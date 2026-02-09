@@ -49,6 +49,9 @@ export const API = {
     LOGOUT_OTHER_SESSIONS: '/api/user/logout-other-sessions',
     LOGOUT_SESSION: (sessionId: string) => `/api/user/sessions/${sessionId}`,
   },
+
+  // Dashboard endpoints
+  DASHBOARD: '/api/dashboard',
   
   // System endpoints
   SYSTEM: {

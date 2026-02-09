@@ -8,6 +8,7 @@ import { errorHandler } from './middlewares/errorHandler';
 import authRoutes from './modules/auth/auth.routes';
 import systemRoutes from './modules/system/system.routes';
 import sessionRoutes from './modules/session/session.routes';
+import dashboardRoutes from './modules/dashboard/dashboard.routes';
 import { config } from './config/env';
 
 const app = express();
@@ -39,6 +40,7 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/system', systemRoutes);
 app.use('/api', sessionRoutes); // Session management & user endpoints
+app.use('/api', dashboardRoutes); // Dashboard (role-based)
 
 // 404 handler
 app.use((req, res) => {

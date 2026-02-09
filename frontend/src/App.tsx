@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route } from "react-router";
 import { ScrollToTop } from "./components/common/ScrollToTop";
 import AppLayout from "./layout/AppLayout";
+import ProtectedRoute from "./components/auth/ProtectedRoute";
 
 // Section Pages
 import Home from "./pages/Home/Home";
@@ -27,8 +28,14 @@ export default function App() {
       <Router>
         <ScrollToTop />
         <Routes>
-          {/* Main Layout */}
-          <Route element={<AppLayout />}>
+          {/* Main Layout - protected */}
+          <Route
+            element={
+              <ProtectedRoute>
+                <AppLayout />
+              </ProtectedRoute>
+            }
+          >
             <Route index path="/" element={<Home />} />
             <Route path="/products" element={<Products />} />
             <Route path="/stock" element={<Stock />} />

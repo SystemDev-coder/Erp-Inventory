@@ -4,6 +4,8 @@
  */
 
 import { env } from '../config/env';
+import { API } from '../config/env';
+import { getAccessToken, setAccessToken, clearAccessToken } from './authStore';
 
 export interface ApiResponse<T = any> {
   success: boolean;
@@ -27,44 +29,102 @@ class ApiClient {
   }
 
   /**
-   * Make an HTTP request
+   * Build headers including Authorization when we have a token
+   */
+  private buildHeaders(overrides: HeadersInit = {}): HeadersInit {
+    const token = getAccessToken();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(overrides as Record<string, string>),
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    return headers;
+  }
+
+  /**
+   * Try to refresh access token using cookie; returns new token or null
+   */
+  private async tryRefresh(): Promise<string | null> {
+    const refreshRes = await fetch(`${this.baseURL}${API.AUTH.REFRESH}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+    });
+    let data: { success?: boolean; data?: { accessToken?: string }; message?: string };
+    try {
+      data = await refreshRes.json();
+    } catch {
+      return null;
+    }
+    if (refreshRes.ok && data.success && data.data?.accessToken) {
+      setAccessToken(data.data.accessToken, false);
+      return data.data.accessToken;
+    }
+    clearAccessToken();
+    return null;
+  }
+
+  /**
+   * Make an HTTP request (with optional 401 retry after refresh)
    */
   private async request<T>(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    isRetry = false
   ): Promise<ApiResponse<T>> {
     const url = `${this.baseURL}${endpoint}`;
-    
+
     const config: RequestInit = {
       ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-      credentials: 'include', // Important: Include cookies for authentication
+      headers: this.buildHeaders(options.headers as Record<string, string>),
+      credentials: 'include',
     };
 
     try {
       const response = await fetch(url, config);
-      const data = await response.json();
-
-      if (!response.ok) {
-        // Handle HTTP errors
+      let data: any;
+      try {
+        data = await response.json();
+      } catch {
         return {
           success: false,
-          error: data.error || data.message || 'An error occurred',
-          message: data.message || `Request failed with status ${response.status}`,
+          error: 'Invalid response from server',
+          message: response.status === 0
+            ? 'Cannot reach server. Check that the backend is running and CORS is allowed.'
+            : `Request failed with status ${response.status}`,
+        };
+      }
+
+      if (!response.ok) {
+        if (response.status === 401 && !isRetry) {
+          const newToken = await this.tryRefresh();
+          if (newToken) {
+            return this.request<T>(endpoint, options, true);
+          }
+        }
+        const errorMessage =
+          data?.errors?.[0]?.message ||
+          data?.error ||
+          data?.message ||
+          'An error occurred';
+        return {
+          success: false,
+          error: errorMessage,
+          message: data?.message || `Request failed with status ${response.status}`,
         };
       }
 
       return data;
     } catch (error) {
-      // Handle network errors
-      console.error('API Request Error:', error);
       return {
         success: false,
         error: 'Network error',
-        message: error instanceof Error ? error.message : 'Failed to connect to server',
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Cannot connect to server. Check the backend URL and that the server is running.',
       };
     }
   }
@@ -73,10 +133,7 @@ class ApiClient {
    * GET request
    */
   async get<T>(endpoint: string, options?: RequestInit): Promise<ApiResponse<T>> {
-    return this.request<T>(endpoint, {
-      ...options,
-      method: 'GET',
-    });
+    return this.request<T>(endpoint, { ...options, method: 'GET' });
   }
 
   /**
@@ -128,12 +185,8 @@ class ApiClient {
    * DELETE request
    */
   async delete<T>(endpoint: string, options?: RequestInit): Promise<ApiResponse<T>> {
-    return this.request<T>(endpoint, {
-      ...options,
-      method: 'DELETE',
-    });
+    return this.request<T>(endpoint, { ...options, method: 'DELETE' });
   }
 }
 
-// Export singleton instance
 export const apiClient = new ApiClient();

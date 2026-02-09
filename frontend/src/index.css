@@ -55,6 +55,20 @@ layer(base);
   --color-primary-900: #4c1d95;
   --color-primary-950: #2e1065;
 
+  /* Brand - same as Primary (for buttons, links) */
+  --color-brand-25: #faf5ff;
+  --color-brand-50: #f5f3ff;
+  --color-brand-100: #ede9fe;
+  --color-brand-200: #ddd6fe;
+  --color-brand-300: #c4b5fd;
+  --color-brand-400: #a78bfa;
+  --color-brand-500: #8b5cf6;
+  --color-brand-600: #7c3aed;
+  --color-brand-700: #6d28d9;
+  --color-brand-800: #5b21b6;
+  --color-brand-900: #4c1d95;
+  --color-brand-950: #2e1065;
+
   /* Secondary - Slate */
   --color-slate-25: #fcfcfd;
   --color-slate-50: #f8fafc;
@@ -177,7 +191,7 @@ layer(base);
 }
 
 @utility menu-item-inactive {
-  @apply text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800;
+  @apply text-slate-800 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800;
 }
 
 @utility menu-item-icon-active {
@@ -185,7 +199,7 @@ layer(base);
 }
 
 @utility menu-item-icon-inactive {
-  @apply text-slate-500 group-hover:text-slate-700 dark:text-slate-400 dark:group-hover:text-slate-300;
+  @apply text-slate-600 group-hover:text-slate-800 dark:text-slate-400 dark:group-hover:text-slate-200;
 }
 
 /* Scrollbar Utilities */

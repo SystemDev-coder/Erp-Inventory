@@ -6,6 +6,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { authService, User, LoginCredentials, RegisterData } from '../services/auth.service';
 import { ApiResponse } from '../services/api';
+import { setAccessToken, clearAccessToken, getAccessToken } from '../services/authStore';
 
 interface AuthContextType {
   user: User | null;
@@ -34,12 +35,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const checkAuth = async () => {
     try {
+      const token = getAccessToken();
+      if (!token) {
+        setUser(null);
+        return;
+      }
       const response = await authService.getCurrentUser();
       if (response.success && response.data) {
         setUser(response.data.user);
+      } else {
+        setUser(null);
       }
     } catch (error) {
-      console.error('Auth check failed:', error);
+      setUser(null);
     } finally {
       setIsLoading(false);
     }
@@ -47,21 +55,23 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const login = async (credentials: LoginCredentials): Promise<ApiResponse> => {
     const response = await authService.login(credentials);
-    
+
     if (response.success && response.data) {
+      setAccessToken(response.data.accessToken, !!credentials.rememberMe);
       setUser(response.data.user);
     }
-    
+
     return response;
   };
 
   const register = async (data: RegisterData): Promise<ApiResponse> => {
     const response = await authService.register(data);
-    
+
     if (response.success && response.data) {
+      setAccessToken(response.data.accessToken, false);
       setUser(response.data.user);
     }
-    
+
     return response;
   };
 
@@ -71,6 +81,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
+      clearAccessToken();
       setUser(null);
     }
   };

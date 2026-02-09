@@ -1,6 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { Plus } from "lucide-react";
-
 import { Link } from "react-router";
 import { useSidebar } from "../context/SidebarContext";
 import { ThemeToggleButton } from "../components/common/ThemeToggleButton";
@@ -153,10 +151,6 @@ const AppHeader: React.FC = () => {
           </div>
         </div>
         <div className="flex items-center gap-4">
-          <button className="hidden sm:flex items-center gap-2 px-4 py-2 bg-primary-600 text-white text-sm font-bold rounded-xl hover:bg-primary-700 transition-all shadow-lg shadow-primary-500/20 active:scale-95">
-            <Plus className="w-4 h-4" />
-            Quick Add
-          </button>
           <div className="flex items-center gap-2 2xsm:gap-3">
             <ThemeToggleButton />
             <NotificationDropdown />

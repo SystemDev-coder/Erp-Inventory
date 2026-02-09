@@ -66,9 +66,7 @@ export interface DeviceInfo {
 export interface SidebarMenuItem {
   id: string;
   name: string;
-  nameS
-
-o: string;
+  nameSo: string;
   icon: string;
   route: string;
   permission: string;

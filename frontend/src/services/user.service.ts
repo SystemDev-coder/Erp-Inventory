@@ -41,6 +41,33 @@ export interface SidebarItem {
   permission?: string;
 }
 
+/** Backend sidebar API response (GET /api/user/sidebar) - permission-based menu */
+export interface SidebarModule {
+  id: string;
+  name: string;
+  nameSo?: string;
+  icon: string;
+  route: string;
+  permission: string;
+  badge?: number | string;
+  items?: SidebarSubModule[];
+}
+
+export interface SidebarSubModule {
+  id: string;
+  name: string;
+  nameSo?: string;
+  route: string;
+  permission: string;
+  badge?: number | string;
+}
+
+export interface SidebarApiResponse {
+  modules: SidebarModule[];
+  cached?: boolean;
+  timestamp?: string;
+}
+
 class UserService {
   /**
    * Get current user's permissions
@@ -50,10 +77,10 @@ class UserService {
   }
 
   /**
-   * Get sidebar configuration for current user
+   * Get sidebar menu for current user (permission-based, from API)
    */
-  async getSidebar(): Promise<ApiResponse<{ sidebar: SidebarItem[] }>> {
-    return apiClient.get<{ sidebar: SidebarItem[] }>(API.USER.SIDEBAR);
+  async getSidebar(): Promise<ApiResponse<SidebarApiResponse>> {
+    return apiClient.get<SidebarApiResponse>(API.USER.SIDEBAR);
   }
 
   /**

@@ -7,6 +7,11 @@
 -- PART 1: RBAC TABLES
 -- ============================================
 
+-- Permissions table adding the missing columns
+ALTER TABLE ims.permissions
+ADD COLUMN IF NOT EXISTS module VARCHAR(50);
+
+-- Permissions table creating
 CREATE TABLE IF NOT EXISTS ims.permissions (
     perm_id SERIAL PRIMARY KEY,
     perm_key VARCHAR(100) UNIQUE NOT NULL,
@@ -15,6 +20,7 @@ CREATE TABLE IF NOT EXISTS ims.permissions (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Role permissions table creating
 CREATE TABLE IF NOT EXISTS ims.role_permissions (
     role_id INT NOT NULL REFERENCES ims.roles(role_id) ON DELETE CASCADE,
     perm_id INT NOT NULL REFERENCES ims.permissions(perm_id) ON DELETE CASCADE,
