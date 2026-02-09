@@ -65,6 +65,14 @@ export const API = {
     USER_OVERRIDES: (id: number) => `/api/system/users/${id}/overrides`,
     USER_AUDIT: (id: number) => `/api/system/users/${id}/audit`,
   },
+
+  // Products endpoints
+  PRODUCTS: {
+    LIST: '/api/products',
+    ITEM: (id: number) => `/api/products/${id}`,
+    CATEGORIES: '/api/products/categories',
+    CATEGORY: (id: number) => `/api/products/categories/${id}`,
+  },
   
   // Health check
   HEALTH: '/api/health',

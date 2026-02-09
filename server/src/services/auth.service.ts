@@ -98,7 +98,7 @@ export class AuthService {
     );
 
     if (userResult.rows.length === 0) {
-      throw new AppError(401, 'Invalid credentials');
+      throw new AppError(401, 'Incorrect username or password');
     }
 
     const user = userResult.rows[0];
@@ -110,7 +110,7 @@ export class AuthService {
     );
 
     if (!isPasswordValid) {
-      throw new AppError(401, 'Invalid credentials');
+      throw new AppError(401, 'Incorrect username or password');
     }
 
     // Generate tokens

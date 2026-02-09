@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route } from "react-router";
 import { ScrollToTop } from "./components/common/ScrollToTop";
 import AppLayout from "./layout/AppLayout";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
+import { useInactivityLogout } from "./hooks/useInactivityLogout";
 
 // Section Pages
 import Home from "./pages/Home/Home";
@@ -22,42 +23,50 @@ import SignIn from "./pages/AuthPages/SignIn";
 import SignUp from "./pages/AuthPages/SignUp";
 import NotFound from "./pages/OtherPage/NotFound";
 
-export default function App() {
+function AppRoutes() {
+  useInactivityLogout();
+
   return (
     <>
-      <Router>
-        <ScrollToTop />
-        <Routes>
-          {/* Main Layout - protected */}
-          <Route
-            element={
-              <ProtectedRoute>
-                <AppLayout />
-              </ProtectedRoute>
-            }
-          >
-            <Route index path="/" element={<Home />} />
-            <Route path="/products" element={<Products />} />
-            <Route path="/stock" element={<Stock />} />
-            <Route path="/sales" element={<Sales />} />
-            <Route path="/purchases" element={<Purchases />} />
-            <Route path="/returns" element={<Returns />} />
-            <Route path="/transfers" element={<Transfers />} />
-            <Route path="/finance" element={<Finance />} />
-            <Route path="/customers" element={<Customers />} />
-            <Route path="/employees" element={<Employees />} />
-            <Route path="/system" element={<System />} />
-            <Route path="/settings" element={<Settings />} />
-          </Route>
+      <ScrollToTop />
+      <Routes>
+        {/* Main Layout - protected */}
+        <Route
+          element={
+            <ProtectedRoute>
+              <AppLayout />
+            </ProtectedRoute>
+          }
+        >
+          <Route index path="/" element={<Home />} />
+          <Route path="/products" element={<Products />} />
+          <Route path="/stock" element={<Stock />} />
+          <Route path="/sales" element={<Sales />} />
+          <Route path="/purchases" element={<Purchases />} />
+          <Route path="/returns" element={<Returns />} />
+          <Route path="/transfers" element={<Transfers />} />
+          <Route path="/finance" element={<Finance />} />
+          <Route path="/customers" element={<Customers />} />
+          <Route path="/employees" element={<Employees />} />
+          <Route path="/system" element={<System />} />
+          <Route path="/settings" element={<Settings />} />
+        </Route>
 
-          {/* Auth Layout */}
-          <Route path="/signin" element={<SignIn />} />
-          <Route path="/signup" element={<SignUp />} />
+        {/* Auth Layout */}
+        <Route path="/signin" element={<SignIn />} />
+        <Route path="/signup" element={<SignUp />} />
 
-          {/* Fallback Route */}
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </Router>
+        {/* Fallback Route */}
+        <Route path="*" element={<NotFound />} />
+      </Routes>
     </>
+  );
+}
+
+export default function App() {
+  return (
+    <Router>
+      <AppRoutes />
+    </Router>
   );
 }

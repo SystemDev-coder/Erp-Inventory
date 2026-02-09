@@ -9,6 +9,7 @@ import authRoutes from './modules/auth/auth.routes';
 import systemRoutes from './modules/system/system.routes';
 import sessionRoutes from './modules/session/session.routes';
 import dashboardRoutes from './modules/dashboard/dashboard.routes';
+import productRoutes from './modules/products/products.routes';
 import { config } from './config/env';
 
 const app = express();
@@ -41,6 +42,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/system', systemRoutes);
 app.use('/api', sessionRoutes); // Session management & user endpoints
 app.use('/api', dashboardRoutes); // Dashboard (role-based)
+app.use('/api/products', productRoutes);
 
 // 404 handler
 app.use((req, res) => {

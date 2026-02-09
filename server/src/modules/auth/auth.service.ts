@@ -120,13 +120,13 @@ export class AuthService {
     );
 
     if (!user) {
-      throw ApiError.unauthorized('Invalid credentials');
+      throw ApiError.unauthorized('Incorrect username or password');
     }
 
     // Verify password
     const isValid = await comparePassword(input.password, user.password_hash);
     if (!isValid) {
-      throw ApiError.unauthorized('Invalid credentials');
+      throw ApiError.unauthorized('Incorrect username or password');
     }
 
     // Generate tokens

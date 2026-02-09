@@ -1,0 +1,16 @@
+﻿FROM node:20-alpine
+
+WORKDIR /app
+
+RUN apk add --no-cache bash curl postgresql-client
+
+COPY package*.json ./
+RUN npm install
+ENV PATH="/app/node_modules/.bin:${PATH}"
+
+# entry script only; source code is bind-mounted in dev
+COPY docker/entrypoint.sh docker/entrypoint.sh
+RUN chmod +x docker/entrypoint.sh
+
+EXPOSE 5000
+CMD ["sh", "/app/docker/entrypoint.sh"]

@@ -3,7 +3,7 @@ import { authService } from './auth.service';
 import { ApiResponse } from '../../utils/ApiResponse';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { AuthRequest } from '../../middlewares/requireAuth';
-import { getCookieOptions } from '../../config/cookie';
+import { getCookieOptions, getClearCookieOptions } from '../../config/cookie';
 import { config } from '../../config/env';
 import {
   registerSchema,
@@ -72,8 +72,8 @@ export class AuthController {
       await authService.logout(req.user.userId);
     }
 
-    // Clear refresh token cookie
-    res.clearCookie(config.cookie.name, getCookieOptions());
+    // Clear refresh token cookie (no maxAge to avoid Express 5 deprecation)
+    res.clearCookie(config.cookie.name, getClearCookieOptions());
 
     return ApiResponse.success(res, null, 'Logged out successfully');
   });

@@ -3,13 +3,60 @@
 -- Run this ONCE in pgAdmin (idempotent - safe to re-run)
 -- ============================================
 
+-- Ensure schema exists and search_path is set
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = 'ims') THEN
+    EXECUTE 'CREATE SCHEMA ims';
+  END IF;
+END $$;
+
+SET search_path TO ims, public;
+
+-- Required extension for UUID generation
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
 -- ============================================
 -- PART 1: RBAC TABLES
 -- ============================================
 
--- Permissions table adding the missing columns
-ALTER TABLE ims.permissions
-ADD COLUMN IF NOT EXISTS module VARCHAR(50);
+-- Ensure base tables exist for FK dependencies
+CREATE TABLE IF NOT EXISTS ims.branches (
+    branch_id SERIAL PRIMARY KEY,
+    branch_name VARCHAR(150) UNIQUE NOT NULL,
+    address TEXT,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS ims.roles (
+    role_id SERIAL PRIMARY KEY,
+    role_name VARCHAR(100) UNIQUE NOT NULL,
+    description TEXT,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS ims.users (
+    user_id SERIAL PRIMARY KEY,
+    branch_id INT REFERENCES ims.branches(branch_id) ON DELETE SET NULL,
+    role_id INT REFERENCES ims.roles(role_id) ON DELETE SET NULL,
+    name VARCHAR(150),
+    username VARCHAR(100) UNIQUE,
+    email VARCHAR(255),
+    phone VARCHAR(30),
+    password_hash TEXT,
+    refresh_token_hash TEXT,
+    reset_code_hash TEXT,
+    reset_code_expires TIMESTAMPTZ,
+    last_login_at TIMESTAMPTZ,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_users_phone ON ims.users(phone) WHERE phone IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username ON ims.users(username);
 
 -- Permissions table creating
 CREATE TABLE IF NOT EXISTS ims.permissions (
@@ -17,8 +64,15 @@ CREATE TABLE IF NOT EXISTS ims.permissions (
     perm_key VARCHAR(100) UNIQUE NOT NULL,
     perm_name VARCHAR(150) NOT NULL,
     module VARCHAR(50) NOT NULL,
+    description TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Permissions table adding the missing columns (for legacy runs)
+ALTER TABLE ims.permissions
+ADD COLUMN IF NOT EXISTS module VARCHAR(50);
+ALTER TABLE ims.permissions
+ADD COLUMN IF NOT EXISTS description TEXT;
 
 -- Role permissions table creating
 CREATE TABLE IF NOT EXISTS ims.role_permissions (
@@ -436,7 +490,7 @@ FOR EACH ROW EXECUTE FUNCTION trigger_invalidate_cache();
 -- FINAL VERIFICATION
 -- ============================================
 
-SELECT '✅ COMPLETE SETUP SUCCESSFUL!' as status;
+SELECT '??? COMPLETE SETUP SUCCESSFUL!' as status;
 SELECT COUNT(*) as total_permissions FROM ims.permissions;
 SELECT COUNT(*) as total_roles FROM ims.roles;
 SELECT r.role_name, COUNT(rp.perm_id) as permission_count
@@ -446,3 +500,6 @@ GROUP BY r.role_id, r.role_name
 ORDER BY r.role_name;
 
 SELECT 'Run this in backend terminal: npm run dev' as next_step;
+
+
+

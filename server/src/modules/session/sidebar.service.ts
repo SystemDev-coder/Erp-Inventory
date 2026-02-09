@@ -58,22 +58,6 @@ export class SidebarService {
         icon: 'Package',
         route: '/products',
         permission: 'products.view',
-        items: [
-          {
-            id: 'products-all',
-            name: 'All Products',
-            nameSo: 'Dhammaan Alaabada',
-            route: '/products',
-            permission: 'products.view',
-          },
-          {
-            id: 'products-categories',
-            name: 'Categories',
-            nameSo: 'Qaybaha',
-            route: '/products/categories',
-            permission: 'products.view',
-          },
-        ],
       });
     }
 

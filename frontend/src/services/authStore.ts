@@ -4,6 +4,7 @@
  */
 
 const TOKEN_KEY = 'erp_access_token';
+const SESSION_TOKEN_KEY = 'erp_access_token_session';
 
 let memoryToken: string | null = null;
 
@@ -11,8 +12,13 @@ export function getAccessToken(): string | null {
   if (memoryToken) return memoryToken;
   try {
     const stored = localStorage.getItem(TOKEN_KEY);
-    if (stored) memoryToken = stored;
-    return stored;
+    if (stored) {
+      memoryToken = stored;
+      return stored;
+    }
+    const sessionStored = sessionStorage.getItem(SESSION_TOKEN_KEY);
+    if (sessionStored) memoryToken = sessionStored;
+    return sessionStored;
   } catch {
     return null;
   }
@@ -23,12 +29,14 @@ export function setAccessToken(token: string, persist = false): void {
   if (persist) {
     try {
       localStorage.setItem(TOKEN_KEY, token);
+      sessionStorage.removeItem(SESSION_TOKEN_KEY);
     } catch {
       // ignore
     }
   } else {
     try {
       localStorage.removeItem(TOKEN_KEY);
+      sessionStorage.setItem(SESSION_TOKEN_KEY, token);
     } catch {
       // ignore
     }
@@ -39,6 +47,7 @@ export function clearAccessToken(): void {
   memoryToken = null;
   try {
     localStorage.removeItem(TOKEN_KEY);
+    sessionStorage.removeItem(SESSION_TOKEN_KEY);
   } catch {
     // ignore
   }

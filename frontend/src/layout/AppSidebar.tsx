@@ -122,7 +122,7 @@ const AppSidebar: React.FC = () => {
           </div>
           {showExpanded && (
             <span className="text-lg font-semibold text-slate-800 dark:text-slate-100 truncate">
-              Inventory
+              KeydMaal MS
             </span>
           )}
         </Link>

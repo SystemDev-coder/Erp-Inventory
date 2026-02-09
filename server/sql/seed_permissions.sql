@@ -14,6 +14,11 @@ CREATE TABLE IF NOT EXISTS ims.permissions (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Backfill missing columns if table already existed without them
+ALTER TABLE ims.permissions
+  ADD COLUMN IF NOT EXISTS description TEXT,
+  ADD COLUMN IF NOT EXISTS module VARCHAR(50);
+
 CREATE TABLE IF NOT EXISTS ims.role_permissions (
     role_id INT NOT NULL REFERENCES ims.roles(role_id) ON DELETE CASCADE,
     perm_id INT NOT NULL REFERENCES ims.permissions(perm_id) ON DELETE CASCADE,
@@ -303,3 +308,4 @@ FROM ims.roles r
 LEFT JOIN ims.role_permissions rp ON r.role_id = rp.role_id
 GROUP BY r.role_id, r.role_name
 ORDER BY r.role_name;
+
