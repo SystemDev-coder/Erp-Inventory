@@ -20,6 +20,8 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 -- PART 1: RBAC TABLES
 -- ============================================
 
+
+
 -- Ensure base tables exist for FK dependencies
 CREATE TABLE IF NOT EXISTS ims.branches (
     branch_id SERIAL PRIMARY KEY,
@@ -54,6 +56,17 @@ CREATE TABLE IF NOT EXISTS ims.users (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Ensure phone exists for legacy schemas before creating the index
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='ims' AND table_name='users' AND column_name='phone'
+  ) THEN
+    ALTER TABLE ims.users ADD COLUMN phone VARCHAR(30);
+  END IF;
+END$$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_users_phone ON ims.users(phone) WHERE phone IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username ON ims.users(username);
@@ -219,17 +232,23 @@ CREATE INDEX IF NOT EXISTS idx_session_activity_session ON ims.session_activity_
 -- PART 3: HELPER FUNCTIONS
 -- ============================================
 
-CREATE OR REPLACE FUNCTION upsert_permission(
-    p_key VARCHAR(100),
-    p_name VARCHAR(150),
-    p_module VARCHAR(50)
+-- Normalize helper to avoid overload conflicts
+DROP FUNCTION IF EXISTS ims.upsert_permission(VARCHAR, VARCHAR, VARCHAR);
+DROP FUNCTION IF EXISTS ims.upsert_permission(VARCHAR, VARCHAR, VARCHAR, TEXT);
+
+CREATE OR REPLACE FUNCTION ims.upsert_permission(
+    p_key TEXT,
+    p_name TEXT,
+    p_module TEXT,
+    p_desc TEXT DEFAULT NULL
 ) RETURNS void AS $$
 BEGIN
-    INSERT INTO ims.permissions (perm_key, perm_name, module)
-    VALUES (p_key, p_name, p_module)
+    INSERT INTO ims.permissions (perm_key, perm_name, module, description)
+    VALUES (p_key, p_name, p_module, p_desc)
     ON CONFLICT (perm_key) DO UPDATE
     SET perm_name = EXCLUDED.perm_name,
-        module = EXCLUDED.module;
+        module = EXCLUDED.module,
+        description = EXCLUDED.description;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -319,6 +338,18 @@ SELECT upsert_permission('finance.expenses', 'Manage Expenses', 'Finance');
 SELECT upsert_permission('finance.payments', 'Manage Payments', 'Finance');
 SELECT upsert_permission('finance.reports', 'Financial Reports', 'Finance');
 SELECT upsert_permission('finance.export', 'Export Finance', 'Finance');
+
+-- Suppliers
+SELECT upsert_permission('suppliers.view', 'View Suppliers', 'Suppliers');
+SELECT upsert_permission('suppliers.create', 'Create Suppliers', 'Suppliers');
+SELECT upsert_permission('suppliers.update', 'Update Suppliers', 'Suppliers');
+SELECT upsert_permission('suppliers.delete', 'Delete Suppliers', 'Suppliers');
+
+-- Receipts
+SELECT upsert_permission('receipts.view', 'View Receipts', 'Receipts');
+SELECT upsert_permission('receipts.create', 'Create Receipts', 'Receipts');
+SELECT upsert_permission('receipts.update', 'Update Receipts', 'Receipts');
+SELECT upsert_permission('receipts.delete', 'Delete Receipts', 'Receipts');
 
 -- CUSTOMERS
 SELECT upsert_permission('customers.view', 'View Customers', 'Customers');
@@ -500,6 +531,3 @@ GROUP BY r.role_id, r.role_name
 ORDER BY r.role_name;
 
 SELECT 'Run this in backend terminal: npm run dev' as next_step;
-
-
-

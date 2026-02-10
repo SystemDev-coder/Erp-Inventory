@@ -28,12 +28,51 @@ export const getCompanyInfo = asyncHandler(async (_req: AuthRequest, res: Respon
 
 export const updateCompanyInfo = asyncHandler(async (req: AuthRequest, res: Response) => {
   const input = companyInfoSchema.parse(req.body);
+
+  // If user supplies external URLs, upload them to Cloudinary first
+  let logoUrl = input.logoImg || '';
+  let bannerUrl = input.bannerImg || '';
+  try {
+    const { uploadImageFromUrl } = await import('../../config/cloudinary');
+    const shouldUpload = (url: string) => {
+      if (!url || !/^https?:\/\//i.test(url)) return false;
+      if (url.includes('/image/fetch/')) return true; // fetched assets should be re-uploaded
+      return !url.includes('res.cloudinary.com');
+    };
+    const extractOriginal = (url: string) => {
+      // For fetch URLs, pull out the last encoded http(s) segment
+      const idx = url.lastIndexOf('http');
+      if (idx >= 0) {
+        try {
+          return decodeURIComponent(url.slice(idx));
+        } catch {
+          return url.slice(idx);
+        }
+      }
+      return url;
+    };
+
+    if (shouldUpload(logoUrl)) {
+      const source = extractOriginal(logoUrl);
+      const uploaded = await uploadImageFromUrl(source, 'system');
+      if (uploaded) logoUrl = uploaded;
+    }
+    if (shouldUpload(bannerUrl)) {
+      const source = extractOriginal(bannerUrl);
+      const uploaded = await uploadImageFromUrl(source, 'system');
+      if (uploaded) bannerUrl = uploaded;
+    }
+  } catch (err) {
+    // Swallow upload errors so the rest of the payload can still persist
+    console.error('Cloudinary upload skipped/failed:', err);
+  }
+
   const company = await settingsService.upsertCompanyInfo({
     companyName: input.companyName,
     phone: input.phone,
     managerName: input.managerName,
-    logoImg: input.logoImg,
-    bannerImg: input.bannerImg,
+    logoImg: logoUrl,
+    bannerImg: bannerUrl,
   });
   return ApiResponse.success(res, { company }, 'Company info saved');
 });

@@ -105,9 +105,52 @@ CREATE TRIGGER trg_supplier_timestamp
     FOR EACH ROW
     EXECUTE FUNCTION update_supplier_timestamp();
 
--- Create indexes for performance
-CREATE INDEX IF NOT EXISTS idx_suppliers_name ON suppliers(supplier_name);
-CREATE INDEX IF NOT EXISTS idx_suppliers_active ON suppliers(is_active);
+-- Ensure supplier_name column exists even if legacy "name" column was used
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='ims' AND table_name='suppliers' AND column_name='supplier_name'
+  ) THEN
+    ALTER TABLE suppliers ADD COLUMN supplier_name VARCHAR(255);
+    -- If legacy name column exists, backfill
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema='ims' AND table_name='suppliers' AND column_name='name'
+    ) THEN
+      UPDATE suppliers SET supplier_name = COALESCE(supplier_name, name);
+    END IF;
+    -- Ensure not null constraint gently
+    ALTER TABLE suppliers ALTER COLUMN supplier_name DROP NOT NULL;
+  END IF;
+
+  -- Add is_active if missing
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='ims' AND table_name='suppliers' AND column_name='is_active'
+  ) THEN
+    ALTER TABLE suppliers ADD COLUMN is_active BOOLEAN DEFAULT TRUE;
+    UPDATE suppliers SET is_active = TRUE WHERE is_active IS NULL;
+  END IF;
+END$$;
+
+-- Create indexes for performance (choose existing column)
+DO $$
+DECLARE
+  col_name text;
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='ims' AND table_name='suppliers' AND column_name='supplier_name') THEN
+    col_name := 'supplier_name';
+  ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='ims' AND table_name='suppliers' AND column_name='name') THEN
+    col_name := 'name';
+  END IF;
+
+  IF col_name IS NOT NULL THEN
+    EXECUTE format('CREATE INDEX IF NOT EXISTS idx_suppliers_name ON suppliers(%I);', col_name);
+  END IF;
+
+  EXECUTE 'CREATE INDEX IF NOT EXISTS idx_suppliers_active ON suppliers(is_active);';
+END$$;
 
 -- =====================================================
 -- 4. IMAGE UPLOADS LOG TABLE (Optional - Track uploads)

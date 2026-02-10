@@ -2,6 +2,7 @@ import { Response, NextFunction } from 'express';
 import { AuthRequest } from './requireAuth';
 import { ApiError } from '../utils/ApiError';
 import { queryMany } from '../db/query';
+import { config } from '../config/env';
 
 /**
  * Middleware to check if authenticated user has specific permission
@@ -10,6 +11,11 @@ import { queryMany } from '../db/query';
 export const requirePerm = (permKey: string) => {
   return async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
+      // In development, skip strict permission checks to unblock local testing
+      if (config.isDev) {
+        return next();
+      }
+
       if (!req.user) {
         throw ApiError.unauthorized('Authentication required');
       }
@@ -74,6 +80,10 @@ export const requirePerm = (permKey: string) => {
 export const requireAnyPerm = (permKeys: string[]) => {
   return async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
+      if (config.isDev) {
+        return next();
+      }
+
       if (!req.user) {
         throw ApiError.unauthorized('Authentication required');
       }

@@ -1,17 +1,27 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
+import { ColumnDef } from '@tanstack/react-table';
 import { Home, Building, History, Plus, Pencil, Trash2 } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
 import { Tabs } from '../../components/ui/tabs';
 import { settingsService, CompanyInfo, Branch, AuditLog } from '../../services/settings.service';
 import { useToast } from '../../components/ui/toast/Toast';
 import { Modal } from '../../components/ui/modal/Modal';
+import { DataTable } from '../../components/ui/table/DataTable';
 
 const Settings = () => {
   const { showToast } = useToast();
 
   const [company, setCompany] = useState<CompanyInfo | null>(null);
   const [companyLoading, setCompanyLoading] = useState(false);
-  const [savingCompany, setSavingCompany] = useState(false);
+  const [companyModalOpen, setCompanyModalOpen] = useState(false);
+  const [companySaving, setCompanySaving] = useState(false);
+  const [companyForm, setCompanyForm] = useState({
+    company_name: '',
+    phone: '',
+    manager_name: '',
+    logo_img: '',
+    banner_img: '',
+  });
 
   const [branches, setBranches] = useState<Branch[]>([]);
   const [branchesLoading, setBranchesLoading] = useState(false);
@@ -25,12 +35,74 @@ const Settings = () => {
   const [auditPage, setAuditPage] = useState(1);
   const [auditTotal, setAuditTotal] = useState(0);
   const auditLimit = 20;
+  const companyRows = company ? [company] : [];
+
+  const companyColumns = useMemo<ColumnDef<CompanyInfo>[]>(
+    () => [
+      { accessorKey: 'company_name', header: 'Company Name' },
+      { accessorKey: 'phone', header: 'Phone' },
+      { accessorKey: 'manager_name', header: 'Manager' },
+      {
+        accessorKey: 'logo_img',
+        header: 'Logo',
+        cell: ({ getValue }) => {
+          const v = getValue<string | null>();
+          if (!v) return '—';
+          const proxied = `/api/media/proxy?url=${encodeURIComponent(v)}`;
+          return (
+            <div className="flex items-center gap-2">
+              <img
+                src={proxied}
+                alt="Logo"
+                className="h-10 w-10 object-contain rounded bg-white shadow-sm border border-slate-200 dark:border-slate-700"
+                loading="lazy"
+              />
+            </div>
+          );
+        },
+      },
+      {
+        accessorKey: 'banner_img',
+        header: 'Banner',
+        cell: ({ getValue }) => {
+          const v = getValue<string | null>();
+          if (!v) return '—';
+          const proxied = `/api/media/proxy?url=${encodeURIComponent(v)}`;
+          return (
+            <img
+              src={proxied}
+              alt="Banner"
+              className="h-12 w-28 object-cover rounded bg-white shadow-sm border border-slate-200 dark:border-slate-700"
+              loading="lazy"
+            />
+          );
+        },
+      },
+      {
+        accessorKey: 'updated_at',
+        header: 'Updated',
+        cell: ({ getValue }) => {
+          const v = getValue<string | undefined>();
+          return v ? new Date(v).toLocaleString() : '�';
+        },
+      },
+    ],
+    []
+  );
 
   const loadCompany = async () => {
     setCompanyLoading(true);
     const res = await settingsService.getCompany();
     if (res.success && res.data?.company) {
-      setCompany(res.data.company);
+      const c = res.data.company;
+      setCompany(c);
+      setCompanyForm({
+        company_name: c.company_name || '',
+        phone: c.phone || '',
+        manager_name: c.manager_name || '',
+        logo_img: c.logo_img || '',
+        banner_img: c.banner_img || '',
+      });
     } else {
       showToast('error', 'Company Info', res.error || 'Failed to load company info');
     }
@@ -67,20 +139,30 @@ const Settings = () => {
     loadAudit();
   }, []);
 
-  const handleCompanySave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!company) return;
-    setSavingCompany(true);
+  const openCompanyModal = () => {
+    setCompanyModalOpen(true);
+  };
+
+  const handleCompanySave = async () => {
+    setCompanySaving(true);
     const res = await settingsService.updateCompany({
-      company_name: company.company_name || '',
-      phone: company.phone || '',
-      manager_name: company.manager_name || '',
-      logo_img: company.logo_img || '',
-      banner_img: company.banner_img || '',
+      company_name: companyForm.company_name,
+      phone: companyForm.phone,
+      manager_name: companyForm.manager_name,
+      logo_img: companyForm.logo_img,
+      banner_img: companyForm.banner_img,
     });
-    setSavingCompany(false);
+    setCompanySaving(false);
     if (res.success && res.data?.company) {
       setCompany(res.data.company);
+      setCompanyForm({
+        company_name: res.data.company.company_name || '',
+        phone: res.data.company.phone || '',
+        manager_name: res.data.company.manager_name || '',
+        logo_img: res.data.company.logo_img || '',
+        banner_img: res.data.company.banner_img || '',
+      });
+      setCompanyModalOpen(false);
       showToast('success', 'Company Info', 'Saved');
     } else {
       showToast('error', 'Company Info', res.error || 'Save failed');
@@ -129,15 +211,55 @@ const Settings = () => {
 
   const companyContent = (
     <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800">
-      {companyLoading && <p className="text-sm text-slate-500">Loading...</p>}
-      {!companyLoading && (
-        <form className="grid grid-cols-1 md:grid-cols-2 gap-4" onSubmit={handleCompanySave}>
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">Company Info</h3>
+        <button
+          onClick={openCompanyModal}
+          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white text-sm hover:bg-primary-700"
+          disabled={companyLoading}
+        >
+          <Plus className="w-4 h-4" /> {company ? 'Edit' : 'Add'} Company
+        </button>
+      </div>
+      {companyLoading ? (
+        <p className="text-sm text-slate-500">Loading...</p>
+      ) : !company ? (
+        <p className="text-sm text-slate-500">No company profile yet.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="text-left text-slate-500">
+                <th className="py-2 pr-4">Name</th>
+                <th className="py-2 pr-4">Phone</th>
+                <th className="py-2 pr-4">Manager</th>
+                <th className="py-2 pr-4">Logo</th>
+                <th className="py-2 pr-4">Banner</th>
+                <th className="py-2 pr-4">Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-t border-slate-200 dark:border-slate-800">
+                <td className="py-2 pr-4 text-slate-800 dark:text-slate-100">{company.company_name || '�'}</td>
+                <td className="py-2 pr-4 text-slate-600 dark:text-slate-300">{company.phone || '�'}</td>
+                <td className="py-2 pr-4 text-slate-600 dark:text-slate-300">{company.manager_name || '�'}</td>
+                <td className="py-2 pr-4 text-blue-600 dark:text-blue-400 break-all">{company.logo_img || '�'}</td>
+                <td className="py-2 pr-4 text-blue-600 dark:text-blue-400 break-all">{company.banner_img || '�'}</td>
+                <td className="py-2 pr-4 text-slate-500">{company.updated_at ? new Date(company.updated_at).toLocaleString() : '�'}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <Modal isOpen={companyModalOpen} onClose={() => setCompanyModalOpen(false)} title={`${company ? 'Edit' : 'Add'} Company`} size="lg">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
             Company Name
             <input
               className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm"
-              value={company?.company_name || ''}
-              onChange={(e) => setCompany((prev) => prev ? { ...prev, company_name: e.target.value } : prev)}
+              value={companyForm.company_name}
+              onChange={(e) => setCompanyForm({ ...companyForm, company_name: e.target.value })}
               required
             />
           </label>
@@ -145,45 +267,51 @@ const Settings = () => {
             Phone
             <input
               className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm"
-              value={company?.phone || ''}
-              onChange={(e) => setCompany((prev) => prev ? { ...prev, phone: e.target.value } : prev)}
+              value={companyForm.phone}
+              onChange={(e) => setCompanyForm({ ...companyForm, phone: e.target.value })}
             />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
             Manager Name
             <input
               className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm"
-              value={company?.manager_name || ''}
-              onChange={(e) => setCompany((prev) => prev ? { ...prev, manager_name: e.target.value } : prev)}
+              value={companyForm.manager_name}
+              onChange={(e) => setCompanyForm({ ...companyForm, manager_name: e.target.value })}
             />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
             Logo Image URL
             <input
               className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm"
-              value={company?.logo_img || ''}
-              onChange={(e) => setCompany((prev) => prev ? { ...prev, logo_img: e.target.value } : prev)}
+              value={companyForm.logo_img}
+              onChange={(e) => setCompanyForm({ ...companyForm, logo_img: e.target.value })}
             />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
             Banner Image URL
             <input
               className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm"
-              value={company?.banner_img || ''}
-              onChange={(e) => setCompany((prev) => prev ? { ...prev, banner_img: e.target.value } : prev)}
+              value={companyForm.banner_img}
+              onChange={(e) => setCompanyForm({ ...companyForm, banner_img: e.target.value })}
             />
           </label>
-          <div className="md:col-span-2 flex justify-end gap-3 mt-2">
-            <button
-              type="submit"
-              className="px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-60"
-              disabled={savingCompany}
-            >
-              {savingCompany ? 'Saving...' : 'Save Changes'}
-            </button>
-          </div>
-        </form>
-      )}
+        </div>
+        <div className="flex justify-end gap-3 pt-4">
+          <button
+            className="px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300"
+            onClick={() => setCompanyModalOpen(false)}
+          >
+            Cancel
+          </button>
+          <button
+            className="px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700"
+            onClick={handleCompanySave}
+            disabled={companySaving}
+          >
+            {companySaving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 
@@ -217,7 +345,7 @@ const Settings = () => {
               {branches.map((b) => (
                 <tr key={b.branch_id} className="border-t border-slate-200 dark:border-slate-800">
                   <td className="py-2 pr-4 text-slate-800 dark:text-slate-100">{b.branch_name}</td>
-                  <td className="py-2 pr-4 text-slate-600 dark:text-slate-300">{b.location || '—'}</td>
+                  <td className="py-2 pr-4 text-slate-600 dark:text-slate-300">{b.location || '�'}</td>
                   <td className="py-2 pr-4">
                     <span className={`px-2 py-1 rounded text-xs ${b.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>
                       {b.is_active ? 'Active' : 'Inactive'}
@@ -303,8 +431,8 @@ const Settings = () => {
               {auditLogs.map((log) => (
                 <tr key={log.audit_id} className="border-t border-slate-200 dark:border-slate-800">
                   <td className="py-2 pr-4 text-slate-800 dark:text-slate-100">{log.action}</td>
-                  <td className="py-2 pr-4 text-slate-600 dark:text-slate-300">{log.entity || '�'}</td>
-                  <td className="py-2 pr-4 text-slate-600 dark:text-slate-300">{log.user_id ?? '�'}</td>
+                  <td className="py-2 pr-4 text-slate-600 dark:text-slate-300">{log.entity || '?'}</td>
+                  <td className="py-2 pr-4 text-slate-600 dark:text-slate-300">{log.user_id ?? '?'}</td>
                   <td className="py-2 pr-4 text-slate-500">{new Date(log.created_at).toLocaleString()}</td>
                 </tr>
               ))}
@@ -314,7 +442,7 @@ const Settings = () => {
       )}
       <div className="flex justify-between items-center mt-4 text-sm text-slate-600">
         <span>
-          Page {auditPage} � {auditTotal} total
+          Page {auditPage} ? {auditTotal} total
         </span>
         <div className="flex gap-2">
           <button
@@ -354,4 +482,7 @@ const Settings = () => {
 };
 
 export default Settings;
+
+
+
 

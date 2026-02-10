@@ -11,6 +11,11 @@ import sessionRoutes from './modules/session/session.routes';
 import dashboardRoutes from './modules/dashboard/dashboard.routes';
 import productRoutes from './modules/products/products.routes';
 import settingsRoutes from './modules/settings/settings.routes';
+import mediaRoutes from './modules/media/media.routes';
+import customerRoutes from './modules/customers/customers.routes';
+import purchaseRoutes from './modules/purchases/purchases.routes';
+import supplierRoutes from './modules/suppliers/suppliers.routes';
+import receiptRoutes from './modules/receipts/receipts.routes';
 import { ensureSettingsSchema } from './migrations/ensureSettingsSchema';
 import { config } from './config/env';
 
@@ -52,6 +57,11 @@ app.use('/api', sessionRoutes); // Session management & user endpoints
 app.use('/api', dashboardRoutes); // Dashboard (role-based)
 app.use('/api/products', productRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/media', mediaRoutes);
+app.use('/api/customers', customerRoutes);
+app.use('/api/purchases', purchaseRoutes);
+app.use('/api/suppliers', supplierRoutes);
+app.use('/api/receipts', receiptRoutes);
 
 // 404 handler
 app.use((req, res) => {

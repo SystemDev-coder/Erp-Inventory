@@ -34,15 +34,15 @@ export const productsService = {
     return queryMany<Category>(
       `SELECT c.*
        FROM ims.categories c
-       ORDER BY c.name`
+       ORDER BY COALESCE(c.name, c.cat_name)`
     );
   },
 
   async createCategory(input: CategoryInput): Promise<Category> {
     const parentId = input.parentId ?? null;
     return queryOne<Category>(
-      `INSERT INTO ims.categories (name, description, parent_id, is_active)
-       VALUES ($1, $2, $3, COALESCE($4, TRUE))
+      `INSERT INTO ims.categories (name, cat_name, description, parent_id, is_active)
+       VALUES ($1, $1, $2, $3, COALESCE($4, TRUE))
        RETURNING *`,
       [input.name, input.description || null, parentId, input.isActive]
     ) as Promise<Category>;
@@ -53,6 +53,7 @@ export const productsService = {
     return queryOne<Category>(
       `UPDATE ims.categories
        SET name = $2,
+           cat_name = $2,
            description = $3,
            parent_id = $4,
            is_active = COALESCE($5, is_active),
@@ -79,11 +80,11 @@ export const productsService = {
     }
     return queryMany<Product>(
       `SELECT p.*,
-              c.name AS category_name
+              COALESCE(c.name, c.cat_name) AS category_name
        FROM ims.products p
-       LEFT JOIN ims.categories c ON c.category_id = p.category_id
+       LEFT JOIN ims.categories c ON c.category_id = p.category_id OR c.cat_id = p.cat_id
        ${where}
-       ORDER BY p.updated_at DESC`,
+       ORDER BY COALESCE(p.updated_at, p.created_at) DESC`,
       params
     );
   },
@@ -91,9 +92,9 @@ export const productsService = {
   async getProduct(id: number): Promise<Product | null> {
     return queryOne<Product>(
       `SELECT p.*,
-              c.name AS category_name
+              COALESCE(c.name, c.cat_name) AS category_name
        FROM ims.products p
-       LEFT JOIN ims.categories c ON c.category_id = p.category_id
+       LEFT JOIN ims.categories c ON c.category_id = p.category_id OR c.cat_id = p.cat_id
        WHERE p.product_id = $1`,
       [id]
     );
@@ -102,8 +103,8 @@ export const productsService = {
   async createProduct(input: ProductInput & { productImageUrl?: string }): Promise<Product> {
     const categoryId = input.categoryId ?? null;
     return queryOne<Product>(
-      `INSERT INTO ims.products (name, sku, category_id, price, cost, stock, status, reorder_level, description, product_image_url)
-       VALUES ($1, NULLIF($2, ''), $3, $4, $5, $6, $7, $8, $9, $10)
+      `INSERT INTO ims.products (name, sku, category_id, cat_id, price, cost, stock, status, reorder_level, description, product_image_url)
+       VALUES ($1, NULLIF($2, ''), $3, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING *`,
       [
         input.name,
@@ -134,7 +135,7 @@ export const productsService = {
       values.push(input.sku);
     }
     if (input.categoryId !== undefined) {
-      updates.push(`category_id = $${paramCount++}`);
+      updates.push(`category_id = $${paramCount}, cat_id = $${paramCount++}`);
       values.push(input.categoryId ?? null);
     }
     if (input.price !== undefined) {

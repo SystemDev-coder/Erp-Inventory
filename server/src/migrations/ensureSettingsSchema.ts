@@ -31,7 +31,22 @@ export async function ensureSettingsSchema() {
   await query(`
     ALTER TABLE ims.branches
       ADD COLUMN IF NOT EXISTS location VARCHAR(255),
-      ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
+      ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true,
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+  `);
+  await query(`
+    CREATE OR REPLACE FUNCTION ims.touch_updated_at() RETURNS TRIGGER AS $$
+    BEGIN
+      NEW.updated_at = NOW();
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+  `);
+  await query(`
+    DROP TRIGGER IF EXISTS trg_branches_touch ON ims.branches;
+    CREATE TRIGGER trg_branches_touch
+    BEFORE UPDATE ON ims.branches
+    FOR EACH ROW EXECUTE FUNCTION ims.touch_updated_at();
   `);
 
   // Audit logs table
@@ -66,6 +81,45 @@ export async function ensureSettingsSchema() {
           AND tc.constraint_type = 'PRIMARY KEY'
       ) THEN
         ALTER TABLE ims.audit_logs ADD PRIMARY KEY (audit_id);
+      END IF;
+    END$$;
+  `);
+
+  // Backfill/align legacy audit_logs structure (action_type/table_name/record_id/new_values)
+  await query(`
+    ALTER TABLE ims.audit_logs
+      ADD COLUMN IF NOT EXISTS action VARCHAR(150),
+      ADD COLUMN IF NOT EXISTS entity VARCHAR(150),
+      ADD COLUMN IF NOT EXISTS entity_id INTEGER,
+      ADD COLUMN IF NOT EXISTS meta JSONB;
+  `);
+
+  // Fill new columns from legacy ones only if legacy columns exist
+  await query(`
+    DO $$
+    DECLARE
+      has_action_type BOOLEAN;
+      has_table_name BOOLEAN;
+      has_record_id  BOOLEAN;
+      has_new_values BOOLEAN;
+    BEGIN
+      SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='ims' AND table_name='audit_logs' AND column_name='action_type') INTO has_action_type;
+      SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='ims' AND table_name='audit_logs' AND column_name='table_name') INTO has_table_name;
+      SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='ims' AND table_name='audit_logs' AND column_name='record_id') INTO has_record_id;
+      SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='ims' AND table_name='audit_logs' AND column_name='new_values') INTO has_new_values;
+
+      IF has_action_type OR has_table_name OR has_record_id OR has_new_values THEN
+        EXECUTE '
+          UPDATE ims.audit_logs
+             SET action = COALESCE(action, ' || CASE WHEN has_action_type THEN 'action_type' ELSE 'NULL' END || '),
+                 entity = COALESCE(entity, ' || CASE WHEN has_table_name THEN 'table_name' ELSE 'NULL' END || '),
+                 entity_id = COALESCE(entity_id, ' || CASE WHEN has_record_id THEN 'record_id' ELSE 'NULL' END || '),
+                 meta = COALESCE(meta, ' || CASE WHEN has_new_values THEN 'new_values' ELSE 'NULL' END || ')
+           WHERE (' || CASE WHEN has_action_type THEN 'action IS NULL AND action_type IS NOT NULL' ELSE 'FALSE' END || ')
+              OR (' || CASE WHEN has_table_name THEN 'entity IS NULL AND table_name IS NOT NULL' ELSE 'FALSE' END || ')
+              OR (' || CASE WHEN has_record_id THEN 'entity_id IS NULL AND record_id IS NOT NULL' ELSE 'FALSE' END || ')
+              OR (' || CASE WHEN has_new_values THEN 'meta IS NULL AND new_values IS NOT NULL' ELSE 'FALSE' END || ');
+        ';
       END IF;
     END$$;
   `);

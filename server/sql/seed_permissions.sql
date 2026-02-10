@@ -139,6 +139,18 @@ SELECT upsert_permission('finance.payments', 'Manage Payments', 'Finance', 'Proc
 SELECT upsert_permission('finance.reports', 'Financial Reports', 'Finance', 'Access financial reports');
 SELECT upsert_permission('finance.export', 'Export Finance', 'Finance', 'Export financial data');
 
+-- Suppliers
+SELECT upsert_permission('suppliers.view', 'View Suppliers', 'Suppliers', 'View supplier list');
+SELECT upsert_permission('suppliers.create', 'Create Suppliers', 'Suppliers', 'Add suppliers');
+SELECT upsert_permission('suppliers.update', 'Update Suppliers', 'Suppliers', 'Edit suppliers');
+SELECT upsert_permission('suppliers.delete', 'Delete Suppliers', 'Suppliers', 'Remove suppliers');
+
+-- Receipts
+SELECT upsert_permission('receipts.view', 'View Receipts', 'Receipts', 'View receipts list');
+SELECT upsert_permission('receipts.create', 'Create Receipts', 'Receipts', 'Record customer receipts');
+SELECT upsert_permission('receipts.update', 'Update Receipts', 'Receipts', 'Edit receipts');
+SELECT upsert_permission('receipts.delete', 'Delete Receipts', 'Receipts', 'Remove receipts');
+
 -- CUSTOMERS
 SELECT upsert_permission('customers.view', 'View Customers', 'Customers', 'View customer list');
 SELECT upsert_permission('customers.create', 'Create Customers', 'Customers', 'Add new customers');

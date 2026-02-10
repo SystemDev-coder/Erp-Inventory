@@ -73,6 +73,23 @@ export const API = {
     CATEGORIES: '/api/products/categories',
     CATEGORY: (id: number) => `/api/products/categories/${id}`,
   },
+
+  // Customers endpoints
+  CUSTOMERS: {
+    LIST: '/api/customers',
+    ITEM: (id: number) => `/api/customers/${id}`,
+  },
+
+  // Purchases endpoints
+  PURCHASES: {
+    LIST: '/api/purchases',
+    ITEM: (id: number) => `/api/purchases/${id}`,
+  },
+
+  RECEIPTS: {
+    LIST: '/api/receipts',
+    ITEM: (id: number) => `/api/receipts/${id}`,
+  },
   
   // Health check
   HEALTH: '/api/health',
