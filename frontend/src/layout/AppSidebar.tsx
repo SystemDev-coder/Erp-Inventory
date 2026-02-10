@@ -3,8 +3,9 @@ import { Link, useLocation } from 'react-router';
 import {
   Home,
   Package,
-  BarChart3,
   ShoppingCart,
+  BarChart3,
+  Box,
   ShoppingBag,
   RotateCcw,
   Undo2,
@@ -27,6 +28,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   BarChart3,
   Warehouse: BarChart3,
   ShoppingCart,
+  Box,
   ShoppingBag,
   Undo2,
   RotateCcw,
@@ -36,10 +38,11 @@ const ICON_MAP: Record<string, LucideIcon> = {
   UserCircle: UserCog,
   Settings,
   Cog: Settings,
+  Reports: BarChart3,
 };
 
 function getIcon(iconName: string): LucideIcon {
-  return ICON_MAP[iconName] ?? Package;
+  return ICON_MAP[iconName] ?? ShoppingCart;
 }
 
 const AppSidebar: React.FC = () => {
@@ -118,7 +121,7 @@ const AppSidebar: React.FC = () => {
       >
         <Link to="/" className="flex items-center gap-3 min-w-0">
           <div className="w-8 h-8 shrink-0 bg-primary-600 dark:bg-primary-500 rounded-lg flex items-center justify-center">
-            <Package className="w-5 h-5 text-white" />
+            <ShoppingCart className="w-5 h-5 text-white" />
           </div>
           {showExpanded && (
             <span className="text-lg font-semibold text-slate-800 dark:text-slate-100 truncate">
@@ -145,9 +148,9 @@ const AppSidebar: React.FC = () => {
         {showExpanded && (
           <div className="px-4 pt-4 pb-2">
             <p className="text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Menu
+              Features
             </p>
-            <div className="mt-2 border-t border-slate-200 dark:border-slate-700" />
+            {/* <div className="mt-2 border-t border-slate-200 dark:border-slate-700" /> */}
           </div>
         )}
         <nav className={`px-2 pb-4 ${showExpanded ? 'pt-2' : 'pt-4'}`}>
@@ -240,7 +243,7 @@ const AppSidebar: React.FC = () => {
       {showExpanded && (
         <div className="p-4 border-t border-slate-200 dark:border-slate-800">
           <p className="text-xs text-slate-500 dark:text-slate-400 text-center">
-            © 2026 Inventory System
+            © 2026 KeydMaal MS | All rights reserved
           </p>
         </div>
       )}

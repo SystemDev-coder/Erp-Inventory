@@ -1,101 +1,95 @@
 import { Response } from 'express';
-import { systemService } from './system.service';
-import { ApiResponse } from '../../utils/ApiResponse';
 import { asyncHandler } from '../../utils/asyncHandler';
+import { ApiResponse } from '../../utils/ApiResponse';
+import { ApiError } from '../../utils/ApiError';
+import { systemService } from './system.service';
 import { AuthRequest } from '../../middlewares/requireAuth';
-import {
-  createRoleSchema,
-  updateRoleSchema,
-  updateRolePermissionsSchema,
-  updateUserAccessSchema,
-  updateUserPermissionsSchema,
-  updateUserOverridesSchema,
-} from './system.schemas';
+import { deleteCloudinaryImage } from '../../config/cloudinary';
 
-export class SystemController {
-  // Permissions
-  getPermissions = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const permissions = await systemService.getPermissions();
-    return ApiResponse.success(res, permissions);
+// Get system information
+export const getSystemInfo = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const systemInfo = await systemService.getSystemInfo();
+  
+  if (!systemInfo) {
+    throw ApiError.notFound('System information not found');
+  }
+  
+  return ApiResponse.success(res, { systemInfo });
+});
+
+// Update system information (text fields)
+export const updateSystemInfo = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const { systemName, address, phone, email, website } = req.body;
+  
+  const systemInfo = await systemService.updateSystemInfo({
+    systemName,
+    address,
+    phone,
+    email,
+    website,
   });
+  
+  return ApiResponse.success(res, { systemInfo }, 'System information updated');
+});
 
-  // Roles
-  getRoles = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const roles = await systemService.getRoles();
-    return ApiResponse.success(res, roles);
-  });
+// Upload system logo
+export const uploadLogo = asyncHandler(async (req: AuthRequest, res: Response) => {
+  if (!req.file) {
+    throw ApiError.badRequest('No file uploaded');
+  }
+  
+  const logoUrl = req.file.path; // Cloudinary URL
+  
+  // Get existing system info to delete old logo
+  const existing = await systemService.getSystemInfo();
+  if (existing?.logo_url) {
+    await deleteCloudinaryImage(existing.logo_url);
+  }
+  
+  const systemInfo = await systemService.updateSystemInfo({ logoUrl });
+  
+  return ApiResponse.success(res, { systemInfo, logoUrl }, 'Logo uploaded successfully');
+});
 
-  createRole = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const input = createRoleSchema.parse(req.body);
-    const role = await systemService.createRole(input, req.user!.userId);
-    return ApiResponse.created(res, role, 'Role created successfully');
-  });
+// Upload system banner
+export const uploadBanner = asyncHandler(async (req: AuthRequest, res: Response) => {
+  if (!req.file) {
+    throw ApiError.badRequest('No file uploaded');
+  }
+  
+  const bannerImageUrl = req.file.path; // Cloudinary URL
+  
+  // Get existing system info to delete old banner
+  const existing = await systemService.getSystemInfo();
+  if (existing?.banner_image_url) {
+    await deleteCloudinaryImage(existing.banner_image_url);
+  }
+  
+  const systemInfo = await systemService.updateSystemInfo({ bannerImageUrl });
+  
+  return ApiResponse.success(res, { systemInfo, bannerImageUrl }, 'Banner uploaded successfully');
+});
 
-  updateRole = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const roleId = parseInt(req.params.id, 10);
-    const input = updateRoleSchema.parse(req.body);
-    const role = await systemService.updateRole(roleId, input, req.user!.userId);
-    return ApiResponse.success(res, role, 'Role updated successfully');
-  });
+// Delete logo
+export const deleteLogo = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const existing = await systemService.getSystemInfo();
+  
+  if (existing?.logo_url) {
+    await deleteCloudinaryImage(existing.logo_url);
+    await systemService.updateSystemInfo({ logoUrl: '' });
+  }
+  
+  return ApiResponse.success(res, null, 'Logo deleted successfully');
+});
 
-  getRolePermissions = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const roleId = parseInt(req.params.id, 10);
-    const permissions = await systemService.getRolePermissions(roleId);
-    return ApiResponse.success(res, permissions);
-  });
-
-  updateRolePermissions = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const roleId = parseInt(req.params.id, 10);
-    const input = updateRolePermissionsSchema.parse(req.body);
-    await systemService.updateRolePermissions(roleId, input, req.user!.userId);
-    return ApiResponse.success(res, null, 'Role permissions updated successfully');
-  });
-
-  // Users
-  getUsers = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const users = await systemService.getUsers();
-    return ApiResponse.success(res, users);
-  });
-
-  updateUserAccess = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const userId = parseInt(req.params.id, 10);
-    const input = updateUserAccessSchema.parse(req.body);
-    await systemService.updateUserAccess(userId, input, req.user!.userId);
-    return ApiResponse.success(res, null, 'User access updated successfully');
-  });
-
-  getUserPermissions = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const userId = parseInt(req.params.id, 10);
-    const permissions = await systemService.getUserPermissions(userId);
-    return ApiResponse.success(res, permissions);
-  });
-
-  updateUserPermissions = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const userId = parseInt(req.params.id, 10);
-    const input = updateUserPermissionsSchema.parse(req.body);
-    await systemService.updateUserPermissions(userId, input, req.user!.userId);
-    return ApiResponse.success(res, null, 'User permissions updated successfully');
-  });
-
-  getUserOverrides = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const userId = parseInt(req.params.id, 10);
-    const overrides = await systemService.getUserOverrides(userId);
-    return ApiResponse.success(res, overrides);
-  });
-
-  updateUserOverrides = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const userId = parseInt(req.params.id, 10);
-    const input = updateUserOverridesSchema.parse(req.body);
-    await systemService.updateUserOverrides(userId, input, req.user!.userId);
-    return ApiResponse.success(res, null, 'User overrides updated successfully');
-  });
-
-  getUserAuditLogs = asyncHandler(async (req: AuthRequest, res: Response) => {
-    const userId = parseInt(req.params.id, 10);
-    const limit = parseInt(req.query.limit as string, 10) || 50;
-    const logs = await systemService.getUserAuditLogs(userId, limit);
-    return ApiResponse.success(res, logs);
-  });
-}
-
-export const systemController = new SystemController();
+// Delete banner
+export const deleteBanner = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const existing = await systemService.getSystemInfo();
+  
+  if (existing?.banner_image_url) {
+    await deleteCloudinaryImage(existing.banner_image_url);
+    await systemService.updateSystemInfo({ bannerImageUrl: '' });
+  }
+  
+  return ApiResponse.success(res, null, 'Banner deleted successfully');
+});

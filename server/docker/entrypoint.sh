@@ -39,4 +39,3 @@ done
 
 echo "Starting dev server..."
 exec npm run dev
-

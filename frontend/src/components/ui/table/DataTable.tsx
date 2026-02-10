@@ -68,46 +68,42 @@ export function DataTable<TData>({
             id: 'actions',
             header: 'Actions',
             cell: ({ row }) => {
-                const items = [];
-
-                if (onView) {
-                    items.push({
-                        label: 'View',
-                        icon: <Eye className="w-4 h-4" />,
-                        onClick: () => onView(row.original),
-                    });
-                }
-
-                if (onEdit) {
-                    items.push({
-                        label: 'Edit',
-                        icon: <Edit className="w-4 h-4" />,
-                        onClick: () => onEdit(row.original),
-                    });
-                }
-
-                if (onDelete) {
-                    if (items.length > 0) {
-                        items.push({ label: '', onClick: () => { }, divider: true });
-                    }
-                    items.push({
-                        label: 'Delete',
-                        icon: <Trash2 className="w-4 h-4" />,
-                        onClick: () => onDelete(row.original),
-                        variant: 'danger' as const,
-                    });
-                }
-
                 return (
-                    <ActionDropdown
-                        trigger={
-                            <button className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors">
-                                <MoreVertical className="w-4 h-4" />
+                    <div className="flex items-center gap-2">
+                        {onView && (
+                            <button
+                                onClick={() => onView(row.original)}
+                                className="p-2 text-slate-600 hover:text-primary-600 hover:bg-primary-50 dark:text-slate-400 dark:hover:text-primary-400 dark:hover:bg-primary-900/20 rounded-lg transition-colors"
+                                title="View"
+                            >
+                                <Eye className="w-4 h-4" />
                             </button>
-                        }
-                        items={items}
-                        align="right"
-                    />
+                        )}
+                        {onEdit && (
+                            <button
+                                onClick={() => {
+                                    console.log('Edit clicked:', row.original);
+                                    onEdit(row.original);
+                                }}
+                                className="p-2 text-slate-600 hover:text-blue-600 hover:bg-blue-50 dark:text-slate-400 dark:hover:text-blue-400 dark:hover:bg-blue-900/20 rounded-lg transition-colors"
+                                title="Edit"
+                            >
+                                <Edit className="w-4 h-4" />
+                            </button>
+                        )}
+                        {onDelete && (
+                            <button
+                                onClick={() => {
+                                    console.log('Delete clicked:', row.original);
+                                    onDelete(row.original);
+                                }}
+                                className="p-2 text-slate-600 hover:text-red-600 hover:bg-red-50 dark:text-slate-400 dark:hover:text-red-400 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                                title="Delete"
+                            >
+                                <Trash2 className="w-4 h-4" />
+                            </button>
+                        )}
+                    </div>
                 );
             },
         };

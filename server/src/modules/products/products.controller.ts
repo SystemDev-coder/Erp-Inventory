@@ -69,3 +69,39 @@ export const deleteCategory = asyncHandler(async (req: AuthRequest, res: Respons
   await productsService.deleteCategory(id);
   return ApiResponse.success(res, null, 'Category deleted');
 });
+
+// Upload product image
+export const uploadProductImage = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const id = Number(req.params.id);
+  
+  if (!req.file) {
+    throw ApiError.badRequest('No file uploaded');
+  }
+  
+  const productImageUrl = req.file.path;
+  
+  // Delete old image if exists
+  const existing = await productsService.getProduct(id);
+  if (existing?.product_image_url) {
+    const { deleteCloudinaryImage } = await import('../../config/cloudinary');
+    await deleteCloudinaryImage(existing.product_image_url);
+  }
+  
+  const product = await productsService.updateProduct(id, { productImageUrl });
+  
+  return ApiResponse.success(res, { product_image_url: productImageUrl }, 'Product image uploaded successfully');
+});
+
+// Delete product image
+export const deleteProductImage = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const id = Number(req.params.id);
+  
+  const product = await productsService.getProduct(id);
+  if (product?.product_image_url) {
+    const { deleteCloudinaryImage } = await import('../../config/cloudinary');
+    await deleteCloudinaryImage(product.product_image_url);
+    await productsService.updateProduct(id, { productImageUrl: '' });
+  }
+  
+  return ApiResponse.success(res, null, 'Product image deleted successfully');
+});

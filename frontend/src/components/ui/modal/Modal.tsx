@@ -42,11 +42,11 @@ export const Modal: React.FC<ModalProps> = ({
     if (!isOpen) return null;
 
     const sizeClasses = {
-        sm: 'max-w-md',
-        md: 'max-w-lg',
-        lg: 'max-w-2xl',
-        xl: 'max-w-4xl',
-        '2xl': 'max-w-6xl',
+        sm: 'max-w-[95vw] sm:max-w-md',
+        md: 'max-w-[95vw] sm:max-w-lg',
+        lg: 'max-w-[95vw] sm:max-w-2xl',
+        xl: 'max-w-[95vw] sm:max-w-4xl',
+        '2xl': 'max-w-[95vw] sm:max-w-6xl',
     };
 
     return (
@@ -58,9 +58,9 @@ export const Modal: React.FC<ModalProps> = ({
             />
 
             {/* Modal */}
-            <div className="flex min-h-full items-center justify-center p-4">
+            <div className="flex min-h-full items-start justify-center p-4 sm:items-center sm:p-6">
                 <div
-                    className={`relative w-full ${sizeClasses[size]} bg-white dark:bg-slate-900 rounded-xl shadow-2xl transform transition-all`}
+                    className={`relative w-full ${sizeClasses[size]} max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-3rem)] bg-white dark:bg-slate-900 rounded-xl shadow-2xl transform transition-all flex flex-col overflow-hidden`}
                     onClick={(e) => e.stopPropagation()}
                 >
                     {/* Header */}
@@ -79,7 +79,7 @@ export const Modal: React.FC<ModalProps> = ({
                     </div>
 
                     {/* Content */}
-                    <div className="px-6 py-4">{children}</div>
+                    <div className="px-4 py-4 sm:px-6 overflow-y-auto">{children}</div>
                 </div>
             </div>
         </div>

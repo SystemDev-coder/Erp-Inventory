@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, ChevronDown, Download, Printer } from 'lucide-react';
+import { Plus, ChevronDown, Download, Printer, Search } from 'lucide-react';
 import { ActionDropdown } from '../dropdown/ActionDropdown';
 
 interface QuickAddItem {
@@ -17,6 +17,7 @@ interface TabActionToolbarProps {
     quickAddItems?: QuickAddItem[];
     onExport?: () => void;
     onPrint?: () => void;
+    onSearch?: (value: string) => void;
     sticky?: boolean;
 }
 
@@ -26,6 +27,7 @@ export const TabActionToolbar: React.FC<TabActionToolbarProps> = ({
     quickAddItems = [],
     onExport,
     onPrint,
+    onSearch,
     sticky = false,
 }) => {
     return (
@@ -37,6 +39,18 @@ export const TabActionToolbar: React.FC<TabActionToolbarProps> = ({
             )}
 
             <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+                {/* Search Input */}
+                {onSearch && (
+                    <div className="relative mr-2">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                        <input
+                            type="text"
+                            placeholder="Search..."
+                            onChange={(e) => onSearch(e.target.value)}
+                            className="pl-9 pr-4 py-2 w-64 text-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 transition-all"
+                        />
+                    </div>
+                )}
                 {/* Export & Print */}
                 {(onExport || onPrint) && (
                     <div className="flex items-center gap-1.5 mr-2 pr-2 border-r border-slate-200 dark:border-slate-800">

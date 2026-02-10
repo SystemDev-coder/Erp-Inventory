@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middlewares/requireAuth';
 import { requirePerm } from '../../middlewares/requirePerm';
+import { uploadProductImage as uploadProductImageMiddleware } from '../../config/cloudinary';
 import {
   listProducts,
   getProduct,
@@ -11,6 +12,8 @@ import {
   createCategory,
   updateCategory,
   deleteCategory,
+  uploadProductImage,
+  deleteProductImage,
 } from './products.controller';
 
 const router = Router();
@@ -29,5 +32,14 @@ router.get('/:id', requirePerm('products.view'), getProduct);
 router.post('/', requirePerm('products.create'), createProduct);
 router.put('/:id', requirePerm('products.update'), updateProduct);
 router.delete('/:id', requirePerm('products.delete'), deleteProduct);
+
+// Product Image Upload
+router.post(
+  '/:id/image',
+  requirePerm('products.update'),
+  uploadProductImageMiddleware.single('image'),
+  uploadProductImage
+);
+router.delete('/:id/image', requirePerm('products.update'), deleteProductImage);
 
 export default router;

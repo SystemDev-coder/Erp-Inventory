@@ -34,9 +34,12 @@ class ApiClient {
   private buildHeaders(overrides: HeadersInit = {}): HeadersInit {
     const token = getAccessToken();
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
       ...(overrides as Record<string, string>),
     };
+    // Only set Content-Type if not explicitly overridden (e.g., for FormData)
+    if (!headers['Content-Type']) {
+      headers['Content-Type'] = 'application/json';
+    }
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
@@ -76,9 +79,20 @@ class ApiClient {
   ): Promise<ApiResponse<T>> {
     const url = `${this.baseURL}${endpoint}`;
 
+    // Don't set Content-Type header if body is FormData (browser sets it automatically with boundary)
+    const isFormData = options.body instanceof FormData;
+    const headers = isFormData 
+      ? this.buildHeaders({ ...(options.headers as Record<string, string>), 'Content-Type': '' })
+      : this.buildHeaders(options.headers as Record<string, string>);
+    
+    // Remove empty Content-Type
+    if (isFormData && headers['Content-Type'] === '') {
+      delete headers['Content-Type'];
+    }
+
     const config: RequestInit = {
       ...options,
-      headers: this.buildHeaders(options.headers as Record<string, string>),
+      headers,
       credentials: 'include',
     };
 
@@ -86,14 +100,21 @@ class ApiClient {
       const response = await fetch(url, config);
       let data: any;
       try {
-        data = await response.json();
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          data = await response.json();
+        } else {
+          const text = await response.text();
+          data = text ? { message: text } : {};
+        }
       } catch {
+        const fallbackText = await response.text().catch(() => '');
         return {
           success: false,
           error: 'Invalid response from server',
-          message: response.status === 0
+          message: fallbackText || (response.status === 0
             ? 'Cannot reach server. Check that the backend is running and CORS is allowed.'
-            : `Request failed with status ${response.status}`,
+            : `Request failed with status ${response.status}`),
         };
       }
 
@@ -116,7 +137,7 @@ class ApiClient {
         };
       }
 
-      return data;
+      return data || { success: true } as ApiResponse<T>;
     } catch (error) {
       return {
         success: false,
@@ -144,10 +165,11 @@ class ApiClient {
     body?: any,
     options?: RequestInit
   ): Promise<ApiResponse<T>> {
+    const isFormData = body instanceof FormData;
     return this.request<T>(endpoint, {
       ...options,
       method: 'POST',
-      body: body ? JSON.stringify(body) : undefined,
+      body: isFormData ? body : (body ? JSON.stringify(body) : undefined),
     });
   }
 

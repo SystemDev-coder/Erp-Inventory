@@ -251,48 +251,15 @@ export class SidebarService {
       });
     }
 
-    // System & Security
-    if (permSet.has('system.users') || permSet.has('system.roles')) {
-      const systemItems = [];
-
-      if (permSet.has('system.users')) {
-        systemItems.push({
-          id: 'system-access-control',
-          name: 'Access Control',
-          nameSo: 'Xakamaynta Gelitaanka',
-          route: '/system/access-control',
-          permission: 'system.users',
-        });
-      }
-
-      if (permSet.has('system.branches')) {
-        systemItems.push({
-          id: 'system-branches',
-          name: 'Branches',
-          nameSo: 'Laanaha',
-          route: '/system/branches',
-          permission: 'system.branches',
-        });
-      }
-
-      if (permSet.has('system.audit')) {
-        systemItems.push({
-          id: 'system-audit',
-          name: 'Audit Logs',
-          nameSo: 'Diiwaanka',
-          route: '/system/audit',
-          permission: 'system.audit',
-        });
-      }
-
+    // Reports (replaces System & Security in sidebar)
+    if (permSet.has('reports.view')) {
       modules.push({
-        id: 'system',
-        name: 'System & Security',
-        nameSo: 'Nidaamka & Amniga',
-        icon: 'Settings',
-        route: '/system',
-        permission: 'system.users',
-        items: systemItems,
+        id: 'reports',
+        name: 'Reports',
+        nameSo: 'Warbixinno',
+        icon: 'BarChart3',
+        route: '/reports',
+        permission: 'reports.view',
       });
     }
 

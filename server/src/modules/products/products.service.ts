@@ -23,6 +23,8 @@ export interface Product {
   is_active: boolean;
   status: string;
   reorder_level: number;
+  description?: string | null;
+  product_image_url?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -97,11 +99,11 @@ export const productsService = {
     );
   },
 
-  async createProduct(input: ProductInput): Promise<Product> {
+  async createProduct(input: ProductInput & { productImageUrl?: string }): Promise<Product> {
     const categoryId = input.categoryId ?? null;
     return queryOne<Product>(
-      `INSERT INTO ims.products (name, sku, category_id, price, cost, stock, status, reorder_level)
-       VALUES ($1, NULLIF($2, ''), $3, $4, $5, $6, $7, $8)
+      `INSERT INTO ims.products (name, sku, category_id, price, cost, stock, status, reorder_level, description, product_image_url)
+       VALUES ($1, NULLIF($2, ''), $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING *`,
       [
         input.name,
@@ -112,36 +114,68 @@ export const productsService = {
         input.stock ?? 0,
         input.status ?? 'active',
         input.reorderLevel ?? 0,
+        input.description || null,
+        input.productImageUrl || null,
       ]
     ) as Promise<Product>;
   },
 
-  async updateProduct(id: number, input: ProductInput): Promise<Product | null> {
-    const categoryId = input.categoryId ?? null;
+  async updateProduct(id: number, input: Partial<ProductInput & { productImageUrl?: string; description?: string }>): Promise<Product | null> {
+    const updates: string[] = [];
+    const values: any[] = [id];
+    let paramCount = 2;
+
+    if (input.name !== undefined) {
+      updates.push(`name = $${paramCount++}`);
+      values.push(input.name);
+    }
+    if (input.sku !== undefined) {
+      updates.push(`sku = NULLIF($${paramCount++}, '')`);
+      values.push(input.sku);
+    }
+    if (input.categoryId !== undefined) {
+      updates.push(`category_id = $${paramCount++}`);
+      values.push(input.categoryId ?? null);
+    }
+    if (input.price !== undefined) {
+      updates.push(`price = $${paramCount++}`);
+      values.push(input.price);
+    }
+    if (input.cost !== undefined) {
+      updates.push(`cost = $${paramCount++}`);
+      values.push(input.cost);
+    }
+    if (input.stock !== undefined) {
+      updates.push(`stock = $${paramCount++}`);
+      values.push(input.stock);
+    }
+    if (input.status !== undefined) {
+      updates.push(`status = $${paramCount++}`);
+      values.push(input.status);
+    }
+    if (input.reorderLevel !== undefined) {
+      updates.push(`reorder_level = $${paramCount++}`);
+      values.push(input.reorderLevel);
+    }
+    if (input.description !== undefined) {
+      updates.push(`description = $${paramCount++}`);
+      values.push(input.description);
+    }
+    if (input.productImageUrl !== undefined) {
+      updates.push(`product_image_url = $${paramCount++}`);
+      values.push(input.productImageUrl || null);
+    }
+
+    if (updates.length === 0) {
+      return this.getProduct(id);
+    }
+
     return queryOne<Product>(
       `UPDATE ims.products
-       SET name = $2,
-           sku = NULLIF($3, ''),
-           category_id = $4,
-           price = $5,
-           cost = $6,
-           stock = $7,
-           status = $8,
-           reorder_level = $9,
-           updated_at = NOW()
+       SET ${updates.join(', ')}, updated_at = NOW()
        WHERE product_id = $1
        RETURNING *`,
-      [
-        id,
-        input.name,
-        input.sku || null,
-        categoryId,
-        input.price ?? 0,
-        input.cost ?? 0,
-        input.stock ?? 0,
-        input.status ?? 'active',
-        input.reorderLevel ?? 0,
-      ]
+      values
     );
   },
 

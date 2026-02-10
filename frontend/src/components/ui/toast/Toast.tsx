@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
-import { X, CheckCircle, AlertCircle, Info, AlertTriangle } from 'lucide-react';
+import { Snackbar, Alert, AlertTitle } from '@mui/material';
+import { createTheme, ThemeProvider } from '@mui/material/styles';
 
 type ToastType = 'success' | 'error' | 'info' | 'warning';
 
@@ -24,6 +25,13 @@ export const useToast = () => {
   return context;
 };
 
+// Create a theme that adapts to dark mode
+const theme = createTheme({
+  palette: {
+    mode: document.documentElement.classList.contains('dark') ? 'dark' : 'light',
+  },
+});
+
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
@@ -42,57 +50,57 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setToasts((prev) => prev.filter((toast) => toast.id !== id));
   };
 
-  const getIcon = (type: ToastType) => {
-    switch (type) {
-      case 'success':
-        return <CheckCircle className="w-5 h-5" />;
-      case 'error':
-        return <AlertCircle className="w-5 h-5" />;
-      case 'warning':
-        return <AlertTriangle className="w-5 h-5" />;
-      case 'info':
-        return <Info className="w-5 h-5" />;
-    }
-  };
-
-  const getStyles = (type: ToastType) => {
-    switch (type) {
-      case 'success':
-        return 'bg-success-50 border-success-200 text-success-800 dark:bg-success-900/20 dark:border-success-800 dark:text-success-300';
-      case 'error':
-        return 'bg-error-50 border-error-200 text-error-800 dark:bg-error-900/20 dark:border-error-800 dark:text-error-300';
-      case 'warning':
-        return 'bg-warning-50 border-warning-200 text-warning-800 dark:bg-warning-900/20 dark:border-warning-800 dark:text-warning-300';
-      case 'info':
-        return 'bg-info-50 border-info-200 text-info-800 dark:bg-info-900/20 dark:border-info-800 dark:text-info-300';
-    }
-  };
-
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
-      <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-md">
-        {toasts.map((toast) => (
-          <div
-            key={toast.id}
-            className={`flex items-start gap-3 p-4 rounded-lg border shadow-lg animate-in slide-in-from-right ${getStyles(toast.type)}`}
-          >
-            <div className="flex-shrink-0 mt-0.5">{getIcon(toast.type)}</div>
-            <div className="flex-1 min-w-0">
-              <p className="font-semibold text-sm">{toast.title}</p>
-              {toast.message && (
-                <p className="text-sm mt-1 opacity-90">{toast.message}</p>
-              )}
-            </div>
-            <button
-              onClick={() => removeToast(toast.id)}
-              className="flex-shrink-0 opacity-70 hover:opacity-100 transition-opacity"
+      <ThemeProvider theme={theme}>
+        <div style={{ position: 'fixed', top: '80px', right: '16px', zIndex: 999999 }}>
+          {toasts.map((toast, index) => (
+            <Snackbar
+              key={toast.id}
+              open={true}
+              anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+              style={{ 
+                position: 'relative',
+                marginBottom: index > 0 ? '8px' : '0',
+                transform: 'none',
+                top: `${index * 60}px`,
+              }}
             >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        ))}
-      </div>
+              <Alert
+                onClose={() => removeToast(toast.id)}
+                severity={toast.type}
+                variant="filled"
+                sx={{
+                  width: '100%',
+                  minWidth: '280px',
+                  maxWidth: '320px',
+                  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+                  borderRadius: '8px',
+                  padding: '6px 12px',
+                  '& .MuiAlert-message': {
+                    padding: '4px 0',
+                    fontSize: '0.875rem',
+                  },
+                  '& .MuiAlert-action': {
+                    padding: '0 0 0 8px',
+                    marginRight: '-4px',
+                  },
+                  '& .MuiAlertTitle-root': {
+                    fontSize: '0.875rem',
+                    fontWeight: 600,
+                    marginBottom: toast.message ? '2px' : '0',
+                    lineHeight: 1.4,
+                  },
+                }}
+              >
+                <AlertTitle>{toast.title}</AlertTitle>
+                {toast.message && <div style={{ fontSize: '0.8125rem', lineHeight: 1.3 }}>{toast.message}</div>}
+              </Alert>
+            </Snackbar>
+          ))}
+        </div>
+      </ThemeProvider>
     </ToastContext.Provider>
   );
 };

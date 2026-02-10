@@ -1,5 +1,6 @@
 import { BrowserRouter as Router, Routes, Route } from "react-router";
 import { ScrollToTop } from "./components/common/ScrollToTop";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import AppLayout from "./layout/AppLayout";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 import { useInactivityLogout } from "./hooks/useInactivityLogout";
@@ -15,7 +16,7 @@ import Transfers from "./pages/Transfers/Transfers";
 import Finance from "./pages/Finance/Finance";
 import Customers from "./pages/Customers/Customers";
 import Employees from "./pages/Employees/Employees";
-import System from "./pages/System/System";
+import Reports from "./pages/Reports/Reports";
 import Settings from "./pages/Settings/Settings";
 
 // Auth Pages
@@ -48,7 +49,7 @@ function AppRoutes() {
           <Route path="/finance" element={<Finance />} />
           <Route path="/customers" element={<Customers />} />
           <Route path="/employees" element={<Employees />} />
-          <Route path="/system" element={<System />} />
+          <Route path="/reports" element={<Reports />} />
           <Route path="/settings" element={<Settings />} />
         </Route>
 
@@ -65,8 +66,10 @@ function AppRoutes() {
 
 export default function App() {
   return (
-    <Router>
-      <AppRoutes />
-    </Router>
+    <ErrorBoundary>
+      <Router>
+        <AppRoutes />
+      </Router>
+    </ErrorBoundary>
   );
 }

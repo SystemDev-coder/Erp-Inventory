@@ -21,6 +21,8 @@ export interface Product {
   is_active: boolean;
   status: string;
   reorder_level: number;
+  description?: string | null;
+  product_image_url?: string | null;
 }
 
 export const productService = {

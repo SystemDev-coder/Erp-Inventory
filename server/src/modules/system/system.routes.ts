@@ -1,93 +1,46 @@
 import { Router } from 'express';
-import { systemController } from './system.controller';
 import { requireAuth } from '../../middlewares/requireAuth';
-import { requirePerm, requireAnyPerm } from '../../middlewares/requirePerm';
+import { requirePerm } from '../../middlewares/requirePerm';
+import { uploadSystemImage } from '../../config/cloudinary';
+import {
+  getSystemInfo,
+  updateSystemInfo,
+  uploadLogo,
+  uploadBanner,
+  deleteLogo,
+  deleteBanner,
+} from './system.controller';
 
 const router = Router();
 
-// All routes require authentication
 router.use(requireAuth);
 
-// Permissions (view only)
-router.get(
-  '/permissions',
-  requireAnyPerm(['system.permissions', 'system.roles']),
-  systemController.getPermissions
-);
+// Get system information (public within system)
+router.get('/', requirePerm('system.view'), getSystemInfo);
 
-// Roles
-router.get(
-  '/roles',
-  requirePerm('system.roles'),
-  systemController.getRoles
-);
+// Update system information
+router.put('/', requirePerm('system.update'), updateSystemInfo);
 
+// Upload logo
 router.post(
-  '/roles',
-  requirePerm('system.roles'),
-  systemController.createRole
+  '/logo',
+  requirePerm('system.update'),
+  uploadSystemImage.single('logo'),
+  uploadLogo
 );
 
-router.put(
-  '/roles/:id',
-  requirePerm('system.roles'),
-  systemController.updateRole
+// Upload banner
+router.post(
+  '/banner',
+  requirePerm('system.update'),
+  uploadSystemImage.single('banner'),
+  uploadBanner
 );
 
-router.get(
-  '/roles/:id/permissions',
-  requirePerm('system.roles'),
-  systemController.getRolePermissions
-);
+// Delete logo
+router.delete('/logo', requirePerm('system.update'), deleteLogo);
 
-router.put(
-  '/roles/:id/permissions',
-  requirePerm('system.roles'),
-  systemController.updateRolePermissions
-);
-
-// Users
-router.get(
-  '/users',
-  requirePerm('system.users'),
-  systemController.getUsers
-);
-
-router.put(
-  '/users/:id',
-  requirePerm('system.users'),
-  systemController.updateUserAccess
-);
-
-router.get(
-  '/users/:id/permissions',
-  requirePerm('system.users'),
-  systemController.getUserPermissions
-);
-
-router.put(
-  '/users/:id/permissions',
-  requirePerm('system.users'),
-  systemController.updateUserPermissions
-);
-
-// New: Allow/Deny overrides
-router.get(
-  '/users/:id/overrides',
-  requirePerm('system.users'),
-  systemController.getUserOverrides
-);
-
-router.put(
-  '/users/:id/overrides',
-  requirePerm('system.users'),
-  systemController.updateUserOverrides
-);
-
-router.get(
-  '/users/:id/audit',
-  requirePerm('system.users'),
-  systemController.getUserAuditLogs
-);
+// Delete banner
+router.delete('/banner', requirePerm('system.update'), deleteBanner);
 
 export default router;
