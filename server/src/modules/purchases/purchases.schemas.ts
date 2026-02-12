@@ -1,9 +1,11 @@
 import { z } from 'zod';
 
 export const purchaseItemSchema = z.object({
-  productId: z.coerce.number().int().positive(),
+  productId: z.coerce.number().int().positive().optional(),
   quantity: z.coerce.number().positive(),
   unitCost: z.coerce.number().nonnegative(),
+  discount: z.coerce.number().nonnegative().default(0).optional(),
+  description: z.string().optional().or(z.literal('')),
   batchNo: z.string().optional().or(z.literal('')),
   expiryDate: z.string().optional(),
 });
@@ -12,7 +14,6 @@ export const purchaseSchema = z.object({
   supplierId: z.coerce.number().int().positive(),
   whId: z.coerce.number().int().positive().nullable().optional(),
   purchaseDate: z.string().optional(),
-  purchaseType: z.enum(['cash', 'credit']).default('cash'),
   subtotal: z.coerce.number().nonnegative().default(0),
   discount: z.coerce.number().nonnegative().default(0),
   total: z.coerce.number().nonnegative().default(0),

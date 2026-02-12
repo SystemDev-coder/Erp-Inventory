@@ -28,7 +28,11 @@ export class AuthController {
 
   login = asyncHandler(async (req: AuthRequest, res: Response) => {
     const input = loginSchema.parse(req.body);
-    const { tokens, user } = await authService.login(input);
+    const { tokens, user } = await authService.login({
+      ...input,
+      ip: req.ip,
+      userAgent: req.get('user-agent') || null,
+    });
 
     // Set refresh token cookie
     res.cookie(config.cookie.name, tokens.refreshToken, getCookieOptions());

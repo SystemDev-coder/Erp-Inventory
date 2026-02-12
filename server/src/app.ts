@@ -16,6 +16,9 @@ import customerRoutes from './modules/customers/customers.routes';
 import purchaseRoutes from './modules/purchases/purchases.routes';
 import supplierRoutes from './modules/suppliers/suppliers.routes';
 import receiptRoutes from './modules/receipts/receipts.routes';
+import accountRoutes from './modules/accounts/accounts.routes';
+import profileRoutes from './modules/profile/profile.routes';
+import userRoutes from './modules/users/users.routes';
 import { ensureSettingsSchema } from './migrations/ensureSettingsSchema';
 import { config } from './config/env';
 
@@ -62,6 +65,9 @@ app.use('/api/customers', customerRoutes);
 app.use('/api/purchases', purchaseRoutes);
 app.use('/api/suppliers', supplierRoutes);
 app.use('/api/receipts', receiptRoutes);
+app.use('/api/accounts', accountRoutes);
+app.use('/api/profile', profileRoutes);
+app.use('/api/users', userRoutes);
 
 // 404 handler
 app.use((req, res) => {

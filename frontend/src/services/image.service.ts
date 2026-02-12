@@ -36,15 +36,4 @@ export const imageService = {
     return apiClient.delete(`/products/${productId}/image`);
   },
 
-  // Supplier Images
-  async uploadSupplierLogo(supplierId: number, file: File): Promise<ApiResponse<{ logo_url: string }>> {
-    const formData = new FormData();
-    formData.append('logo', file);
-    
-    return apiClient.post(`/suppliers/${supplierId}/logo`, formData);
-  },
-
-  async deleteSupplierLogo(supplierId: number): Promise<ApiResponse> {
-    return apiClient.delete(`/suppliers/${supplierId}/logo`);
-  },
 };

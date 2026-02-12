@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireAuth } from '../../middlewares/requireAuth';
 import { requirePerm } from '../../middlewares/requirePerm';
 import {
+  listPurchaseItems,
   listPurchases,
   getPurchase,
   createPurchase,
@@ -13,6 +14,7 @@ const router = Router();
 
 router.use(requireAuth);
 
+router.get('/items', requirePerm('purchases.view'), listPurchaseItems);
 router.get('/', requirePerm('purchases.view'), listPurchases);
 router.get('/:id', requirePerm('purchases.view'), getPurchase);
 router.post('/', requirePerm('purchases.create'), createPurchase);

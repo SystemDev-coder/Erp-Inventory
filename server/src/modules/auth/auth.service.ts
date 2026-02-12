@@ -112,15 +112,19 @@ export class AuthService {
    * Login user
    */
   async login(input: LoginInput): Promise<{ tokens: AuthTokens; user: UserProfile }> {
-    // Find user by username or phone
+    // Find user by username or phone (even if inactive to return proper message)
     const user = await queryOne<User>(
       `SELECT * FROM ims.users 
-       WHERE (username = $1 OR phone = $1) AND is_active = true`,
+       WHERE (username = $1 OR phone = $1)`,
       [input.identifier]
     );
 
     if (!user) {
       throw ApiError.unauthorized('Incorrect username or password');
+    }
+
+    if (!user.is_active) {
+      throw ApiError.forbidden('You are not authorized to access this section. Please contact the system administrator.');
     }
 
     // Verify password
@@ -153,10 +157,23 @@ export class AuthService {
       throw ApiError.internal('Failed to retrieve user profile');
     }
 
-    return {
+    const result = {
       tokens: { accessToken, refreshToken },
       user: userProfile,
     };
+
+    // Audit login
+    const { logAudit } = await import('../../utils/audit');
+    logAudit({
+      userId: user.user_id,
+      action: 'login',
+      entity: 'auth',
+      entityId: user.user_id,
+      ip: input.ip,
+      userAgent: input.userAgent,
+    });
+
+    return result;
   }
 
   /**
@@ -174,12 +191,16 @@ export class AuthService {
     // Verify token hash in database
     const tokenHash = hashToken(refreshToken);
     const user = await queryOne<User>(
-      'SELECT * FROM ims.users WHERE user_id = $1 AND refresh_token_hash = $2 AND is_active = true',
+      'SELECT * FROM ims.users WHERE user_id = $1 AND refresh_token_hash = $2',
       [payload.userId, tokenHash]
     );
 
     if (!user) {
       throw ApiError.unauthorized('Invalid refresh token');
+    }
+
+    if (!user.is_active) {
+      throw ApiError.forbidden('You are not authorized to access this section. Please contact the system administrator.');
     }
 
     // Generate new access token with clean payload (no exp, iat, etc.)

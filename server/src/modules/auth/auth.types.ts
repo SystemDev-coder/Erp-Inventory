@@ -52,6 +52,8 @@ export interface RegisterInput {
 export interface LoginInput {
   identifier: string;
   password: string;
+  ip?: string | null;
+  userAgent?: string | null;
 }
 
 export interface ForgotPasswordInput {

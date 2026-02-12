@@ -57,7 +57,11 @@ export async function ensureSettingsSchema() {
       action VARCHAR(150) NOT NULL,
       entity VARCHAR(150),
       entity_id INTEGER,
+      old_value JSONB,
+      new_value JSONB,
       meta JSONB,
+      ip_address TEXT,
+      user_agent TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
@@ -91,7 +95,11 @@ export async function ensureSettingsSchema() {
       ADD COLUMN IF NOT EXISTS action VARCHAR(150),
       ADD COLUMN IF NOT EXISTS entity VARCHAR(150),
       ADD COLUMN IF NOT EXISTS entity_id INTEGER,
-      ADD COLUMN IF NOT EXISTS meta JSONB;
+      ADD COLUMN IF NOT EXISTS old_value JSONB,
+      ADD COLUMN IF NOT EXISTS new_value JSONB,
+      ADD COLUMN IF NOT EXISTS meta JSONB,
+      ADD COLUMN IF NOT EXISTS ip_address TEXT,
+      ADD COLUMN IF NOT EXISTS user_agent TEXT;
   `);
 
   // Fill new columns from legacy ones only if legacy columns exist

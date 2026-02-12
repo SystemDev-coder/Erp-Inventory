@@ -22,10 +22,15 @@ export interface Branch {
 export interface AuditLog {
   audit_id: number;
   user_id: number | null;
+  username?: string | null;
   action: string;
   entity: string | null;
   entity_id: number | null;
+  old_value?: any;
+  new_value?: any;
   meta?: any;
+  ip_address?: string | null;
+  user_agent?: string | null;
   created_at: string;
 }
 

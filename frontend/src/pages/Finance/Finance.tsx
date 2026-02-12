@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
 import { Plus, BarChart3, TrendingUp, TrendingDown, Users, Wallet, CreditCard, FileText } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
@@ -7,6 +7,7 @@ import { DataTable } from '../../components/ui/table/DataTable';
 import { Modal } from '../../components/ui/modal/Modal';
 import { useToast } from '../../components/ui/toast/Toast';
 import Badge from '../../components/ui/badge/Badge';
+import { accountService, Account } from '../../services/account.service';
 
 // Mock Data
 const mockFinance = [
@@ -20,6 +21,16 @@ const mockFinance = [
 const Finance = () => {
     const { showToast } = useToast();
     const [isAddOpen, setIsAddOpen] = useState(false);
+    const [accounts, setAccounts] = useState<Account[]>([]);
+    const [editingId, setEditingId] = useState<number | null>(null);
+    const [loading, setLoading] = useState(false);
+    const [accountForm, setAccountForm] = useState<Partial<Account>>({
+        name: '',
+        institution: '',
+        currency_code: 'USD',
+        balance: 0,
+        is_active: true,
+    });
 
     const columns: ColumnDef<any>[] = [
         { accessorKey: 'date', header: 'Date' },
@@ -47,6 +58,31 @@ const Finance = () => {
         },
     ];
 
+    const accountColumns: ColumnDef<Account>[] = useMemo(() => [
+        { accessorKey: 'name', header: 'Account' },
+        { accessorKey: 'institution', header: 'Institution', cell: ({ row }) => row.original.institution || '-' },
+        { accessorKey: 'currency_code', header: 'Currency' },
+        { accessorKey: 'balance', header: 'Balance', cell: ({ row }) => `$${Number(row.original.balance || 0).toFixed(2)}` },
+        {
+            accessorKey: 'is_active',
+            header: 'Active',
+            cell: ({ row }) => row.original.is_active ? 'Yes' : 'No',
+        },
+    ], []);
+
+    const fetchAccounts = async () => {
+        setLoading(true);
+        const res = await accountService.list();
+        if (res.success && res.data?.accounts) {
+            setAccounts(res.data.accounts);
+        } else {
+            showToast('error', 'Load failed', res.error || 'Could not load accounts');
+        }
+        setLoading(false);
+    };
+
+    useEffect(() => { fetchAccounts(); }, []);
+
     const tabs = [
         {
             id: 'overview',
@@ -66,6 +102,43 @@ const Finance = () => {
                         <p className="text-sm font-medium text-slate-500">Total Money Out (Month)</p>
                         <h3 className="text-2xl font-bold mt-2 text-red-600">$8,200.00</h3>
                     </div>
+                </div>
+            )
+        },
+        {
+            id: 'accounts',
+            label: 'Accounts',
+            icon: Wallet,
+            content: (
+                <div className="space-y-3">
+                    <div className="flex justify-between items-center">
+                        <div className="text-sm text-slate-600 dark:text-slate-300">Bank and cash accounts</div>
+                        <button
+                            onClick={() => { setAccountForm({ name: '', institution: '', currency_code: 'USD', balance: 0, is_active: true }); setEditingId(null); setIsAddOpen(true); }}
+                            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 text-sm"
+                        >
+                            <Plus size={16} /> New Account
+                        </button>
+                    </div>
+                    <DataTable
+                        data={accounts}
+                        columns={accountColumns}
+                        isLoading={loading}
+                        searchPlaceholder="Search accounts..."
+                        showToolbarActions={false}
+                        onEdit={(row) => {
+                            setAccountForm({
+                                name: row.name,
+                                institution: row.institution || '',
+                                currency_code: row.currency_code,
+                                balance: row.balance,
+                                is_active: row.is_active,
+                            });
+                            setEditingId(row.acc_id);
+                            setIsAddOpen(true);
+                        }}
+                        onDelete={undefined}
+                    />
                 </div>
             )
         },
@@ -150,53 +223,154 @@ const Finance = () => {
             <PageHeader
                 title="Finance Management"
                 description="Track all money coming in and going out of your business."
-                actions={
-                    <button
-                        onClick={() => setIsAddOpen(true)}
-                        className="flex items-center gap-2 px-6 py-2.5 bg-primary-600 text-white font-bold rounded-xl hover:bg-primary-700 transition-all shadow-lg shadow-primary-500/20 active:scale-95"
-                    >
-                        <Plus className="w-5 h-5" />
-                        Record Payment
-                    </button>
-                }
+                // actions={
+                //     <button
+                //         onClick={() => {
+                //             setAccountForm({ name: '', institution: '', currency_code: 'USD', balance: 0, is_active: true });
+                //             setIsAddOpen(true);
+                //         }}
+                //         className="flex items-center gap-2 px-6 py-2.5 bg-primary-600 text-white font-bold rounded-xl hover:bg-primary-700 transition-all shadow-lg shadow-primary-500/20 active:scale-95"
+                //     >
+                //         <Plus className="w-5 h-5" />
+                //         New Account
+                //     </button>
+                // }
             />
             <Tabs tabs={tabs} defaultTab="overview" />
 
             <Modal
                 isOpen={isAddOpen}
                 onClose={() => setIsAddOpen(false)}
-                title="Record New Payment"
+                title="New Account"
                 size="md"
             >
-                <form onSubmit={(e) => {
-                    e.preventDefault();
-                    showToast('success', 'Payment Recorded', 'The financial transaction has been saved.');
-                    setIsAddOpen(false);
-                }} className="space-y-6">
-                    <div className="space-y-2">
-                        <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Payment Type</label>
-                        <select className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 dark:bg-slate-800 focus:ring-2 focus:ring-primary-500 outline-none transition-all">
-                            <option>Money In (Income)</option>
-                            <option>Money Out (Expense)</option>
-                        </select>
-                    </div>
-                    <div className="space-y-2">
-                        <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Description</label>
-                        <input type="text" required placeholder="e.g. Monthly Rent, Sale Payment" className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 dark:bg-slate-800 focus:ring-2 focus:ring-primary-500 outline-none transition-all" />
-                    </div>
-                    <div className="space-y-2">
-                        <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Amount</label>
-                        <div className="relative">
-                            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">$</span>
-                            <input type="number" step="0.01" required placeholder="0.00" className="w-full pl-8 pr-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 dark:bg-slate-800 focus:ring-2 focus:ring-primary-500 outline-none transition-all" />
+                <div className="p-2 md:p-3">
+                    <form
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                            (async () => {
+                                setLoading(true);
+                                const res = await accountService.create({
+                                    name: accountForm.name || '',
+                                    institution: accountForm.institution,
+                                    currency_code: accountForm.currency_code || 'USD',
+                                    balance: Number(accountForm.balance || 0),
+                                    is_active: accountForm.is_active ?? true,
+                                });
+                                if (editingId) {
+                                    const updateRes = await accountService.update(editingId, {
+                                        name: accountForm.name || '',
+                                        institution: accountForm.institution,
+                                        currency_code: accountForm.currency_code || 'USD',
+                                        balance: Number(accountForm.balance || 0),
+                                        is_active: accountForm.is_active ?? true,
+                                    });
+                                    setLoading(false);
+                                    const resToUse = updateRes.success ? updateRes : res;
+                                    if (resToUse.success && resToUse.data && (resToUse.data as any).account) {
+                                        const acct = (resToUse.data as { account: Account }).account;
+                                        showToast('success', 'Account updated');
+                                        setAccounts((prev) => prev.map((a) => (a.acc_id === editingId ? acct : a)));
+                                        setEditingId(null);
+                                        setIsAddOpen(false);
+                                    } else {
+                                        showToast('error', 'Save failed', resToUse.error || 'Check the form');
+                                    }
+                                    return;
+                                }
+                                setLoading(false);
+                                if (res.success && res.data && (res.data as any).account) {
+                                    const acct = (res.data as { account: Account }).account;
+                                    showToast('success', 'Account created');
+                                    setAccounts((prev) => [acct, ...prev]);
+                                    setEditingId(null);
+                                    setIsAddOpen(false);
+                                } else {
+                                    showToast('error', 'Save failed', res.error || 'Check the form');
+                                }
+                            })();
+                        }}
+                        className="space-y-4"
+                    >
+                        <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-200">
+                            Name
+                            <input
+                                type="text"
+                                required
+                                value={accountForm.name || ''}
+                                onChange={(e) => setAccountForm({ ...accountForm, name: e.target.value })}
+                                placeholder="Account name"
+                                className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
+                            />
+                        </label>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-200">
+                                Institution
+                                <input
+                                    value={accountForm.institution || ''}
+                                    onChange={(e) => setAccountForm({ ...accountForm, institution: e.target.value })}
+                                    placeholder="Bank name"
+                                    className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
+                                />
+                            </label>
+                            <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-200">
+                                Currency
+                                <input
+                                    value={accountForm.currency_code || 'USD'}
+                                    onChange={(e) =>
+                                        setAccountForm({
+                                            ...accountForm,
+                                            currency_code: e.target.value.toUpperCase().slice(0, 3),
+                                        })
+                                    }
+                                    placeholder="USD"
+                                    className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
+                                />
+                            </label>
                         </div>
-                    </div>
-
-                    <div className="flex justify-end gap-3 pt-4">
-                        <button type="button" onClick={() => setIsAddOpen(false)} className="px-6 py-2.5 font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-all">Cancel</button>
-                        <button type="submit" className="px-8 py-2.5 bg-primary-600 text-white font-bold rounded-xl hover:bg-primary-700 transition-all shadow-lg shadow-primary-500/20 active:scale-95">Record Transaction</button>
-                    </div>
-                </form>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-center">
+                            <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-200">
+                                Opening Balance
+                                <input
+                                    type="number"
+                                    value={accountForm.balance ?? 0}
+                                    onChange={(e) => setAccountForm({ ...accountForm, balance: Number(e.target.value || 0) })}
+                                    placeholder="0.00"
+                                    className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
+                                />
+                            </label>
+                            <div className="flex items-center gap-3 text-sm font-medium text-slate-700 dark:text-slate-200 mt-6 md:mt-0">
+                                <span>Status:</span>
+                                <label className="inline-flex items-center gap-2 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={accountForm.is_active ?? true}
+                                        onChange={(e) => setAccountForm({ ...accountForm, is_active: e.target.checked })}
+                                        className="h-4 w-4 accent-primary-500 rounded"
+                                    />
+                                    <span className={accountForm.is_active ? 'text-emerald-500' : 'text-slate-400'}>
+                                        {accountForm.is_active ? 'Active' : 'Inactive'}
+                                    </span>
+                                </label>
+                            </div>
+                        </div>
+                        <div className="flex justify-end gap-3 pt-2">
+                            <button
+                                type="button"
+                                onClick={() => setIsAddOpen(false)}
+                                className="px-6 py-2.5 font-semibold text-slate-600 bg-slate-100 dark:bg-slate-800 dark:text-slate-200 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="submit"
+                                className="px-8 py-2.5 bg-primary-600 text-white font-bold rounded-lg hover:bg-primary-700 transition-all shadow-md shadow-primary-500/20 active:scale-95"
+                            >
+                                Save
+                            </button>
+                        </div>
+                    </form>
+                </div>
             </Modal>
         </div>
     );

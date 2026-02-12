@@ -242,9 +242,17 @@ CREATE TABLE IF NOT EXISTS ims.categories (
 
 CREATE TABLE IF NOT EXISTS ims.suppliers (
     supplier_id BIGSERIAL PRIMARY KEY,
-    name VARCHAR(140) NOT NULL,
-    country VARCHAR(80),
-    phone VARCHAR(30)
+    supplier_name VARCHAR(255) NOT NULL,
+    company_name VARCHAR(255),
+    contact_person VARCHAR(255),
+    contact_phone VARCHAR(50),
+    phone VARCHAR(50),
+    address TEXT,
+    location TEXT,
+    remaining_balance NUMERIC(14,2) NOT NULL DEFAULT 0,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS ims.products (
@@ -437,7 +445,7 @@ CREATE TABLE IF NOT EXISTS ims.purchases (
     currency_code CHAR(3) NOT NULL DEFAULT 'USD' REFERENCES ims.currencies(currency_code),
     fx_rate NUMERIC(18,6) NOT NULL DEFAULT 1 CHECK (fx_rate > 0),
     purchase_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    purchase_type ims.purchase_type_enum NOT NULL DEFAULT 'cash',
+      purchase_type ims.purchase_type_enum NOT NULL DEFAULT 'cash',
     subtotal NUMERIC(14,2) NOT NULL DEFAULT 0,
     discount NUMERIC(14,2) NOT NULL DEFAULT 0,
     total NUMERIC(14,2) NOT NULL DEFAULT 0,
@@ -449,14 +457,21 @@ CREATE TABLE IF NOT EXISTS ims.purchases (
 CREATE TABLE IF NOT EXISTS ims.purchase_items (
     purchase_item_id BIGSERIAL PRIMARY KEY,
     purchase_id BIGINT NOT NULL REFERENCES ims.purchases(purchase_id),
-    product_id BIGINT NOT NULL REFERENCES ims.products(product_id),
+    product_id BIGINT REFERENCES ims.products(product_id),
     quantity NUMERIC(14,3) NOT NULL,
     unit_cost NUMERIC(14,2) NOT NULL DEFAULT 0,
     line_total NUMERIC(14,2) NOT NULL DEFAULT 0,
     batch_no VARCHAR(80),
     expiry_date DATE,
+    discount NUMERIC(14,2) NOT NULL DEFAULT 0,
+    description VARCHAR(240),
     CONSTRAINT chk_purchase_item_vals CHECK (quantity > 0 AND unit_cost >= 0 AND line_total >= 0)
 );
+
+-- Ensure new columns exist for legacy databases
+ALTER TABLE IF EXISTS ims.purchase_items
+  ADD COLUMN IF NOT EXISTS discount NUMERIC(14,2) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS description VARCHAR(240);
 
 CREATE TABLE IF NOT EXISTS ims.supplier_charges (
     sup_charge_id BIGSERIAL PRIMARY KEY,

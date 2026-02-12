@@ -11,10 +11,15 @@ export interface Branch {
 export interface AuditLog {
   audit_id: number;
   user_id: number | null;
+  username?: string | null;
   action: string;
   entity: string | null;
   entity_id: number | null;
+  old_value?: any;
+  new_value?: any;
   meta?: any;
+  ip_address?: string | null;
+  user_agent?: string | null;
   created_at: string;
 }
 
@@ -139,9 +144,21 @@ export const settingsService = {
   async listAuditLogs(page = 1, limit = 50): Promise<{ rows: AuditLog[]; total: number }> {
     const offset = (page - 1) * limit;
     const rows = await queryMany<AuditLog>(
-      `SELECT audit_id, user_id, action, entity, entity_id, meta, created_at
-         FROM ims.audit_logs
-         ORDER BY created_at DESC
+      `SELECT al.audit_id,
+              al.user_id,
+              u.username,
+              al.action,
+              al.entity,
+              al.entity_id,
+              al.old_value,
+              al.new_value,
+              al.meta,
+              al.ip_address,
+              al.user_agent,
+              al.created_at
+         FROM ims.audit_logs al
+         LEFT JOIN ims.users u ON u.user_id = al.user_id
+         ORDER BY al.created_at DESC
          LIMIT $1 OFFSET $2`,
       [limit, offset]
     );

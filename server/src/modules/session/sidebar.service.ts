@@ -2,6 +2,8 @@ import { queryOne, query } from '../../db/query';
 import crypto from 'crypto';
 import { SidebarMenuResponse, SidebarMenuItem } from './session.types';
 
+const SIDEBAR_CACHE_VERSION = 'v3';
+
 export class SidebarService {
   /**
    * Generate sidebar menu based on user permissions
@@ -46,18 +48,6 @@ export class SidebarService {
         icon: 'Home',
         route: '/',
         permission: 'home.view',
-      });
-    }
-
-    // Products
-    if (permSet.has('products.view')) {
-      modules.push({
-        id: 'products',
-        name: 'Products',
-        nameSo: 'Alaabada',
-        icon: 'Package',
-        route: '/products',
-        permission: 'products.view',
       });
     }
 
@@ -287,7 +277,7 @@ export class SidebarService {
   ): Promise<SidebarMenuItem[] | null> {
     const permissionsHash = crypto
       .createHash('sha256')
-      .update(permissions.sort().join(','))
+      .update(`${SIDEBAR_CACHE_VERSION}|${permissions.sort().join(',')}`)
       .digest('hex');
 
     const cached = await queryOne<{ menu_data: SidebarMenuItem[]; expires_at: Date }>(
@@ -309,7 +299,7 @@ export class SidebarService {
   ): Promise<void> {
     const permissionsHash = crypto
       .createHash('sha256')
-      .update(permissions.sort().join(','))
+      .update(`${SIDEBAR_CACHE_VERSION}|${permissions.sort().join(',')}`)
       .digest('hex');
 
     const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes

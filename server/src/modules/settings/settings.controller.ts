@@ -5,6 +5,7 @@ import { ApiError } from '../../utils/ApiError';
 import { settingsService } from './settings.service';
 import { companyInfoSchema, branchCreateSchema, branchUpdateSchema, auditQuerySchema } from './settings.schemas';
 import { AuthRequest } from '../../middlewares/requireAuth';
+import { logAudit } from '../../utils/audit';
 
 export const getCompanyInfo = asyncHandler(async (_req: AuthRequest, res: Response) => {
   const data = await settingsService.getCompanyInfo();
@@ -74,6 +75,19 @@ export const updateCompanyInfo = asyncHandler(async (req: AuthRequest, res: Resp
     logoImg: logoUrl,
     bannerImg: bannerUrl,
   });
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'update',
+    entity: 'company_info',
+    entityId: company.company_id,
+    newValue: {
+      company_name: company.company_name,
+      phone: company.phone,
+      manager_name: company.manager_name,
+    },
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
   return ApiResponse.success(res, { company }, 'Company info saved');
 });
 
@@ -89,6 +103,15 @@ export const createBranch = asyncHandler(async (req: AuthRequest, res: Response)
     location: input.location,
     isActive: input.isActive,
   });
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'create',
+    entity: 'branches',
+    entityId: branch.branch_id,
+    newValue: branch,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
   return ApiResponse.created(res, { branch }, 'Branch created');
 });
 
@@ -101,12 +124,29 @@ export const updateBranch = asyncHandler(async (req: AuthRequest, res: Response)
     isActive: input.isActive,
   });
   if (!branch) throw ApiError.notFound('Branch not found');
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'update',
+    entity: 'branches',
+    entityId: id,
+    newValue: input,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
   return ApiResponse.success(res, { branch }, 'Branch updated');
 });
 
 export const deleteBranch = asyncHandler(async (req: AuthRequest, res: Response) => {
   const id = Number(req.params.id);
   await settingsService.deleteBranch(id);
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'delete',
+    entity: 'branches',
+    entityId: id,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
   return ApiResponse.success(res, null, 'Branch deleted');
 });
 

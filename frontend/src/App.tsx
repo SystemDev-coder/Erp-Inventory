@@ -11,6 +11,7 @@ import Products from "./pages/Products/Products";
 import Stock from "./pages/Stock/Stock";
 import Sales from "./pages/Sales/Sales";
 import Purchases from "./pages/Purchases/Purchases";
+import PurchaseEditor from "./pages/Purchases/PurchaseEditor";
 import Returns from "./pages/Returns/Returns";
 import Transfers from "./pages/Transfers/Transfers";
 import Finance from "./pages/Finance/Finance";
@@ -18,6 +19,7 @@ import Customers from "./pages/Customers/Customers";
 import Employees from "./pages/Employees/Employees";
 import Reports from "./pages/Reports/Reports";
 import Settings from "./pages/Settings/Settings";
+import Support from "./pages/Support/Support";
 
 // Auth Pages
 import SignIn from "./pages/AuthPages/SignIn";
@@ -41,9 +43,12 @@ function AppRoutes() {
         >
           <Route index path="/" element={<Home />} />
           <Route path="/products" element={<Products />} />
+          <Route path="/purchased-items" element={<Products />} />
           <Route path="/stock" element={<Stock />} />
           <Route path="/sales" element={<Sales />} />
           <Route path="/purchases" element={<Purchases />} />
+          <Route path="/purchases/new" element={<PurchaseEditor />} />
+          <Route path="/purchases/:id" element={<PurchaseEditor />} />
           <Route path="/returns" element={<Returns />} />
           <Route path="/transfers" element={<Transfers />} />
           <Route path="/finance" element={<Finance />} />
@@ -51,6 +56,7 @@ function AppRoutes() {
           <Route path="/employees" element={<Employees />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/support" element={<Support />} />
         </Route>
 
         {/* Auth Layout */}

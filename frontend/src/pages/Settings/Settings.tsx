@@ -1,15 +1,31 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
-import { Home, Building, History, Plus, Pencil, Trash2 } from 'lucide-react';
+import { Home, Building, History, Plus, Pencil, Trash2, Users } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
 import { Tabs } from '../../components/ui/tabs';
 import { settingsService, CompanyInfo, Branch, AuditLog } from '../../services/settings.service';
 import { useToast } from '../../components/ui/toast/Toast';
 import { Modal } from '../../components/ui/modal/Modal';
 import { DataTable } from '../../components/ui/table/DataTable';
+import { userService, UserRow, RoleRow } from '../../services/user.service';
+import UsersModal from './UsersModal';
+import { useAuth } from '../../context/AuthContext';
+
+const formatAuditValue = (val: any) => {
+  if (val === null || val === undefined) return '—';
+  if (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean') return String(val);
+  if (Array.isArray(val)) return val.map((v) => formatAuditValue(v)).join(', ');
+  if (typeof val === 'object') {
+    const parts = Object.entries(val).map(([k, v]) => `${k}: ${formatAuditValue(v)}`);
+    return parts.join(', ');
+  }
+  return String(val);
+};
 
 const Settings = () => {
   const { showToast } = useToast();
+  const { user } = useAuth();
+  const isAdmin = useMemo(() => user?.role_name === 'Admin', [user]);
 
   const [company, setCompany] = useState<CompanyInfo | null>(null);
   const [companyLoading, setCompanyLoading] = useState(false);
@@ -29,6 +45,7 @@ const Settings = () => {
   const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
   const [branchForm, setBranchForm] = useState({ branchName: '', location: '' });
   const [branchSaving, setBranchSaving] = useState(false);
+  const [branchToDelete, setBranchToDelete] = useState<Branch | null>(null);
 
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
@@ -36,6 +53,21 @@ const Settings = () => {
   const [auditTotal, setAuditTotal] = useState(0);
   const auditLimit = 20;
   const companyRows = company ? [company] : [];
+
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [roles, setRoles] = useState<RoleRow[]>([]);
+  const [userModalOpen, setUserModalOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<UserRow | null>(null);
+  const [userForm, setUserForm] = useState<{ name: string; username: string; password: string; role_id: number | ''; branch_id: number | ''; is_active: boolean }>({
+    name: '',
+    username: '',
+    password: '',
+    role_id: '',
+    branch_id: '',
+    is_active: true,
+  });
+  const [userToDelete, setUserToDelete] = useState<UserRow | null>(null);
+  const filteredUsers = useMemo(() => users.filter((u) => u.user_id !== user?.user_id), [users, user]);
 
   const companyColumns = useMemo<ColumnDef<CompanyInfo>[]>(
     () => [
@@ -133,11 +165,28 @@ const Settings = () => {
     setAuditLoading(false);
   };
 
+  const loadUsers = async () => {
+    const res = await userService.list();
+    if (res.success && res.data?.users) setUsers(res.data.users);
+  };
+
+  const loadRoles = async () => {
+    const res = await userService.listRoles();
+    if (res.success && res.data?.roles) setRoles(res.data.roles);
+  };
+
   useEffect(() => {
     loadCompany();
     loadBranches();
     loadAudit();
   }, []);
+
+  useEffect(() => {
+    if (isAdmin) {
+      loadUsers();
+      loadRoles();
+    }
+  }, [isAdmin]);
 
   const openCompanyModal = () => {
     setCompanyModalOpen(true);
@@ -198,11 +247,69 @@ const Settings = () => {
     }
   };
 
-  const deleteBranch = async (branch: Branch) => {
-    if (!confirm(`Delete branch "${branch.branch_name}"?`)) return;
-    const res = await settingsService.deleteBranch(branch.branch_id);
+  const userColumns = useMemo<ColumnDef<UserRow>[]>(() => [
+    { accessorKey: 'name', header: 'Name' },
+    { accessorKey: 'username', header: 'Username' },
+    { accessorKey: 'role_name', header: 'Role' },
+    { accessorKey: 'is_active', header: 'Active', cell: ({ row }) => row.original.is_active ? 'Yes' : 'No' },
+  ], []);
+
+  const openUserModal = (user?: UserRow) => {
+    setEditingUser(user || null);
+    setUserForm({
+      name: user?.name || '',
+      username: user?.username || '',
+      password: '',
+      role_id: user?.role_id || '',
+      branch_id: user?.branch_id || '',
+      is_active: user?.is_active ?? true,
+    });
+    setUserModalOpen(true);
+  };
+
+  const saveUser = async (formOverride?: typeof userForm) => {
+    const f = formOverride || userForm;
+    if (!userForm.name || !userForm.username || (!editingUser && !userForm.password) || !userForm.role_id || !userForm.branch_id) {
+      showToast('error', 'Users', 'Fill required fields');
+      return;
+    }
+    const payload = {
+      name: f.name,
+      username: f.username,
+      password: f.password,
+      role_id: Number(f.role_id),
+      branch_id: Number(f.branch_id),
+      is_active: f.is_active,
+    };
+    const res = editingUser
+      ? await userService.update(editingUser.user_id, payload)
+      : await userService.create(payload);
+    if (res.success && res.data?.user) {
+      showToast('success', 'Users', editingUser ? 'User updated' : 'User created');
+      setUserModalOpen(false);
+      setEditingUser(null);
+      loadUsers();
+    } else {
+      showToast('error', 'Users', res.error || 'Save failed');
+    }
+  };
+
+  const deleteUserAction = async (u: UserRow) => {
+    const res = await userService.remove(u.user_id);
+    if (res.success) {
+      showToast('success', 'Users', 'User deleted');
+      loadUsers();
+    } else {
+      showToast('error', 'Users', res.error || 'Delete failed');
+    }
+  };
+
+  const confirmDeleteBranch = async () => {
+    if (!branchToDelete) return;
+    const res = await settingsService.deleteBranch(branchToDelete.branch_id);
     if (res.success) {
       showToast('success', 'Branches', 'Branch deleted');
+      setBranchToDelete(null);
       loadBranches();
     } else {
       showToast('error', 'Branches', res.error || 'Delete failed');
@@ -360,7 +467,7 @@ const Settings = () => {
                     </button>
                     <button
                       className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800"
-                      onClick={() => deleteBranch(b)}
+                      onClick={() => setBranchToDelete(b)}
                     >
                       <Trash2 className="w-4 h-4 text-red-500" />
                     </button>
@@ -412,6 +519,10 @@ const Settings = () => {
 
   const auditContent = (
     <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800">
+      {/** helper for concise display */} 
+      {/** placed here to keep file-local scope */} 
+      {/** eslint-disable-next-line */} 
+      {/**/}
       {auditLoading ? (
         <p className="text-sm text-slate-500">Loading...</p>
       ) : auditLogs.length === 0 ? (
@@ -421,18 +532,34 @@ const Settings = () => {
           <table className="min-w-full text-sm">
             <thead>
               <tr className="text-left text-slate-500">
-                <th className="py-2 pr-4">Action</th>
-                <th className="py-2 pr-4">Entity</th>
+                <th className="py-2 pr-4">Table</th>
+                <th className="py-2 pr-4">Record ID</th>
                 <th className="py-2 pr-4">User</th>
-                <th className="py-2 pr-4">Time</th>
+                <th className="py-2 pr-4">Action</th>
+                <th className="py-2 pr-4">Old Value</th>
+                <th className="py-2 pr-4">New Value</th>
+                <th className="py-2 pr-4">IP</th>
+                <th className="py-2 pr-4">Device</th>
+                <th className="py-2 pr-4">Date &amp; Time</th>
               </tr>
             </thead>
             <tbody>
               {auditLogs.map((log) => (
                 <tr key={log.audit_id} className="border-t border-slate-200 dark:border-slate-800">
-                  <td className="py-2 pr-4 text-slate-800 dark:text-slate-100">{log.action}</td>
-                  <td className="py-2 pr-4 text-slate-600 dark:text-slate-300">{log.entity || '?'}</td>
-                  <td className="py-2 pr-4 text-slate-600 dark:text-slate-300">{log.user_id ?? '?'}</td>
+                  <td className="py-2 pr-4 text-slate-800 dark:text-slate-100">{log.entity || '—'}</td>
+                  <td className="py-2 pr-4 text-slate-600 dark:text-slate-300">{log.entity_id ?? '—'}</td>
+                  <td className="py-2 pr-4 text-slate-600 dark:text-slate-300">{log.username || log.user_id || '—'}</td>
+                  <td className="py-2 pr-4 text-slate-800 dark:text-slate-100 capitalize">{log.action}</td>
+                  <td className="py-2 pr-4 text-slate-500 max-w-xs truncate" title={log.old_value ? JSON.stringify(log.old_value) : ''}>
+                    {formatAuditValue(log.old_value)}
+                  </td>
+                  <td className="py-2 pr-4 text-slate-500 max-w-xs truncate" title={log.new_value ? JSON.stringify(log.new_value) : ''}>
+                    {formatAuditValue(log.new_value)}
+                  </td>
+                  <td className="py-2 pr-4 text-slate-500">{log.ip_address || '—'}</td>
+                  <td className="py-2 pr-4 text-slate-500 max-w-xs truncate" title={log.user_agent || ''}>
+                    {log.user_agent || '—'}
+                  </td>
                   <td className="py-2 pr-4 text-slate-500">{new Date(log.created_at).toLocaleString()}</td>
                 </tr>
               ))}
@@ -464,11 +591,47 @@ const Settings = () => {
     </div>
   );
 
+  const usersContent = (
+    <div className="space-y-3">
+      <div className="flex justify-between items-center">
+        <div className="text-sm text-slate-600 dark:text-slate-300">Manage system users</div>
+        <button
+          onClick={() => openUserModal()}
+          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 text-sm"
+        >
+          <Plus size={16} /> New User
+        </button>
+      </div>
+      <DataTable
+        data={filteredUsers}
+        columns={userColumns}
+        searchPlaceholder="Search users..."
+        onEdit={openUserModal}
+        onDelete={(u) => {
+          if (u.user_id === user?.user_id) {
+            showToast('error', 'Users', 'You cannot modify your own account here.');
+            return;
+          }
+          setUserToDelete(u);
+        }}
+        showToolbarActions={false}
+      />
+    </div>
+  );
+
   const tabs = useMemo(() => [
     { id: 'company', label: 'Company Info', icon: Home, content: companyContent },
     { id: 'branches', label: 'Branches', icon: Building, content: branchesContent },
     { id: 'audit', label: 'Audit History', icon: History, content: auditContent },
-  ], [companyContent, branchesContent, auditContent]);
+    ...(isAdmin ? [{ id: 'users', label: 'Users', icon: Users, content: usersContent }] : []),
+  ], [companyContent, branchesContent, auditContent, usersContent, isAdmin]);
+
+  const handleTabChange = (tabId: string) => {
+    if (tabId === 'audit') loadAudit();
+    if (tabId === 'users' && isAdmin) loadUsers();
+    if (tabId === 'branches') loadBranches();
+    if (tabId === 'company') loadCompany();
+  };
 
   return (
     <div>
@@ -476,7 +639,68 @@ const Settings = () => {
         title="Settings"
         description="Configure how your inventory system works for your business."
       />
-      <Tabs tabs={tabs} defaultTab="company" />
+      <Tabs tabs={tabs} defaultTab="company" onChange={handleTabChange} />
+
+      <UsersModal
+        isOpen={userModalOpen}
+        onClose={() => { setUserModalOpen(false); setEditingUser(null); }}
+        onSave={(f) => { setUserForm(f); saveUser(f); }}
+        form={userForm}
+        setForm={setUserForm}
+        roles={roles}
+        branches={branches}
+        editing={editingUser}
+      />
+
+      <Modal
+        isOpen={!!branchToDelete}
+        onClose={() => setBranchToDelete(null)}
+        title="Delete Branch"
+        size="sm"
+      >
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          Are you sure you want to delete the branch <strong>{branchToDelete?.branch_name}</strong>? This action cannot be undone.
+        </p>
+        <div className="flex justify-end gap-3 pt-4">
+          <button
+            className="px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200"
+            onClick={() => setBranchToDelete(null)}
+          >
+            Cancel
+          </button>
+          <button
+            className="px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700"
+            onClick={confirmDeleteBranch}
+          >
+            Delete
+          </button>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={!!userToDelete}
+        onClose={() => setUserToDelete(null)}
+        title="Delete User"
+        size="sm"
+      >
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          Delete user <strong>{userToDelete?.username}</strong>? They will lose access immediately.
+        </p>
+        <div className="flex justify-end gap-3 pt-4">
+          <button
+            className="px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200"
+            onClick={() => setUserToDelete(null)}
+          >
+            Cancel
+          </button>
+          <button
+            className="px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700"
+            onClick={() => { if (userToDelete) { deleteUserAction(userToDelete); setUserToDelete(null); } }}
+          >
+            Delete
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 };

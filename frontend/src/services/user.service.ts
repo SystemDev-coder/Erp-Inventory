@@ -1,130 +1,53 @@
-/**
- * User Service
- * Handles user-related API calls (permissions, preferences, sessions)
- */
-
-import { apiClient, ApiResponse } from './api';
+import { apiClient } from './api';
 import { API } from '../config/env';
 
-export interface Permission {
-  perm_id: number;
-  perm_key: string;
-  perm_name: string;
-  description: string | null;
-}
-
-export interface UserPreferences {
-  theme?: string;
-  language?: string;
-  timezone?: string;
-  notifications?: boolean;
-  [key: string]: any;
-}
-
-export interface Session {
-  session_id: string;
-  device_name: string;
-  device_os: string;
-  browser_name: string;
-  ip_address: string;
-  is_current: boolean;
-  last_active_at: string;
-  created_at: string;
-}
-
-export interface SidebarItem {
-  id: string;
-  label: string;
-  icon?: string;
-  path?: string;
-  children?: SidebarItem[];
-  permission?: string;
-}
-
-/** Backend sidebar API response (GET /api/user/sidebar) - permission-based menu */
-export interface SidebarModule {
-  id: string;
+export interface UserRow {
+  user_id: number;
+  branch_id: number;
+  role_id: number;
   name: string;
-  nameSo?: string;
-  icon: string;
-  route: string;
-  permission: string;
-  badge?: number | string;
-  items?: SidebarSubModule[];
+  username: string;
+  is_active: boolean;
+  role_name?: string | null;
+  created_at?: string;
 }
 
-export interface SidebarSubModule {
-  id: string;
-  name: string;
-  nameSo?: string;
-  route: string;
-  permission: string;
-  badge?: number | string;
+export interface RoleRow {
+  role_id: number;
+  role_name: string;
 }
 
-export interface SidebarApiResponse {
-  modules: SidebarModule[];
-  cached?: boolean;
-  timestamp?: string;
-}
-
-class UserService {
-  /**
-   * Get current user's permissions
-   */
-  async getPermissions(): Promise<ApiResponse<{ permissions: Permission[] }>> {
-    return apiClient.get<{ permissions: Permission[] }>(API.USER.PERMISSIONS);
-  }
-
-  /**
-   * Get sidebar menu for current user (permission-based, from API)
-   */
-  async getSidebar(): Promise<ApiResponse<SidebarApiResponse>> {
-    return apiClient.get<SidebarApiResponse>(API.USER.SIDEBAR);
-  }
-
-  /**
-   * Check if user has a specific permission
-   */
-  async checkPermission(permKey: string): Promise<ApiResponse<{ hasPermission: boolean }>> {
-    return apiClient.get<{ hasPermission: boolean }>(API.USER.CHECK_PERMISSION(permKey));
-  }
-
-  /**
-   * Get user preferences
-   */
-  async getPreferences(): Promise<ApiResponse<{ preferences: UserPreferences }>> {
-    return apiClient.get<{ preferences: UserPreferences }>(API.USER.PREFERENCES);
-  }
-
-  /**
-   * Update user preferences
-   */
-  async updatePreferences(preferences: Partial<UserPreferences>): Promise<ApiResponse<{ preferences: UserPreferences }>> {
-    return apiClient.put<{ preferences: UserPreferences }>(API.USER.PREFERENCES, preferences);
-  }
-
-  /**
-   * Get all active sessions
-   */
-  async getSessions(): Promise<ApiResponse<{ sessions: Session[] }>> {
-    return apiClient.get<{ sessions: Session[] }>(API.USER.SESSIONS);
-  }
-
-  /**
-   * Logout all other sessions except current
-   */
-  async logoutOtherSessions(): Promise<ApiResponse<{ message: string }>> {
-    return apiClient.post<{ message: string }>(API.USER.LOGOUT_OTHER_SESSIONS);
-  }
-
-  /**
-   * Logout a specific session
-   */
-  async logoutSession(sessionId: string): Promise<ApiResponse<{ message: string }>> {
-    return apiClient.delete<{ message: string }>(API.USER.LOGOUT_SESSION(sessionId));
-  }
-}
-
-// Export singleton instance
-export const userService = new UserService();
+export const userService = {
+  async getSidebar() {
+    return apiClient.get<{ modules: any[] }>(API.USER.SIDEBAR);
+  },
+  async list() {
+    return apiClient.get<{ users: UserRow[] }>('/api/users');
+  },
+  async listRoles() {
+    return apiClient.get<{ roles: RoleRow[] }>('/api/users/roles');
+  },
+  async create(data: Partial<UserRow> & { password: string }) {
+    return apiClient.post<{ user: UserRow }>('/api/users', {
+      branchId: data.branch_id,
+      roleId: data.role_id,
+      name: data.name,
+      username: data.username,
+      password: data.password,
+      isActive: data.is_active,
+    });
+  },
+  async update(id: number, data: Partial<UserRow> & { password?: string }) {
+    return apiClient.put<{ user: UserRow }>(`/api/users/${id}`, {
+      branchId: data.branch_id,
+      roleId: data.role_id,
+      name: data.name,
+      username: data.username,
+      password: data.password,
+      isActive: data.is_active,
+    });
+  },
+  async remove(id: number) {
+    return apiClient.delete<{ message: string }>(`/api/users/${id}`);
+  },
+};
