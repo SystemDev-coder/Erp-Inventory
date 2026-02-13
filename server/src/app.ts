@@ -20,6 +20,8 @@ import receiptRoutes from './modules/receipts/receipts.routes';
 import accountRoutes from './modules/accounts/accounts.routes';
 import profileRoutes from './modules/profile/profile.routes';
 import userRoutes from './modules/users/users.routes';
+import inventoryRoutes from './modules/inventory/inventory.routes';
+import notificationRoutes from './modules/notifications/notifications.routes';
 import { ensureSettingsSchema } from './migrations/ensureSettingsSchema';
 import { config } from './config/env';
 
@@ -70,6 +72,8 @@ app.use('/api/receipts', receiptRoutes);
 app.use('/api/accounts', accountRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/inventory', inventoryRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // 404 handler
 app.use((req, res) => {

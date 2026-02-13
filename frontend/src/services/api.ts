@@ -31,7 +31,7 @@ class ApiClient {
   /**
    * Build headers including Authorization when we have a token
    */
-  private buildHeaders(overrides: HeadersInit = {}): HeadersInit {
+  private buildHeaders(overrides: HeadersInit = {}): Record<string, string> {
     const token = getAccessToken();
     const headers: Record<string, string> = {
       ...(overrides as Record<string, string>),

@@ -8,7 +8,9 @@ import { useInactivityLogout } from "./hooks/useInactivityLogout";
 // Section Pages
 import Home from "./pages/Home/Home";
 import Products from "./pages/Products/Products";
-import Stock from "./pages/Stock/Stock";
+import StockPage from "./pages/Stock/StockPage";
+import StockAdjustmentsPage from "./pages/Stock/StockAdjustmentsPage";
+import StockRecountPage from "./pages/Stock/StockRecountPage";
 import Sales from "./pages/Sales/Sales";
 import SaleCreate from "./pages/Sales/SaleCreate";
 import Purchases from "./pages/Purchases/Purchases";
@@ -45,7 +47,10 @@ function AppRoutes() {
           <Route index path="/" element={<Home />} />
           <Route path="/products" element={<Products />} />
           <Route path="/purchased-items" element={<Products />} />
-          <Route path="/stock" element={<Stock />} />
+          <Route path="/stock" element={<StockPage />} />
+          <Route path="/stock/adjustments" element={<StockAdjustmentsPage />} />
+          <Route path="/stock/recount" element={<StockRecountPage />} />
+          <Route path="/inventory" element={<StockPage />} />
           <Route path="/sales" element={<Sales />} />
           <Route path="/sales/new" element={<SaleCreate />} />
           <Route path="/purchases" element={<Purchases />} />

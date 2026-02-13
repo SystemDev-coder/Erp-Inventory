@@ -14,12 +14,10 @@ const Sales = () => {
     const navigate = useNavigate();
     const [sales, setSales] = useState<Sale[]>([]);
     const [loading, setLoading] = useState(false);
-    const [search, setSearch] = useState('');
-    const [statusFilter, setStatusFilter] = useState<'all' | Sale['status']>('all');
 
-    const loadSales = async (term?: string, status?: string) => {
+    const loadSales = async () => {
         setLoading(true);
-        const res = await salesService.list(term, status);
+        const res = await salesService.list();
         if (res.success && res.data?.sales) {
             setSales(res.data.sales);
         } else {
@@ -91,7 +89,7 @@ const Sales = () => {
                     <TabActionToolbar
                         title="Recent Sales"
                         primaryAction={{ label: 'New Sale', onClick: () => navigate('/sales/new') }}
-                        onDisplay={() => loadSales(search, statusFilter)}
+                        onDisplay={loadSales}
                     />
                     <DataTable
                         data={sales}

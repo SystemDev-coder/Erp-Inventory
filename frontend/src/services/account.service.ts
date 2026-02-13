@@ -1,5 +1,4 @@
 import { apiClient } from './api';
-import { API } from '../config/env';
 
 export interface Account {
   acc_id: number;

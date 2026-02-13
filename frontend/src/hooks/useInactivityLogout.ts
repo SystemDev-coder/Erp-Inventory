@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -8,11 +8,11 @@ const LAST_ACTIVITY_KEY = "lastActivityTime";
 export function useInactivityLogout(timeoutMs: number = DEFAULT_TIMEOUT_MS) {
   const { isAuthenticated, logout } = useAuth();
   const navigate = useNavigate();
-  const timerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearTimer = useCallback(() => {
     if (timerRef.current) {
-      window.clearTimeout(timerRef.current);
+      clearTimeout(timerRef.current);
       timerRef.current = null;
     }
   }, []);
@@ -26,7 +26,7 @@ export function useInactivityLogout(timeoutMs: number = DEFAULT_TIMEOUT_MS) {
 
   const resetTimer = useCallback(() => {
     clearTimer();
-    timerRef.current = window.setTimeout(() => {
+    timerRef.current = setTimeout(() => {
       void handleLogout();
     }, timeoutMs);
   }, [clearTimer, handleLogout, timeoutMs]);
@@ -81,4 +81,3 @@ export function useInactivityLogout(timeoutMs: number = DEFAULT_TIMEOUT_MS) {
     };
   }, [clearTimer, handleLogout, isAuthenticated, resetTimer, timeoutMs]);
 }
-

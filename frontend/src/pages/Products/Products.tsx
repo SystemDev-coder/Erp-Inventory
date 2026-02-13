@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
-import { ListChecks } from 'lucide-react';
 import { PageHeader, TabActionToolbar } from '../../components/ui/layout';
 import { DataTable } from '../../components/ui/table/DataTable';
 import Badge from '../../components/ui/badge/Badge';
@@ -113,7 +112,6 @@ const Products = () => {
       <PageHeader
         title="Purchased Items"
         description="See every item received from suppliers."
-        icon={ListChecks}
       />
 
       <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm p-4 space-y-3 border border-slate-100 dark:border-slate-800">

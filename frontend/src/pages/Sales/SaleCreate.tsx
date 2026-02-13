@@ -13,6 +13,7 @@ const SaleCreate = () => {
   const navigate = useNavigate();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [isDebt, setIsDebt] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(false);
   const [saleForm, setSaleForm] = useState({
@@ -72,8 +73,8 @@ const SaleCreate = () => {
       subtotal: Number(saleForm.subtotal),
       discount: Number(saleForm.discount),
       total: Number(saleForm.total),
-      saleType: saleForm.sale_type,
-      status: saleForm.status,
+      saleType: isDebt ? 'credit' : saleForm.sale_type,
+      status: isDebt ? 'unpaid' : saleForm.status,
       note: saleForm.note || undefined,
       items: saleForm.items
         .filter(it => it.product_id && it.quantity > 0)
@@ -82,9 +83,9 @@ const SaleCreate = () => {
           quantity: Number(it.quantity),
           unitPrice: Number(it.unit_price),
         })),
-      payFromAccId: saleForm.status === 'void' || !saleForm.acc_id ? undefined : Number(saleForm.acc_id),
+      payFromAccId: (saleForm.status === 'void' || isDebt || !saleForm.acc_id) ? undefined : Number(saleForm.acc_id),
       paidAmount:
-        saleForm.status === 'void'
+        saleForm.status === 'void' || isDebt
           ? undefined
           : Number(saleForm.paid_amount || (saleForm.sale_type === 'cash' ? saleForm.total : 0)),
     };
@@ -122,12 +123,18 @@ const SaleCreate = () => {
             <select
               className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
               value={saleForm.customer_id}
-              onChange={e =>
+              onChange={e => {
+                const cid = e.target.value ? Number(e.target.value) : '';
+                setIsDebt(false);
                 setSaleForm(prev => ({
                   ...prev,
-                  customer_id: e.target.value ? Number(e.target.value) : '',
-                }))
-              }
+                  customer_id: cid,
+                  sale_type: cid ? prev.sale_type : 'cash',
+                  status: cid ? prev.status : 'paid',
+                  acc_id: prev.acc_id,
+                  paid_amount: prev.paid_amount,
+                }));
+              }}
             >
               <option value="">Walking Customer</option>
               {customers.map(c => (
@@ -160,6 +167,7 @@ const SaleCreate = () => {
                   sale_type: e.target.value as 'cash' | 'credit',
                 }))
               }
+              disabled={isDebt}
             >
               <option value="cash">Cash</option>
               <option value="credit">Credit</option>
@@ -176,6 +184,7 @@ const SaleCreate = () => {
                   status: e.target.value as Sale['status'],
                 }))
               }
+              disabled={isDebt}
             >
               <option value="paid">Paid</option>
               <option value="partial">Partial</option>
@@ -207,6 +216,41 @@ const SaleCreate = () => {
           )}
         </div>
 
+        {saleForm.customer_id && (
+          <div className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-300">
+            <input
+              id="debt-toggle"
+              type="checkbox"
+              className="h-4 w-4 accent-primary-600"
+              checked={isDebt}
+              onChange={(e) => {
+                const checked = e.target.checked;
+                setIsDebt(checked);
+                setSaleForm((prev) => {
+                  const next = { ...prev };
+                  if (checked) {
+                    next.sale_type = 'credit';
+                    next.status = 'unpaid';
+                    next.acc_id = '';
+                    next.paid_amount = 0;
+                  } else {
+                    // restore defaults for a normal cash sale
+                    next.sale_type = 'cash';
+                    next.status = 'paid';
+                    // keep any previously chosen account if present
+                    next.acc_id = prev.acc_id;
+                    next.paid_amount = prev.paid_amount;
+                  }
+                  return next;
+                });
+              }}
+            />
+            <label htmlFor="debt-toggle" className="select-none">
+              Mark as debt for this customer (will be unpaid credit)
+            </label>
+          </div>
+        )}
+
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <span className="font-semibold text-slate-800 dark:text-slate-200">Items</span>
@@ -215,13 +259,22 @@ const SaleCreate = () => {
               onClick={() =>
                 setSaleForm(prev => ({
                   ...prev,
-                  items: [...prev.items, { product_name: '', quantity: 1, unit_price: 0 }],
+                  items: [...prev.items, { product_id: '', quantity: 1, unit_price: 0 }],
                 }))
               }
               className="inline-flex items-center gap-1 text-sm px-3 py-1 rounded-lg bg-primary-600 text-white hover:bg-primary-700"
+              aria-label="Add line"
+              title="Add line"
             >
-              <Plus size={16} /> Add line
+              <Plus size={16} />
             </button>
+          </div>
+
+          <div className="hidden md:grid md:grid-cols-[2fr_1fr_1fr_auto] gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400 px-1">
+            <span>Item</span>
+            <span className="text-right">Qty</span>
+            <span className="text-right">Unit Price</span>
+            <span className="text-right pr-6">Line Total / Action</span>
           </div>
 
           <div className="space-y-2">
@@ -279,17 +332,27 @@ const SaleCreate = () => {
                     recalcTotals(next, saleForm.discount);
                   }}
                 />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = saleForm.items.filter((_, i) => i !== idx);
-                    setSaleForm(prev => ({ ...prev, items: next }));
-                    recalcTotals(next, saleForm.discount);
-                  }}
-                  className="px-2 py-1 text-xs rounded-lg border border-slate-200 dark:border-slate-700 text-red-500 hover:bg-red-50"
-                >
-                  Remove
-                </button>
+                <div className="flex items-center justify-between md:justify-end gap-3 text-sm text-slate-600 dark:text-slate-300">
+                  <div className="flex items-center gap-2">
+                    <span className="md:hidden font-medium">Line Total</span>
+                    <span className="font-semibold">
+                      ${(Number(it.quantity || 0) * Number(it.unit_price || 0)).toFixed(2)}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = saleForm.items.filter((_, i) => i !== idx);
+                      setSaleForm(prev => ({ ...prev, items: next }));
+                      recalcTotals(next, saleForm.discount);
+                    }}
+                    className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 text-red-500 hover:bg-red-50"
+                    aria-label="Remove line"
+                    title="Remove line"
+                  >
+                    ×
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -321,7 +384,7 @@ const SaleCreate = () => {
           </div>
         </div>
 
-        {saleForm.status === 'partial' && saleForm.status !== 'void' && (
+        {saleForm.status === 'partial' && !isDebt && (
           <div className="flex justify-end">
             <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
               Amount Paid Now

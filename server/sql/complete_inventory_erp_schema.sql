@@ -231,6 +231,23 @@ CREATE TABLE IF NOT EXISTS ims.audit_logs (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS ims.notifications (
+    notification_id BIGSERIAL PRIMARY KEY,
+    branch_id BIGINT REFERENCES ims.branches(branch_id),
+    user_id BIGINT NOT NULL REFERENCES ims.users(user_id),
+    created_by BIGINT REFERENCES ims.users(user_id),
+    title VARCHAR(160) NOT NULL,
+    message TEXT NOT NULL,
+    category VARCHAR(50) NOT NULL DEFAULT 'system',
+    link VARCHAR(240),
+    is_read BOOLEAN NOT NULL DEFAULT FALSE,
+    read_at TIMESTAMPTZ,
+    meta JSONB,
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    deleted_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- =========================================================
 -- 4) MASTER DATA (Existing)
 -- =========================================================
@@ -977,6 +994,31 @@ CREATE TABLE IF NOT EXISTS ims.tax_returns (
 );
 
 -- =========================================================
+-- 15.12) SOFT DELETE BASELINE (applies on fresh init)
+-- Ensures core inventory tables support soft delete on first load
+-- (Triggers/migrations may also add these; keeping here for portability)
+-- =========================================================
+ALTER TABLE ims.products
+  ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+ALTER TABLE ims.warehouses
+  ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+ALTER TABLE ims.branches
+  ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+ALTER TABLE ims.warehouse_stock
+  ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+ALTER TABLE ims.branch_stock
+  ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+-- =========================================================
 -- 16) CREATE INDEXES FOR ALL TABLES
 -- =========================================================
 
@@ -1028,6 +1070,10 @@ CREATE INDEX IF NOT EXISTS idx_adj_items_prd ON ims.stock_adjustment_items(produ
 CREATE INDEX IF NOT EXISTS idx_audit_user ON ims.audit_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_date ON ims.audit_logs(created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON ims.audit_logs(entity, entity_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_user ON ims.notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON ims.notifications(created_at);
+CREATE INDEX IF NOT EXISTS idx_notifications_unread ON ims.notifications(user_id, is_read)
+WHERE is_deleted = FALSE;
 CREATE INDEX IF NOT EXISTS idx_employees_branch ON ims.employees(branch_id);
 CREATE INDEX IF NOT EXISTS idx_emp_salary_emp ON ims.employee_salary(emp_id);
 CREATE INDEX IF NOT EXISTS idx_payroll_branch ON ims.payroll_runs(branch_id);

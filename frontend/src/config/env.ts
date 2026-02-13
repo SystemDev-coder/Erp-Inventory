@@ -96,6 +96,13 @@ export const API = {
     LIST: '/api/receipts',
     ITEM: (id: number) => `/api/receipts/${id}`,
   },
+
+  NOTIFICATIONS: {
+    LIST: '/api/notifications',
+    ITEM: (id: number) => `/api/notifications/${id}`,
+    MARK_READ: (id: number) => `/api/notifications/${id}/read`,
+    MARK_ALL_READ: '/api/notifications/read-all',
+  },
   
   // Health check
   HEALTH: '/api/health',

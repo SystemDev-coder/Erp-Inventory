@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+﻿import { useCallback, useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import {
   Home,
@@ -20,7 +20,10 @@ import {
   LucideIcon,
 } from 'lucide-react';
 import { useSidebar } from '../context/SidebarContext';
-import { userService, SidebarModule } from '../services/user.service';
+import { userService } from '../services/user.service';
+
+type SidebarItem = { id: string; name: string; route: string };
+type SidebarModule = { id: string; name: string; icon: string; route: string; items?: SidebarItem[] };
 
 const ICON_MAP: Record<string, LucideIcon> = {
   Home,
@@ -80,9 +83,13 @@ const AppSidebar: React.FC = () => {
   }, []);
 
   const isActive = useCallback(
-    (path: string) => {
-      if (path === '/') return location.pathname === '/';
-      return location.pathname.startsWith(path);
+    (path: string, exact = false) => {
+      const current = location.pathname.replace(/\/+$/, '') || '/';
+      const target = path.replace(/\/+$/, '') || '/';
+
+      if (target === '/') return current === '/';
+      if (exact) return current === target;
+      return current === target || current.startsWith(`${target}/`);
     },
     [location.pathname]
   );
@@ -213,7 +220,7 @@ const AppSidebar: React.FC = () => {
                     {showExpanded && hasChildren && isOpen && (
                       <ul className="ml-4 mt-0.5 pl-6 border-l border-slate-200 dark:border-slate-700 space-y-0.5">
                         {mod.items!.map((sub) => {
-                          const subActive = isActive(sub.route);
+                          const subActive = isActive(sub.route, true);
                           return (
                             <li key={sub.id}>
                               <Link
@@ -252,3 +259,5 @@ const AppSidebar: React.FC = () => {
 };
 
 export default AppSidebar;
+
+

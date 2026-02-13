@@ -1,5 +1,5 @@
 import { useState, FormEvent } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router-dom";
 import { ChevronLeftIcon, EyeCloseIcon, EyeIcon } from "../../icons";
 import Label from "../form/Label";
 import Input from "../form/input/InputField";
@@ -74,7 +74,8 @@ export default function SignInForm() {
                   <Label>
                     Username or Phone <span className="text-error-500">*</span>{" "}
                   </Label>
-                  <Input 
+                  <Input
+                    className="border-2 border-slate-300 focus:border-primary-500 focus:ring-primary-500/20 dark:border-slate-700"
                     placeholder="Enter username or phone" 
                     value={identifier}
                     onChange={(e) => setIdentifier(e.target.value)}
@@ -88,6 +89,7 @@ export default function SignInForm() {
                   <div className="relative">
                     <Input
                       type={showPassword ? "text" : "password"}
+                      className="border-2 border-slate-300 focus:border-primary-500 focus:ring-primary-500/20 dark:border-slate-700"
                       placeholder="Enter your password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}

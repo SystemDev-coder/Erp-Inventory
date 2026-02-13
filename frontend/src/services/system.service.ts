@@ -5,7 +5,12 @@
 
 import { apiClient, ApiResponse } from './api';
 import { API } from '../config/env';
-import { Permission } from './user.service';
+
+export interface Permission {
+  perm_id: number;
+  perm_key: string;
+  perm_name: string;
+}
 
 export interface Role {
   role_id: number;
