@@ -10,6 +10,7 @@ import Home from "./pages/Home/Home";
 import Products from "./pages/Products/Products";
 import Stock from "./pages/Stock/Stock";
 import Sales from "./pages/Sales/Sales";
+import SaleCreate from "./pages/Sales/SaleCreate";
 import Purchases from "./pages/Purchases/Purchases";
 import PurchaseEditor from "./pages/Purchases/PurchaseEditor";
 import Returns from "./pages/Returns/Returns";
@@ -46,6 +47,7 @@ function AppRoutes() {
           <Route path="/purchased-items" element={<Products />} />
           <Route path="/stock" element={<Stock />} />
           <Route path="/sales" element={<Sales />} />
+          <Route path="/sales/new" element={<SaleCreate />} />
           <Route path="/purchases" element={<Purchases />} />
           <Route path="/purchases/new" element={<PurchaseEditor />} />
           <Route path="/purchases/:id" element={<PurchaseEditor />} />

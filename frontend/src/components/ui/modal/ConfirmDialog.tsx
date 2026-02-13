@@ -11,6 +11,10 @@ interface ConfirmDialogProps {
     cancelText?: string;
     variant?: 'danger' | 'warning' | 'info' | 'success';
     isLoading?: boolean;
+    /**
+     * When true, hide the Cancel button and only show a single confirm/OK button.
+     */
+    hideCancel?: boolean;
 }
 
 export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
@@ -23,6 +27,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
     cancelText = 'Cancel',
     variant = 'warning',
     isLoading = false,
+    hideCancel = false,
 }) => {
     if (!isOpen) return null;
 
@@ -95,13 +100,15 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
 
                     {/* Actions */}
                     <div className="flex gap-2 px-6 pb-6">
-                        <button
-                            onClick={onClose}
-                            disabled={isLoading}
-                            className="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-medium hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            {cancelText}
-                        </button>
+                        {!hideCancel && (
+                            <button
+                                onClick={onClose}
+                                disabled={isLoading}
+                                className="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-medium hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {cancelText}
+                            </button>
+                        )}
                         <button
                             onClick={handleConfirm}
                             disabled={isLoading}

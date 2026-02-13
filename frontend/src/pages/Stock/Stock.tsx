@@ -55,7 +55,6 @@ const Stock = () => {
             id: 'levels',
             label: 'Stock Levels',
             icon: Warehouse,
-            badge: mockStock.length,
             content: (
                 <DataTable
                     data={mockStock}
@@ -69,7 +68,6 @@ const Stock = () => {
             id: 'low',
             label: 'Low Stock',
             icon: AlertCircle,
-            badge: 2,
             content: (
                 <div className="bg-white dark:bg-slate-900 p-12 rounded-2xl border border-slate-200 dark:border-slate-800 text-center text-slate-500">
                     Items currently running low will be listed here.

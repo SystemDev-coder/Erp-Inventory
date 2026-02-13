@@ -46,7 +46,8 @@ const Products = () => {
     setLoading(false);
   };
 
-  useEffect(() => { fetchData(); }, []);
+  // Stop automatic loading on mount; items will load via explicit Display/search/filter actions
+  useEffect(() => { /* no initial fetch */ }, []);
 
   const debouncedSearch = useMemo(
     () =>
@@ -119,9 +120,9 @@ const Products = () => {
         <div className="flex flex-wrap gap-3 items-center">
           <TabActionToolbar
             title="Items"
-            hidePrimary
+            primaryAction={{ label: 'Add', onClick: () => {} }}
+            onDisplay={() => fetchData(search, supplierFilter)}
             onSearch={(value: string) => { setSearch(value); debouncedSearch(value); }}
-            searchPlaceholder="Search item, supplier..."
           />
           <div className="flex items-center gap-2">
             <span className="text-sm text-slate-600 dark:text-slate-300">Supplier</span>

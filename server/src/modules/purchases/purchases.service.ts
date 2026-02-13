@@ -181,6 +181,41 @@ export const purchasesService = {
         }
       }
 
+      // ---- Financial side effects: supplier remaining balance & account balance ----
+      // 1) Always increase supplier remaining_balance by the full purchase total (if not void)
+      if (total > 0 && (input.status || 'received') !== 'void') {
+        await client.query(
+          `UPDATE ims.suppliers
+             SET remaining_balance = remaining_balance + $1
+           WHERE supplier_id = $2`,
+          [total, input.supplierId]
+        );
+      }
+
+      // 2) If there is an inline payment, reduce account balance and supplier remaining_balance
+      const paidAmountRaw = input.paidAmount ?? 0;
+      const payFromAccId = input.payFromAccId;
+      if (payFromAccId && paidAmountRaw > 0 && (input.status || 'received') !== 'void') {
+        const paidAmount = Math.min(paidAmountRaw, total);
+        if (paidAmount > 0) {
+          // Subtract from cash/bank account
+          await client.query(
+            `UPDATE ims.accounts
+               SET balance = balance - $1
+             WHERE acc_id = $2`,
+            [paidAmount, payFromAccId]
+          );
+
+          // Reduce supplier remaining balance
+          await client.query(
+            `UPDATE ims.suppliers
+               SET remaining_balance = remaining_balance - $1
+             WHERE supplier_id = $2`,
+            [paidAmount, input.supplierId]
+          );
+        }
+      }
+
       await client.query('COMMIT');
       return purchase;
     } catch (error) {

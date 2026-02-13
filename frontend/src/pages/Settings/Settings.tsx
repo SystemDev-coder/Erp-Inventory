@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
 import { Home, Building, History, Plus, Pencil, Trash2, Users } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
@@ -20,6 +20,84 @@ const formatAuditValue = (val: any) => {
     return parts.join(', ');
   }
   return String(val);
+};
+
+const formatChangedOnly = (oldVal: any, newVal: any) => {
+  // If both are objects, show only fields that changed; otherwise fallback to new/old
+  if (oldVal && newVal && typeof oldVal === 'object' && typeof newVal === 'object') {
+    const keys = Array.from(new Set([...Object.keys(oldVal), ...Object.keys(newVal)]));
+    const changed = keys
+      .filter((k) => JSON.stringify(oldVal[k]) !== JSON.stringify(newVal[k]))
+      .map((k) => `${k}: ${formatAuditValue(newVal[k] !== undefined ? newVal[k] : oldVal[k])}`);
+    return changed.length ? changed.join(', ') : 'No field changes';
+  }
+  if (newVal !== undefined && newVal !== null) return formatAuditValue(newVal);
+  if (oldVal !== undefined && oldVal !== null) return formatAuditValue(oldVal);
+  return '—';
+};
+
+const getAuditChangedValues = (oldVal: any, newVal: any) => {
+  // If both sides are empty or identical, show nothing
+  if (
+    (oldVal === undefined || oldVal === null) &&
+    (newVal === undefined || newVal === null)
+  ) {
+    return { oldText: '—', newText: '—' };
+  }
+
+  const isPlainObject = (v: any) =>
+    v !== null && typeof v === 'object' && !Array.isArray(v);
+
+  if (isPlainObject(oldVal) && isPlainObject(newVal)) {
+    const allKeys = Array.from(
+      new Set([...Object.keys(oldVal), ...Object.keys(newVal)])
+    );
+
+    const changedKeys = allKeys.filter((key) => {
+      const before = (oldVal as any)[key];
+      const after = (newVal as any)[key];
+      return JSON.stringify(before) !== JSON.stringify(after);
+    });
+
+    if (!changedKeys.length) {
+      return { oldText: '—', newText: '—' };
+    }
+
+    const oldText = changedKeys
+      .map((key) => `${key}: ${formatAuditValue((oldVal as any)[key])}`)
+      .join(', ');
+
+    const newText = changedKeys
+      .map((key) => `${key}: ${formatAuditValue((newVal as any)[key])}`)
+      .join(', ');
+
+    return { oldText: oldText || '—', newText: newText || '—' };
+  }
+
+  // Fallback for non-objects or when only one side exists
+  if (JSON.stringify(oldVal) === JSON.stringify(newVal)) {
+    return { oldText: '—', newText: '—' };
+  }
+
+  return {
+    oldText: formatAuditValue(oldVal),
+    newText: formatAuditValue(newVal),
+  };
+};
+
+const getDeviceLabel = (userAgent?: string | null) => {
+  if (!userAgent) return '—';
+  const ua = userAgent.toLowerCase();
+
+  if (ua.includes('iphone') || ua.includes('android') || ua.includes('mobile') || ua.includes('ipad') || ua.includes('tablet')) {
+    return 'Mobile';
+  }
+
+  if (ua.includes('windows') || ua.includes('macintosh') || ua.includes('linux')) {
+    return 'Laptop/Desktop';
+  }
+
+  return 'Laptop/Desktop';
 };
 
 const Settings = () => {
@@ -175,18 +253,10 @@ const Settings = () => {
     if (res.success && res.data?.roles) setRoles(res.data.roles);
   };
 
+  // Initial data will now be loaded explicitly via "Display" buttons per tab
   useEffect(() => {
-    loadCompany();
-    loadBranches();
-    loadAudit();
+    // No automatic loading on mount
   }, []);
-
-  useEffect(() => {
-    if (isAdmin) {
-      loadUsers();
-      loadRoles();
-    }
-  }, [isAdmin]);
 
   const openCompanyModal = () => {
     setCompanyModalOpen(true);
@@ -320,13 +390,22 @@ const Settings = () => {
     <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800">
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">Company Info</h3>
-        <button
-          onClick={openCompanyModal}
-          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white text-sm hover:bg-primary-700"
-          disabled={companyLoading}
-        >
-          <Plus className="w-4 h-4" /> {company ? 'Edit' : 'Add'} Company
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => loadCompany()}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
+            disabled={companyLoading}
+          >
+            Display
+          </button>
+          <button
+            onClick={openCompanyModal}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white text-sm hover:bg-primary-700"
+            disabled={companyLoading}
+          >
+            <Plus className="w-4 h-4" /> {company ? 'Edit' : 'Add'} Company
+          </button>
+        </div>
       </div>
       {companyLoading ? (
         <p className="text-sm text-slate-500">Loading...</p>
@@ -426,12 +505,21 @@ const Settings = () => {
     <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800">
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">Branches</h3>
-        <button
-          onClick={() => openBranchModal()}
-          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white text-sm hover:bg-primary-700"
-        >
-          <Plus className="w-4 h-4" /> Add Branch
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => loadBranches()}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
+            disabled={branchesLoading}
+          >
+            Display
+          </button>
+          <button
+            onClick={() => openBranchModal()}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white text-sm hover:bg-primary-700"
+          >
+            <Plus className="w-4 h-4" /> Add Branch
+          </button>
+        </div>
       </div>
       {branchesLoading ? (
         <p className="text-sm text-slate-500">Loading...</p>
@@ -519,6 +607,16 @@ const Settings = () => {
 
   const auditContent = (
     <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800">
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">Audit History</h3>
+        <button
+          onClick={() => loadAudit(1)}
+          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
+          disabled={auditLoading}
+        >
+          Display
+        </button>
+      </div>
       {/** helper for concise display */} 
       {/** placed here to keep file-local scope */} 
       {/** eslint-disable-next-line */} 
@@ -533,36 +631,43 @@ const Settings = () => {
             <thead>
               <tr className="text-left text-slate-500">
                 <th className="py-2 pr-4">Table</th>
-                <th className="py-2 pr-4">Record ID</th>
                 <th className="py-2 pr-4">User</th>
                 <th className="py-2 pr-4">Action</th>
                 <th className="py-2 pr-4">Old Value</th>
                 <th className="py-2 pr-4">New Value</th>
-                <th className="py-2 pr-4">IP</th>
                 <th className="py-2 pr-4">Device</th>
                 <th className="py-2 pr-4">Date &amp; Time</th>
               </tr>
             </thead>
             <tbody>
-              {auditLogs.map((log) => (
-                <tr key={log.audit_id} className="border-t border-slate-200 dark:border-slate-800">
-                  <td className="py-2 pr-4 text-slate-800 dark:text-slate-100">{log.entity || '—'}</td>
-                  <td className="py-2 pr-4 text-slate-600 dark:text-slate-300">{log.entity_id ?? '—'}</td>
-                  <td className="py-2 pr-4 text-slate-600 dark:text-slate-300">{log.username || log.user_id || '—'}</td>
-                  <td className="py-2 pr-4 text-slate-800 dark:text-slate-100 capitalize">{log.action}</td>
-                  <td className="py-2 pr-4 text-slate-500 max-w-xs truncate" title={log.old_value ? JSON.stringify(log.old_value) : ''}>
-                    {formatAuditValue(log.old_value)}
-                  </td>
-                  <td className="py-2 pr-4 text-slate-500 max-w-xs truncate" title={log.new_value ? JSON.stringify(log.new_value) : ''}>
-                    {formatAuditValue(log.new_value)}
-                  </td>
-                  <td className="py-2 pr-4 text-slate-500">{log.ip_address || '—'}</td>
-                  <td className="py-2 pr-4 text-slate-500 max-w-xs truncate" title={log.user_agent || ''}>
-                    {log.user_agent || '—'}
-                  </td>
-                  <td className="py-2 pr-4 text-slate-500">{new Date(log.created_at).toLocaleString()}</td>
-                </tr>
-              ))}
+              {auditLogs.map((log) => {
+                const { oldText, newText } = getAuditChangedValues(log.old_value, log.new_value);
+                return (
+                  <tr key={log.audit_id} className="border-t border-slate-200 dark:border-slate-800">
+                    <td className="py-2 pr-4 text-slate-800 dark:text-slate-100">{log.entity || '—'}</td>
+                    <td className="py-2 pr-4 text-slate-600 dark:text-slate-300">{log.username || log.user_id || '—'}</td>
+                    <td className="py-2 pr-4 text-slate-800 dark:text-slate-100 capitalize">{log.action}</td>
+                    <td
+                      className="py-2 pr-4 text-slate-500 max-w-xs truncate"
+                      title={log.old_value ? JSON.stringify(log.old_value) : ''}
+                    >
+                      {oldText}
+                    </td>
+                    <td
+                      className="py-2 pr-4 text-slate-500 max-w-xs truncate"
+                      title={log.new_value ? JSON.stringify(log.new_value) : ''}
+                    >
+                      {newText}
+                    </td>
+                    <td className="py-2 pr-4 text-slate-500 max-w-xs truncate" title={log.user_agent || ''}>
+                      {getDeviceLabel(log.user_agent)}
+                    </td>
+                    <td className="py-2 pr-4 text-slate-500">
+                      {new Date(log.created_at).toLocaleString()}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -595,12 +700,20 @@ const Settings = () => {
     <div className="space-y-3">
       <div className="flex justify-between items-center">
         <div className="text-sm text-slate-600 dark:text-slate-300">Manage system users</div>
-        <button
-          onClick={() => openUserModal()}
-          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 text-sm"
-        >
-          <Plus size={16} /> New User
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => { loadUsers(); loadRoles(); }}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
+          >
+            Display
+          </button>
+          <button
+            onClick={() => openUserModal()}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 text-sm"
+          >
+            <Plus size={16} /> New User
+          </button>
+        </div>
       </div>
       <DataTable
         data={filteredUsers}
@@ -626,11 +739,8 @@ const Settings = () => {
     ...(isAdmin ? [{ id: 'users', label: 'Users', icon: Users, content: usersContent }] : []),
   ], [companyContent, branchesContent, auditContent, usersContent, isAdmin]);
 
-  const handleTabChange = (tabId: string) => {
-    if (tabId === 'audit') loadAudit();
-    if (tabId === 'users' && isAdmin) loadUsers();
-    if (tabId === 'branches') loadBranches();
-    if (tabId === 'company') loadCompany();
+  const handleTabChange = (_tabId: string) => {
+    // Data loading is now triggered only by explicit "Display" buttons in each tab
   };
 
   return (
@@ -706,6 +816,10 @@ const Settings = () => {
 };
 
 export default Settings;
+
+
+
+
 
 
 

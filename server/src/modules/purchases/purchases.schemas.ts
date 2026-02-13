@@ -22,6 +22,9 @@ export const purchaseSchema = z.object({
   fxRate: z.coerce.number().positive().default(1),
   note: z.string().optional().or(z.literal('')),
   items: z.array(purchaseItemSchema).optional(),
+  // Optional inline payment details (used to update accounts and supplier balance)
+  payFromAccId: z.coerce.number().int().positive().optional(),
+  paidAmount: z.coerce.number().nonnegative().optional(),
 });
 
 export type PurchaseInput = z.infer<typeof purchaseSchema>;

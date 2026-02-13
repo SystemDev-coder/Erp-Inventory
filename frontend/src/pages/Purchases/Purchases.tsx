@@ -61,39 +61,60 @@ const Purchases = () => {
     is_active: true,
   } as Supplier);
 
-  const fetchData = async (term?: string, status?: string) => {
+  const loadPurchases = async (term?: string, status?: string) => {
     setLoading(true);
-    const [pRes, sRes, iRes] = await Promise.all([
-      purchaseService.list(term, status),
-      supplierService.list(),
-      purchaseService.listItems({ search: term }),
-    ]);
-    if (pRes.success && pRes.data?.purchases) {
-      setPurchases(pRes.data.purchases);
+    const res = await purchaseService.list(term, status);
+    if (res.success && res.data?.purchases) {
+      setPurchases(res.data.purchases);
     } else {
-      showToast('error', 'Load failed', pRes.error || 'Could not load purchases');
-    }
-    if (sRes.success && sRes.data?.suppliers) {
-      setSuppliers(sRes.data.suppliers);
-    }
-    if (iRes.success && iRes.data?.items) {
-      setItems(iRes.data.items);
+      showToast('error', 'Load failed', res.error || 'Could not load purchases');
     }
     setLoading(false);
   };
 
-  useEffect(() => { fetchData(); }, []);
+  const loadSuppliers = async (term?: string) => {
+    setLoading(true);
+    const res = await supplierService.list(term);
+    if (res.success && res.data?.suppliers) {
+      setSuppliers(res.data.suppliers);
+    } else {
+      showToast('error', 'Load failed', res.error || 'Could not load suppliers');
+    }
+    setLoading(false);
+  };
 
-  const debouncedSearch = useMemo(
+  const loadItems = async (term?: string) => {
+    setLoading(true);
+    const res = await purchaseService.listItems({ search: term });
+    if (res.success && res.data?.items) {
+      setItems(res.data.items);
+    } else {
+      showToast('error', 'Load failed', res.error || 'Could not load items');
+    }
+    setLoading(false);
+  };
+
+  // Stop automatic loading on mount; data will load via explicit Display/search/filter actions
+  useEffect(() => { /* no initial fetch on mount */ }, []);
+
+  const debouncedPurchaseSearch = useMemo(
     () =>
       debounce((term: string) => {
-        fetchData(term, statusFilter);
+        loadPurchases(term, statusFilter);
       }, 300),
     [statusFilter]
   );
 
-  useEffect(() => () => debouncedSearch.cancel(), [debouncedSearch]);
-  useEffect(() => { fetchData(search, statusFilter); }, [statusFilter]);
+  const debouncedSupplierSearch = useMemo(
+    () =>
+      debounce((term: string) => {
+        loadSuppliers(term);
+      }, 300),
+    []
+  );
+
+  useEffect(() => () => debouncedPurchaseSearch.cancel(), [debouncedPurchaseSearch]);
+  useEffect(() => () => debouncedSupplierSearch.cancel(), [debouncedSupplierSearch]);
 
   const columns: ColumnDef<Purchase>[] = useMemo(() => [
     {
@@ -168,7 +189,7 @@ const Purchases = () => {
         remaining_balance: 0,
         is_active: true,
       } as Supplier);
-      fetchData(search);
+      loadSuppliers(search);
     } else {
       showToast('error', 'Save failed', res.error || 'Check the form');
     }
@@ -186,7 +207,7 @@ const Purchases = () => {
     const res = await supplierService.remove(supplierToDelete.supplier_id);
     if (res.success) {
       showToast('success', 'Supplier deleted');
-      fetchData(search);
+      loadSuppliers(search);
     } else {
       showToast('error', 'Delete failed', res.error || 'Cannot delete supplier');
     }
@@ -202,7 +223,7 @@ const Purchases = () => {
     const res = await purchaseService.remove(purchaseToDelete.purchase_id);
     if (res.success) {
       showToast('success', 'Deleted', `Purchase #${purchaseToDelete.purchase_id} removed`);
-      fetchData(search);
+      loadPurchases(search, statusFilter);
     } else {
       showToast('error', 'Delete failed', res.error || 'Could not delete purchase');
     }
@@ -261,20 +282,23 @@ const Purchases = () => {
       id: 'list',
       label: 'Purchases',
       icon: ShoppingBag,
-      badge: purchases.length,
       content: (
         <div className="space-y-2">
           <TabActionToolbar
             title="Purchase Orders"
             primaryAction={{ label: 'New Purchase', onClick: () => navigate('/purchases/new') }}
-            onSearch={(value: string) => { setSearch(value); debouncedSearch(value); }}
+            onDisplay={() => loadPurchases(search, statusFilter)}
+            onSearch={(value: string) => { setSearch(value); debouncedPurchaseSearch(value); }}
             onExport={() => showToast('info', 'Export', 'Export coming soon')}
           />
           <div className="flex flex-wrap gap-2 px-1">
             {statusFilters.map((s) => (
               <button
                 key={s}
-                onClick={() => setStatusFilter(s)}
+                onClick={() => {
+                  setStatusFilter(s);
+                  loadPurchases(search, s);
+                }}
                 className={`px-3 py-1 rounded-full text-sm border ${
                   statusFilter === s
                     ? 'bg-primary-600 text-white border-primary-600'
@@ -300,7 +324,6 @@ const Purchases = () => {
       id: 'suppliers',
       label: 'Suppliers',
       icon: Users,
-      badge: suppliers.length,
       content: (
         <div className="space-y-2">
           <TabActionToolbar
@@ -322,7 +345,8 @@ const Purchases = () => {
                 setSupplierModalOpen(true);
               },
             }}
-            onSearch={(value: string) => { setSearch(value); debouncedSearch(value); }}
+            onDisplay={() => loadSuppliers(search)}
+            onSearch={(value: string) => { setSearch(value); debouncedSupplierSearch(value); }}
           />
           <DataTable
             data={suppliers}
@@ -339,9 +363,16 @@ const Purchases = () => {
       id: 'items',
       label: 'Items',
       icon: ShoppingBag,
-      badge: items.length,
       content: (
         <div className="space-y-2">
+          <div className="flex justify-end">
+            <button
+              onClick={() => loadItems(search)}
+              className="px-3 py-2 text-sm font-medium rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all"
+            >
+              Display
+            </button>
+          </div>
           <DataTable
             data={items}
             columns={itemColumns}
@@ -381,16 +412,43 @@ const Purchases = () => {
       <ConfirmDialog
         isOpen={supplierDeleteOpen}
         onClose={() => { setSupplierDeleteOpen(false); setSupplierToDelete(null); }}
-        onConfirm={confirmDeleteSupplier}
-        title="Delete Supplier?"
+        onConfirm={() => {
+          if (supplierToDelete && Number(supplierToDelete.remaining_balance || 0) > 0) {
+            // Just acknowledge the warning; do NOT delete
+            return;
+          }
+          confirmDeleteSupplier();
+        }}
+        title={
+          supplierToDelete && Number(supplierToDelete.remaining_balance || 0) > 0
+            ? 'Supplier Has Remaining Balance'
+            : 'Delete Supplier?'
+        }
         message={
           supplierToDelete
-            ? `Deleting supplier "${supplierToDelete.supplier_name}" will remove their record. This cannot be undone.`
+            ? Number(supplierToDelete.remaining_balance || 0) > 0
+              ? `N.B: This supplier "${supplierToDelete.supplier_name}" has remaining balance of $${Number(
+                  supplierToDelete.remaining_balance || 0
+                ).toFixed(
+                  2
+                )}. If you need to remove this supplier, first settle their balance (pay all remaining money), then you can delete them.`
+              : `Deleting supplier "${supplierToDelete.supplier_name}" will remove their record. This cannot be undone.`
             : 'Are you sure you want to delete this supplier?'
         }
-        confirmText="Delete"
+        confirmText={
+          supplierToDelete && Number(supplierToDelete.remaining_balance || 0) > 0
+            ? 'OK'
+            : 'Delete'
+        }
         cancelText="Cancel"
-        variant="danger"
+        hideCancel={
+          !!(supplierToDelete && Number(supplierToDelete.remaining_balance || 0) > 0)
+        }
+        variant={
+          supplierToDelete && Number(supplierToDelete.remaining_balance || 0) > 0
+            ? 'warning'
+            : 'danger'
+        }
         isLoading={loading}
       />
 

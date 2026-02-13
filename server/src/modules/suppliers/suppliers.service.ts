@@ -1,4 +1,5 @@
 import { queryMany, queryOne } from '../../db/query';
+import { ApiError } from '../../utils/ApiError';
 
 export interface Supplier {
   supplier_id: number;
@@ -58,6 +59,15 @@ export const suppliersService = {
 
   // Create supplier
   async createSupplier(input: SupplierInput): Promise<Supplier> {
+    // Enforce unique supplier name (case-insensitive)
+    const existing = await queryOne<{ supplier_id: number }>(
+      `SELECT supplier_id FROM ims.suppliers WHERE LOWER(supplier_name) = LOWER($1)`,
+      [input.supplierName]
+    );
+    if (existing) {
+      throw ApiError.conflict('Supplier name already exists');
+    }
+
     return queryOne<Supplier>(
       `INSERT INTO ims.suppliers (
         supplier_name, company_name, contact_person, contact_phone, phone, address, location, remaining_balance, is_active
@@ -84,6 +94,14 @@ export const suppliersService = {
     let paramCount = 1;
 
     if (input.supplierName !== undefined) {
+      // Prevent renaming to an existing supplier name
+      const existing = await queryOne<{ supplier_id: number }>(
+        `SELECT supplier_id FROM ims.suppliers WHERE LOWER(supplier_name) = LOWER($1) AND supplier_id <> $2`,
+        [input.supplierName, id]
+      );
+      if (existing) {
+        throw ApiError.conflict('Supplier name already exists');
+      }
       updates.push(`supplier_name = $${paramCount++}`);
       values.push(input.supplierName);
     }

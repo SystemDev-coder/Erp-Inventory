@@ -81,7 +81,8 @@ const Finance = () => {
         setLoading(false);
     };
 
-    useEffect(() => { fetchAccounts(); }, []);
+    // Stop automatic loading on mount; accounts will load via explicit Display button
+    useEffect(() => { /* no initial fetch */ }, []);
 
     const tabs = [
         {
@@ -113,12 +114,21 @@ const Finance = () => {
                 <div className="space-y-3">
                     <div className="flex justify-between items-center">
                         <div className="text-sm text-slate-600 dark:text-slate-300">Bank and cash accounts</div>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => fetchAccounts()}
+                            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
+                            disabled={loading}
+                        >
+                            Display
+                        </button>
                         <button
                             onClick={() => { setAccountForm({ name: '', institution: '', currency_code: 'USD', balance: 0, is_active: true }); setEditingId(null); setIsAddOpen(true); }}
                             className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 text-sm"
                         >
                             <Plus size={16} /> New Account
                         </button>
+                    </div>
                     </div>
                     <DataTable
                         data={accounts}

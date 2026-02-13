@@ -208,7 +208,12 @@ const PurchaseEditor = () => {
       status: form.status,
       note: form.note,
       items: preparedItems,
-      // acc_id and paid_amount are UI-only; backend schema currently doesn't accept them.
+      // Inline payment info: optional, will update supplier remaining balance and account
+      payFromAccId: form.status === 'void' || !form.acc_id ? undefined : Number(form.acc_id),
+      paidAmount:
+        form.status === 'void'
+          ? undefined
+          : Number(form.paid_amount || 0),
     };
     const res = isEdit
       ? await purchaseService.update(Number(id), payload)

@@ -1,4 +1,5 @@
 import { queryMany, queryOne } from '../../db/query';
+import { ApiError } from '../../utils/ApiError';
 
 export interface Branch {
   branch_id: number;
@@ -93,6 +94,15 @@ export const settingsService = {
   },
 
   async createBranch(input: { branchName: string; location?: string | null; isActive?: boolean }): Promise<Branch> {
+    // Prevent duplicate branch names (case-insensitive)
+    const existing = await queryOne<{ branch_id: number }>(
+      `SELECT branch_id FROM ims.branches WHERE LOWER(branch_name) = LOWER($1)`,
+      [input.branchName]
+    );
+    if (existing) {
+      throw ApiError.conflict('Branch name already exists');
+    }
+
     return queryOne<Branch>(
       `INSERT INTO ims.branches (branch_name, location, is_active)
        VALUES ($1, $2, COALESCE($3, true))
@@ -107,6 +117,14 @@ export const settingsService = {
     let param = 2;
 
     if (input.branchName !== undefined) {
+      // Ensure new branch name is not taken by another branch
+      const existing = await queryOne<{ branch_id: number }>(
+        `SELECT branch_id FROM ims.branches WHERE LOWER(branch_name) = LOWER($1) AND branch_id <> $2`,
+        [input.branchName, id]
+      );
+      if (existing) {
+        throw ApiError.conflict('Branch name already exists');
+      }
       updates.push(`branch_name = $${param++}`);
       values.push(input.branchName);
     }

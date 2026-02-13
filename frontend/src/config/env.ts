@@ -86,6 +86,12 @@ export const API = {
     ITEM: (id: number) => `/api/purchases/${id}`,
   },
 
+  // Sales endpoints
+  SALES: {
+    LIST: '/api/sales',
+    ITEM: (id: number) => `/api/sales/${id}`,
+  },
+
   RECEIPTS: {
     LIST: '/api/receipts',
     ITEM: (id: number) => `/api/receipts/${id}`,

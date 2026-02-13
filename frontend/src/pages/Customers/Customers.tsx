@@ -64,10 +64,6 @@ const Customers = () => {
         setLoading(false);
     };
 
-    useEffect(() => {
-        fetchCustomers();
-    }, []);
-
     const debouncedSearch = useMemo(
         () =>
             debounce((term: string) => {
@@ -173,12 +169,12 @@ const Customers = () => {
             id: 'all',
             label: 'All Customers',
             icon: Users,
-            badge: customers.length,
             content: (
                 <div className="space-y-2">
                     <TabActionToolbar
                         title="Customer Directory"
                         primaryAction={{ label: 'New Customer', onClick: () => { setForm(emptyForm); setIsAddOpen(true); } }}
+                        onDisplay={() => fetchCustomers()}
                         onSearch={(value: string) => {
                             setSearch(value);
                             debouncedSearch(value);

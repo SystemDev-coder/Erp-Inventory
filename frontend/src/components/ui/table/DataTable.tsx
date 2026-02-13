@@ -153,45 +153,22 @@ export function DataTable<TData>({
                     />
                 </div>
 
-                {/* Actions */}
-                {showToolbarActions && (
+                {/* Actions (column visibility only; Print/Export removed) */}
+                {showToolbarActions && enableColumnVisibility && (
                     <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-                        <button
-                            onClick={() => window.print()}
-                            className="flex items-center gap-2 px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 rounded-xl transition-colors border border-slate-200 dark:border-slate-700"
-                            title="Print"
-                        >
-                            <Printer className="w-4 h-4" />
-                            <span className="hidden sm:inline">Print</span>
-                        </button>
-
-                        <button
-                            onClick={() => {
-                                // Basic CSV export logic
-                                console.log('Exporting data as CSV...');
-                            }}
-                            className="flex items-center gap-2 px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 rounded-xl transition-colors border border-slate-200 dark:border-slate-700"
-                            title="Export CSV"
-                        >
-                            <Download className="w-4 h-4" />
-                            <span className="hidden sm:inline">Export</span>
-                        </button>
-
-                        {enableColumnVisibility && (
-                            <ActionDropdown
-                                trigger={
-                                    <button className="p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 rounded-xl transition-colors border border-slate-200 dark:border-slate-700">
-                                        <Settings2 className="w-4 h-4" />
-                                    </button>
-                                }
-                                items={table
-                                    .getAllColumns()
-                                    .filter((column) => column.getCanHide())
-                                    .map((column) => ({
-                                        label: column.id.charAt(0).toUpperCase() + column.id.slice(1),
-                                        onClick: () => column.toggleVisibility(!column.getIsVisible()),
-                                    }))} />
-                        )}
+                        <ActionDropdown
+                            trigger={
+                                <button className="p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 rounded-xl transition-colors border border-slate-200 dark:border-slate-700">
+                                    <Settings2 className="w-4 h-4" />
+                                </button>
+                            }
+                            items={table
+                                .getAllColumns()
+                                .filter((column) => column.getCanHide())
+                                .map((column) => ({
+                                    label: column.id.charAt(0).toUpperCase() + column.id.slice(1),
+                                    onClick: () => column.toggleVisibility(!column.getIsVisible()),
+                                }))} />
                     </div>
                 )}
             </div>

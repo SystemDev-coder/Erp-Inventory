@@ -49,6 +49,14 @@ export interface PurchaseCreateInput {
   note?: string | null;
   currencyCode?: string;
   fxRate?: number;
+  /**
+   * Optional: account to pay from when recording an immediate payment
+   */
+  payFromAccId?: number;
+  /**
+   * Optional: amount paid now (will reduce supplier remaining balance and account balance)
+   */
+  paidAmount?: number;
   items?: Array<{
     productId?: number;
     quantity: number;

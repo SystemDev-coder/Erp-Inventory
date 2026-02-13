@@ -18,6 +18,11 @@ interface TabActionToolbarProps {
     onExport?: () => void;
     onPrint?: () => void;
     onSearch?: (value: string) => void;
+    /**
+     * Optional explicit data load trigger (e.g. "Display" button)
+     */
+    onDisplay?: () => void;
+    displayLabel?: string;
     sticky?: boolean;
 }
 
@@ -28,6 +33,8 @@ export const TabActionToolbar: React.FC<TabActionToolbarProps> = ({
     onExport,
     onPrint,
     onSearch,
+    onDisplay,
+    displayLabel,
     sticky = false,
 }) => {
     return (
@@ -50,6 +57,14 @@ export const TabActionToolbar: React.FC<TabActionToolbarProps> = ({
                             className="pl-9 pr-4 py-2 w-64 text-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 transition-all"
                         />
                     </div>
+                )}
+                {onDisplay && (
+                    <button
+                        onClick={onDisplay}
+                        className="px-3 py-2 text-sm font-medium rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all"
+                    >
+                        {displayLabel || 'Display'}
+                    </button>
                 )}
                 {/* Export & Print */}
                 {(onExport || onPrint) && (
