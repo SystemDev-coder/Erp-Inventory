@@ -1,2 +1,8 @@
 -- Force sidebar rebuild (cache version bump v3)
-DELETE FROM ims.sidebar_menu_cache;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables 
+             WHERE table_schema = 'ims' AND table_name = 'sidebar_menu_cache') THEN
+    DELETE FROM ims.sidebar_menu_cache;
+  END IF;
+END$$;

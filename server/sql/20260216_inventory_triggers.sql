@@ -1,6 +1,19 @@
 -- Inventory triggers and soft delete support
 BEGIN;
 
+-- Ensure movement_type_enum exists
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace 
+                 WHERE t.typname='movement_type_enum' AND n.nspname='ims') THEN
+    CREATE TYPE ims.movement_type_enum AS ENUM (
+      'opening','purchase','sale','transfer_out','transfer_in',
+      'wh_transfer_out','wh_transfer_in','adjustment',
+      'sales_return','purchase_return'
+    );
+  END IF;
+END$$;
+
 -- Soft delete columns
 DO $$
 BEGIN
@@ -191,41 +204,49 @@ CREATE TRIGGER trg_adjust_items_stock
 AFTER INSERT OR UPDATE OR DELETE ON ims.stock_adjustment_items
 FOR EACH ROW EXECUTE FUNCTION ims.fn_adjust_items_stock();
 
--- Warehouse transfer items trigger
-CREATE OR REPLACE FUNCTION ims.fn_wh_transfer_items_stock() RETURNS TRIGGER AS $$
-DECLARE
-  v_transfer ims.warehouse_transfers%ROWTYPE;
-  v_from_wh BIGINT;
-  v_to_wh BIGINT;
-  v_from_branch BIGINT;
-  v_to_branch BIGINT;
-  v_qty NUMERIC;
-  v_cost NUMERIC;
+-- Warehouse transfer items trigger (only if table exists)
+DO $$
 BEGIN
-  v_transfer := (SELECT * FROM ims.warehouse_transfers WHERE wh_transfer_id = COALESCE(NEW.wh_transfer_id, OLD.wh_transfer_id));
-  v_from_wh := v_transfer.from_wh_id;
-  v_to_wh := v_transfer.to_wh_id;
-  v_from_branch := ims.fn_wh_branch(v_from_wh);
-  v_to_branch := ims.fn_wh_branch(v_to_wh);
-  v_cost := COALESCE(NEW.unit_cost, OLD.unit_cost, 0);
+  IF EXISTS (SELECT 1 FROM information_schema.tables 
+             WHERE table_schema='ims' AND table_name='warehouse_transfers') THEN
+    
+    CREATE OR REPLACE FUNCTION ims.fn_wh_transfer_items_stock() RETURNS TRIGGER AS $fn$
+    DECLARE
+      v_transfer ims.warehouse_transfers%ROWTYPE;
+      v_from_wh BIGINT;
+      v_to_wh BIGINT;
+      v_from_branch BIGINT;
+      v_to_branch BIGINT;
+      v_qty NUMERIC;
+      v_cost NUMERIC;
+    BEGIN
+      v_transfer := (SELECT * FROM ims.warehouse_transfers WHERE wh_transfer_id = COALESCE(NEW.wh_transfer_id, OLD.wh_transfer_id));
+      v_from_wh := v_transfer.from_wh_id;
+      v_to_wh := v_transfer.to_wh_id;
+      v_from_branch := ims.fn_wh_branch(v_from_wh);
+      v_to_branch := ims.fn_wh_branch(v_to_wh);
+      v_cost := COALESCE(NEW.unit_cost, OLD.unit_cost, 0);
 
-  IF TG_OP = 'DELETE' THEN
-    v_qty := OLD.quantity;
-    PERFORM ims.fn_apply_stock_move(v_from_branch, v_from_wh, OLD.product_id, v_qty, 'wh_transfer_in', 'warehouse_transfer_items', OLD.wh_transfer_item_id, v_cost, FALSE);
-    PERFORM ims.fn_apply_stock_move(v_to_branch, v_to_wh, OLD.product_id, -v_qty, 'wh_transfer_out', 'warehouse_transfer_items', OLD.wh_transfer_item_id, v_cost, TRUE);
-    RETURN OLD;
-  ELSE
-    v_qty := COALESCE(NEW.quantity,0) - COALESCE(OLD.quantity,0);
-    PERFORM ims.fn_apply_stock_move(v_from_branch, v_from_wh, COALESCE(NEW.product_id, OLD.product_id), -v_qty, 'wh_transfer_out', 'warehouse_transfer_items', COALESCE(NEW.wh_transfer_item_id, OLD.wh_transfer_item_id), v_cost, TRUE);
-    PERFORM ims.fn_apply_stock_move(v_to_branch, v_to_wh, COALESCE(NEW.product_id, OLD.product_id), v_qty, 'wh_transfer_in', 'warehouse_transfer_items', COALESCE(NEW.wh_transfer_item_id, OLD.wh_transfer_item_id), v_cost, FALSE);
-    RETURN NEW;
+      IF TG_OP = 'DELETE' THEN
+        v_qty := OLD.quantity;
+        PERFORM ims.fn_apply_stock_move(v_from_branch, v_from_wh, OLD.product_id, v_qty, 'wh_transfer_in', 'warehouse_transfer_items', OLD.wh_transfer_item_id, v_cost, FALSE);
+        PERFORM ims.fn_apply_stock_move(v_to_branch, v_to_wh, OLD.product_id, -v_qty, 'wh_transfer_out', 'warehouse_transfer_items', OLD.wh_transfer_item_id, v_cost, TRUE);
+        RETURN OLD;
+      ELSE
+        v_qty := COALESCE(NEW.quantity,0) - COALESCE(OLD.quantity,0);
+        PERFORM ims.fn_apply_stock_move(v_from_branch, v_from_wh, COALESCE(NEW.product_id, OLD.product_id), -v_qty, 'wh_transfer_out', 'warehouse_transfer_items', COALESCE(NEW.wh_transfer_item_id, OLD.wh_transfer_item_id), v_cost, TRUE);
+        PERFORM ims.fn_apply_stock_move(v_to_branch, v_to_wh, COALESCE(NEW.product_id, OLD.product_id), v_qty, 'wh_transfer_in', 'warehouse_transfer_items', COALESCE(NEW.wh_transfer_item_id, OLD.wh_transfer_item_id), v_cost, FALSE);
+        RETURN NEW;
+      END IF;
+    END;
+    $fn$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS trg_wh_transfer_items ON ims.warehouse_transfer_items;
+    CREATE TRIGGER trg_wh_transfer_items
+    AFTER INSERT OR UPDATE OR DELETE ON ims.warehouse_transfer_items
+    FOR EACH ROW EXECUTE FUNCTION ims.fn_wh_transfer_items_stock();
+    
   END IF;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_wh_transfer_items ON ims.warehouse_transfer_items;
-CREATE TRIGGER trg_wh_transfer_items
-AFTER INSERT OR UPDATE OR DELETE ON ims.warehouse_transfer_items
-FOR EACH ROW EXECUTE FUNCTION ims.fn_wh_transfer_items_stock();
+END$$;
 
 COMMIT;

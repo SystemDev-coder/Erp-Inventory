@@ -6,18 +6,28 @@ import { accountsService } from './accounts.service';
 import { accountSchema, accountUpdateSchema } from './accounts.schemas';
 import { AuthRequest } from '../../middlewares/requireAuth';
 
-export const listAccounts = asyncHandler(async (_req: AuthRequest, res: Response) => {
-  const accounts = await accountsService.list();
+export const listAccounts = asyncHandler(async (req: AuthRequest, res: Response) => {
+  // Get accounts filtered by user's accessible branches (set by middleware)
+  const branchIds = (req as any).userBranches?.map((b: any) => b.branch_id) || [];
+  const accounts = await accountsService.list(branchIds);
   return ApiResponse.success(res, { accounts });
 });
 
 export const createAccount = asyncHandler(async (req: AuthRequest, res: Response) => {
   const input = accountSchema.parse(req.body);
-  // If an account with same name and currency exists, skip duplicate create
-  const existing = await accountsService.findByNameAndCurrency(input.name, input.currencyCode || 'USD');
+  const currentBranch = (req as any).currentBranch;
+  
+  // Check for duplicates within the current branch only
+  const existing = await accountsService.findByNameAndCurrency(
+    input.name, 
+    input.currencyCode || 'USD',
+    currentBranch?.branch_id
+  );
   if (existing) {
-    return ApiResponse.success(res, { account: existing }, 'Account already exists');
+    return ApiResponse.success(res, { account: existing }, 'Account already exists in this branch');
   }
+  
+  // Create account - branch_id will be added automatically by database trigger!
   const account = await accountsService.create(input);
   return ApiResponse.created(res, { account }, 'Account created');
 });

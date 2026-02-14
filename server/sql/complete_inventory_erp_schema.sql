@@ -1,5 +1,57 @@
 /* =========================================================
 COMPLETE INVENTORY ERP SCHEMA WITH FINANCIAL MODULES
+AND BRANCH-BASED MULTI-TENANCY
+=========================================================
+
+BRANCH-BASED MULTI-TENANCY FEATURES:
+-------------------------------------
+
+1. USER-BRANCH RELATIONSHIP:
+   - New table: user_branch (junction table)
+   - Users can belong to multiple branches
+   - Each user has a primary branch
+   - Flexible access control
+
+2. BRANCH-SPECIFIC DATA:
+   Tables with branch_id column for data isolation:
+   - categories (branch-specific product categories)
+   - suppliers (branch-specific suppliers)
+   - customers (branch-specific customers)
+   - products (branch-specific products)
+   - accounts (branch-specific bank/cash accounts)
+   - employees (branch assignments)
+   - sales, purchases (branch transactions)
+   - inventory_movements (branch inventory tracking)
+   - audit_logs (branch audit trails)
+   - All other operational tables
+
+3. BRANCH-SCOPED UNIQUE CONSTRAINTS:
+   - Product barcodes: unique per branch
+   - Category names: unique per branch
+   - Allows branches to operate independently
+
+4. HELPER FUNCTIONS:
+   - fn_user_branches(user_id): Get all accessible branches
+   - fn_user_primary_branch(user_id): Get user's primary branch
+   - fn_user_has_branch_access(user_id, branch_id): Check access
+
+5. VIEWS FOR EASY QUERYING:
+   - v_branch_products: Products with related data
+   - v_branch_customers: Customers with branch info
+   - v_branch_suppliers: Suppliers with branch info
+
+6. AUDIT COLUMNS:
+   - created_by, updated_by: Track who creates/modifies records
+   - created_at, updated_at: Track timestamps
+
+USAGE NOTES:
+------------
+- All API endpoints should filter data by user's accessible branches
+- Use helper functions to get user's branches before querying
+- Always include branch_id when creating records
+- Validate branch access on all operations
+
+Last Updated: 2026-02-14
 ========================================================= */
 BEGIN;
 
@@ -202,10 +254,37 @@ CREATE TABLE IF NOT EXISTS ims.users (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- User-Branch Junction Table (Many-to-Many)
+-- Allows users to access multiple branches
+CREATE TABLE IF NOT EXISTS ims.user_branch (
+    user_id BIGINT NOT NULL REFERENCES ims.users(user_id) ON DELETE CASCADE,
+    branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON DELETE CASCADE,
+    is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, branch_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_branch_user ON ims.user_branch(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_branch_branch ON ims.user_branch(branch_id);
+CREATE INDEX IF NOT EXISTS idx_user_branch_primary ON ims.user_branch(user_id, is_primary) WHERE is_primary = TRUE;
+
+COMMENT ON TABLE ims.user_branch IS 'Junction table linking users to multiple branches they can access';
+COMMENT ON COLUMN ims.user_branch.is_primary IS 'Indicates if this is the user''s primary/default branch';
+
+-- Migrate existing users to user_branch table
+INSERT INTO ims.user_branch (user_id, branch_id, is_primary)
+SELECT user_id, branch_id, TRUE
+FROM ims.users
+WHERE branch_id IS NOT NULL
+ON CONFLICT (user_id, branch_id) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS ims.permissions (
     perm_id BIGSERIAL PRIMARY KEY,
     perm_key VARCHAR(80) NOT NULL UNIQUE,
-    perm_name VARCHAR(120) NOT NULL
+    perm_name VARCHAR(120) NOT NULL,
+    module VARCHAR(50) NOT NULL DEFAULT 'system',
+    description TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS ims.role_permissions (
@@ -227,6 +306,11 @@ CREATE TABLE IF NOT EXISTS ims.audit_logs (
     action VARCHAR(60) NOT NULL,
     entity VARCHAR(40) NOT NULL,
     entity_id BIGINT,
+    old_value JSONB,
+    new_value JSONB,
+    meta JSONB,
+    ip_address VARCHAR(45),
+    user_agent TEXT,
     note TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -249,16 +333,26 @@ CREATE TABLE IF NOT EXISTS ims.notifications (
 );
 
 -- =========================================================
--- 4) MASTER DATA (Existing)
+-- 4) MASTER DATA (Branch-Specific)
 -- =========================================================
 CREATE TABLE IF NOT EXISTS ims.categories (
     cat_id BIGSERIAL PRIMARY KEY,
-    cat_name VARCHAR(120) NOT NULL UNIQUE,
-    description TEXT
+    branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id),
+    cat_name VARCHAR(120) NOT NULL,
+    description TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_by BIGINT REFERENCES ims.users(user_id),
+    updated_by BIGINT REFERENCES ims.users(user_id)
 );
+
+-- Unique constraint: category name must be unique within a branch
+CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_name_branch ON ims.categories(branch_id, cat_name);
+CREATE INDEX IF NOT EXISTS idx_categories_branch ON ims.categories(branch_id);
 
 CREATE TABLE IF NOT EXISTS ims.suppliers (
     supplier_id BIGSERIAL PRIMARY KEY,
+    branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id),
     supplier_name VARCHAR(255) NOT NULL,
     company_name VARCHAR(255),
     contact_person VARCHAR(255),
@@ -269,11 +363,16 @@ CREATE TABLE IF NOT EXISTS ims.suppliers (
     remaining_balance NUMERIC(14,2) NOT NULL DEFAULT 0,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by BIGINT REFERENCES ims.users(user_id),
+    updated_by BIGINT REFERENCES ims.users(user_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_suppliers_branch ON ims.suppliers(branch_id);
 
 CREATE TABLE IF NOT EXISTS ims.products (
     product_id BIGSERIAL PRIMARY KEY,
+    branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id),
     cat_id BIGINT NOT NULL REFERENCES ims.categories(cat_id),
     supplier_id BIGINT REFERENCES ims.suppliers(supplier_id),
     unit_id BIGINT REFERENCES ims.units(unit_id),
@@ -281,15 +380,22 @@ CREATE TABLE IF NOT EXISTS ims.products (
     reorder_qty NUMERIC(14,3) NOT NULL DEFAULT 0,
     tax_id BIGINT REFERENCES ims.taxes(tax_id),
     name VARCHAR(160) NOT NULL,
-    barcode VARCHAR(80) UNIQUE,
+    barcode VARCHAR(80),
     open_balance NUMERIC(14,3) NOT NULL DEFAULT 0,
     cost_price NUMERIC(14,2) NOT NULL DEFAULT 0,
     sell_price NUMERIC(14,2) NOT NULL DEFAULT 0,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_by BIGINT REFERENCES ims.users(user_id),
+    updated_by BIGINT REFERENCES ims.users(user_id),
     CONSTRAINT chk_product_prices CHECK (cost_price >= 0 AND sell_price >= 0),
     CONSTRAINT chk_reorder_vals CHECK (reorder_level >= 0 AND reorder_qty >= 0)
 );
+
+-- Unique constraint: barcode must be unique within a branch
+CREATE UNIQUE INDEX IF NOT EXISTS idx_products_barcode_branch ON ims.products(branch_id, barcode) WHERE barcode IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_products_branch ON ims.products(branch_id);
 
 CREATE TABLE IF NOT EXISTS ims.product_price_history (
     price_hist_id BIGSERIAL PRIMARY KEY,
@@ -356,30 +462,46 @@ CREATE TABLE IF NOT EXISTS ims.branch_stock (
 );
 
 -- =========================================================
--- 6) CUSTOMERS (Existing)
+-- 6) CUSTOMERS (Branch-Specific)
 -- =========================================================
 CREATE TABLE IF NOT EXISTS ims.customers (
     customer_id BIGSERIAL PRIMARY KEY,
+    branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id),
     full_name VARCHAR(160) NOT NULL,
     phone VARCHAR(30),
     sex ims.sex_enum,
     address TEXT,
     registered_date DATE NOT NULL DEFAULT CURRENT_DATE,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_by BIGINT REFERENCES ims.users(user_id),
+    updated_by BIGINT REFERENCES ims.users(user_id)
 );
 
+CREATE INDEX IF NOT EXISTS idx_customers_branch ON ims.customers(branch_id);
+
 -- =========================================================
--- 7) ACCOUNTS & RECEIVABLES (Existing)
+-- 7) ACCOUNTS & RECEIVABLES (Branch-Specific)
 -- =========================================================
 CREATE TABLE IF NOT EXISTS ims.accounts (
     acc_id BIGSERIAL PRIMARY KEY,
+    branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id),
     name VARCHAR(120) NOT NULL,
     institution VARCHAR(120),
     currency_code CHAR(3) NOT NULL DEFAULT 'USD' REFERENCES ims.currencies(currency_code),
     balance NUMERIC(14,2) NOT NULL DEFAULT 0,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    CONSTRAINT chk_acc_balance CHECK (balance >= 0)
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_by BIGINT REFERENCES ims.users(user_id),
+    updated_by BIGINT REFERENCES ims.users(user_id),
+    CONSTRAINT chk_acc_balance CHECK (balance >= 0),
+    CONSTRAINT uq_account_name_per_branch UNIQUE (branch_id, name)
 );
+
+CREATE INDEX IF NOT EXISTS idx_accounts_branch ON ims.accounts(branch_id);
+CREATE INDEX IF NOT EXISTS idx_accounts_active ON ims.accounts(branch_id, is_active) WHERE is_active = TRUE;
 
 CREATE TABLE IF NOT EXISTS ims.charges (
     charge_id BIGSERIAL PRIMARY KEY,
@@ -1141,6 +1263,411 @@ VALUES
     ('May 2024', 2024, 5, '2024-05-01', '2024-05-31'),
     ('June 2024', 2024, 6, '2024-06-01', '2024-06-30')
 ON CONFLICT DO NOTHING;
+
+-- =========================================================
+-- 18) BRANCH-BASED MULTI-TENANCY HELPER FUNCTIONS
+-- =========================================================
+
+-- Function to get all branches a user has access to
+CREATE OR REPLACE FUNCTION ims.fn_user_branches(p_user_id BIGINT)
+RETURNS TABLE(branch_id BIGINT, branch_name VARCHAR, is_primary BOOLEAN) 
+LANGUAGE plpgsql STABLE AS $$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    b.branch_id,
+    b.branch_name,
+    ub.is_primary
+  FROM ims.user_branch ub
+  JOIN ims.branches b ON b.branch_id = ub.branch_id
+  WHERE ub.user_id = p_user_id
+  ORDER BY ub.is_primary DESC, b.branch_name;
+END;
+$$;
+
+COMMENT ON FUNCTION ims.fn_user_branches IS 'Returns all branches a user has access to';
+
+-- Function to get user's primary branch
+CREATE OR REPLACE FUNCTION ims.fn_user_primary_branch(p_user_id BIGINT)
+RETURNS BIGINT
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  v_branch_id BIGINT;
+BEGIN
+  SELECT branch_id INTO v_branch_id
+  FROM ims.user_branch
+  WHERE user_id = p_user_id AND is_primary = TRUE
+  LIMIT 1;
+  
+  -- If no primary branch, return first available branch
+  IF v_branch_id IS NULL THEN
+    SELECT branch_id INTO v_branch_id
+    FROM ims.user_branch
+    WHERE user_id = p_user_id
+    ORDER BY created_at
+    LIMIT 1;
+  END IF;
+  
+  RETURN v_branch_id;
+END;
+$$;
+
+COMMENT ON FUNCTION ims.fn_user_primary_branch IS 'Returns user''s primary branch ID';
+
+-- Function to check if user has access to a specific branch
+CREATE OR REPLACE FUNCTION ims.fn_user_has_branch_access(p_user_id BIGINT, p_branch_id BIGINT)
+RETURNS BOOLEAN
+LANGUAGE plpgsql STABLE AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM ims.user_branch
+    WHERE user_id = p_user_id AND branch_id = p_branch_id
+  );
+END;
+$$;
+
+COMMENT ON FUNCTION ims.fn_user_has_branch_access IS 'Checks if user has access to a specific branch';
+
+-- =========================================================
+-- 19) BRANCH-BASED VIEWS FOR EASIER QUERYING
+-- =========================================================
+
+-- View for products with related data
+CREATE OR REPLACE VIEW ims.v_branch_products AS
+SELECT 
+  p.*,
+  c.cat_name,
+  u.unit_name,
+  u.symbol as unit_symbol,
+  s.supplier_name,
+  t.tax_name,
+  t.rate_percent as tax_rate,
+  b.branch_name
+FROM ims.products p
+LEFT JOIN ims.categories c ON c.cat_id = p.cat_id
+LEFT JOIN ims.units u ON u.unit_id = p.unit_id
+LEFT JOIN ims.suppliers s ON s.supplier_id = p.supplier_id
+LEFT JOIN ims.taxes t ON t.tax_id = p.tax_id
+LEFT JOIN ims.branches b ON b.branch_id = p.branch_id;
+
+COMMENT ON VIEW ims.v_branch_products IS 'Products with related data including branch information';
+
+-- View for customers with branch info
+CREATE OR REPLACE VIEW ims.v_branch_customers AS
+SELECT 
+  c.*,
+  b.branch_name
+FROM ims.customers c
+LEFT JOIN ims.branches b ON b.branch_id = c.branch_id;
+
+COMMENT ON VIEW ims.v_branch_customers IS 'Customers with branch information';
+
+-- View for suppliers with branch info
+CREATE OR REPLACE VIEW ims.v_branch_suppliers AS
+SELECT 
+  s.*,
+  b.branch_name
+FROM ims.suppliers s
+LEFT JOIN ims.branches b ON b.branch_id = s.branch_id;
+
+COMMENT ON VIEW ims.v_branch_suppliers IS 'Suppliers with branch information';
+
+-- View for accounts with branch info
+CREATE OR REPLACE VIEW ims.v_branch_accounts AS
+SELECT 
+  a.*,
+  b.branch_name,
+  c.currency_name,
+  c.symbol as currency_symbol
+FROM ims.accounts a
+LEFT JOIN ims.branches b ON b.branch_id = a.branch_id
+LEFT JOIN ims.currencies c ON c.currency_code = a.currency_code;
+
+COMMENT ON VIEW ims.v_branch_accounts IS 'Accounts with branch and currency information';
+
+-- View for active accounts per branch
+CREATE OR REPLACE VIEW ims.v_active_branch_accounts AS
+SELECT 
+  a.*,
+  b.branch_name,
+  c.currency_name,
+  c.symbol as currency_symbol
+FROM ims.accounts a
+LEFT JOIN ims.branches b ON b.branch_id = a.branch_id
+LEFT JOIN ims.currencies c ON c.currency_code = a.currency_code
+WHERE a.is_active = TRUE;
+
+COMMENT ON VIEW ims.v_active_branch_accounts IS 'Active accounts with branch and currency information';
+
+-- Function to get accounts for a specific branch
+CREATE OR REPLACE FUNCTION ims.fn_branch_accounts(p_branch_id BIGINT, p_active_only BOOLEAN DEFAULT TRUE)
+RETURNS TABLE(
+  acc_id BIGINT,
+  branch_id BIGINT,
+  name VARCHAR,
+  institution VARCHAR,
+  currency_code CHAR,
+  balance NUMERIC,
+  is_active BOOLEAN,
+  branch_name VARCHAR
+) 
+LANGUAGE plpgsql STABLE AS $$
+BEGIN
+  IF p_active_only THEN
+    RETURN QUERY
+    SELECT 
+      a.acc_id,
+      a.branch_id,
+      a.name,
+      a.institution,
+      a.currency_code,
+      a.balance,
+      a.is_active,
+      b.branch_name
+    FROM ims.accounts a
+    LEFT JOIN ims.branches b ON b.branch_id = a.branch_id
+    WHERE a.branch_id = p_branch_id AND a.is_active = TRUE
+    ORDER BY a.name;
+  ELSE
+    RETURN QUERY
+    SELECT 
+      a.acc_id,
+      a.branch_id,
+      a.name,
+      a.institution,
+      a.currency_code,
+      a.balance,
+      a.is_active,
+      b.branch_name
+    FROM ims.accounts a
+    LEFT JOIN ims.branches b ON b.branch_id = a.branch_id
+    WHERE a.branch_id = p_branch_id
+    ORDER BY a.name;
+  END IF;
+END;
+$$;
+
+COMMENT ON FUNCTION ims.fn_branch_accounts IS 'Returns accounts for a specific branch, optionally filtered by active status';
+
+-- Function to get account balance for a branch
+CREATE OR REPLACE FUNCTION ims.fn_branch_total_balance(p_branch_id BIGINT, p_currency_code CHAR(3) DEFAULT NULL)
+RETURNS NUMERIC
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  v_total NUMERIC;
+BEGIN
+  IF p_currency_code IS NOT NULL THEN
+    SELECT COALESCE(SUM(balance), 0) INTO v_total
+    FROM ims.accounts
+    WHERE branch_id = p_branch_id 
+      AND currency_code = p_currency_code
+      AND is_active = TRUE;
+  ELSE
+    SELECT COALESCE(SUM(balance), 0) INTO v_total
+    FROM ims.accounts
+    WHERE branch_id = p_branch_id 
+      AND is_active = TRUE;
+  END IF;
+  
+  RETURN v_total;
+END;
+$$;
+
+COMMENT ON FUNCTION ims.fn_branch_total_balance IS 'Returns total balance of all active accounts for a branch, optionally filtered by currency';
+
+-- =========================================================
+-- 20) AUTOMATIC BRANCH CONTEXT MANAGEMENT
+-- =========================================================
+
+-- Set current user and branch context for session
+CREATE OR REPLACE FUNCTION ims.set_current_context(p_user_id BIGINT, p_branch_id BIGINT)
+RETURNS VOID
+LANGUAGE plpgsql AS $$
+BEGIN
+  -- Set session variables for current user and branch
+  PERFORM set_config('app.current_user_id', p_user_id::text, false);
+  PERFORM set_config('app.current_branch_id', p_branch_id::text, false);
+END;
+$$;
+
+COMMENT ON FUNCTION ims.set_current_context IS 'Sets current user and branch context in session for automatic branch_id population';
+
+-- Get current branch from session
+CREATE OR REPLACE FUNCTION ims.get_current_branch()
+RETURNS BIGINT
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  v_value TEXT;
+BEGIN
+  v_value := current_setting('app.current_branch_id', true);
+  IF v_value IS NULL OR v_value = '' THEN
+    RETURN NULL;
+  END IF;
+  RETURN v_value::BIGINT;
+EXCEPTION
+  WHEN OTHERS THEN
+    RETURN NULL;
+END;
+$$;
+
+COMMENT ON FUNCTION ims.get_current_branch IS 'Gets current branch_id from session context';
+
+-- Get current user from session
+CREATE OR REPLACE FUNCTION ims.get_current_user()
+RETURNS BIGINT
+LANGUAGE plpgsql STABLE AS $$
+BEGIN
+  RETURN NULLIF(current_setting('app.current_user_id', true), '')::BIGINT;
+EXCEPTION
+  WHEN OTHERS THEN
+    RETURN NULL;
+END;
+$$;
+
+COMMENT ON FUNCTION ims.get_current_user IS 'Gets current user_id from session context';
+
+-- =========================================================
+-- 21) AUTO-POPULATE BRANCH_ID TRIGGERS
+-- =========================================================
+
+-- Generic trigger function to auto-populate branch_id on INSERT
+CREATE OR REPLACE FUNCTION ims.trg_auto_branch_id()
+RETURNS TRIGGER
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_branch_id BIGINT;
+  v_user_id BIGINT;
+BEGIN
+  -- Get current branch and user from session
+  v_branch_id := ims.get_current_branch();
+  v_user_id := ims.get_current_user();
+  
+  -- On INSERT: auto-populate branch_id if not provided
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.branch_id IS NULL THEN
+      IF v_branch_id IS NOT NULL THEN
+        -- Use session branch_id
+        NEW.branch_id := v_branch_id;
+      ELSE
+        -- Fallback: Get user's primary branch from users table if user_id is available
+        IF v_user_id IS NOT NULL THEN
+          SELECT branch_id INTO NEW.branch_id
+          FROM ims.users
+          WHERE user_id = v_user_id
+          LIMIT 1;
+        END IF;
+        
+        -- If still NULL, try to get first available branch
+        IF NEW.branch_id IS NULL THEN
+          SELECT branch_id INTO NEW.branch_id
+          FROM ims.branches
+          WHERE is_active = TRUE
+          ORDER BY branch_id
+          LIMIT 1;
+        END IF;
+      END IF;
+    END IF;
+    
+    -- Auto-populate created_by if column exists and not set
+    IF v_user_id IS NOT NULL THEN
+      BEGIN
+        IF NEW.created_by IS NULL THEN
+          NEW.created_by := v_user_id;
+        END IF;
+      EXCEPTION
+        WHEN undefined_column THEN NULL;
+      END;
+      
+      -- Set created_at if not already set
+      BEGIN
+        IF NEW.created_at IS NULL THEN
+          NEW.created_at := NOW();
+        END IF;
+      EXCEPTION
+        WHEN undefined_column THEN NULL;
+      END;
+    END IF;
+  END IF;
+  
+  -- On UPDATE: auto-populate updated_by
+  IF TG_OP = 'UPDATE' THEN
+    IF v_user_id IS NOT NULL THEN
+      BEGIN
+        NEW.updated_by := v_user_id;
+      EXCEPTION
+        WHEN undefined_column THEN NULL;
+      END;
+      
+      -- Update updated_at timestamp
+      BEGIN
+        NEW.updated_at := NOW();
+      EXCEPTION
+        WHEN undefined_column THEN NULL;
+      END;
+    END IF;
+  END IF;
+  
+  RETURN NEW;
+END;
+$$;
+
+COMMENT ON FUNCTION ims.trg_auto_branch_id IS 'Automatically populates branch_id, created_by, updated_by, and timestamps based on session context';
+
+-- Apply trigger to all branch-specific tables
+CREATE TRIGGER trg_auto_branch_categories BEFORE INSERT OR UPDATE ON ims.categories
+  FOR EACH ROW EXECUTE FUNCTION ims.trg_auto_branch_id();
+
+CREATE TRIGGER trg_auto_branch_suppliers BEFORE INSERT OR UPDATE ON ims.suppliers
+  FOR EACH ROW EXECUTE FUNCTION ims.trg_auto_branch_id();
+
+CREATE TRIGGER trg_auto_branch_customers BEFORE INSERT OR UPDATE ON ims.customers
+  FOR EACH ROW EXECUTE FUNCTION ims.trg_auto_branch_id();
+
+CREATE TRIGGER trg_auto_branch_products BEFORE INSERT OR UPDATE ON ims.products
+  FOR EACH ROW EXECUTE FUNCTION ims.trg_auto_branch_id();
+
+CREATE TRIGGER trg_auto_branch_accounts BEFORE INSERT OR UPDATE ON ims.accounts
+  FOR EACH ROW EXECUTE FUNCTION ims.trg_auto_branch_id();
+
+CREATE TRIGGER trg_auto_branch_sales BEFORE INSERT OR UPDATE ON ims.sales
+  FOR EACH ROW EXECUTE FUNCTION ims.trg_auto_branch_id();
+
+CREATE TRIGGER trg_auto_branch_purchases BEFORE INSERT OR UPDATE ON ims.purchases
+  FOR EACH ROW EXECUTE FUNCTION ims.trg_auto_branch_id();
+
+CREATE TRIGGER trg_auto_branch_charges BEFORE INSERT OR UPDATE ON ims.charges
+  FOR EACH ROW EXECUTE FUNCTION ims.trg_auto_branch_id();
+
+CREATE TRIGGER trg_auto_branch_receipts BEFORE INSERT OR UPDATE ON ims.receipts
+  FOR EACH ROW EXECUTE FUNCTION ims.trg_auto_branch_id();
+
+CREATE TRIGGER trg_auto_branch_supplier_charges BEFORE INSERT OR UPDATE ON ims.supplier_charges
+  FOR EACH ROW EXECUTE FUNCTION ims.trg_auto_branch_id();
+
+CREATE TRIGGER trg_auto_branch_supplier_payments BEFORE INSERT OR UPDATE ON ims.supplier_payments
+  FOR EACH ROW EXECUTE FUNCTION ims.trg_auto_branch_id();
+
+CREATE TRIGGER trg_auto_branch_expenses BEFORE INSERT OR UPDATE ON ims.expenses
+  FOR EACH ROW EXECUTE FUNCTION ims.trg_auto_branch_id();
+
+CREATE TRIGGER trg_auto_branch_inventory_movements BEFORE INSERT OR UPDATE ON ims.inventory_movements
+  FOR EACH ROW EXECUTE FUNCTION ims.trg_auto_branch_id();
+
+CREATE TRIGGER trg_auto_branch_employees BEFORE INSERT OR UPDATE ON ims.employees
+  FOR EACH ROW EXECUTE FUNCTION ims.trg_auto_branch_id();
+
+CREATE TRIGGER trg_auto_branch_employee_payments BEFORE INSERT OR UPDATE ON ims.employee_payments
+  FOR EACH ROW EXECUTE FUNCTION ims.trg_auto_branch_id();
+
+CREATE TRIGGER trg_auto_branch_employee_loans BEFORE INSERT OR UPDATE ON ims.employee_loans
+  FOR EACH ROW EXECUTE FUNCTION ims.trg_auto_branch_id();
+
+CREATE TRIGGER trg_auto_branch_audit_logs BEFORE INSERT OR UPDATE ON ims.audit_logs
+  FOR EACH ROW EXECUTE FUNCTION ims.trg_auto_branch_id();
+
+-- Special trigger for warehouses (already has branch_id but needs created_by)
+CREATE TRIGGER trg_auto_warehouse_audit BEFORE INSERT OR UPDATE ON ims.warehouses
+  FOR EACH ROW EXECUTE FUNCTION ims.trg_auto_branch_id();
 
 COMMIT;
 

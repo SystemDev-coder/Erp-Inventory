@@ -8,11 +8,27 @@ ALTER TABLE products
   ADD COLUMN IF NOT EXISTS stock NUMERIC(14,3) DEFAULT 0;
 
 -- Backfill from legacy columns if present
-UPDATE products
-   SET price = COALESCE(price, sell_price, 0),
-       cost  = COALESCE(cost, cost_price, 0),
-       stock = COALESCE(stock, open_balance, 0)
- WHERE (price IS NULL OR cost IS NULL OR stock IS NULL);
+DO $$
+BEGIN
+  -- Check if open_balance column exists
+  IF EXISTS (SELECT 1 FROM information_schema.columns 
+             WHERE table_schema = 'ims' 
+             AND table_name = 'products' 
+             AND column_name = 'open_balance') THEN
+    UPDATE products
+       SET price = COALESCE(price, sell_price, 0),
+           cost  = COALESCE(cost, cost_price, 0),
+           stock = COALESCE(stock, open_balance, 0)
+     WHERE (price IS NULL OR cost IS NULL OR stock IS NULL);
+  ELSE
+    -- If open_balance doesn't exist, just backfill price and cost
+    UPDATE products
+       SET price = COALESCE(price, sell_price, 0),
+           cost  = COALESCE(cost, cost_price, 0),
+           stock = COALESCE(stock, 0)
+     WHERE (price IS NULL OR cost IS NULL OR stock IS NULL);
+  END IF;
+END $$;
 
 -- Ensure not-null with defaults
 ALTER TABLE products
