@@ -18,6 +18,7 @@ import {
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { ApiError } from '../../utils/ApiError';
 import { logAudit } from '../../utils/audit';
+import { assertBranchAccess, resolveBranchScope } from '../../utils/branchScope';
 
 const sanitizeQuery = (query: any) => {
   const cleaned: Record<string, any> = { ...query };
@@ -36,31 +37,74 @@ const sanitizeQuery = (query: any) => {
 };
 
 export const listStock = asyncHandler(async (req: AuthRequest, res) => {
+  const scope = await resolveBranchScope(req);
   const filters = stockQuerySchema.parse(sanitizeQuery(req.query));
-  const rows = await inventoryService.listStock(filters);
+  if (filters.branchId) {
+    assertBranchAccess(scope, filters.branchId);
+  }
+  const rows = await inventoryService.listStock({
+    ...filters,
+    branchIds: scope.isAdmin ? undefined : scope.branchIds,
+  });
   return ApiResponse.success(res, { rows });
 });
 
+export const listItems = asyncHandler(async (req: AuthRequest, res) => {
+  const scope = await resolveBranchScope(req);
+  const filters = stockQuerySchema.parse(sanitizeQuery(req.query));
+  if (filters.branchId) {
+    assertBranchAccess(scope, filters.branchId);
+  }
+  const items = await inventoryService.listPurchasedItems({
+    ...filters,
+    branchIds: scope.isAdmin ? undefined : scope.branchIds,
+  });
+  return ApiResponse.success(res, { items });
+});
+
 export const listMovements = asyncHandler(async (req: AuthRequest, res) => {
+  const scope = await resolveBranchScope(req);
   const filters = movementQuerySchema.parse(sanitizeQuery(req.query));
-  const rows = await inventoryService.listMovements(filters);
+  if (filters.branchId) {
+    assertBranchAccess(scope, filters.branchId);
+  }
+  const rows = await inventoryService.listMovements({
+    ...filters,
+    branchIds: scope.isAdmin ? undefined : scope.branchIds,
+  });
   return ApiResponse.success(res, { rows });
 });
 
 export const listAdjustments = asyncHandler(async (req: AuthRequest, res) => {
+  const scope = await resolveBranchScope(req);
   const filters = adjustmentListQuerySchema.parse(sanitizeQuery(req.query));
-  const rows = await inventoryService.listAdjustments(filters);
+  if (filters.branchId) {
+    assertBranchAccess(scope, filters.branchId);
+  }
+  const rows = await inventoryService.listAdjustments({
+    ...filters,
+    branchIds: scope.isAdmin ? undefined : scope.branchIds,
+  });
   return ApiResponse.success(res, { rows });
 });
 
 export const listRecounts = asyncHandler(async (req: AuthRequest, res) => {
+  const scope = await resolveBranchScope(req);
   const filters = recountListQuerySchema.parse(sanitizeQuery(req.query));
-  const rows = await inventoryService.listRecounts(filters);
+  if (filters.branchId) {
+    assertBranchAccess(scope, filters.branchId);
+  }
+  const rows = await inventoryService.listRecounts({
+    ...filters,
+    branchIds: scope.isAdmin ? undefined : scope.branchIds,
+  });
   return ApiResponse.success(res, { rows });
 });
 
 export const createAdjustment = asyncHandler(async (req: AuthRequest, res) => {
+  const scope = await resolveBranchScope(req);
   const input = adjustmentSchema.parse(req.body);
+  assertBranchAccess(scope, input.branchId);
   const adjustment = await inventoryService.adjust(input, req.user);
   await logAudit({
     userId: req.user?.userId ?? null,
@@ -75,13 +119,16 @@ export const createAdjustment = asyncHandler(async (req: AuthRequest, res) => {
 });
 
 export const createTransfer = asyncHandler(async (req: AuthRequest, res) => {
+  const scope = await resolveBranchScope(req);
   const input = transferSchema.parse(req.body);
-  await inventoryService.transfer(input, req.user);
+  await inventoryService.transfer(input, req.user, scope);
   return ApiResponse.created(res, null, 'Stock transferred');
 });
 
 export const createRecount = asyncHandler(async (req: AuthRequest, res) => {
+  const scope = await resolveBranchScope(req);
   const input = recountSchema.parse(req.body);
+  assertBranchAccess(scope, input.branchId);
   const recount = await inventoryService.recount(input, req.user);
   if (recount?.adjustment) {
     await logAudit({
@@ -98,8 +145,12 @@ export const createRecount = asyncHandler(async (req: AuthRequest, res) => {
 });
 
 export const listBranches = asyncHandler(async (req: AuthRequest, res) => {
+  const scope = await resolveBranchScope(req);
   const filters = locationQuerySchema.parse(sanitizeQuery(req.query));
-  const branches = await inventoryService.listBranches(filters);
+  const branches = await inventoryService.listBranches({
+    ...filters,
+    branchIds: scope.isAdmin ? undefined : scope.branchIds,
+  });
   return ApiResponse.success(res, { branches });
 });
 
@@ -119,10 +170,12 @@ export const createBranch = asyncHandler(async (req: AuthRequest, res) => {
 });
 
 export const updateBranch = asyncHandler(async (req: AuthRequest, res) => {
+  const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
   if (!Number.isFinite(id) || id <= 0) {
     throw ApiError.badRequest('Invalid branch id');
   }
+  assertBranchAccess(scope, id);
   const input = branchUpdateSchema.parse(req.body);
   const branch = await inventoryService.updateBranch(id, input);
   if (!branch) throw ApiError.notFound('Branch not found');
@@ -139,10 +192,12 @@ export const updateBranch = asyncHandler(async (req: AuthRequest, res) => {
 });
 
 export const deleteBranch = asyncHandler(async (req: AuthRequest, res) => {
+  const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
   if (!Number.isFinite(id) || id <= 0) {
     throw ApiError.badRequest('Invalid branch id');
   }
+  assertBranchAccess(scope, id);
   await inventoryService.deleteBranch(id);
   await logAudit({
     userId: req.user?.userId ?? null,
@@ -156,13 +211,22 @@ export const deleteBranch = asyncHandler(async (req: AuthRequest, res) => {
 });
 
 export const listWarehouses = asyncHandler(async (req: AuthRequest, res) => {
+  const scope = await resolveBranchScope(req);
   const filters = locationQuerySchema.parse(sanitizeQuery(req.query));
-  const warehouses = await inventoryService.listWarehouses(filters);
+  if (filters.branchId) {
+    assertBranchAccess(scope, filters.branchId);
+  }
+  const warehouses = await inventoryService.listWarehouses({
+    ...filters,
+    branchIds: scope.isAdmin ? undefined : scope.branchIds,
+  });
   return ApiResponse.success(res, { warehouses });
 });
 
 export const createWarehouse = asyncHandler(async (req: AuthRequest, res) => {
+  const scope = await resolveBranchScope(req);
   const input = warehouseCreateSchema.parse(req.body);
+  assertBranchAccess(scope, input.branchId);
   const warehouse = await inventoryService.createWarehouse(input);
   await logAudit({
     userId: req.user?.userId ?? null,
@@ -177,12 +241,16 @@ export const createWarehouse = asyncHandler(async (req: AuthRequest, res) => {
 });
 
 export const updateWarehouse = asyncHandler(async (req: AuthRequest, res) => {
+  const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
   if (!Number.isFinite(id) || id <= 0) {
     throw ApiError.badRequest('Invalid warehouse id');
   }
   const input = warehouseUpdateSchema.parse(req.body);
-  const warehouse = await inventoryService.updateWarehouse(id, input);
+  if (input.branchId) {
+    assertBranchAccess(scope, input.branchId);
+  }
+  const warehouse = await inventoryService.updateWarehouse(id, input, scope);
   if (!warehouse) throw ApiError.notFound('Warehouse not found');
   await logAudit({
     userId: req.user?.userId ?? null,
@@ -197,11 +265,12 @@ export const updateWarehouse = asyncHandler(async (req: AuthRequest, res) => {
 });
 
 export const deleteWarehouse = asyncHandler(async (req: AuthRequest, res) => {
+  const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
   if (!Number.isFinite(id) || id <= 0) {
     throw ApiError.badRequest('Invalid warehouse id');
   }
-  await inventoryService.deleteWarehouse(id);
+  await inventoryService.deleteWarehouse(id, scope);
   await logAudit({
     userId: req.user?.userId ?? null,
     action: 'delete',

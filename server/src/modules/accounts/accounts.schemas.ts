@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 export const accountSchema = z.object({
+  branchId: z.coerce.number().int().positive().optional(),
   name: z.string().min(1),
   institution: z.string().optional().or(z.literal('')),
   currencyCode: z.string().length(3).default('USD'),

@@ -1,4 +1,6 @@
 import { queryMany, queryOne } from '../../db/query';
+import { ApiError } from '../../utils/ApiError';
+import { BranchScope } from '../../utils/branchScope';
 import { ReceiptInput } from './receipts.schemas';
 
 export interface Receipt {
@@ -18,25 +20,47 @@ export interface Receipt {
 }
 
 export const receiptsService = {
-  async listReceipts(search?: string): Promise<Receipt[]> {
+  async listReceipts(scope: BranchScope, search?: string, branchId?: number): Promise<Receipt[]> {
     const params: any[] = [];
-    let filter = '';
+    const clauses: string[] = [];
+
+    if (branchId) {
+      params.push(branchId);
+      clauses.push(`r.branch_id = $${params.length}`);
+    } else if (!scope.isAdmin) {
+      params.push(scope.branchIds);
+      clauses.push(`r.branch_id = ANY($${params.length})`);
+    }
+
     if (search) {
       params.push(`%${search}%`);
-      filter = `WHERE (c.full_name ILIKE $1 OR r.reference_no ILIKE $1)`;
+      clauses.push(`(c.full_name ILIKE $${params.length} OR r.reference_no ILIKE $${params.length})`);
     }
+
+    const whereSql = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     return queryMany<Receipt>(
-      `SELECT r.*,
-              c.full_name AS customer_name
+      `SELECT r.*, c.full_name AS customer_name
          FROM ims.receipts r
          LEFT JOIN ims.customers c ON c.customer_id = r.customer_id
-         ${filter}
+         ${whereSql}
         ORDER BY r.receipt_date DESC`,
       params
     );
   },
 
   async createReceipt(input: ReceiptInput, ctx: { branchId: number; userId: number }): Promise<Receipt> {
+    const account = await queryOne<{ acc_id: number }>(
+      `SELECT acc_id
+         FROM ims.accounts
+        WHERE acc_id = $1
+          AND branch_id = $2
+          AND is_active = TRUE`,
+      [input.accId, ctx.branchId]
+    );
+    if (!account) {
+      throw ApiError.badRequest('Selected account is not available in this branch');
+    }
+
     return queryOne<Receipt>(
       `INSERT INTO ims.receipts (
          charge_id, customer_id, branch_id, user_id, acc_id,
@@ -59,44 +83,112 @@ export const receiptsService = {
     ) as Promise<Receipt>;
   },
 
-  async updateReceipt(id: number, input: Partial<ReceiptInput>): Promise<Receipt | null> {
+  async updateReceipt(id: number, input: Partial<ReceiptInput>, scope: BranchScope): Promise<Receipt | null> {
+    const target = await this.getReceipt(id, scope);
+    if (!target) {
+      return null;
+    }
+
+    if (input.accId !== undefined) {
+      const account = await queryOne<{ acc_id: number }>(
+        `SELECT acc_id
+           FROM ims.accounts
+          WHERE acc_id = $1
+            AND branch_id = $2
+            AND is_active = TRUE`,
+        [input.accId, target.branch_id]
+      );
+      if (!account) {
+        throw ApiError.badRequest('Selected account is not available in this branch');
+      }
+    }
+
     const updates: string[] = [];
     const values: any[] = [];
     let p = 1;
 
-    if (input.chargeId !== undefined) { updates.push(`charge_id = $${p++}`); values.push(input.chargeId); }
-    if (input.customerId !== undefined) { updates.push(`customer_id = $${p++}`); values.push(input.customerId); }
-    if (input.accId !== undefined) { updates.push(`acc_id = $${p++}`); values.push(input.accId); }
-    if (input.currencyCode !== undefined) { updates.push(`currency_code = $${p++}`); values.push(input.currencyCode); }
-    if (input.fxRate !== undefined) { updates.push(`fx_rate = $${p++}`); values.push(input.fxRate); }
-    if (input.receiptDate !== undefined) { updates.push(`receipt_date = $${p++}`); values.push(input.receiptDate); }
-    if (input.amount !== undefined) { updates.push(`amount = $${p++}`); values.push(input.amount); }
-    if (input.referenceNo !== undefined) { updates.push(`reference_no = $${p++}`); values.push(input.referenceNo); }
-    if (input.note !== undefined) { updates.push(`note = $${p++}`); values.push(input.note); }
+    if (input.chargeId !== undefined) {
+      updates.push(`charge_id = $${p++}`);
+      values.push(input.chargeId);
+    }
+    if (input.customerId !== undefined) {
+      updates.push(`customer_id = $${p++}`);
+      values.push(input.customerId);
+    }
+    if (input.accId !== undefined) {
+      updates.push(`acc_id = $${p++}`);
+      values.push(input.accId);
+    }
+    if (input.currencyCode !== undefined) {
+      updates.push(`currency_code = $${p++}`);
+      values.push(input.currencyCode);
+    }
+    if (input.fxRate !== undefined) {
+      updates.push(`fx_rate = $${p++}`);
+      values.push(input.fxRate);
+    }
+    if (input.receiptDate !== undefined) {
+      updates.push(`receipt_date = $${p++}`);
+      values.push(input.receiptDate);
+    }
+    if (input.amount !== undefined) {
+      updates.push(`amount = $${p++}`);
+      values.push(input.amount);
+    }
+    if (input.referenceNo !== undefined) {
+      updates.push(`reference_no = $${p++}`);
+      values.push(input.referenceNo);
+    }
+    if (input.note !== undefined) {
+      updates.push(`note = $${p++}`);
+      values.push(input.note);
+    }
 
-    if (updates.length === 0) return this.getReceipt(id);
+    if (updates.length === 0) return target;
 
     values.push(id);
+    let whereSql = `receipt_id = $${p}`;
+    if (!scope.isAdmin) {
+      values.push(scope.branchIds);
+      whereSql += ` AND branch_id = ANY($${p + 1})`;
+    }
+
     return queryOne<Receipt>(
       `UPDATE ims.receipts
           SET ${updates.join(', ')}
-        WHERE receipt_id = $${p}
+        WHERE ${whereSql}
         RETURNING *`,
       values
     );
   },
 
-  async getReceipt(id: number): Promise<Receipt | null> {
+  async getReceipt(id: number, scope: BranchScope): Promise<Receipt | null> {
+    if (scope.isAdmin) {
+      return queryOne<Receipt>(
+        `SELECT r.*, c.full_name AS customer_name
+           FROM ims.receipts r
+           LEFT JOIN ims.customers c ON c.customer_id = r.customer_id
+          WHERE r.receipt_id = $1`,
+        [id]
+      );
+    }
+
     return queryOne<Receipt>(
       `SELECT r.*, c.full_name AS customer_name
          FROM ims.receipts r
          LEFT JOIN ims.customers c ON c.customer_id = r.customer_id
-        WHERE r.receipt_id = $1`,
-      [id]
+        WHERE r.receipt_id = $1
+          AND r.branch_id = ANY($2)`,
+      [id, scope.branchIds]
     );
   },
 
-  async deleteReceipt(id: number): Promise<void> {
-    await queryOne(`DELETE FROM ims.receipts WHERE receipt_id = $1`, [id]);
+  async deleteReceipt(id: number, scope: BranchScope): Promise<void> {
+    if (scope.isAdmin) {
+      await queryOne(`DELETE FROM ims.receipts WHERE receipt_id = $1`, [id]);
+      return;
+    }
+
+    await queryOne(`DELETE FROM ims.receipts WHERE receipt_id = $1 AND branch_id = ANY($2)`, [id, scope.branchIds]);
   },
 };

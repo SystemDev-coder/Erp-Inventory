@@ -5,32 +5,41 @@ import { ApiError } from '../../utils/ApiError';
 import { receiptsService } from './receipts.service';
 import { receiptSchema } from './receipts.schemas';
 import { AuthRequest } from '../../middlewares/requireAuth';
+import { assertBranchAccess, pickBranchForWrite, resolveBranchScope } from '../../utils/branchScope';
 
 export const listReceipts = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
   const search = (req.query.search as string) || undefined;
-  const receipts = await receiptsService.listReceipts(search);
+  const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
+  if (branchId) {
+    assertBranchAccess(scope, branchId);
+  }
+  const receipts = await receiptsService.listReceipts(scope, search, branchId);
   return ApiResponse.success(res, { receipts });
 });
 
 export const createReceipt = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
   const input = receiptSchema.parse(req.body);
-  const branchId = req.user?.branchId ?? 1;
+  const branchId = pickBranchForWrite(scope, input.branchId);
   const userId = req.user?.userId ?? 1;
   const receipt = await receiptsService.createReceipt(input, { branchId, userId });
   return ApiResponse.created(res, { receipt }, 'Receipt recorded');
 });
 
 export const updateReceipt = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
   const input = receiptSchema.partial().parse(req.body);
-  const receipt = await receiptsService.updateReceipt(id, input);
+  const receipt = await receiptsService.updateReceipt(id, input, scope);
   if (!receipt) throw ApiError.notFound('Receipt not found');
   return ApiResponse.success(res, { receipt }, 'Receipt updated');
 });
 
 export const deleteReceipt = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
   if (!id) throw ApiError.badRequest('Invalid receipt id');
-  await receiptsService.deleteReceipt(id);
+  await receiptsService.deleteReceipt(id, scope);
   return ApiResponse.success(res, null, 'Receipt deleted');
 });

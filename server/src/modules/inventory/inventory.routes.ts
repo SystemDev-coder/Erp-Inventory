@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   listStock,
+  listItems,
   listMovements,
   listAdjustments,
   listRecounts,
@@ -23,6 +24,7 @@ const router = Router();
 
 router.use(requireAuth);
 
+router.get('/items', requireAnyPerm(['stock.view', 'inventory.view']), listItems);
 router.get('/stock', requireAnyPerm(['stock.view', 'inventory.view']), listStock);
 router.get('/movements', requireAnyPerm(['stock.view', 'inventory.view']), listMovements);
 router.get('/adjustments', requireAnyPerm(['stock.view', 'stock.adjust', 'inventory.view']), listAdjustments);

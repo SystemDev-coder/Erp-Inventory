@@ -59,6 +59,13 @@ export class AuthService {
 
       const user = result.rows[0];
 
+      await client.query(
+        `INSERT INTO ims.user_branch (user_id, branch_id, is_primary)
+         VALUES ($1, $2, TRUE)
+         ON CONFLICT (user_id, branch_id) DO UPDATE SET is_primary = TRUE`,
+        [user.user_id, user.branch_id]
+      );
+
       // Generate tokens
       const payload: TokenPayload = {
         userId: user.user_id,
@@ -133,12 +140,24 @@ export class AuthService {
       throw ApiError.unauthorized('Incorrect username or password');
     }
 
+    const primaryBranch = await queryOne<{ branch_id: number }>(
+      `SELECT branch_id
+         FROM ims.user_branch
+        WHERE user_id = $1
+          AND is_primary = TRUE
+        ORDER BY created_at
+        LIMIT 1`,
+      [user.user_id]
+    );
+
+    const effectiveBranchId = Number(primaryBranch?.branch_id || user.branch_id);
+
     // Generate tokens
     const payload: TokenPayload = {
       userId: user.user_id,
       username: user.username || user.phone || '',
       roleId: user.role_id,
-      branchId: user.branch_id,
+      branchId: effectiveBranchId,
     };
 
     const accessToken = signAccessToken(payload);

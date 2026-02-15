@@ -20,6 +20,32 @@ CREATE TABLE IF NOT EXISTS ims.user_branch (
 COMMENT ON TABLE ims.user_branch IS 'Junction table linking users to multiple branches they can access';
 COMMENT ON COLUMN ims.user_branch.is_primary IS 'Indicates if this is the user''s primary/default branch';
 
+CREATE OR REPLACE FUNCTION ims.fn_sync_user_branch_from_users()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.branch_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  UPDATE ims.user_branch
+     SET is_primary = FALSE
+   WHERE user_id = NEW.user_id;
+
+  INSERT INTO ims.user_branch (user_id, branch_id, is_primary)
+  VALUES (NEW.user_id, NEW.branch_id, TRUE)
+  ON CONFLICT (user_id, branch_id)
+  DO UPDATE SET is_primary = TRUE;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_sync_user_branch_from_users ON ims.users;
+CREATE TRIGGER trg_sync_user_branch_from_users
+AFTER INSERT OR UPDATE OF branch_id ON ims.users
+FOR EACH ROW
+EXECUTE FUNCTION ims.fn_sync_user_branch_from_users();
+
 -- Migrate existing users.branch_id to user_branch table
 INSERT INTO ims.user_branch (user_id, branch_id, is_primary)
 SELECT user_id, branch_id, TRUE
@@ -116,9 +142,15 @@ BEGIN
     
     CREATE INDEX IF NOT EXISTS idx_products_branch ON ims.products(branch_id);
     
-    -- Update barcode unique constraint to be branch-specific
-    DROP INDEX IF EXISTS products_barcode_key;
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_products_barcode_branch ON ims.products(branch_id, barcode) WHERE barcode IS NOT NULL;
+    -- Update barcode uniqueness to be branch-specific.
+    -- In many databases, products_barcode_key is a UNIQUE CONSTRAINT (not a plain index),
+    -- so it must be dropped via ALTER TABLE first.
+    ALTER TABLE ims.products DROP CONSTRAINT IF EXISTS products_barcode_key;
+    DROP INDEX IF EXISTS ims.products_barcode_key;
+    DROP INDEX IF EXISTS ims.idx_products_barcode_branch;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_products_barcode_branch
+      ON ims.products(branch_id, barcode)
+      WHERE barcode IS NOT NULL;
   END IF;
 END$$;
 

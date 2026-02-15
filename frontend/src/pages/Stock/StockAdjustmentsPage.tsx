@@ -5,8 +5,13 @@ import { PageHeader } from '../../components/ui/layout';
 import { DataTable } from '../../components/ui/table/DataTable';
 import { Modal } from '../../components/ui/modal/Modal';
 import { useToast } from '../../components/ui/toast/Toast';
-import { inventoryService, InventoryBranch, InventoryWarehouse, StockAdjustmentRow } from '../../services/inventory.service';
-import { productService, Product } from '../../services/product.service';
+import {
+  inventoryService,
+  InventoryBranch,
+  InventoryWarehouse,
+  StockAdjustmentRow,
+  InventoryItem,
+} from '../../services/inventory.service';
 
 const inputClass =
   'h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
@@ -22,7 +27,7 @@ const StockAdjustmentsPage = () => {
 
   const [branches, setBranches] = useState<InventoryBranch[]>([]);
   const [warehouses, setWarehouses] = useState<InventoryWarehouse[]>([]);
-  const [items, setItems] = useState<Product[]>([]);
+  const [items, setItems] = useState<InventoryItem[]>([]);
 
   const [filters, setFilters] = useState({
     branchId: '',
@@ -37,6 +42,7 @@ const StockAdjustmentsPage = () => {
     itemId: '',
     qty: 0,
     unitCost: 0,
+    salePrice: 0,
     note: '',
   });
 
@@ -49,6 +55,21 @@ const StockAdjustmentsPage = () => {
     if (!form.branchId) return warehouses;
     return warehouses.filter((row) => row.branch_id === Number(form.branchId));
   }, [form.branchId, warehouses]);
+
+  const filterItems = useMemo(() => {
+    if (!filters.branchId) return items;
+    return items.filter((row) => row.branch_id === Number(filters.branchId));
+  }, [filters.branchId, items]);
+
+  const formItems = useMemo(() => {
+    if (!form.branchId) return items;
+    return items.filter((row) => row.branch_id === Number(form.branchId));
+  }, [form.branchId, items]);
+
+  const adjustmentValue = useMemo(
+    () => Number((Number(form.qty || 0) * Number(form.unitCost || 0)).toFixed(2)),
+    [form.qty, form.unitCost]
+  );
 
   const columns = useMemo<ColumnDef<StockAdjustmentRow>[]>(
     () => [
@@ -90,7 +111,7 @@ const StockAdjustmentsPage = () => {
     const [branchRes, whRes, itemRes] = await Promise.all([
       inventoryService.listBranches({ includeInactive: false }),
       inventoryService.listWarehouses({ includeInactive: false }),
-      productService.list(),
+      inventoryService.listItems({}),
     ]);
 
     if (branchRes.success && branchRes.data?.branches) {
@@ -105,10 +126,10 @@ const StockAdjustmentsPage = () => {
       showToast('error', 'Stock', whRes.error || 'Failed to load warehouses');
     }
 
-    if (itemRes.success && itemRes.data?.products) {
-      setItems(itemRes.data.products);
+    if (itemRes.success && itemRes.data?.items) {
+      setItems(itemRes.data.items);
     } else {
-      showToast('error', 'Stock', itemRes.error || 'Failed to load items');
+      showToast('error', 'Stock', itemRes.error || 'Failed to load purchased items');
     }
     setMastersLoading(false);
   };
@@ -132,6 +153,16 @@ const StockAdjustmentsPage = () => {
       return;
     }
     showToast('error', 'Stock Adjustments', res.error || 'Failed to load adjustments');
+  };
+
+  const handleSelectFormItem = (itemId: string) => {
+    const selected = formItems.find((row) => row.item_id === Number(itemId));
+    setForm((prev) => ({
+      ...prev,
+      itemId,
+      unitCost: selected ? Number(selected.last_unit_cost || selected.cost_price || 0) : 0,
+      salePrice: selected ? Number(selected.sale_price || 0) : 0,
+    }));
   };
 
   const handleSave = async () => {
@@ -162,6 +193,7 @@ const StockAdjustmentsPage = () => {
       itemId: '',
       qty: 0,
       unitCost: 0,
+      salePrice: 0,
       note: '',
     });
     if (hasLoaded) {
@@ -203,7 +235,14 @@ const StockAdjustmentsPage = () => {
             <select
               className={inputClass}
               value={filters.branchId}
-              onChange={(e) => setFilters((prev) => ({ ...prev, branchId: e.target.value, whId: '' }))}
+              onChange={(e) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  branchId: e.target.value,
+                  whId: '',
+                  itemId: '',
+                }))
+              }
             >
               <option value="">All branches</option>
               {branches.map((branch) => (
@@ -229,16 +268,16 @@ const StockAdjustmentsPage = () => {
             </select>
           </div>
           <div>
-            <label className={labelClass}>Item</label>
+            <label className={labelClass}>Purchased Item</label>
             <select
               className={inputClass}
               value={filters.itemId}
               onChange={(e) => setFilters((prev) => ({ ...prev, itemId: e.target.value }))}
             >
-              <option value="">All items</option>
-              {items.map((item) => (
-                <option key={item.product_id} value={item.product_id}>
-                  {item.name}
+              <option value="">All purchased items</option>
+              {filterItems.map((item) => (
+                <option key={item.item_id} value={item.item_id}>
+                  {item.item_name}
                 </option>
               ))}
             </select>
@@ -282,7 +321,16 @@ const StockAdjustmentsPage = () => {
             <select
               className={inputClass}
               value={form.branchId}
-              onChange={(e) => setForm((prev) => ({ ...prev, branchId: e.target.value, whId: '' }))}
+              onChange={(e) =>
+                setForm((prev) => ({
+                  ...prev,
+                  branchId: e.target.value,
+                  whId: '',
+                  itemId: '',
+                  unitCost: 0,
+                  salePrice: 0,
+                }))
+              }
             >
               <option value="">Select branch</option>
               {branches.map((branch) => (
@@ -308,16 +356,17 @@ const StockAdjustmentsPage = () => {
             </select>
           </div>
           <div>
-            <label className={labelClass}>Item *</label>
+            <label className={labelClass}>Purchased Item *</label>
             <select
               className={inputClass}
               value={form.itemId}
-              onChange={(e) => setForm((prev) => ({ ...prev, itemId: e.target.value }))}
+              onChange={(e) => handleSelectFormItem(e.target.value)}
+              disabled={!form.branchId}
             >
-              <option value="">Select item</option>
-              {items.map((item) => (
-                <option key={item.product_id} value={item.product_id}>
-                  {item.name}
+              <option value="">Select purchased item</option>
+              {formItems.map((item) => (
+                <option key={item.item_id} value={item.item_id}>
+                  {item.item_name}
                 </option>
               ))}
             </select>
@@ -333,13 +382,21 @@ const StockAdjustmentsPage = () => {
             />
           </div>
           <div>
-            <label className={labelClass}>Unit Cost</label>
+            <label className={labelClass}>Cost Price</label>
             <input
               type="number"
               className={inputClass}
               value={form.unitCost}
               onChange={(e) => setForm((prev) => ({ ...prev, unitCost: Number(e.target.value) }))}
             />
+          </div>
+          <div>
+            <label className={labelClass}>Sale Price</label>
+            <input type="number" className={inputClass} value={form.salePrice} readOnly />
+          </div>
+          <div>
+            <label className={labelClass}>Auto Value (Qty x Cost)</label>
+            <input type="number" className={inputClass} value={adjustmentValue} readOnly />
           </div>
           <div>
             <label className={labelClass}>Note</label>

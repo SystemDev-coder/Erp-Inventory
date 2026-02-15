@@ -94,6 +94,7 @@ class ApiClient {
       ...options,
       headers,
       credentials: 'include',
+      cache: 'no-store',
     };
 
     try {
@@ -119,6 +120,9 @@ class ApiClient {
       }
 
       if (!response.ok) {
+        if (response.status === 304) {
+          return (data || { success: true }) as ApiResponse<T>;
+        }
         if (response.status === 401 && !isRetry) {
           const newToken = await this.tryRefresh();
           if (newToken) {

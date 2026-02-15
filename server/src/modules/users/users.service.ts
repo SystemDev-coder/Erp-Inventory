@@ -1,7 +1,8 @@
 import { queryMany, queryOne } from '../../db/query';
+import { withTransaction } from '../../db/withTx';
 import { hashPassword } from '../../utils/password';
-import { UserCreateInput, UserUpdateInput } from './users.schemas';
 import { ApiError } from '../../utils/ApiError';
+import { UserCreateInput, UserUpdateInput } from './users.schemas';
 
 export interface UserRow {
   user_id: number;
@@ -29,7 +30,6 @@ export const usersService = {
   },
 
   async create(input: UserCreateInput): Promise<UserRow> {
-    // Enforce unique username at application level for clearer error feedback
     const existing = await queryOne<{ user_id: number }>(
       `SELECT user_id FROM ims.users WHERE username = $1`,
       [input.username]
@@ -39,18 +39,35 @@ export const usersService = {
     }
 
     const passwordHash = await hashPassword(input.password);
-    return queryOne<UserRow>(
-      `INSERT INTO ims.users (branch_id, role_id, name, username, password_hash, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [
-        input.branchId,
-        input.roleId,
-        input.name,
-        input.username,
-        passwordHash,
-        input.isActive ?? true,
-      ]
-    ) as Promise<UserRow>;
+
+    const created = await withTransaction(async (client) => {
+      const row = await client.query<UserRow>(
+        `INSERT INTO ims.users (branch_id, role_id, name, username, password_hash, is_active)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING *`,
+        [
+          input.branchId,
+          input.roleId,
+          input.name,
+          input.username,
+          passwordHash,
+          input.isActive ?? true,
+        ]
+      );
+
+      const user = row.rows[0];
+      await client.query(`DELETE FROM ims.user_branch WHERE user_id = $1`, [user.user_id]);
+      await client.query(
+        `INSERT INTO ims.user_branch (user_id, branch_id, is_primary)
+         VALUES ($1, $2, TRUE)
+         ON CONFLICT (user_id, branch_id) DO UPDATE SET is_primary = TRUE`,
+        [user.user_id, input.branchId]
+      );
+
+      return user;
+    });
+
+    return created;
   },
 
   async update(id: number, input: UserUpdateInput): Promise<UserRow | null> {
@@ -58,11 +75,19 @@ export const usersService = {
     const values: any[] = [];
     let p = 1;
 
-    if (input.branchId !== undefined) { updates.push(`branch_id = $${p++}`); values.push(input.branchId); }
-    if (input.roleId !== undefined) { updates.push(`role_id = $${p++}`); values.push(input.roleId); }
-    if (input.name !== undefined) { updates.push(`name = $${p++}`); values.push(input.name); }
+    if (input.branchId !== undefined) {
+      updates.push(`branch_id = $${p++}`);
+      values.push(input.branchId);
+    }
+    if (input.roleId !== undefined) {
+      updates.push(`role_id = $${p++}`);
+      values.push(input.roleId);
+    }
+    if (input.name !== undefined) {
+      updates.push(`name = $${p++}`);
+      values.push(input.name);
+    }
     if (input.username !== undefined) {
-      // Check for username collisions on update
       const existing = await queryOne<{ user_id: number }>(
         `SELECT user_id FROM ims.users WHERE username = $1 AND user_id <> $2`,
         [input.username, id]
@@ -73,22 +98,54 @@ export const usersService = {
       updates.push(`username = $${p++}`);
       values.push(input.username);
     }
-    if (input.isActive !== undefined) { updates.push(`is_active = $${p++}`); values.push(input.isActive); }
+    if (input.isActive !== undefined) {
+      updates.push(`is_active = $${p++}`);
+      values.push(input.isActive);
+    }
     if (input.password !== undefined) {
       const hash = await hashPassword(input.password);
       updates.push(`password_hash = $${p++}`);
       values.push(hash);
     }
 
-    if (!updates.length) {
-      return this.get(id);
-    }
+    const updated = await withTransaction(async (client) => {
+      let user: UserRow | null;
 
-    values.push(id);
-    return queryOne<UserRow>(
-      `UPDATE ims.users SET ${updates.join(', ')} WHERE user_id = $${p} RETURNING *`,
-      values
-    );
+      if (!updates.length) {
+        const row = await client.query<UserRow>(
+          `SELECT u.*, r.role_name
+             FROM ims.users u
+             LEFT JOIN ims.roles r ON r.role_id = u.role_id
+            WHERE u.user_id = $1`,
+          [id]
+        );
+        user = row.rows[0] ?? null;
+      } else {
+        values.push(id);
+        const row = await client.query<UserRow>(
+          `UPDATE ims.users
+              SET ${updates.join(', ')}
+            WHERE user_id = $${p}
+            RETURNING *`,
+          values
+        );
+        user = row.rows[0] ?? null;
+      }
+
+      if (user && input.branchId !== undefined) {
+        await client.query(`DELETE FROM ims.user_branch WHERE user_id = $1`, [id]);
+        await client.query(
+          `INSERT INTO ims.user_branch (user_id, branch_id, is_primary)
+           VALUES ($1, $2, TRUE)
+           ON CONFLICT (user_id, branch_id) DO UPDATE SET is_primary = TRUE`,
+          [id, input.branchId]
+        );
+      }
+
+      return user;
+    });
+
+    return updated;
   },
 
   get(id: number): Promise<UserRow | null> {
@@ -102,6 +159,10 @@ export const usersService = {
   },
 
   async remove(id: number): Promise<void> {
-    await queryOne(`DELETE FROM ims.users WHERE user_id = $1`, [id]);
+    await withTransaction(async (client) => {
+      await client.query(`DELETE FROM ims.user_branch WHERE user_id = $1`, [id]);
+      await client.query(`DELETE FROM ims.users WHERE user_id = $1`, [id]);
+      return null;
+    });
   },
 };

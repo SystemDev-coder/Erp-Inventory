@@ -48,6 +48,9 @@ fi
 for file in $(find "$MIGRATIONS_DIR" -maxdepth 1 -type f -name '*.sql' ! -name "${BASE_MIGRATION}" | sort); do
   base=$(basename "$file")
   case "$base" in
+    test_*.sql|check_*.sql)
+      echo "Skipping $base (diagnostic/test script)"
+      ;;
     20260209_products_categories.sql|PRODUCTS_CATEGORIES.sql)
       echo "Skipping $base (covered by ${BASE_MIGRATION})"
       ;;

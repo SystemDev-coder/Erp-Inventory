@@ -8,21 +8,9 @@ import { inventoryService } from '../../services/inventory.service';
 import { productService } from '../../services/product.service';
 import { useToast } from '../../components/ui/toast/Toast';
 
-type StockRow = {
-  product_id: number;
-  name: string;
-  barcode?: string;
-  branch_id: number;
-  branch_name: string;
-  wh_id: number | null;
-  wh_name: string | null;
-  wh_qty: number;
-  branch_qty: number;
-};
-
 const Inventory = () => {
   const { showToast } = useToast();
-  const [stock, setStock] = useState<StockRow[]>([]);
+  const [stock, setStock] = useState<any[]>([]);
   const [movements, setMovements] = useState<any[]>([]);
   const [loadingStock, setLoadingStock] = useState(false);
   const [loadingMove, setLoadingMove] = useState(false);
@@ -33,7 +21,7 @@ const Inventory = () => {
   const [adjustForm, setAdjustForm] = useState({ branchId: '', whId: '', productId: '', qty: 0, unitCost: 0, note: '' });
   const [transferForm, setTransferForm] = useState({ fromWhId: '', toWhId: '', productId: '', qty: 0, unitCost: 0, note: '' });
 
-  const stockColumns = useMemo<ColumnDef<StockRow>[]>(() => [
+  const stockColumns = useMemo<ColumnDef<any>[]>(() => [
     { accessorKey: 'name', header: 'Product' },
     { accessorKey: 'barcode', header: 'Barcode' },
     { accessorKey: 'branch_name', header: 'Branch' },

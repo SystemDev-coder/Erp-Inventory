@@ -16,8 +16,11 @@ export interface Receipt {
 }
 
 export const receiptService = {
-  async list(search?: string) {
-    const qs = search ? `?search=${encodeURIComponent(search)}` : '';
+  async list(search?: string, branchId?: number) {
+    const params: string[] = [];
+    if (search) params.push(`search=${encodeURIComponent(search)}`);
+    if (branchId) params.push(`branchId=${encodeURIComponent(String(branchId))}`);
+    const qs = params.length ? `?${params.join('&')}` : '';
     return apiClient.get<{ receipts: Receipt[] }>(`${API.RECEIPTS.LIST}${qs}`);
   },
 
@@ -27,6 +30,7 @@ export const receiptService = {
       customerId: data.customer_id,
       accId: data.acc_id,
       amount: data.amount,
+      branchId: data.branch_id,
       referenceNo: data.reference_no,
       note: data.note,
     });
@@ -38,6 +42,7 @@ export const receiptService = {
       customerId: data.customer_id,
       accId: data.acc_id,
       amount: data.amount,
+      branchId: data.branch_id,
       referenceNo: data.reference_no,
       note: data.note,
     });

@@ -13,6 +13,7 @@ type LineItem = {
   description: string;
   quantity: number;
   unit_cost: number;
+  sale_price: number;
   discount: number;
   batch_no?: string;
   expiry_date?: string;
@@ -25,6 +26,7 @@ const emptyLine: LineItem = {
   description: '',
   quantity: 1,
   unit_cost: 0,
+  sale_price: 0,
   discount: 0,
   batch_no: '',
   expiry_date: '',
@@ -126,6 +128,7 @@ const PurchaseEditor = () => {
         description: it.description || '',
         quantity: Number(it.quantity || 1),
         unit_cost: Number(it.unit_cost || 0),
+        sale_price: Number((it as any).sale_price || 0),
         discount: Number(it.discount || 0),
         batch_no: it.batch_no || '',
         expiry_date: it.expiry_date || '',
@@ -188,6 +191,7 @@ const PurchaseEditor = () => {
         productId: li.product_id ? Number(li.product_id) : undefined,
         quantity: Number(li.quantity),
         unitCost: Number(li.unit_cost),
+        salePrice: Number(li.sale_price || 0),
         discount: Number(li.discount || 0),
         description: (li.description || li.name || '').trim() || undefined,
         batchNo: li.batch_no || undefined,
@@ -463,6 +467,7 @@ const PurchaseEditor = () => {
                 <th className="px-2 py-2 text-left">Description</th>
                 <th className="px-2 py-2 text-center">Qty</th>
                 <th className="px-2 py-2 text-center">Unit Cost</th>
+                <th className="px-2 py-2 text-center">Sale Price</th>
                 <th className="px-2 py-2 text-center">Discount</th>
                 <th className="px-2 py-2 text-right">Line Total</th>
                 <th className="px-2 py-2 text-center">Action</th>
@@ -530,6 +535,19 @@ const PurchaseEditor = () => {
                     <input
                       type="number"
                       className={compactNumberCls}
+                      value={item.sale_price}
+                      min={0}
+                      step="1"
+                      onChange={(e) => {
+                        const v = Number(e.target.value || 0);
+                        setLineItemValue(idx, 'sale_price', v);
+                      }}
+                    />
+                  </td>
+                  <td className="px-2 py-1">
+                    <input
+                      type="number"
+                      className={compactNumberCls}
                       value={item.discount}
                       min={0}
                       step="1"
@@ -564,7 +582,7 @@ const PurchaseEditor = () => {
               ))}
               {lineItems.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="text-center text-slate-500 py-3">
+                  <td colSpan={8} className="text-center text-slate-500 py-3">
                     No items. Add a line to begin.
                   </td>
                 </tr>

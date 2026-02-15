@@ -7,6 +7,7 @@ export interface PurchaseItem {
   product_name?: string | null;
   quantity: number;
   unit_cost: number;
+  sale_price?: number;
   discount?: number;
   line_total?: number;
   description?: string | null;
@@ -19,6 +20,8 @@ export interface PurchaseItemView extends PurchaseItem {
   purchase_date: string;
   supplier_id: number;
   supplier_name?: string | null;
+  cost_price?: number;
+  sale_price?: number;
   purchase_type: 'cash' | 'credit';
 }
 export interface Purchase {
@@ -38,6 +41,7 @@ export interface Purchase {
 }
 
 export interface PurchaseCreateInput {
+  branchId?: number;
   supplierId: number;
   whId?: number | null;
   purchaseDate?: string;
@@ -61,6 +65,7 @@ export interface PurchaseCreateInput {
     productId?: number;
     quantity: number;
     unitCost: number;
+    salePrice?: number;
     discount?: number;
     description?: string;
     batchNo?: string;
@@ -69,10 +74,11 @@ export interface PurchaseCreateInput {
 }
 
 export const purchaseService = {
-  async list(search?: string, status?: string) {
+  async list(search?: string, status?: string, branchId?: number) {
     const params: string[] = [];
     if (search) params.push(`search=${encodeURIComponent(search)}`);
     if (status && status !== 'all') params.push(`status=${encodeURIComponent(status)}`);
+    if (branchId) params.push(`branchId=${encodeURIComponent(String(branchId))}`);
     const qs = params.length ? `?${params.join('&')}` : '';
     return apiClient.get<{ purchases: Purchase[] }>(`${API.PURCHASES.LIST}${qs}`);
   },
@@ -81,7 +87,7 @@ export const purchaseService = {
     return apiClient.get<{ purchase: Purchase; items?: PurchaseItem[] }>(API.PURCHASES.ITEM(id));
   },
 
-  async listItems(params?: { search?: string; supplierId?: number; productId?: number; from?: string; to?: string }) {
+  async listItems(params?: { search?: string; supplierId?: number; productId?: number; branchId?: number; from?: string; to?: string }) {
     const qs = params
       ? '?' +
         Object.entries(params)

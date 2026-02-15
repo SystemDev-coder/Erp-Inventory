@@ -4,6 +4,7 @@ export const purchaseItemSchema = z.object({
   productId: z.coerce.number().int().positive().optional(),
   quantity: z.coerce.number().positive(),
   unitCost: z.coerce.number().nonnegative(),
+  salePrice: z.coerce.number().nonnegative().optional(),
   discount: z.coerce.number().nonnegative().default(0).optional(),
   description: z.string().optional().or(z.literal('')),
   batchNo: z.string().optional().or(z.literal('')),
@@ -11,6 +12,7 @@ export const purchaseItemSchema = z.object({
 });
 
 export const purchaseSchema = z.object({
+  branchId: z.coerce.number().int().positive().optional(),
   supplierId: z.coerce.number().int().positive(),
   whId: z.coerce.number().int().positive().nullable().optional(),
   purchaseDate: z.string().optional(),

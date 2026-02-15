@@ -254,6 +254,39 @@ CREATE TABLE IF NOT EXISTS ims.users (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS ims.user_branch (
+    user_id BIGINT NOT NULL REFERENCES ims.users(user_id) ON DELETE CASCADE,
+    branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON DELETE CASCADE,
+    is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, branch_id)
+);
+
+CREATE OR REPLACE FUNCTION ims.fn_sync_user_branch_from_users()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.branch_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+
+    UPDATE ims.user_branch
+       SET is_primary = FALSE
+     WHERE user_id = NEW.user_id;
+
+    INSERT INTO ims.user_branch (user_id, branch_id, is_primary)
+    VALUES (NEW.user_id, NEW.branch_id, TRUE)
+    ON CONFLICT (user_id, branch_id)
+    DO UPDATE SET is_primary = TRUE;
+
+    RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_sync_user_branch_from_users ON ims.users;
+CREATE TRIGGER trg_sync_user_branch_from_users
+AFTER INSERT OR UPDATE OF branch_id ON ims.users
+FOR EACH ROW
+EXECUTE FUNCTION ims.fn_sync_user_branch_from_users();
+
 -- User-Branch Junction Table (Many-to-Many)
 -- Allows users to access multiple branches
 CREATE TABLE IF NOT EXISTS ims.user_branch (
@@ -547,13 +580,56 @@ CREATE TABLE IF NOT EXISTS ims.sales (
     tax_amount NUMERIC(14,2) NOT NULL DEFAULT 0,
     sale_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     sale_type ims.sale_type_enum NOT NULL DEFAULT 'cash',
+    doc_type VARCHAR(20) NOT NULL DEFAULT 'sale',
+    quote_valid_until DATE,
     subtotal NUMERIC(14,2) NOT NULL DEFAULT 0,
     discount NUMERIC(14,2) NOT NULL DEFAULT 0,
     total NUMERIC(14,2) NOT NULL DEFAULT 0,
     status ims.sale_status_enum NOT NULL DEFAULT 'paid',
     note TEXT,
-    CONSTRAINT chk_sales_amounts CHECK (subtotal >= 0 AND discount >= 0 AND total >= 0)
+    pay_acc_id BIGINT REFERENCES ims.accounts(acc_id),
+    paid_amount NUMERIC(14,2) NOT NULL DEFAULT 0,
+    is_stock_applied BOOLEAN NOT NULL DEFAULT TRUE,
+    voided_at TIMESTAMPTZ,
+    void_reason TEXT,
+    CONSTRAINT chk_sales_amounts CHECK (subtotal >= 0 AND discount >= 0 AND total >= 0),
+    CONSTRAINT chk_sales_doc_type CHECK (doc_type IN ('sale', 'invoice', 'quotation')),
+    CONSTRAINT chk_sales_paid_amount CHECK (paid_amount >= 0)
 );
+
+ALTER TABLE IF EXISTS ims.sales
+  ADD COLUMN IF NOT EXISTS doc_type VARCHAR(20) NOT NULL DEFAULT 'sale',
+  ADD COLUMN IF NOT EXISTS quote_valid_until DATE,
+  ADD COLUMN IF NOT EXISTS pay_acc_id BIGINT REFERENCES ims.accounts(acc_id),
+  ADD COLUMN IF NOT EXISTS paid_amount NUMERIC(14,2) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS is_stock_applied BOOLEAN NOT NULL DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS voided_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS void_reason TEXT;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM pg_constraint
+     WHERE conname = 'chk_sales_doc_type'
+       AND conrelid = 'ims.sales'::regclass
+  ) THEN
+    ALTER TABLE ims.sales
+      ADD CONSTRAINT chk_sales_doc_type
+      CHECK (doc_type IN ('sale', 'invoice', 'quotation'));
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+      FROM pg_constraint
+     WHERE conname = 'chk_sales_paid_amount'
+       AND conrelid = 'ims.sales'::regclass
+  ) THEN
+    ALTER TABLE ims.sales
+      ADD CONSTRAINT chk_sales_paid_amount
+      CHECK (paid_amount >= 0);
+  END IF;
+END $$;
 
 ALTER TABLE ims.charges
 DROP CONSTRAINT IF EXISTS fk_charges_sale;
@@ -599,6 +675,7 @@ CREATE TABLE IF NOT EXISTS ims.purchase_items (
     product_id BIGINT REFERENCES ims.products(product_id),
     quantity NUMERIC(14,3) NOT NULL,
     unit_cost NUMERIC(14,2) NOT NULL DEFAULT 0,
+    sale_price NUMERIC(14,2),
     line_total NUMERIC(14,2) NOT NULL DEFAULT 0,
     batch_no VARCHAR(80),
     expiry_date DATE,
@@ -610,7 +687,8 @@ CREATE TABLE IF NOT EXISTS ims.purchase_items (
 -- Ensure new columns exist for legacy databases
 ALTER TABLE IF EXISTS ims.purchase_items
   ADD COLUMN IF NOT EXISTS discount NUMERIC(14,2) NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS description VARCHAR(240);
+  ADD COLUMN IF NOT EXISTS description VARCHAR(240),
+  ADD COLUMN IF NOT EXISTS sale_price NUMERIC(14,2);
 
 CREATE TABLE IF NOT EXISTS ims.supplier_charges (
     sup_charge_id BIGSERIAL PRIMARY KEY,
@@ -1140,6 +1218,10 @@ ALTER TABLE ims.branch_stock
   ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 
+ALTER TABLE ims.inventory_movements
+  ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
 -- =========================================================
 -- 16) CREATE INDEXES FOR ALL TABLES
 -- =========================================================
@@ -1147,6 +1229,9 @@ ALTER TABLE ims.branch_stock
 -- Existing table indexes
 CREATE INDEX IF NOT EXISTS idx_users_branch ON ims.users(branch_id);
 CREATE INDEX IF NOT EXISTS idx_users_role ON ims.users(role_id);
+CREATE INDEX IF NOT EXISTS idx_user_branch_user ON ims.user_branch(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_branch_branch ON ims.user_branch(branch_id);
+CREATE INDEX IF NOT EXISTS idx_user_branch_primary ON ims.user_branch(user_id, is_primary) WHERE is_primary = TRUE;
 CREATE INDEX IF NOT EXISTS idx_products_cat ON ims.products(cat_id);
 CREATE INDEX IF NOT EXISTS idx_products_supplier ON ims.products(supplier_id);
 CREATE INDEX IF NOT EXISTS idx_products_unit ON ims.products(unit_id);
@@ -1159,6 +1244,8 @@ CREATE INDEX IF NOT EXISTS idx_sales_wh ON ims.sales(wh_id);
 CREATE INDEX IF NOT EXISTS idx_sales_user ON ims.sales(user_id);
 CREATE INDEX IF NOT EXISTS idx_sales_customer ON ims.sales(customer_id);
 CREATE INDEX IF NOT EXISTS idx_sales_date ON ims.sales(sale_date);
+CREATE INDEX IF NOT EXISTS idx_sales_doc_type_status ON ims.sales(doc_type, status);
+CREATE INDEX IF NOT EXISTS idx_sales_pay_acc ON ims.sales(pay_acc_id);
 CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON ims.sale_items(sale_id);
 CREATE INDEX IF NOT EXISTS idx_sale_items_product ON ims.sale_items(product_id);
 CREATE INDEX IF NOT EXISTS idx_charges_branch ON ims.charges(branch_id);

@@ -271,9 +271,10 @@ const Purchases = () => {
     { accessorKey: 'description', header: 'Item', cell: ({ row }) => row.original.description || row.original.product_name || '-' },
     { accessorKey: 'quantity', header: 'Qty', cell: ({ row }) => Number(row.original.quantity || 0).toFixed(3) },
     { accessorKey: 'unit_cost', header: 'Unit Cost', cell: ({ row }) => `$${Number(row.original.unit_cost || 0).toFixed(2)}` },
+    { accessorKey: 'cost_price', header: 'Cost Price', cell: ({ row }) => `$${Number(row.original.cost_price || row.original.unit_cost || 0).toFixed(2)}` },
+    { accessorKey: 'sale_price', header: 'Sale Price', cell: ({ row }) => `$${Number(row.original.sale_price || 0).toFixed(2)}` },
     { accessorKey: 'discount', header: 'Discount', cell: ({ row }) => `$${Number(row.original.discount || 0).toFixed(2)}` },
     { accessorKey: 'line_total', header: 'Line Total', cell: ({ row }) => `$${Number(row.original.line_total || 0).toFixed(2)}` },
-    { accessorKey: 'purchase_type', header: 'Type', cell: ({ row }) => row.original.purchase_type },
   ], []);
 
 

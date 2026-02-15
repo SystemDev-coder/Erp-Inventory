@@ -53,6 +53,7 @@ function AppRoutes() {
           <Route path="/inventory" element={<StockPage />} />
           <Route path="/sales" element={<Sales />} />
           <Route path="/sales/new" element={<SaleCreate />} />
+          <Route path="/sales/:id/edit" element={<SaleCreate />} />
           <Route path="/purchases" element={<Purchases />} />
           <Route path="/purchases/new" element={<PurchaseEditor />} />
           <Route path="/purchases/:id" element={<PurchaseEditor />} />

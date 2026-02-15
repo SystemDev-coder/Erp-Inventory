@@ -2,46 +2,55 @@ import { Response } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiResponse } from '../../utils/ApiResponse';
 import { ApiError } from '../../utils/ApiError';
+import { AuthRequest } from '../../middlewares/requireAuth';
+import { pickBranchForWrite, resolveBranchScope } from '../../utils/branchScope';
 import { accountsService } from './accounts.service';
 import { accountSchema, accountUpdateSchema } from './accounts.schemas';
-import { AuthRequest } from '../../middlewares/requireAuth';
 
 export const listAccounts = asyncHandler(async (req: AuthRequest, res: Response) => {
-  // Get accounts filtered by user's accessible branches (set by middleware)
-  const branchIds = (req as any).userBranches?.map((b: any) => b.branch_id) || [];
-  const accounts = await accountsService.list(branchIds);
+  const scope = await resolveBranchScope(req);
+  const accounts = await accountsService.list(scope);
   return ApiResponse.success(res, { accounts });
 });
 
 export const createAccount = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
   const input = accountSchema.parse(req.body);
-  const currentBranch = (req as any).currentBranch;
-  
-  // Check for duplicates within the current branch only
+  const branchId = pickBranchForWrite(scope, input.branchId);
+
   const existing = await accountsService.findByNameAndCurrency(
-    input.name, 
+    input.name,
     input.currencyCode || 'USD',
-    currentBranch?.branch_id
+    branchId
   );
   if (existing) {
     return ApiResponse.success(res, { account: existing }, 'Account already exists in this branch');
   }
-  
-  // Create account - branch_id will be added automatically by database trigger!
-  const account = await accountsService.create(input);
+
+  const account = await accountsService.create(input, { branchId });
   return ApiResponse.created(res, { account }, 'Account created');
 });
 
 export const updateAccount = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
+  if (!Number.isFinite(id) || id <= 0) {
+    throw ApiError.badRequest('Invalid account id');
+  }
+
   const input = accountUpdateSchema.parse(req.body);
-  const account = await accountsService.update(id, input);
+  const account = await accountsService.update(id, input, scope);
   if (!account) throw ApiError.notFound('Account not found');
   return ApiResponse.success(res, { account }, 'Account updated');
 });
 
 export const deleteAccount = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
-  await accountsService.remove(id);
+  if (!Number.isFinite(id) || id <= 0) {
+    throw ApiError.badRequest('Invalid account id');
+  }
+
+  await accountsService.remove(id, scope);
   return ApiResponse.success(res, null, 'Account deleted');
 });
