@@ -13,14 +13,17 @@ export interface UserRow {
   is_active: boolean;
   created_at: string;
   role_name?: string | null;
+  emp_id?: number | null;
+  emp_name?: string | null;
 }
 
 export const usersService = {
   async list(): Promise<UserRow[]> {
     return queryMany<UserRow>(
-      `SELECT u.*, r.role_name
+      `SELECT u.*, r.role_name, e.emp_id, e.full_name as emp_name
          FROM ims.users u
          LEFT JOIN ims.roles r ON r.role_id = u.role_id
+         LEFT JOIN ims.employees e ON e.user_id = u.user_id
         ORDER BY u.user_id DESC`
     );
   },
@@ -164,5 +167,97 @@ export const usersService = {
       await client.query(`DELETE FROM ims.users WHERE user_id = $1`, [id]);
       return null;
     });
+  },
+
+  async generateFromEmployee(input: {
+    empId: number;
+  }): Promise<{ user: UserRow; username: string; password: string }> {
+    // Check if employee exists and doesn't already have a user
+    const employee = await queryOne<{ 
+      emp_id: number; 
+      full_name: string; 
+      user_id: number | null; 
+      branch_id: number;
+      role_id: number | null;
+    }>(
+      `SELECT emp_id, full_name, user_id, branch_id, role_id FROM ims.employees WHERE emp_id = $1`,
+      [input.empId]
+    );
+
+    if (!employee) {
+      throw ApiError.notFound('Employee not found');
+    }
+
+    if (employee.user_id) {
+      throw ApiError.conflict('Employee already has a user account');
+    }
+
+    if (!employee.role_id) {
+      throw ApiError.badRequest('Employee must have a role assigned before generating user account');
+    }
+
+    // Auto-generate username from full name
+    // Example: "Ahmed Hassan" -> "ahmed.hassan"
+    let baseUsername = employee.full_name
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, '.')
+      .replace(/[^a-z0-9.]/g, '');
+
+    // Ensure username is unique by adding numbers if needed
+    let username = baseUsername;
+    let counter = 1;
+    while (await queryOne<{ user_id: number }>(`SELECT user_id FROM ims.users WHERE username = $1`, [username])) {
+      username = `${baseUsername}${counter}`;
+      counter++;
+    }
+
+    // Auto-generate password from name + numbers
+    // Example: "Ahmed Hassan" -> "Ahmed2024!" or "Hassan@123"
+    const nameParts = employee.full_name.split(' ').filter(p => p.length > 0);
+    const firstName = nameParts[0] || 'User';
+    const year = new Date().getFullYear();
+    const randomNum = Math.floor(Math.random() * 900) + 100; // 100-999
+    const password = `${firstName}${year}@${randomNum}`;
+
+    const passwordHash = await hashPassword(password);
+
+    const created = await withTransaction(async (client) => {
+      // Create user with employee's name, branch, and role
+      const userRow = await client.query<UserRow>(
+        `INSERT INTO ims.users (branch_id, role_id, name, username, password_hash, is_active)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING *`,
+        [
+          employee.branch_id,
+          employee.role_id,
+          employee.full_name, // Use employee's full name
+          username,
+          passwordHash,
+          true, // Always active by default
+        ]
+      );
+
+      const user = userRow.rows[0];
+
+      // Link user to branch
+      await client.query(`DELETE FROM ims.user_branch WHERE user_id = $1`, [user.user_id]);
+      await client.query(
+        `INSERT INTO ims.user_branch (user_id, branch_id, is_primary)
+         VALUES ($1, $2, TRUE)
+         ON CONFLICT (user_id, branch_id) DO UPDATE SET is_primary = TRUE`,
+        [user.user_id, employee.branch_id]
+      );
+
+      // Link employee to user
+      await client.query(
+        `UPDATE ims.employees SET user_id = $1 WHERE emp_id = $2`,
+        [user.user_id, input.empId]
+      );
+
+      return { user, username, password };
+    });
+
+    return created;
   },
 };

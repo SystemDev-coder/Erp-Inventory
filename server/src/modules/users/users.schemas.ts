@@ -18,5 +18,10 @@ export const userUpdateSchema = z.object({
   isActive: z.boolean().optional(),
 });
 
+export const userGenerateFromEmployeeSchema = z.object({
+  empId: z.coerce.number().int().positive(),
+});
+
 export type UserCreateInput = z.infer<typeof userCreateSchema>;
 export type UserUpdateInput = z.infer<typeof userUpdateSchema>;
+export type UserGenerateFromEmployeeInput = z.infer<typeof userGenerateFromEmployeeSchema>;

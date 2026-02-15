@@ -147,27 +147,45 @@ const Sales = () => {
 
   const printSaleInvoice = useCallback(
     async (sale: Sale) => {
-      const res = await salesService.get(sale.sale_id);
-      if (!res.success || !res.data?.sale) {
-        showToast('error', 'Sales', res.error || 'Failed to load sale details');
-        return;
-      }
+      try {
+        // Load sale details first
+        const res = await salesService.get(sale.sale_id);
+        if (!res.success || !res.data?.sale) {
+          showToast('error', 'Sales', res.error || 'Failed to load sale details');
+          return;
+        }
 
-      const printWindow = window.open('', '_blank', 'noopener,noreferrer,width=1100,height=800');
-      if (!printWindow) {
-        showToast('error', 'Sales', 'Allow popups to print invoice');
-        return;
-      }
+        // Build the HTML content
+        const html = buildPrintableInvoice(res.data.sale, res.data.items || []);
+        
+        // Open new window for printing
+        const printWindow = window.open('', '_blank', 'width=900,height=700');
+        
+        if (!printWindow) {
+          showToast('error', 'Print Blocked', 'Please allow popups for this site. Click the popup icon in your address bar.');
+          return;
+        }
 
-      const html = buildPrintableInvoice(res.data.sale, res.data.items || []);
-      printWindow.document.open();
-      printWindow.document.write(html);
-      printWindow.document.close();
-      printWindow.focus();
-      setTimeout(() => {
-        printWindow.print();
-        printWindow.close();
-      }, 200);
+        // Write the HTML content
+        printWindow.document.write(html);
+        printWindow.document.close();
+        
+        // Focus the window
+        printWindow.focus();
+        
+        // Wait a bit for content to render, then print
+        setTimeout(() => {
+          try {
+            printWindow.print();
+          } catch (err) {
+            console.error('Print error:', err);
+          }
+        }, 500);
+        
+      } catch (error) {
+        console.error('Invoice print error:', error);
+        showToast('error', 'Print Failed', 'Unable to generate invoice');
+      }
     },
     [showToast]
   );

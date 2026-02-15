@@ -3,7 +3,7 @@ import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiResponse } from '../../utils/ApiResponse';
 import { ApiError } from '../../utils/ApiError';
 import { usersService } from './users.service';
-import { userCreateSchema, userUpdateSchema } from './users.schemas';
+import { userCreateSchema, userUpdateSchema, userGenerateFromEmployeeSchema } from './users.schemas';
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { logAudit } from '../../utils/audit';
 
@@ -65,4 +65,29 @@ export const deleteUser = asyncHandler(async (req: AuthRequest, res: Response) =
     userAgent: req.get('user-agent') || null,
   });
   return ApiResponse.success(res, null, 'User deleted');
+});
+
+export const generateUserFromEmployee = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const input = userGenerateFromEmployeeSchema.parse(req.body);
+  const result = await usersService.generateFromEmployee(input);
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'create',
+    entity: 'users',
+    entityId: result.user.user_id,
+    newValue: { 
+      username: result.username, 
+      role_id: result.user.role_id, 
+      branch_id: result.user.branch_id,
+      emp_id: input.empId,
+      generated_from_employee: true,
+    },
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
+  return ApiResponse.created(res, { 
+    user: result.user,
+    username: result.username,
+    password: result.password,
+  }, 'User generated from employee successfully');
 });

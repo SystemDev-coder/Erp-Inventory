@@ -9,6 +9,7 @@ import { Modal } from '../../components/ui/modal/Modal';
 import { DataTable } from '../../components/ui/table/DataTable';
 import { userService, UserRow, RoleRow } from '../../services/user.service';
 import UsersModal from './UsersModal';
+import GenerateUsersListModal from './GenerateUsersListModal';
 import { useAuth } from '../../context/AuthContext';
 
 const formatAuditValue = (val: unknown): string => {
@@ -95,6 +96,7 @@ const Settings = () => {
   const [users, setUsers] = useState<UserRow[]>([]);
   const [roles, setRoles] = useState<RoleRow[]>([]);
   const [userModalOpen, setUserModalOpen] = useState(false);
+  const [generateUserModalOpen, setGenerateUserModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserRow | null>(null);
   const [userToDelete, setUserToDelete] = useState<UserRow | null>(null);
   const [userForm, setUserForm] = useState<{
@@ -114,13 +116,24 @@ const Settings = () => {
   });
 
   const filteredUsers = useMemo(
-    () => users.filter((row) => row.user_id !== user?.user_id),
+    () => users.filter((row) => row.user_id !== user?.user_id && row.emp_id), // Only show users linked to employees
     [users, user?.user_id]
   );
 
   const userColumns = useMemo<ColumnDef<UserRow>[]>(
     () => [
-      { accessorKey: 'name', header: 'Name' },
+      { 
+        accessorKey: 'name', 
+        header: 'Name',
+        cell: ({ row }) => (
+          <div>
+            <div className="font-medium text-slate-900 dark:text-white">{row.original.name}</div>
+            {row.original.emp_name && (
+              <div className="text-xs text-slate-500 dark:text-slate-400">Employee: {row.original.emp_name}</div>
+            )}
+          </div>
+        ),
+      },
       { accessorKey: 'username', header: 'Username' },
       { accessorKey: 'role_name', header: 'Role' },
       {
@@ -470,10 +483,22 @@ const Settings = () => {
     </div>
   );
 
+  const handleGenerateUserSuccess = () => {
+    loadUsers(); // Reload users after generating new ones
+  };
+
   const usersContent = (
     <div className="space-y-3">
+      {/* Info Banner */}
+      <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 text-sm text-blue-800 dark:text-blue-200">
+        <p className="font-medium mb-1">👥 Employee-Based User Management</p>
+        <p className="text-xs">All system users must be linked to employees. Use "Generate User" to create login accounts for employees.</p>
+      </div>
+
       <div className="flex justify-between items-center">
-        <div className="text-sm text-slate-600 dark:text-slate-300">Manage system users</div>
+        <div className="text-sm text-slate-600 dark:text-slate-300">
+          Showing {filteredUsers.length} employee-linked users
+        </div>
         <div className="flex items-center gap-2">
           <button
             onClick={() => {
@@ -483,13 +508,13 @@ const Settings = () => {
             }}
             className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 text-slate-700 text-sm hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
           >
-            Display
+            Refresh
           </button>
           <button
-            onClick={() => openUserModal()}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 text-sm"
+            onClick={() => setGenerateUserModalOpen(true)}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-gradient-to-r from-green-600 to-green-700 text-white hover:from-green-700 hover:to-green-800 text-sm shadow-sm"
           >
-            <Plus size={16} /> New User
+            <Plus size={16} /> Generate User from Employee
           </button>
         </div>
       </div>
@@ -539,6 +564,12 @@ const Settings = () => {
         roles={roles}
         branches={branches}
         editing={editingUser}
+      />
+
+      <GenerateUsersListModal
+        isOpen={generateUserModalOpen}
+        onClose={() => setGenerateUserModalOpen(false)}
+        onSuccess={handleGenerateUserSuccess}
       />
 
       <Modal isOpen={!!userToDelete} onClose={() => setUserToDelete(null)} title="Delete User" size="sm">

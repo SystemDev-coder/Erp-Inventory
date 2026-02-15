@@ -22,6 +22,8 @@ import profileRoutes from './modules/profile/profile.routes';
 import userRoutes from './modules/users/users.routes';
 import inventoryRoutes from './modules/inventory/inventory.routes';
 import notificationRoutes from './modules/notifications/notifications.routes';
+import employeeRoutes from './modules/employees/employees.routes';
+// import scheduleRoutes from './modules/schedules/schedules.routes'; // TEMP: Disabled - has import errors
 import { ensureSettingsSchema } from './migrations/ensureSettingsSchema';
 import { config } from './config/env';
 
@@ -74,6 +76,8 @@ app.use('/api/profile', profileRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/employees', employeeRoutes);
+// app.use('/api/schedules', scheduleRoutes); // TEMP: Disabled - has import errors
 
 // 404 handler
 app.use((req, res) => {

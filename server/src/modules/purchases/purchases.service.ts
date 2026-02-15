@@ -502,9 +502,12 @@ export const purchasesService = {
 
       if (updates.length > 0) {
         values.push(id);
+        // Only set purchase_date if it wasn't explicitly provided
+        const hasPurchaseDate = input.purchaseDate !== undefined;
+        const purchaseDateClause = hasPurchaseDate ? '' : ', purchase_date = COALESCE(purchase_date, NOW())';
         await client.query(
           `UPDATE ims.purchases
-              SET ${updates.join(', ')}, purchase_date = COALESCE(purchase_date, NOW())
+              SET ${updates.join(', ')}${purchaseDateClause}
             WHERE purchase_id = $${p}
             RETURNING *`,
           values

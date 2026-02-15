@@ -9,6 +9,8 @@ export interface UserRow {
   username: string;
   is_active: boolean;
   role_name?: string | null;
+  emp_id?: number | null;
+  emp_name?: string | null;
   created_at?: string;
 }
 
@@ -49,5 +51,12 @@ export const userService = {
   },
   async remove(id: number) {
     return apiClient.delete<{ message: string }>(`/api/users/${id}`);
+  },
+  async generateFromEmployee(data: {
+    emp_id: number;
+  }) {
+    return apiClient.post<{ user: UserRow; username: string; password: string }>('/api/users/generate-from-employee', {
+      empId: data.emp_id,
+    });
   },
 };
