@@ -5,6 +5,7 @@ import { ApiError } from '../../utils/ApiError';
 import { suppliersService } from './suppliers.service';
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { z } from 'zod';
+import { pickBranchForWrite, resolveBranchScope } from '../../utils/branchScope';
 
 const supplierSchema = z.object({
   supplierName: z.string().min(1, 'Supplier name is required'),
@@ -20,15 +21,17 @@ const supplierSchema = z.object({
 
 // List all suppliers
 export const listSuppliers = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
   const search = req.query.search as string;
-  const suppliers = await suppliersService.listSuppliers(search);
+  const suppliers = await suppliersService.listSuppliers(scope, search);
   return ApiResponse.success(res, { suppliers });
 });
 
 // Get single supplier
 export const getSupplier = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
-  const supplier = await suppliersService.getSupplier(id);
+  const supplier = await suppliersService.getSupplier(id, scope);
   
   if (!supplier) {
     throw ApiError.notFound('Supplier not found');
@@ -39,16 +42,19 @@ export const getSupplier = asyncHandler(async (req: AuthRequest, res: Response) 
 
 // Create supplier
 export const createSupplier = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
   const input = supplierSchema.parse(req.body);
-  const supplier = await suppliersService.createSupplier(input);
+  const branchId = pickBranchForWrite(scope, undefined);
+  const supplier = await suppliersService.createSupplier(input, { branchId });
   return ApiResponse.created(res, { supplier }, 'Supplier created');
 });
 
 // Update supplier
 export const updateSupplier = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
   const input = supplierSchema.partial().parse(req.body);
-  const supplier = await suppliersService.updateSupplier(id, input);
+  const supplier = await suppliersService.updateSupplier(id, input, scope);
   
   if (!supplier) {
     throw ApiError.notFound('Supplier not found');
@@ -59,7 +65,8 @@ export const updateSupplier = asyncHandler(async (req: AuthRequest, res: Respons
 
 // Delete supplier
 export const deleteSupplier = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
-  await suppliersService.deleteSupplier(id);
+  await suppliersService.deleteSupplier(id, scope);
   return ApiResponse.success(res, null, 'Supplier deleted');
 });

@@ -21,25 +21,25 @@ const router = Router();
 router.use(requireAuth);
 
 // Categories
-router.get('/categories', requirePerm('products.view'), listCategories);
-router.post('/categories', requirePerm('products.create'), createCategory);
-router.put('/categories/:id', requirePerm('products.update'), updateCategory);
-router.delete('/categories/:id', requirePerm('products.delete'), deleteCategory);
+router.get('/categories', requirePerm('items.view'), listCategories);
+router.post('/categories', requirePerm('items.create'), createCategory);
+router.put('/categories/:id', requirePerm('items.update'), updateCategory);
+router.delete('/categories/:id', requirePerm('items.delete'), deleteCategory);
 
 // Products
-router.get('/', requirePerm('products.view'), listProducts);
-router.get('/:id', requirePerm('products.view'), getProduct);
-router.post('/', requirePerm('products.create'), createProduct);
-router.put('/:id', requirePerm('products.update'), updateProduct);
-router.delete('/:id', requirePerm('products.delete'), deleteProduct);
+router.get('/', requirePerm('items.view'), listProducts);
+router.get('/:id', requirePerm('items.view'), getProduct);
+router.post('/', requirePerm('items.create'), createProduct);
+router.put('/:id', requirePerm('items.update'), updateProduct);
+router.delete('/:id', requirePerm('items.delete'), deleteProduct);
 
 // Product Image Upload
 router.post(
   '/:id/image',
-  requirePerm('products.update'),
+  requirePerm('items.update'),
   uploadProductImageMiddleware.single('image'),
   uploadProductImage
 );
-router.delete('/:id/image', requirePerm('products.update'), deleteProductImage);
+router.delete('/:id/image', requirePerm('items.update'), deleteProductImage);
 
 export default router;

@@ -1,17 +1,11 @@
 export interface User {
   user_id: number;
-  branch_id: number;
   role_id: number;
   name: string;
   username: string;
   password_hash: string;
-  phone: string | null;
   is_active: boolean;
   created_at: Date;
-  refresh_token_hash: string | null;
-  reset_code_hash: string | null;
-  reset_code_expires: Date | null;
-  last_login_at: Date | null;
 }
 
 export interface UserProfile {

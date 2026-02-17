@@ -25,7 +25,7 @@ const DeleteConfirmModal = ({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="small" title="">
+    <Modal isOpen={isOpen} onClose={onClose} size="sm" title="" resizable>
       <div className="text-center py-4">
         {/* Icon */}
         <div className="mx-auto flex items-center justify-center w-16 h-16 rounded-full bg-red-100 dark:bg-red-900/20 mb-4">

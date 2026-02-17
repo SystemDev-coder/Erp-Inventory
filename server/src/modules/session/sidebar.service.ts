@@ -1,46 +1,31 @@
-import { queryOne, query } from '../../db/query';
-import crypto from 'crypto';
-import { SidebarMenuResponse, SidebarMenuItem } from './session.types';
-
-const SIDEBAR_CACHE_VERSION = 'v3';
+import { SidebarMenuItem, SidebarMenuResponse } from './session.types';
 
 export class SidebarService {
-  /**
-   * Generate sidebar menu based on user permissions
-   */
-  async generateSidebar(userId: number, permissions: string[]): Promise<SidebarMenuResponse> {
-    // Check cache first
-    const cached = await this.getCachedSidebar(userId, permissions);
-    if (cached) {
-      return {
-        modules: cached,
-        cached: true,
-        timestamp: new Date(),
-      };
-    }
-
-    // Generate fresh menu
-    const modules = this.buildSidebarMenu(permissions);
-
-    // Cache the result
-    await this.cacheSidebar(userId, permissions, modules);
-
+  async generateSidebar(
+    _userId: number,
+    permissions: string[]
+  ): Promise<SidebarMenuResponse> {
     return {
-      modules,
+      modules: this.buildSidebarMenu(permissions),
       cached: false,
       timestamp: new Date(),
     };
   }
 
-  /**
-   * Build sidebar menu structure from permissions
-   */
   private buildSidebarMenu(permissions: string[]): SidebarMenuItem[] {
-    const permSet = new Set(permissions);
+    const has = (perm: string) => {
+      if (permissions.includes(perm)) return true;
+      if (perm.startsWith('items.')) {
+        return permissions.includes(perm.replace('items.', 'products.'));
+      }
+      if (perm.startsWith('products.')) {
+        return permissions.includes(perm.replace('products.', 'items.'));
+      }
+      return false;
+    };
     const modules: SidebarMenuItem[] = [];
 
-    // Home/Dashboard
-    if (permSet.has('home.view')) {
+    if (has('home.view')) {
       modules.push({
         id: 'home',
         name: 'Home',
@@ -51,63 +36,71 @@ export class SidebarService {
       });
     }
 
-    // Stock
-    if (permSet.has('stock.view')) {
+    if (has('items.view') || has('products.view') || has('stock.view')) {
+      const storePermission =
+        has('items.view') || has('products.view') ? 'items.view' : 'stock.view';
       modules.push({
-        id: 'stock',
-        name: 'Stock',
-        nameSo: 'Kaydka',
-        icon: 'BarChart3',
-        route: '/stock',
-        permission: 'stock.view',
+        id: 'store-management',
+        name: 'Store Management',
+        nameSo: 'Maareynta Dukaanka',
+        icon: 'Box',
+        route: '/store-management',
+        permission: storePermission,
         items: [
           {
-            id: 'stock-levels',
+            id: 'store-items',
+            name: 'Items',
+            nameSo: 'Alaabta',
+            route: '/store-management/items',
+            permission: 'items.view',
+          },
+          {
+            id: 'store-categories',
+            name: 'Categories',
+            nameSo: 'Qaybaha',
+            route: '/store-management/categories',
+            permission: 'items.view',
+          },
+          {
+            id: 'store-units',
+            name: 'Units',
+            nameSo: 'Cabbirrada',
+            route: '/store-management/units',
+            permission: 'items.view',
+          },
+          {
+            id: 'store-stock-levels',
             name: 'Stock Levels',
             nameSo: 'Heerarka Kaydka',
-            route: '/stock',
+            route: '/store-management/stock',
             permission: 'stock.view',
           },
           {
-            id: 'stock-adjustments',
+            id: 'store-stock-adjustments',
             name: 'Adjustments',
             nameSo: 'Hagaajinta',
-            route: '/stock/adjustments',
+            route: '/store-management/stock/adjustments',
             permission: 'stock.adjust',
           },
           {
-            id: 'stock-recount',
+            id: 'store-stock-recount',
             name: 'Stock Recount',
             nameSo: 'Tirinta Kaydka',
-            route: '/stock/recount',
+            route: '/store-management/stock/recount',
             permission: 'stock.recount',
           },
-        ].filter((item) => permSet.has(item.permission)),
+          {
+            id: 'store-stores',
+            name: 'Stores',
+            nameSo: 'Dukaamyada',
+            route: '/store-management/stores',
+            permission: 'stock.view',
+          },
+        ].filter((item) => has(item.permission)),
       });
     }
 
-    // Sales
-    if (permSet.has('sales.view')) {
-      const salesItems = [
-        {
-          id: 'sales-transactions',
-          name: 'Transactions',
-          nameSo: 'Dhaqaaqyada',
-          route: '/sales',
-          permission: 'sales.view',
-        },
-      ];
-
-      if (permSet.has('sales.pos')) {
-        salesItems.push({
-          id: 'sales-pos',
-          name: 'POS',
-          nameSo: 'POS',
-          route: '/sales/pos',
-          permission: 'sales.pos',
-        });
-      }
-
+    if (has('sales.view')) {
       modules.push({
         id: 'sales',
         name: 'Sales',
@@ -115,12 +108,10 @@ export class SidebarService {
         icon: 'ShoppingCart',
         route: '/sales',
         permission: 'sales.view',
-        items: salesItems,
       });
     }
 
-    // Purchases
-    if (permSet.has('purchases.view')) {
+    if (has('purchases.view')) {
       modules.push({
         id: 'purchases',
         name: 'Purchases',
@@ -128,97 +119,10 @@ export class SidebarService {
         icon: 'ShoppingBag',
         route: '/purchases',
         permission: 'purchases.view',
-        items: [
-          {
-            id: 'purchases-orders',
-            name: 'Purchase Orders',
-            nameSo: 'Dalabada Iibsiga',
-            route: '/purchases',
-            permission: 'purchases.view',
-          },
-        ],
       });
     }
 
-    // Returns
-    if (permSet.has('returns.view')) {
-      modules.push({
-        id: 'returns',
-        name: 'Returns',
-        nameSo: 'Celinta',
-        icon: 'Undo2',
-        route: '/returns',
-        permission: 'returns.view',
-      });
-    }
-
-    // Transfers
-    if (permSet.has('transfers.view')) {
-      modules.push({
-        id: 'transfers',
-        name: 'Transfers',
-        nameSo: 'Wareejinta',
-        icon: 'ArrowLeftRight',
-        route: '/transfers',
-        permission: 'transfers.view',
-      });
-    }
-
-    // Finance
-    if (permSet.has('finance.view')) {
-      const financeItems = [
-        {
-          id: 'finance-overview',
-          name: 'Overview',
-          nameSo: 'Dulmar',
-          route: '/finance',
-          permission: 'finance.view',
-        },
-      ];
-
-      if (permSet.has('finance.expenses')) {
-        financeItems.push({
-          id: 'finance-expenses',
-          name: 'Expenses',
-          nameSo: 'Kharashyada',
-          route: '/finance/expenses',
-          permission: 'finance.expenses',
-        });
-      }
-
-      if (permSet.has('finance.payments')) {
-        financeItems.push({
-          id: 'finance-payments',
-          name: 'Payments',
-          nameSo: 'Lacag Bixinta',
-          route: '/finance/payments',
-          permission: 'finance.payments',
-        });
-      }
-
-      if (permSet.has('finance.reports')) {
-        financeItems.push({
-          id: 'finance-reports',
-          name: 'Reports',
-          nameSo: 'Warbixinada',
-          route: '/finance/reports',
-          permission: 'finance.reports',
-        });
-      }
-
-      modules.push({
-        id: 'finance',
-        name: 'Finance',
-        nameSo: 'Maaliyadda',
-        icon: 'DollarSign',
-        route: '/finance',
-        permission: 'finance.view',
-        items: financeItems,
-      });
-    }
-
-    // Customers
-    if (permSet.has('customers.view')) {
+    if (has('customers.view')) {
       modules.push({
         id: 'customers',
         name: 'Customers',
@@ -229,8 +133,7 @@ export class SidebarService {
       });
     }
 
-    // Employees
-    if (permSet.has('employees.view')) {
+    if (has('employees.view')) {
       modules.push({
         id: 'employees',
         name: 'Employees',
@@ -238,11 +141,60 @@ export class SidebarService {
         icon: 'UserCircle',
         route: '/employees',
         permission: 'employees.view',
+        items: [
+          {
+            id: 'employees-list',
+            name: 'Employees List',
+            nameSo: 'Liiska Shaqaalaha',
+            route: '/employees',
+            permission: 'employees.view',
+          },
+          {
+            id: 'employees-shifts',
+            name: 'Shifts',
+            nameSo: 'Wareegyada',
+            route: '/employees/shifts',
+            permission: 'employees.view',
+          },
+        ].filter((item) => has(item.permission)),
       });
     }
 
-    // Reports (replaces System & Security in sidebar)
-    if (permSet.has('reports.view')) {
+    if (has('finance.view')) {
+      modules.push({
+        id: 'finance',
+        name: 'Finance',
+        nameSo: 'Maaliyadda',
+        icon: 'DollarSign',
+        route: '/finance',
+        permission: 'finance.view',
+        items: [
+          {
+            id: 'finance-overview',
+            name: 'Overview',
+            nameSo: 'Dulmar',
+            route: '/finance',
+            permission: 'finance.view',
+          },
+          {
+            id: 'finance-payroll',
+            name: 'Payroll',
+            nameSo: 'Mushaharka',
+            route: '/finance/payroll',
+            permission: 'finance.view',
+          },
+          {
+            id: 'finance-expense',
+            name: 'Expense',
+            nameSo: 'Kharash',
+            route: '/finance/expense',
+            permission: 'finance.view',
+          },
+        ].filter((item) => has(item.permission)),
+      });
+    }
+
+    if (has('reports.view')) {
       modules.push({
         id: 'reports',
         name: 'Reports',
@@ -253,8 +205,7 @@ export class SidebarService {
       });
     }
 
-    // Settings
-    if (permSet.has('settings.view')) {
+    if (has('settings.view')) {
       modules.push({
         id: 'settings',
         name: 'Settings',
@@ -266,59 +217,6 @@ export class SidebarService {
     }
 
     return modules;
-  }
-
-  /**
-   * Get cached sidebar menu
-   */
-  private async getCachedSidebar(
-    userId: number,
-    permissions: string[]
-  ): Promise<SidebarMenuItem[] | null> {
-    const permissionsHash = crypto
-      .createHash('sha256')
-      .update(`${SIDEBAR_CACHE_VERSION}|${permissions.sort().join(',')}`)
-      .digest('hex');
-
-    const cached = await queryOne<{ menu_data: SidebarMenuItem[]; expires_at: Date }>(
-      `SELECT menu_data, expires_at FROM ims.sidebar_menu_cache 
-       WHERE user_id = $1 AND permissions_hash = $2 AND expires_at > NOW()`,
-      [userId, permissionsHash]
-    );
-
-    return cached ? cached.menu_data : null;
-  }
-
-  /**
-   * Cache sidebar menu
-   */
-  private async cacheSidebar(
-    userId: number,
-    permissions: string[],
-    menu: SidebarMenuItem[]
-  ): Promise<void> {
-    const permissionsHash = crypto
-      .createHash('sha256')
-      .update(`${SIDEBAR_CACHE_VERSION}|${permissions.sort().join(',')}`)
-      .digest('hex');
-
-    const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
-
-    // Get user's role
-    const user = await queryOne<{ role_id: number }>(
-      'SELECT role_id FROM ims.users WHERE user_id = $1',
-      [userId]
-    );
-
-    if (!user) return;
-
-    await query(
-      `INSERT INTO ims.sidebar_menu_cache (user_id, role_id, menu_data, permissions_hash, expires_at)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (user_id, role_id) DO UPDATE 
-       SET menu_data = $3, permissions_hash = $4, expires_at = $5`,
-      [userId, user.role_id, JSON.stringify(menu), permissionsHash, expiresAt]
-    );
   }
 }
 

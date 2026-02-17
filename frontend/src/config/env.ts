@@ -103,7 +103,16 @@ export const API = {
     MARK_READ: (id: number) => `/api/notifications/${id}/read`,
     MARK_ALL_READ: '/api/notifications/read-all',
   },
-  
+
+  STORES: {
+    LIST: '/api/stores',
+    ITEM: (id: number) => `/api/stores/${id}`,
+    ITEMS: (id: number) => `/api/stores/${id}/items`,
+    ADD_ITEM: (id: number) => `/api/stores/${id}/items`,
+    UPDATE_ITEM: (storeId: number, itemId: number) => `/api/stores/${storeId}/items/${itemId}`,
+    REMOVE_ITEM: (storeId: number, itemId: number) => `/api/stores/${storeId}/items/${itemId}`,
+  },
+
   // Health check
   HEALTH: '/api/health',
 } as const;

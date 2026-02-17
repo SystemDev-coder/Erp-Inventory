@@ -5,6 +5,7 @@ import { ApiResponse } from '../../utils/ApiResponse';
 import { ApiError } from '../../utils/ApiError';
 import { customersService } from './customers.service';
 import { AuthRequest } from '../../middlewares/requireAuth';
+import { pickBranchForWrite, resolveBranchScope } from '../../utils/branchScope';
 
 const customerSchema = z.object({
   fullName: z.string().min(1, 'Customer name is required'),
@@ -13,17 +14,20 @@ const customerSchema = z.object({
   address: z.string().optional().nullable(),
   sex: z.enum(['male', 'female']).optional(),
   isActive: z.boolean().optional(),
+  remainingBalance: z.coerce.number().nonnegative().optional(),
 });
 
 export const listCustomers = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
   const search = req.query.search as string | undefined;
-  const customers = await customersService.listCustomers(search);
+  const customers = await customersService.listCustomers(scope, search);
   return ApiResponse.success(res, { customers });
 });
 
 export const getCustomer = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
-  const customer = await customersService.getCustomer(id);
+  const customer = await customersService.getCustomer(id, scope);
   if (!customer) {
     throw ApiError.notFound('Customer not found');
   }
@@ -31,15 +35,18 @@ export const getCustomer = asyncHandler(async (req: AuthRequest, res: Response) 
 });
 
 export const createCustomer = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
   const input = customerSchema.parse(req.body);
-  const customer = await customersService.createCustomer(input);
+  const branchId = pickBranchForWrite(scope, undefined);
+  const customer = await customersService.createCustomer(input, { branchId });
   return ApiResponse.created(res, { customer }, 'Customer created');
 });
 
 export const updateCustomer = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
   const input = customerSchema.partial().parse(req.body);
-  const customer = await customersService.updateCustomer(id, input);
+  const customer = await customersService.updateCustomer(id, input, scope);
   if (!customer) {
     throw ApiError.notFound('Customer not found');
   }
@@ -47,7 +54,8 @@ export const updateCustomer = asyncHandler(async (req: AuthRequest, res: Respons
 });
 
 export const deleteCustomer = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
-  await customersService.deleteCustomer(id);
+  await customersService.deleteCustomer(id, scope);
   return ApiResponse.success(res, null, 'Customer deleted');
 });

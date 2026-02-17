@@ -131,4 +131,47 @@ export async function ensureSettingsSchema() {
       END IF;
     END$$;
   `);
+
+  // Customers: add remaining_balance for opening/balance input (fixes "column c.remaining_balance does not exist")
+  await query(`
+    ALTER TABLE ims.customers
+      ADD COLUMN IF NOT EXISTS remaining_balance NUMERIC(14,2) NOT NULL DEFAULT 0;
+  `);
+
+  // Stores table (branch-specific; requires ims.branches to exist)
+  await query(`
+    CREATE TABLE IF NOT EXISTS ims.stores (
+      store_id BIGSERIAL PRIMARY KEY,
+      branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id),
+      store_name VARCHAR(120) NOT NULL,
+      store_code VARCHAR(40),
+      address TEXT,
+      phone VARCHAR(30),
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      created_by BIGINT REFERENCES ims.users(user_id),
+      updated_by BIGINT REFERENCES ims.users(user_id),
+      CONSTRAINT uq_store_per_branch UNIQUE (branch_id, store_name)
+    );
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS idx_stores_branch ON ims.stores(branch_id);`);
+
+  // Store items: items (products) in each store
+  await query(`
+    CREATE TABLE IF NOT EXISTS ims.store_items (
+      store_item_id BIGSERIAL PRIMARY KEY,
+      store_id BIGINT NOT NULL REFERENCES ims.stores(store_id) ON DELETE CASCADE,
+      product_id BIGINT NOT NULL REFERENCES ims.products(product_id) ON DELETE CASCADE,
+      quantity NUMERIC(14,3) NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      CONSTRAINT chk_store_item_qty CHECK (quantity >= 0),
+      CONSTRAINT uq_store_product UNIQUE (store_id, product_id)
+    );
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS idx_store_items_store ON ims.store_items(store_id);`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_store_items_product ON ims.store_items(product_id);`);
+
+  await query(`ALTER TABLE ims.products ADD COLUMN IF NOT EXISTS store_id BIGINT REFERENCES ims.stores(store_id);`);
 }

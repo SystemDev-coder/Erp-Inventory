@@ -12,8 +12,8 @@ export const registerSchema = z.object({
     .min(1)
     .optional(),
   password: z.string().min(6, 'Password must be at least 6 characters').max(100),
-  branch_id: z.number().int().positive().optional(),
-  role_id: z.number().int().positive().optional(),
+  branch_id: z.coerce.number().int().positive().optional(),
+  role_id: z.coerce.number().int().positive().optional(),
 }).refine((data) => data.username || data.phone, {
   message: 'Either username or phone must be provided',
   path: ['username'],

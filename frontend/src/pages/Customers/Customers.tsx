@@ -32,6 +32,7 @@ type CustomerForm = {
     address?: string;
     sex?: 'male' | 'female';
     is_active: boolean;
+    remaining_balance: number;
 };
 
 const emptyForm: CustomerForm = {
@@ -41,6 +42,7 @@ const emptyForm: CustomerForm = {
     address: '',
     sex: undefined,
     is_active: true,
+    remaining_balance: 0,
 };
 
 const Customers = () => {
@@ -114,6 +116,7 @@ const Customers = () => {
             address: form.address || null,
             sex: form.sex,
             is_active: form.is_active,
+            remaining_balance: Number(form.remaining_balance) || 0,
         };
 
         const res = form.customer_id
@@ -140,6 +143,7 @@ const Customers = () => {
             address: row.address || '',
             sex: row.sex as 'male' | 'female' | undefined,
             is_active: row.is_active,
+            remaining_balance: Number(row.remaining_balance ?? 0),
         });
         setIsAddOpen(true);
     };
@@ -285,6 +289,19 @@ const Customers = () => {
                             onChange={(e) => setForm({ ...form, address: e.target.value })}
                             className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 dark:bg-slate-800 focus:ring-2 focus:ring-primary-500 outline-none transition-all"
                         />
+                    </div>
+                    <div className="space-y-2">
+                        <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Remaining Balance</label>
+                        <input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            placeholder="0.00"
+                            value={form.remaining_balance}
+                            onChange={(e) => setForm({ ...form, remaining_balance: Number(e.target.value || 0) })}
+                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 dark:bg-slate-800 focus:ring-2 focus:ring-primary-500 outline-none transition-all"
+                        />
+                        <p className="text-xs text-slate-500">Opening balance or amount customer owes</p>
                     </div>
 
                     <div className="flex justify-end gap-3 pt-4">

@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
-import { Plus, Trash2, ArrowLeft } from 'lucide-react';
+import { Plus, Trash2, ArrowLeft, Search, Package } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
 import { useToast } from '../../components/ui/toast/Toast';
 import { purchaseService, PurchaseItem } from '../../services/purchase.service';
 import { supplierService, Supplier } from '../../services/supplier.service';
 import { accountService, Account } from '../../services/account.service';
+import { productService, Product } from '../../services/product.service';
+import { Modal } from '../../components/ui/modal/Modal';
 
 type LineItem = {
   product_id: number | '';
@@ -67,6 +69,14 @@ const PurchaseEditor = () => {
     note: '',
   });
   const [lineItems, setLineItems] = useState<LineItem[]>([emptyLine]);
+  const [productPickerOpen, setProductPickerOpen] = useState(false);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [productSearch, setProductSearch] = useState('');
+
+  const loadProducts = async (search?: string) => {
+    const res = await productService.list(search);
+    if (res.success && res.data?.products) setProducts(res.data.products);
+  };
 
   const recalcTotals = (items: LineItem[], headerDiscount: number) => {
     const subtotal = items.reduce((sum, item) => {
@@ -112,7 +122,7 @@ const PurchaseEditor = () => {
     if (res.success && res.data?.purchase) {
       const p = res.data.purchase;
         setForm({
-          supplier_id: p.supplier_id,
+          supplier_id: p.supplier_id ?? '',
           purchase_date: p.purchase_date.slice(0, 10),
           subtotal: Number(p.subtotal || 0),
           discount: Number(p.discount || 0),
@@ -150,6 +160,37 @@ const PurchaseEditor = () => {
     if (isEdit && Number(id)) loadPurchase(Number(id));
   }, [id]);
 
+  useEffect(() => {
+    if (productPickerOpen) loadProducts(productSearch);
+  }, [productPickerOpen, productSearch]);
+
+  const handleSelectProduct = (p: Product) => {
+    const existingIdx = lineItems.findIndex((li) => Number(li.product_id) === p.product_id);
+    const filtered = lineItems.filter((li) => li.quantity > 0 || (li.name && li.name.trim()));
+    if (existingIdx >= 0) {
+      const updated = lineItems.map((li, i) =>
+        i === existingIdx ? { ...li, quantity: (li.quantity || 1) + 1 } : li
+      );
+      setLineItems(updated);
+      recalcTotals(updated, form.discount);
+    } else {
+      const newItem: LineItem = {
+        product_id: p.product_id,
+        name: p.name,
+        description: p.name,
+        quantity: 1,
+        unit_cost: Number(p.cost || 0),
+        sale_price: Number(p.price || 0),
+        discount: 0,
+        line_total: Number(p.cost || 0),
+      };
+      const next = [...filtered, newItem];
+      setLineItems(next);
+      recalcTotals(next, form.discount);
+    }
+    setProductPickerOpen(false);
+  };
+
   const handleSave = async () => {
     let supplierId = form.supplier_id as number | '';
 
@@ -181,10 +222,7 @@ const PurchaseEditor = () => {
       setLoading(false);
     }
 
-    if (!supplierId) {
-      showToast('error', 'Missing supplier', 'Choose a supplier');
-      return;
-    }
+    // supplierId can be empty - backend uses Walking Supplier
     const preparedItems = lineItems
       .filter((li) => (li.product_id !== '' || li.name.trim() !== '') && li.quantity > 0)
       .map((li) => ({
@@ -204,7 +242,7 @@ const PurchaseEditor = () => {
     recalcTotals(lineItems, form.discount);
     setLoading(true);
     const payload = {
-      supplierId: supplierId as number,
+      supplierId: supplierId ? Number(supplierId) : null,
       purchaseDate: form.purchase_date,
       subtotal: Number(form.subtotal),
       discount: Number(form.discount),
@@ -287,7 +325,7 @@ const PurchaseEditor = () => {
                 }
               }}
             >
-              <option value="">Select supplier</option>
+              <option value="">No supplier (Walk-in)</option>
               {suppliers.map((s) => (
                 <option key={s.supplier_id} value={s.supplier_id}>
                   {s.supplier_name}
@@ -450,14 +488,80 @@ const PurchaseEditor = () => {
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <span className="font-semibold text-slate-800 dark:text-slate-200">Items</span>
-          <button
-            type="button"
-            onClick={() => setLineItems((prev) => [...prev, { ...emptyLine }])}
-            className="inline-flex items-center gap-1 text-sm px-3 py-1 rounded-lg bg-primary-600 text-white hover:bg-primary-700"
-          >
-            <Plus size={16} /> Add line
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setProductPickerOpen(true)}
+              className="inline-flex items-center gap-1 text-sm px-3 py-1 rounded-lg bg-primary-600 text-white hover:bg-primary-700"
+            >
+              <Package size={16} /> Select from products
+            </button>
+            <button
+              type="button"
+              onClick={() => setLineItems((prev) => [...prev, { ...emptyLine }])}
+              className="inline-flex items-center gap-1 text-sm px-3 py-1 rounded-lg border border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-800"
+            >
+              <Plus size={16} /> Add line
+            </button>
+          </div>
         </div>
+
+        {/* Product Picker Modal */}
+        <Modal
+          isOpen={productPickerOpen}
+          onClose={() => setProductPickerOpen(false)}
+          title="Select products from inventory"
+          size="lg"
+        >
+          <div className="space-y-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input
+                type="text"
+                className="w-full pl-9 pr-4 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900"
+                placeholder="Search products..."
+                value={productSearch}
+                onChange={(e) => setProductSearch(e.target.value)}
+              />
+            </div>
+            <div className="max-h-80 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-lg">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-100 dark:bg-slate-800 sticky top-0">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Product</th>
+                    <th className="px-3 py-2 text-right">Cost</th>
+                    <th className="px-3 py-2 text-right">Price</th>
+                    <th className="px-3 py-2 text-center">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {products.map((p) => (
+                    <tr
+                      key={p.product_id}
+                      className="border-t border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                    >
+                      <td className="px-3 py-2 font-medium">{p.name}</td>
+                      <td className="px-3 py-2 text-right">${Number(p.cost || 0).toFixed(2)}</td>
+                      <td className="px-3 py-2 text-right">${Number(p.price || 0).toFixed(2)}</td>
+                      <td className="px-3 py-2 text-center">
+                        <button
+                          type="button"
+                          onClick={() => handleSelectProduct(p)}
+                          className="text-primary-600 hover:text-primary-700 dark:text-primary-400 font-medium"
+                        >
+                          Add
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {products.length === 0 && (
+                <div className="py-8 text-center text-slate-500">No products found</div>
+              )}
+            </div>
+          </div>
+        </Modal>
 
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden">

@@ -1,12 +1,6 @@
-/**
- * BRANCH ACCESS MIDDLEWARE
- * Ensures users can only access data from their assigned branches
- */
-
 import { Request, Response, NextFunction } from 'express';
-import { pool } from '../db/pool';
+import { queryMany, queryOne } from '../db/query';
 
-// Extend Express Request to include branch information
 declare global {
   namespace Express {
     interface Request {
@@ -17,93 +11,140 @@ declare global {
   }
 }
 
-/**
- * Middleware to load user's accessible branches and set database context
- */
+const resolveRequestedBranch = (req: Request): number | null => {
+  const raw =
+    req.query.branchId ??
+    req.headers['x-branch-id'] ??
+    req.body?.branchId;
+
+  if (raw === undefined || raw === null || raw === '') {
+    return null;
+  }
+
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+
 export const loadUserBranches = async (
   req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
-    const userId = req.user?.userId;
-
+    const userId = (req as any).user?.userId as number | undefined;
     if (!userId) {
-      res.status(401).json({ message: 'User not authenticated' });
+      res.status(401).json({ success: false, message: 'User not authenticated' });
       return;
     }
 
-    // Get all branches user has access to
-    const result = await pool.query(
-      `SELECT branch_id, is_primary 
-       FROM ims.user_branch 
-       WHERE user_id = $1 
-       ORDER BY is_primary DESC, branch_id`,
+    let rows = await queryMany<{ branch_id: number; is_default: boolean }>(
+      `SELECT ub.branch_id, ub.is_default
+         FROM ims.user_branches ub
+         JOIN ims.branches b ON b.branch_id = ub.branch_id
+        WHERE ub.user_id = $1
+          AND b.is_active = TRUE
+        ORDER BY ub.is_default DESC, ub.branch_id`,
       [userId]
     );
 
-    if (result.rows.length === 0) {
-      res.status(403).json({ 
-        message: 'User has no branch access assigned' 
-      });
-      return;
-    }
+    if (!rows.length) {
+      const tokenBranchId = Number((req as any).user?.branchId || 0);
+      const preferredBranch = tokenBranchId
+        ? await queryOne<{ branch_id: number }>(
+            `SELECT branch_id
+               FROM ims.branches
+              WHERE branch_id = $1
+                AND is_active = TRUE`,
+            [tokenBranchId]
+          )
+        : null;
 
-    // Store accessible branches in request
-    req.userBranches = result.rows.map((r: any) => r.branch_id);
-    
-    // Set primary branch
-    const primaryRow = result.rows.find((r: any) => r.is_primary);
-    req.primaryBranch = primaryRow ? primaryRow.branch_id : result.rows[0].branch_id;
+      const fallbackBranch =
+        preferredBranch ||
+        (await queryOne<{ branch_id: number }>(
+          `SELECT branch_id
+             FROM ims.branches
+            WHERE is_active = TRUE
+            ORDER BY branch_id
+            LIMIT 1`
+        ));
 
-    // Check if user specified a branch in query/header
-    const requestedBranch = 
-      req.query.branchId || 
-      req.headers['x-branch-id'] ||
-      req.body?.branchId;
-
-    if (requestedBranch) {
-      const branchId = parseInt(requestedBranch as string);
-      
-      // Verify user has access to requested branch
-      if (req.userBranches.includes(branchId)) {
-        req.currentBranch = branchId;
-      } else {
-        res.status(403).json({ 
-          message: 'Access denied to requested branch' 
+      if (!fallbackBranch) {
+        res.status(403).json({
+          success: false,
+          message: 'No active branch available in the system',
         });
         return;
       }
-    } else {
-      // Default to primary branch
-      req.currentBranch = req.primaryBranch;
+
+      await queryOne(
+        `INSERT INTO ims.user_branches (user_id, branch_id, is_default)
+         VALUES ($1, $2, TRUE)
+         ON CONFLICT (user_id, branch_id)
+         DO UPDATE SET is_default = TRUE`,
+        [userId, fallbackBranch.branch_id]
+      );
+
+      rows = await queryMany<{ branch_id: number; is_default: boolean }>(
+        `SELECT ub.branch_id, ub.is_default
+           FROM ims.user_branches ub
+           JOIN ims.branches b ON b.branch_id = ub.branch_id
+          WHERE ub.user_id = $1
+            AND b.is_active = TRUE
+          ORDER BY ub.is_default DESC, ub.branch_id`,
+        [userId]
+      );
     }
 
-    // **IMPORTANT: Set database session context for automatic branch_id population**
-    await setDatabaseContext(userId, req.currentBranch);
+    req.userBranches = rows.map((row) => Number(row.branch_id));
+    req.primaryBranch =
+      Number(rows.find((row) => row.is_default)?.branch_id) ||
+      Number(rows[0].branch_id);
+
+    const requestedBranchId = resolveRequestedBranch(req);
+    if (requestedBranchId) {
+      if (!req.userBranches.includes(requestedBranchId)) {
+        res.status(403).json({
+          success: false,
+          message: 'Access denied to requested branch',
+        });
+        return;
+      }
+      req.currentBranch = requestedBranchId;
+    } else {
+      req.currentBranch = req.primaryBranch;
+    }
 
     next();
   } catch (error) {
     console.error('Branch access middleware error:', error);
-    res.status(500).json({ message: 'Internal server error' });
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+    });
   }
 };
 
-/**
- * Middleware to ensure branch_id is provided and user has access
- */
-export const validateBranchAccess = (paramName: string = 'branchId') => {
+export const validateBranchAccess = (paramName = 'branchId') => {
   return (req: Request, res: Response, next: NextFunction): void => {
-    const branchId = parseInt(req.params[paramName] || req.body[paramName] || req.query[paramName] as string);
+    const raw =
+      req.params[paramName] ??
+      req.body?.[paramName] ??
+      req.query?.[paramName];
 
-    if (!branchId) {
-      res.status(400).json({ message: `${paramName} is required` });
+    const branchId = Number(raw);
+    if (!Number.isFinite(branchId) || branchId <= 0) {
+      res.status(400).json({
+        success: false,
+        message: `${paramName} is required`,
+      });
       return;
     }
 
     if (!req.userBranches || !req.userBranches.includes(branchId)) {
-      res.status(403).json({ 
-        message: 'Access denied to this branch' 
+      res.status(403).json({
+        success: false,
+        message: 'Access denied to this branch',
       });
       return;
     }
@@ -112,82 +153,58 @@ export const validateBranchAccess = (paramName: string = 'branchId') => {
   };
 };
 
-/**
- * Helper function to build SQL WHERE clause for branch filtering
- */
 export const buildBranchFilter = (
   req: Request,
   tableAlias?: string
 ): { clause: string; params: number[] } => {
   const prefix = tableAlias ? `${tableAlias}.` : '';
-  
-  if (!req.userBranches || req.userBranches.length === 0) {
+
+  if (!req.userBranches?.length) {
     return { clause: 'FALSE', params: [] };
   }
 
   if (req.currentBranch) {
-    // Filter by current/selected branch only
     return {
       clause: `${prefix}branch_id = $1`,
-      params: [req.currentBranch]
+      params: [req.currentBranch],
     };
   }
 
-  // Filter by all accessible branches
-  const placeholders = req.userBranches.map((_, i) => `$${i + 1}`).join(', ');
   return {
-    clause: `${prefix}branch_id IN (${placeholders})`,
-    params: req.userBranches
+    clause: `${prefix}branch_id = ANY($1)`,
+    params: [req.userBranches],
   };
 };
 
-/**
- * Helper to get user's primary branch
- */
-export const getUserPrimaryBranch = async (userId: number): Promise<number | null> => {
-  const result = await pool.query(
-    `SELECT ims.fn_user_primary_branch($1) as branch_id`,
+export const getUserPrimaryBranch = async (
+  userId: number
+): Promise<number | null> => {
+  const rows = await queryMany<{ branch_id: number }>(
+    `SELECT branch_id
+       FROM ims.user_branches
+      WHERE user_id = $1
+      ORDER BY is_default DESC, branch_id
+      LIMIT 1`,
     [userId]
   );
-  return result.rows[0]?.branch_id || null;
+  return rows[0] ? Number(rows[0].branch_id) : null;
 };
 
-/**
- * Helper to check if user has access to specific branch
- */
 export const checkBranchAccess = async (
   userId: number,
   branchId: number
 ): Promise<boolean> => {
-  const result = await pool.query(
-    `SELECT ims.fn_user_has_branch_access($1, $2) as has_access`,
+  const rows = await queryMany<{ branch_id: number }>(
+    `SELECT branch_id
+       FROM ims.user_branches
+      WHERE user_id = $1
+        AND branch_id = $2
+      LIMIT 1`,
     [userId, branchId]
   );
-  return result.rows[0]?.has_access || false;
+  return Boolean(rows[0]);
 };
 
-/**
- * Set database session context for automatic branch_id and user_id population
- * This enables database triggers to automatically insert branch_id and audit fields
- */
-export const setDatabaseContext = async (
-  userId: number,
-  branchId: number
-): Promise<void> => {
-  await pool.query(
-    `SELECT ims.set_current_context($1, $2)`,
-    [userId, branchId]
-  );
-};
+export const setDatabaseContext = async (): Promise<void> => {};
 
-/**
- * Clear database session context (optional, good practice at end of request)
- */
-export const clearDatabaseContext = async (): Promise<void> => {
-  try {
-    await pool.query(`SELECT set_config('app.current_user_id', '', false)`);
-    await pool.query(`SELECT set_config('app.current_branch_id', '', false)`);
-  } catch (error) {
-    // Ignore errors during cleanup
-  }
-};
+export const clearDatabaseContext = async (): Promise<void> => {};

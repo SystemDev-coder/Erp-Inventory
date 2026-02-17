@@ -6,7 +6,6 @@ import morgan from 'morgan';
 import { corsOptions } from './config/cors';
 import { errorHandler } from './middlewares/errorHandler';
 import authRoutes from './modules/auth/auth.routes';
-import systemRoutes from './modules/system/system.routes';
 import sessionRoutes from './modules/session/session.routes';
 import dashboardRoutes from './modules/dashboard/dashboard.routes';
 import productRoutes from './modules/products/products.routes';
@@ -16,15 +15,15 @@ import customerRoutes from './modules/customers/customers.routes';
 import purchaseRoutes from './modules/purchases/purchases.routes';
 import salesRoutes from './modules/sales/sales.routes';
 import supplierRoutes from './modules/suppliers/suppliers.routes';
-import receiptRoutes from './modules/receipts/receipts.routes';
 import accountRoutes from './modules/accounts/accounts.routes';
 import profileRoutes from './modules/profile/profile.routes';
 import userRoutes from './modules/users/users.routes';
 import inventoryRoutes from './modules/inventory/inventory.routes';
 import notificationRoutes from './modules/notifications/notifications.routes';
 import employeeRoutes from './modules/employees/employees.routes';
+import storeRoutes from './modules/stores/stores.routes';
+import shiftRoutes from './modules/shifts/shifts.routes';
 // import scheduleRoutes from './modules/schedules/schedules.routes'; // TEMP: Disabled - has import errors
-import { ensureSettingsSchema } from './migrations/ensureSettingsSchema';
 import { config } from './config/env';
 
 const app = express();
@@ -32,12 +31,6 @@ const app = express();
 // Security middleware
 app.use(helmet());
 app.use(cors(corsOptions));
-
-// Ensure settings-related tables/columns exist (idempotent)
-ensureSettingsSchema().catch((err) => {
-  // eslint-disable-next-line no-console
-  console.error('Failed to ensure settings schema', err);
-});
 
 // Request parsing
 app.use(express.json());
@@ -60,7 +53,6 @@ app.get('/api/health', (req, res) => {
 
 // Routes
 app.use('/api/auth', authRoutes);
-app.use('/api/system', systemRoutes);
 app.use('/api', sessionRoutes); // Session management & user endpoints
 app.use('/api', dashboardRoutes); // Dashboard (role-based)
 app.use('/api/products', productRoutes);
@@ -70,13 +62,14 @@ app.use('/api/customers', customerRoutes);
 app.use('/api/sales', salesRoutes);
 app.use('/api/purchases', purchaseRoutes);
 app.use('/api/suppliers', supplierRoutes);
-app.use('/api/receipts', receiptRoutes);
 app.use('/api/accounts', accountRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/employees', employeeRoutes);
+app.use('/api/stores', storeRoutes);
+app.use('/api/shifts', shiftRoutes);
 // app.use('/api/schedules', scheduleRoutes); // TEMP: Disabled - has import errors
 
 // 404 handler

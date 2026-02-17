@@ -23,8 +23,13 @@ const buildPrintableInvoice = (sale: Sale, items: SaleItem[]) => {
   const docNo = `S-${sale.sale_id}`;
   const date = new Date(sale.sale_date).toLocaleString();
   const customer = sale.customer_name || 'Walking Customer';
-  const paidAmount = Number(sale.paid_amount || 0);
-  const balance = Math.max(Number(sale.total || 0) - paidAmount, 0);
+  const totalAmount = Number(sale.total || 0);
+  // When status is paid, show full total as paid and 0 balance (fixes display inconsistency)
+  const paidAmount =
+    sale.status === 'paid'
+      ? totalAmount
+      : Math.min(Number(sale.paid_amount || 0), totalAmount);
+  const balance = Math.max(totalAmount - paidAmount, 0);
   const safeNote = escapeHtml(String(sale.note || ''));
 
   const itemRows = items
@@ -55,7 +60,7 @@ const buildPrintableInvoice = (sale: Sale, items: SaleItem[]) => {
         <title>${docLabel} ${docNo}</title>
         <style>
           * { box-sizing: border-box; font-family: Arial, sans-serif; }
-          body { margin: 24px; color: #0f172a; }
+          body { margin: 24px; color: #0f172a; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
           .header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 18px; }
           .brand { font-size: 22px; font-weight: 700; }
           .doc-type { font-size: 14px; color: #475569; margin-top: 6px; }
@@ -70,6 +75,7 @@ const buildPrintableInvoice = (sale: Sale, items: SaleItem[]) => {
           .note { margin-top: 16px; font-size: 13px; color: #334155; white-space: pre-wrap; }
           .footer { margin-top: 28px; font-size: 12px; color: #64748b; text-align: center; }
           .void { color: #b91c1c; font-weight: 700; margin-top: 8px; }
+          @media print { body { margin: 16px; } }
         </style>
       </head>
       <body>
@@ -169,18 +175,12 @@ const Sales = () => {
         // Write the HTML content
         printWindow.document.write(html);
         printWindow.document.close();
-        
-        // Focus the window
         printWindow.focus();
-        
-        // Wait a bit for content to render, then print
-        setTimeout(() => {
-          try {
-            printWindow.print();
-          } catch (err) {
-            console.error('Print error:', err);
-          }
-        }, 500);
+
+        // Single print call after content is ready
+        printWindow.onload = () => {
+          printWindow.print();
+        };
         
       } catch (error) {
         console.error('Invoice print error:', error);

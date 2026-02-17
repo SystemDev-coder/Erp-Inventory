@@ -8,61 +8,95 @@ export interface BranchScope {
   primaryBranchId: number;
 }
 
-const uniqueNumbers = (values: number[]) => Array.from(new Set(values.filter((v) => Number.isFinite(v) && v > 0)));
+const dedupeNumbers = (values: Array<number | null | undefined>) =>
+  Array.from(
+    new Set(
+      values
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value) && value > 0)
+    )
+  );
+
+const ensureBranchAssignment = async (userId: number): Promise<number> => {
+  const firstBranch = await queryOne<{ branch_id: number }>(
+    `SELECT branch_id
+       FROM ims.branches
+      WHERE is_active = TRUE
+      ORDER BY branch_id
+      LIMIT 1`
+  );
+
+  if (!firstBranch) {
+    throw ApiError.badRequest('No active branch is available in the system');
+  }
+
+  await queryOne(
+    `INSERT INTO ims.user_branches (user_id, branch_id, is_default)
+     VALUES ($1, $2, TRUE)
+     ON CONFLICT (user_id, branch_id)
+     DO UPDATE SET is_default = TRUE`,
+    [userId, firstBranch.branch_id]
+  );
+
+  return Number(firstBranch.branch_id);
+};
 
 export const resolveBranchScope = async (req: AuthRequest): Promise<BranchScope> => {
   if (!req.user) {
     throw ApiError.unauthorized('Authentication required');
   }
 
-  const role = await queryOne<{ role_name: string }>(
-    `SELECT role_name FROM ims.roles WHERE role_id = $1`,
+  const roleRow = await queryOne<{ role_name: string }>(
+    `SELECT role_name
+       FROM ims.roles
+      WHERE role_id = $1`,
     [req.user.roleId]
   );
 
-  const isAdmin = (role?.role_name || '').toLowerCase() === 'admin';
+  const roleName = (roleRow?.role_name || '').toLowerCase();
+  const isAdmin = roleName.includes('admin');
+
   if (isAdmin) {
-    const branches = await queryMany<{ branch_id: number }>(
+    const rows = await queryMany<{ branch_id: number }>(
       `SELECT branch_id
          FROM ims.branches
-        WHERE COALESCE(is_deleted, FALSE) = FALSE
+        WHERE is_active = TRUE
         ORDER BY branch_id`
     );
-    const branchIds = uniqueNumbers(branches.map((row) => Number(row.branch_id)));
+    const branchIds = dedupeNumbers(rows.map((row) => row.branch_id));
+    const primaryBranchId =
+      Number(req.user.branchId) ||
+      Number(branchIds[0]) ||
+      (await ensureBranchAssignment(req.user.userId));
+
     return {
       isAdmin: true,
       branchIds,
-      primaryBranchId: req.user.branchId,
+      primaryBranchId,
     };
   }
 
-  const assigned = await queryMany<{ branch_id: number; is_primary: boolean }>(
-    `SELECT ub.branch_id, ub.is_primary
-       FROM ims.user_branch ub
+  const assigned = await queryMany<{ branch_id: number; is_default: boolean }>(
+    `SELECT ub.branch_id, ub.is_default
+       FROM ims.user_branches ub
        JOIN ims.branches b ON b.branch_id = ub.branch_id
       WHERE ub.user_id = $1
-        AND COALESCE(b.is_deleted, FALSE) = FALSE
-      ORDER BY ub.is_primary DESC, ub.branch_id`,
+        AND b.is_active = TRUE
+      ORDER BY ub.is_default DESC, ub.branch_id`,
     [req.user.userId]
   );
 
-  const branchIds = uniqueNumbers(assigned.map((row) => Number(row.branch_id)));
-  const primaryFromMap = assigned.find((row) => row.is_primary)?.branch_id;
-  const primaryBranchId = Number(primaryFromMap || branchIds[0] || req.user.branchId);
+  let branchIds = dedupeNumbers(assigned.map((row) => row.branch_id));
+  let primaryBranchId = Number(
+    assigned.find((row) => row.is_default)?.branch_id ||
+      branchIds[0] ||
+      req.user.branchId ||
+      0
+  );
 
-  if (!branchIds.length) {
-    // Backfill legacy data so old users still get one branch assignment.
-    await queryOne(
-      `INSERT INTO ims.user_branch (user_id, branch_id, is_primary)
-       VALUES ($1, $2, TRUE)
-       ON CONFLICT (user_id, branch_id) DO UPDATE SET is_primary = TRUE`,
-      [req.user.userId, primaryBranchId]
-    );
-    return {
-      isAdmin: false,
-      branchIds: [primaryBranchId],
-      primaryBranchId,
-    };
+  if (!branchIds.length || !primaryBranchId) {
+    primaryBranchId = await ensureBranchAssignment(req.user.userId);
+    branchIds = [primaryBranchId];
   }
 
   return {
@@ -79,7 +113,10 @@ export const assertBranchAccess = (scope: BranchScope, branchId: number) => {
   }
 };
 
-export const pickBranchForWrite = (scope: BranchScope, requestedBranchId?: number | null) => {
+export const pickBranchForWrite = (
+  scope: BranchScope,
+  requestedBranchId?: number | null
+) => {
   if (requestedBranchId && Number.isFinite(requestedBranchId)) {
     assertBranchAccess(scope, requestedBranchId);
     return requestedBranchId;

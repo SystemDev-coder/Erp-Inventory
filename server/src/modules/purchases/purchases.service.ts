@@ -52,7 +52,7 @@ const resolveProductForPurchaseItem = async (
   client: PoolClient,
   item: PurchaseItemInput,
   branchId: number,
-  supplierId: number
+  supplierId: number | null
 ): Promise<number> => {
   const requestedCost = Number(item.unitCost || 0);
 
@@ -85,10 +85,10 @@ const resolveProductForPurchaseItem = async (
               cost = $2,
               sell_price = $3,
               price = $3,
-              supplier_id = COALESCE(supplier_id, $4),
+              supplier_id = COALESCE(supplier_id, $4::bigint),
               is_active = TRUE
         WHERE product_id = $1`,
-      [item.productId, requestedCost, nextSale, supplierId]
+      [item.productId, requestedCost, nextSale, supplierId ?? null]
     );
     return Number(item.productId);
   }
@@ -125,10 +125,10 @@ const resolveProductForPurchaseItem = async (
               cost = $2,
               sell_price = $3,
               price = $3,
-              supplier_id = COALESCE(supplier_id, $4),
+              supplier_id = COALESCE(supplier_id, $4::bigint),
               is_active = TRUE
         WHERE product_id = $1`,
-      [productId, requestedCost, nextSale, supplierId]
+      [productId, requestedCost, nextSale, supplierId ?? null]
     );
     return productId;
   }
@@ -323,6 +323,11 @@ export const purchasesService = {
         }
       }
 
+      const effectiveSupplierId = input.supplierId ?? (await client.query<{ fn_get_or_create_walking_supplier: number }>(
+        `SELECT ims.fn_get_or_create_walking_supplier($1) AS fn_get_or_create_walking_supplier`,
+        [context.branchId]
+      )).rows[0]?.fn_get_or_create_walking_supplier ?? null;
+
       const purchaseResult = await client.query<Purchase>(
       `INSERT INTO ims.purchases (
          branch_id, wh_id, user_id, supplier_id, currency_code, fx_rate,
@@ -333,7 +338,7 @@ export const purchasesService = {
         context.branchId,
         input.whId ?? null,
         context.userId,
-        input.supplierId,
+        effectiveSupplierId,
         input.currencyCode || 'USD',
         input.fxRate || 1,
         input.purchaseDate || null,
@@ -354,7 +359,7 @@ export const purchasesService = {
             client,
             item,
             context.branchId,
-            input.supplierId
+            effectiveSupplierId
           );
           affectedProductIds.add(productId);
           const lineTotal = Number(item.quantity) * Number(item.unitCost) - Number(item.discount || 0);
@@ -379,13 +384,13 @@ export const purchasesService = {
       }
 
       // ---- Financial side effects: supplier remaining balance & account balance ----
-      // 1) Always increase supplier remaining_balance by the full purchase total (if not void)
-      if (total > 0 && (input.status || 'received') !== 'void') {
+      // 1) Always increase supplier remaining_balance by the full purchase total (if not void and supplier exists)
+      if (total > 0 && (input.status || 'received') !== 'void' && effectiveSupplierId) {
         await client.query(
           `UPDATE ims.suppliers
              SET remaining_balance = remaining_balance + $1
            WHERE supplier_id = $2`,
-          [total, input.supplierId]
+          [total, effectiveSupplierId]
         );
       }
 
@@ -408,12 +413,14 @@ export const purchasesService = {
           }
 
           // Reduce supplier remaining balance
-          await client.query(
-            `UPDATE ims.suppliers
-               SET remaining_balance = remaining_balance - $1
-             WHERE supplier_id = $2`,
-            [paidAmount, input.supplierId]
-          );
+          if (effectiveSupplierId) {
+            await client.query(
+              `UPDATE ims.suppliers
+                 SET remaining_balance = remaining_balance - $1
+               WHERE supplier_id = $2`,
+              [paidAmount, effectiveSupplierId]
+            );
+          }
         }
       }
 
@@ -460,8 +467,12 @@ export const purchasesService = {
       let p = 1;
 
       if (input.supplierId !== undefined) {
+        const effSupplier = input.supplierId ?? (await client.query<{ fn_get_or_create_walking_supplier: number }>(
+          `SELECT ims.fn_get_or_create_walking_supplier($1) AS fn_get_or_create_walking_supplier`,
+          [currentBranchId]
+        )).rows[0]?.fn_get_or_create_walking_supplier ?? null;
         updates.push(`supplier_id = $${p++}`);
-        values.push(input.supplierId);
+        values.push(effSupplier);
       }
       if (input.whId !== undefined) {
         updates.push(`wh_id = $${p++}`);
@@ -516,7 +527,13 @@ export const purchasesService = {
 
       if (input.items) {
         await client.query(`DELETE FROM ims.purchase_items WHERE purchase_id = $1`, [id]);
-        const supplierIdForItems = Number(input.supplierId ?? currentPurchase.rows[0].supplier_id);
+        let supplierIdForItems: number | null = input.supplierId ?? currentPurchase.rows[0].supplier_id ?? null;
+        if (supplierIdForItems == null) {
+          supplierIdForItems = (await client.query<{ fn_get_or_create_walking_supplier: number }>(
+            `SELECT ims.fn_get_or_create_walking_supplier($1) AS fn_get_or_create_walking_supplier`,
+            [currentBranchId]
+          )).rows[0]?.fn_get_or_create_walking_supplier ?? null;
+        }
         for (const item of input.items) {
           const productId = await resolveProductForPurchaseItem(
             client,

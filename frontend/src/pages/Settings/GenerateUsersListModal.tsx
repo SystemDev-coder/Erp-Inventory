@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Modal } from '../../components/ui/modal/Modal';
-import { User, UserPlus, Check, Copy, Eye, EyeOff, Loader } from 'lucide-react';
+import { User, Check, Copy, Eye, EyeOff, Loader } from 'lucide-react';
 import { employeeService, Employee } from '../../services/employee.service';
 import { userService } from '../../services/user.service';
 import { useToast } from '../../components/ui/toast/Toast';
@@ -61,6 +61,12 @@ const GenerateUsersListModal = ({ isOpen, onClose, onSuccess }: Props) => {
       return;
     }
 
+    const empId = Number(employee.emp_id);
+    if (!Number.isInteger(empId) || empId <= 0) {
+      showToast('error', 'Invalid Employee', 'Invalid employee data. Please refresh and try again.');
+      return;
+    }
+
     setEmployees(prev =>
       prev.map(emp =>
         emp.emp_id === employee.emp_id ? { ...emp, isGenerating: true } : emp
@@ -68,10 +74,11 @@ const GenerateUsersListModal = ({ isOpen, onClose, onSuccess }: Props) => {
     );
 
     try {
-      const response = await userService.generateFromEmployee({ empId: employee.emp_id });
-      
-      if (response.success && response.data) {
-        const { username, password } = response.data;
+      const response = await userService.generateFromEmployee({ emp_id: empId });
+
+      const payload = response.data;
+      if (response.success && payload) {
+        const { username, password } = payload;
         
         setEmployees(prev =>
           prev.map(emp =>
@@ -82,7 +89,7 @@ const GenerateUsersListModal = ({ isOpen, onClose, onSuccess }: Props) => {
                   isGenerated: true,
                   generatedUsername: username,
                   generatedPassword: password,
-                  user_id: response.data.user.user_id,
+                  user_id: payload.user.user_id,
                 }
               : emp
           )
@@ -116,13 +123,8 @@ const GenerateUsersListModal = ({ isOpen, onClose, onSuccess }: Props) => {
     <Modal 
       isOpen={isOpen} 
       onClose={onClose} 
-      title={
-        <div className="flex items-center gap-2">
-          <UserPlus className="w-5 h-5 text-primary-600" />
-          <span>Generate Users from Employees</span>
-        </div>
-      }
-      size="medium"
+      title="Generate Users from Employees"
+      size="lg"
     >
       <div className="space-y-3">
         {/* Info Banner */}

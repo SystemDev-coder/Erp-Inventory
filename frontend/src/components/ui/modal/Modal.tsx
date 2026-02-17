@@ -4,10 +4,11 @@ import { X } from 'lucide-react';
 interface ModalProps {
     isOpen: boolean;
     onClose: () => void;
-    title: string;
+    title: React.ReactNode;
     children: React.ReactNode;
     size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl';
     showCloseButton?: boolean;
+    resizable?: boolean;
 }
 
 export const Modal: React.FC<ModalProps> = ({
@@ -17,6 +18,7 @@ export const Modal: React.FC<ModalProps> = ({
     children,
     size = 'md',
     showCloseButton = true,
+    resizable = false,
 }) => {
     useEffect(() => {
         if (isOpen) {
@@ -60,7 +62,7 @@ export const Modal: React.FC<ModalProps> = ({
             {/* Modal */}
             <div className="flex min-h-full items-start justify-center p-4 sm:items-center sm:p-6">
                 <div
-                    className={`relative w-full ${sizeClasses[size]} max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-3rem)] bg-white dark:bg-slate-900 rounded-xl shadow-2xl transform transition-all flex flex-col overflow-hidden`}
+                    className={`relative w-full ${sizeClasses[size]} max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-3rem)] bg-white dark:bg-slate-900 rounded-xl shadow-2xl transform transition-all flex flex-col ${resizable ? 'resize overflow-auto min-w-[320px] min-h-[240px]' : 'overflow-hidden'}`}
                     onClick={(e) => e.stopPropagation()}
                 >
                     {/* Header */}

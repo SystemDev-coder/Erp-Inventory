@@ -36,8 +36,8 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
         name: employee.full_name,
         phone: employee.phone || '',
         address: employee.address || '',
-        role_id: employee.role_id || undefined,
-        salary: employee.basic_salary || 0,
+        role_id: employee.role_id ?? undefined,
+        salary: Number(employee.basic_salary) || 0,
         hire_date: employee.hire_date.split('T')[0],
         status: employee.status,
       });
@@ -56,7 +56,13 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await onSubmit(formData);
+    // Ensure salary and role_id are numbers (HTML inputs can send strings)
+    const payload = {
+      ...formData,
+      salary: Number(formData.salary) || 0,
+      role_id: formData.role_id != null ? Number(formData.role_id) : undefined,
+    };
+    await onSubmit(payload);
   };
 
   if (!isOpen) return null;

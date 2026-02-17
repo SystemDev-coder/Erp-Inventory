@@ -1,129 +1,267 @@
-import { queryOne, queryMany } from '../../db/query';
+import { queryMany, queryOne } from '../../db/query';
 import { withTransaction } from '../../db/withTx';
 import { ApiError } from '../../utils/ApiError';
 import {
-  hashPassword,
   comparePassword,
   generateResetCode,
-  hashResetCode,
-  compareResetCode,
+  hashPassword,
 } from '../../utils/password';
 import {
   signAccessToken,
   signRefreshToken,
   verifyRefreshToken,
-  hashToken,
   TokenPayload,
 } from '../../utils/jwt';
 import { config } from '../../config/env';
 import {
+  AuthTokens,
+  ForgotPasswordInput,
+  LoginInput,
+  RegisterInput,
+  ResetPasswordInput,
   User,
   UserProfile,
-  AuthTokens,
-  RegisterInput,
-  LoginInput,
-  ForgotPasswordInput,
-  ResetPasswordInput,
+  UserWithPermissions,
 } from './auth.types';
-import { sessionService } from '../session/session.service';
-import { parseDeviceInfo } from '../../utils/deviceDetection';
+import { logAudit } from '../../utils/audit';
+
+type ResetEntry = {
+  userId: number;
+  code: string;
+  expiresAt: Date;
+};
+
+const resetStore = new Map<string, ResetEntry>();
+
+const normalizeIdentifier = (value: string) => value.trim().toLowerCase();
+
+const now = () => new Date();
+
+const defaultPermissions = [
+  'home.view',
+  'items.view',
+  'stock.view',
+  'sales.view',
+  'purchases.view',
+  'customers.view',
+  'suppliers.view',
+  'finance.view',
+  'settings.view',
+];
+
+const ensureRole = async (requestedRoleId?: number): Promise<number> => {
+  if (requestedRoleId) {
+    const role = await queryOne<{ role_id: number }>(
+      `SELECT role_id
+         FROM ims.roles
+        WHERE role_id = $1`,
+      [requestedRoleId]
+    );
+    if (role) return Number(role.role_id);
+  }
+
+  const fallbackRole = await queryOne<{ role_id: number }>(
+    `SELECT role_id
+       FROM ims.roles
+      ORDER BY role_id
+      LIMIT 1`
+  );
+
+  if (!fallbackRole) {
+    throw ApiError.badRequest('No role is configured in the database');
+  }
+
+  return Number(fallbackRole.role_id);
+};
+
+const ensureBranch = async (requestedBranchId?: number): Promise<number> => {
+  if (requestedBranchId) {
+    const branch = await queryOne<{ branch_id: number }>(
+      `SELECT branch_id
+         FROM ims.branches
+        WHERE branch_id = $1
+          AND is_active = TRUE`,
+      [requestedBranchId]
+    );
+    if (branch) return Number(branch.branch_id);
+  }
+
+  const fallbackBranch = await queryOne<{ branch_id: number }>(
+    `SELECT branch_id
+       FROM ims.branches
+      WHERE is_active = TRUE
+      ORDER BY branch_id
+      LIMIT 1`
+  );
+
+  if (!fallbackBranch) {
+    throw ApiError.badRequest('No active branch is configured in the database');
+  }
+
+  return Number(fallbackBranch.branch_id);
+};
+
+const getPrimaryBranch = async (userId: number): Promise<number> => {
+  const row = await queryOne<{ branch_id: number }>(
+    `SELECT ub.branch_id
+       FROM ims.user_branches ub
+       JOIN ims.branches b ON b.branch_id = ub.branch_id
+      WHERE ub.user_id = $1
+        AND b.is_active = TRUE
+      ORDER BY ub.is_default DESC, ub.branch_id
+      LIMIT 1`,
+    [userId]
+  );
+
+  if (row) return Number(row.branch_id);
+
+  return ensureBranch(undefined);
+};
+
+const resolveIdentifierToUsername = (input: RegisterInput) => {
+  const username = input.username?.trim();
+  if (username) return username;
+
+  const phone = input.phone?.trim();
+  if (phone) return phone;
+
+  throw ApiError.badRequest('Username is required');
+};
+
+const mapProfile = async (userId: number): Promise<UserProfile | null> => {
+  const row = await queryOne<{
+    user_id: number;
+    name: string;
+    username: string;
+    role_id: number;
+    role_name: string | null;
+    is_active: boolean;
+    branch_id: number | null;
+    branch_name: string | null;
+  }>(
+    `SELECT
+        u.user_id,
+        u.name,
+        u.username,
+        u.role_id,
+        r.role_name,
+        u.is_active,
+        b.branch_id,
+        b.branch_name
+     FROM ims.users u
+     LEFT JOIN ims.roles r ON r.role_id = u.role_id
+     LEFT JOIN LATERAL (
+       SELECT br.branch_id, br.branch_name
+         FROM ims.user_branches ub
+         JOIN ims.branches br ON br.branch_id = ub.branch_id
+        WHERE ub.user_id = u.user_id
+        ORDER BY ub.is_default DESC, ub.branch_id
+        LIMIT 1
+     ) b ON TRUE
+     WHERE u.user_id = $1`,
+    [userId]
+  );
+
+  if (!row) return null;
+
+  const branchId = Number(row.branch_id || (await ensureBranch(undefined)));
+  const branchName = row.branch_name || 'Main Branch';
+
+  return {
+    user_id: Number(row.user_id),
+    name: row.name,
+    username: row.username,
+    phone: null,
+    role_id: Number(row.role_id),
+    role_name: row.role_name || 'User',
+    branch_id: branchId,
+    branch_name: branchName,
+    is_active: Boolean(row.is_active),
+  };
+};
+
+const buildTokenPayload = async (
+  user: Pick<User, 'user_id' | 'username' | 'role_id'>
+): Promise<TokenPayload> => {
+  const branchId = await getPrimaryBranch(Number(user.user_id));
+  return {
+    userId: Number(user.user_id),
+    username: user.username,
+    roleId: Number(user.role_id),
+    branchId,
+  };
+};
 
 export class AuthService {
-  /**
-   * Register a new user
-   */
-  async register(input: RegisterInput): Promise<{ tokens: AuthTokens; user: UserProfile }> {
+  async register(
+    input: RegisterInput
+  ): Promise<{ tokens: AuthTokens; user: UserProfile }> {
     return withTransaction(async (client) => {
-      // Set defaults
-      const branchId = input.branch_id || 1;
-      const roleId = input.role_id || 1;
-
-      // Hash password
-      const passwordHash = await hashPassword(input.password);
-
-      // Insert user
-      const insertQuery = `
-        INSERT INTO ims.users (branch_id, role_id, name, username, phone, password_hash, is_active)
-        VALUES ($1, $2, $3, $4, $5, $6, true)
-        RETURNING user_id, branch_id, role_id, name, username, phone
-      `;
-
-      const result = await client.query(insertQuery, [
-        branchId,
-        roleId,
-        input.name,
-        input.username || null,
-        input.phone || null,
-        passwordHash,
-      ]);
-
-      const user = result.rows[0];
-
-      await client.query(
-        `INSERT INTO ims.user_branch (user_id, branch_id, is_primary)
-         VALUES ($1, $2, TRUE)
-         ON CONFLICT (user_id, branch_id) DO UPDATE SET is_primary = TRUE`,
-        [user.user_id, user.branch_id]
+      const username = resolveIdentifierToUsername(input);
+      const existingUser = await client.query<{ user_id: number }>(
+        `SELECT user_id
+           FROM ims.users
+          WHERE LOWER(username) = LOWER($1)
+          LIMIT 1`,
+        [username]
       );
-
-      // Generate tokens
-      const payload: TokenPayload = {
-        userId: user.user_id,
-        username: user.username || user.phone,
-        roleId: user.role_id,
-        branchId: user.branch_id,
-      };
-
-      const accessToken = signAccessToken(payload);
-      const refreshToken = signRefreshToken(payload);
-
-      // Store refresh token hash
-      const tokenHash = hashToken(refreshToken);
-      await client.query(
-        'UPDATE ims.users SET refresh_token_hash = $1, last_login_at = NOW() WHERE user_id = $2',
-        [tokenHash, user.user_id]
-      );
-
-      // Get user profile within transaction
-      const profileResult = await client.query<UserProfile>(
-        `SELECT 
-          u.user_id,
-          u.name,
-          u.username,
-          u.phone,
-          u.role_id,
-          u.branch_id,
-          u.is_active,
-          COALESCE(r.role_name, 'User') as role_name,
-          COALESCE(b.branch_name, 'Main Branch') as branch_name
-         FROM ims.users u
-         LEFT JOIN ims.roles r ON u.role_id = r.role_id
-         LEFT JOIN ims.branches b ON u.branch_id = b.branch_id
-         WHERE u.user_id = $1`,
-        [user.user_id]
-      );
-
-      const userProfile = profileResult.rows[0];
-      if (!userProfile) {
-        throw ApiError.internal('Failed to retrieve user profile');
+      if (existingUser.rows[0]) {
+        throw ApiError.conflict('Username already exists');
       }
 
-      return {
-        tokens: { accessToken, refreshToken },
-        user: userProfile,
+      const roleId = await ensureRole(input.role_id);
+      const branchId = await ensureBranch(input.branch_id);
+      const passwordHash = await hashPassword(input.password);
+
+      const inserted = await client.query<User>(
+        `INSERT INTO ims.users (role_id, name, username, password_hash, is_active)
+         VALUES ($1, $2, $3, $4, TRUE)
+         RETURNING user_id, role_id, name, username, password_hash, is_active, created_at`,
+        [roleId, input.name.trim(), username, passwordHash]
+      );
+
+      const createdUser = inserted.rows[0];
+      await client.query(
+        `INSERT INTO ims.user_branches (user_id, branch_id, is_default)
+         VALUES ($1, $2, TRUE)
+         ON CONFLICT (user_id, branch_id)
+         DO UPDATE SET is_default = TRUE`,
+        [createdUser.user_id, branchId]
+      );
+
+      const payload = await buildTokenPayload(createdUser);
+      const tokens = {
+        accessToken: signAccessToken(payload),
+        refreshToken: signRefreshToken(payload),
       };
+
+      const profile = await mapProfile(Number(createdUser.user_id));
+      if (!profile) {
+        throw ApiError.internal('Failed to load user profile');
+      }
+
+      await logAudit({
+        userId: Number(createdUser.user_id),
+        action: 'auth.register',
+        entity: 'users',
+        entityId: Number(createdUser.user_id),
+        branchId,
+      });
+
+      return { tokens, user: profile };
     });
   }
 
-  /**
-   * Login user
-   */
-  async login(input: LoginInput): Promise<{ tokens: AuthTokens; user: UserProfile }> {
-    // Find user by username or phone (even if inactive to return proper message)
+  async login(
+    input: LoginInput
+  ): Promise<{ tokens: AuthTokens; user: UserProfile }> {
+    const identifier = normalizeIdentifier(input.identifier);
     const user = await queryOne<User>(
-      `SELECT * FROM ims.users 
-       WHERE (username = $1 OR phone = $1)`,
-      [input.identifier]
+      `SELECT user_id, role_id, name, username, password_hash, is_active, created_at
+         FROM ims.users
+        WHERE LOWER(username) = $1
+        LIMIT 1`,
+      [identifier]
     );
 
     if (!user) {
@@ -131,200 +269,120 @@ export class AuthService {
     }
 
     if (!user.is_active) {
-      throw ApiError.forbidden('You are not authorized to access this section. Please contact the system administrator.');
+      throw ApiError.forbidden(
+        'You are not authorized to access this section. Please contact the system administrator.'
+      );
     }
 
-    // Verify password
     const isValid = await comparePassword(input.password, user.password_hash);
     if (!isValid) {
       throw ApiError.unauthorized('Incorrect username or password');
     }
 
-    const primaryBranch = await queryOne<{ branch_id: number }>(
-      `SELECT branch_id
-         FROM ims.user_branch
-        WHERE user_id = $1
-          AND is_primary = TRUE
-        ORDER BY created_at
-        LIMIT 1`,
-      [user.user_id]
-    );
-
-    const effectiveBranchId = Number(primaryBranch?.branch_id || user.branch_id);
-
-    // Generate tokens
-    const payload: TokenPayload = {
-      userId: user.user_id,
-      username: user.username || user.phone || '',
-      roleId: user.role_id,
-      branchId: effectiveBranchId,
+    const payload = await buildTokenPayload(user);
+    const tokens = {
+      accessToken: signAccessToken(payload),
+      refreshToken: signRefreshToken(payload),
     };
 
-    const accessToken = signAccessToken(payload);
-    const refreshToken = signRefreshToken(payload);
-
-    // Store refresh token hash
-    const tokenHash = hashToken(refreshToken);
-    await queryOne(
-      'UPDATE ims.users SET refresh_token_hash = $1, last_login_at = NOW() WHERE user_id = $2',
-      [tokenHash, user.user_id]
-    );
-
-    // Get user profile
-    const userProfile = await this.getUserProfileById(user.user_id);
+    const userProfile = await mapProfile(Number(user.user_id));
     if (!userProfile) {
       throw ApiError.internal('Failed to retrieve user profile');
     }
 
-    const result = {
-      tokens: { accessToken, refreshToken },
-      user: userProfile,
-    };
-
-    // Audit login
-    const { logAudit } = await import('../../utils/audit');
-    logAudit({
-      userId: user.user_id,
-      action: 'login',
-      entity: 'auth',
-      entityId: user.user_id,
+    await logAudit({
+      userId: Number(user.user_id),
+      action: 'auth.login',
+      entity: 'users',
+      entityId: Number(user.user_id),
+      branchId: payload.branchId,
       ip: input.ip,
-      userAgent: input.userAgent,
+      userAgent: input.userAgent || null,
     });
 
-    return result;
+    return { tokens, user: userProfile };
   }
 
-  /**
-   * Refresh access token
-   */
   async refresh(refreshToken: string): Promise<string> {
     let payload: TokenPayload;
-    
     try {
       payload = verifyRefreshToken(refreshToken);
-    } catch (error) {
+    } catch {
       throw ApiError.unauthorized('Invalid or expired refresh token');
     }
 
-    // Verify token hash in database
-    const tokenHash = hashToken(refreshToken);
     const user = await queryOne<User>(
-      'SELECT * FROM ims.users WHERE user_id = $1 AND refresh_token_hash = $2',
-      [payload.userId, tokenHash]
+      `SELECT user_id, role_id, name, username, password_hash, is_active, created_at
+         FROM ims.users
+        WHERE user_id = $1`,
+      [payload.userId]
     );
 
-    if (!user) {
+    if (!user || !user.is_active) {
       throw ApiError.unauthorized('Invalid refresh token');
     }
 
-    if (!user.is_active) {
-      throw ApiError.forbidden('You are not authorized to access this section. Please contact the system administrator.');
+    const nextPayload = await buildTokenPayload(user);
+    return signAccessToken(nextPayload);
+  }
+
+  async logout(_userId: number): Promise<void> {}
+
+  async getUserProfileById(userId: number): Promise<UserProfile | null> {
+    return mapProfile(userId);
+  }
+
+  async getUserWithPermissions(userId: number): Promise<UserWithPermissions> {
+    const user = await this.getUserProfileById(userId);
+    if (!user) {
+      throw ApiError.notFound('User not found');
     }
 
-    // Generate new access token with clean payload (no exp, iat, etc.)
-    const newAccessToken = signAccessToken({
-      userId: payload.userId,
-      username: payload.username,
-      roleId: payload.roleId,
-      branchId: payload.branchId,
-      sessionId: payload.sessionId,
-    });
-
-    // Optional: Rotate refresh token (recommended for production)
-    // For simplicity, we're not rotating here, but you can add it
-
-    return newAccessToken;
-  }
-
-  /**
-   * Logout user
-   */
-  async logout(userId: number): Promise<void> {
-    await queryOne(
-      'UPDATE ims.users SET refresh_token_hash = NULL WHERE user_id = $1',
-      [userId]
-    );
-  }
-
-  /**
-   * Get user profile by ID
-   */
-  async getUserProfileById(userId: number): Promise<UserProfile | null> {
-    return queryOne<UserProfile>(
-      `SELECT 
-        u.user_id,
-        u.name,
-        u.username,
-        u.phone,
-        u.role_id,
-        u.branch_id,
-        u.is_active,
-        COALESCE(r.role_name, 'User') as role_name,
-        COALESCE(b.branch_name, 'Main Branch') as branch_name
-       FROM ims.users u
-       LEFT JOIN ims.roles r ON u.role_id = r.role_id
-       LEFT JOIN ims.branches b ON u.branch_id = b.branch_id
-       WHERE u.user_id = $1`,
-      [userId]
-    );
-  }
-
-  /**
-   * Get user with full permissions (role + overrides)
-   * Formula: effective = (role_permissions ∪ user_permissions ∪ overrides_allow) - overrides_deny
-   */
-  async getUserWithPermissions(userId: number): Promise<any | null> {
-    const user = await this.getUserProfileById(userId);
-    if (!user) return null;
-
-    // Get role permissions
     const rolePerms = await queryMany<{ perm_key: string }>(
       `SELECT DISTINCT p.perm_key
-       FROM ims.role_permissions rp
-       JOIN ims.permissions p ON rp.perm_id = p.perm_id
-       WHERE rp.role_id = $1`,
+         FROM ims.role_permissions rp
+         JOIN ims.permissions p ON p.perm_id = rp.perm_id
+        WHERE rp.role_id = $1`,
       [user.role_id]
     );
 
-    // Get legacy user permission overrides (allow only)
     const userPerms = await queryMany<{ perm_key: string }>(
       `SELECT DISTINCT p.perm_key
-       FROM ims.user_permissions up
-       JOIN ims.permissions p ON up.perm_id = p.perm_id
-       WHERE up.user_id = $1`,
+         FROM ims.user_permissions up
+         JOIN ims.permissions p ON p.perm_id = up.perm_id
+        WHERE up.user_id = $1`,
       [userId]
     );
 
-    // Get allow overrides
     const allowOverrides = await queryMany<{ perm_key: string }>(
       `SELECT DISTINCT p.perm_key
-       FROM ims.user_permission_overrides upo
-       JOIN ims.permissions p ON upo.perm_id = p.perm_id
-       WHERE upo.user_id = $1 AND upo.effect = 'allow'`,
+         FROM ims.user_permission_overrides uo
+         JOIN ims.permissions p ON p.perm_id = uo.perm_id
+        WHERE uo.user_id = $1
+          AND uo.effect = 'allow'`,
       [userId]
     );
 
-    // Get deny overrides
     const denyOverrides = await queryMany<{ perm_key: string }>(
       `SELECT DISTINCT p.perm_key
-       FROM ims.user_permission_overrides upo
-       JOIN ims.permissions p ON upo.perm_id = p.perm_id
-       WHERE upo.user_id = $1 AND upo.effect = 'deny'`,
+         FROM ims.user_permission_overrides uo
+         JOIN ims.permissions p ON p.perm_id = uo.perm_id
+        WHERE uo.user_id = $1
+          AND uo.effect = 'deny'`,
       [userId]
     );
 
-    // Apply formula: (role ∪ legacy ∪ allow) - deny
-    const allowed = new Set([
-      ...rolePerms.map((p) => p.perm_key),
-      ...userPerms.map((p) => p.perm_key),
-      ...allowOverrides.map((p) => p.perm_key),
+    const permissionSet = new Set<string>([
+      ...rolePerms.map((row) => row.perm_key),
+      ...userPerms.map((row) => row.perm_key),
+      ...allowOverrides.map((row) => row.perm_key),
     ]);
 
-    const denied = new Set(denyOverrides.map((p) => p.perm_key));
+    denyOverrides.forEach((row) => permissionSet.delete(row.perm_key));
 
-    // Remove denied permissions
-    denied.forEach((perm) => allowed.delete(perm));
+    if (!permissionSet.size) {
+      defaultPermissions.forEach((perm) => permissionSet.add(perm));
+    }
 
     return {
       user,
@@ -332,97 +390,69 @@ export class AuthService {
         role_id: user.role_id,
         role_name: user.role_name,
       },
-      permissions: Array.from(allowed),
+      permissions: Array.from(permissionSet),
     };
   }
 
-  /**
-   * Request password reset
-   */
-  async forgotPassword(input: ForgotPasswordInput): Promise<{ resetCode?: string }> {
-    // Find user
-    const user = await queryOne<User>(
-      `SELECT * FROM ims.users 
-       WHERE (username = $1 OR phone = $1) AND is_active = true`,
-      [input.identifier]
+  async forgotPassword(
+    input: ForgotPasswordInput
+  ): Promise<{ resetCode?: string }> {
+    const user = await queryOne<{ user_id: number; is_active: boolean; username: string }>(
+      `SELECT user_id, is_active, username
+         FROM ims.users
+        WHERE LOWER(username) = $1
+        LIMIT 1`,
+      [normalizeIdentifier(input.identifier)]
     );
 
-    if (!user) {
-      // Don't reveal if user exists
+    if (!user || !user.is_active) {
       if (config.resetPassword.devReturnCode) {
         return { resetCode: '000000' };
       }
       return {};
     }
 
-    // Generate reset code
     const code = generateResetCode();
-    const codeHash = await hashResetCode(code);
-    const expiresAt = new Date(Date.now() + config.resetPassword.expiresMin * 60 * 1000);
+    const expiresAt = new Date(now().getTime() + config.resetPassword.expiresMin * 60 * 1000);
 
-    // Store in database
-    await queryOne(
-      `UPDATE ims.users 
-       SET reset_code_hash = $1, reset_code_expires = $2 
-       WHERE user_id = $3`,
-      [codeHash, expiresAt, user.user_id]
-    );
+    resetStore.set(normalizeIdentifier(user.username), {
+      userId: Number(user.user_id),
+      code,
+      expiresAt,
+    });
 
-    // In dev mode, return code for testing
     if (config.resetPassword.devReturnCode) {
       return { resetCode: code };
     }
 
-    // In production, send SMS/Email (implement later)
-    console.log(`[DEV] Reset code for ${input.identifier}: ${code}`);
-
     return {};
   }
 
-  /**
-   * Reset password with code
-   */
   async resetPassword(input: ResetPasswordInput): Promise<void> {
-    return withTransaction(async (client) => {
-      // Find user
-      const result = await client.query<User>(
-        `SELECT * FROM ims.users 
-         WHERE (username = $1 OR phone = $1) AND is_active = true`,
-        [input.identifier]
-      );
+    const identifier = normalizeIdentifier(input.identifier);
+    const entry = resetStore.get(identifier);
+    if (!entry) {
+      throw ApiError.badRequest('No password reset requested');
+    }
 
-      const user = result.rows[0];
-      if (!user) {
-        throw ApiError.badRequest('Invalid reset request');
-      }
+    if (entry.expiresAt.getTime() < now().getTime()) {
+      resetStore.delete(identifier);
+      throw ApiError.badRequest('Reset code has expired');
+    }
 
-      // Check if reset code exists and not expired
-      if (!user.reset_code_hash || !user.reset_code_expires) {
-        throw ApiError.badRequest('No password reset requested');
-      }
+    if (entry.code !== input.code) {
+      throw ApiError.badRequest('Invalid reset code');
+    }
 
-      if (new Date() > new Date(user.reset_code_expires)) {
-        throw ApiError.badRequest('Reset code has expired');
-      }
+    const newPasswordHash = await hashPassword(input.newPassword);
+    await queryOne(
+      `UPDATE ims.users
+          SET password_hash = $1
+        WHERE user_id = $2`,
+      [newPasswordHash, entry.userId]
+    );
 
-      // Verify code
-      const isValid = await compareResetCode(input.code, user.reset_code_hash);
-      if (!isValid) {
-        throw ApiError.badRequest('Invalid reset code');
-      }
-
-      // Update password
-      const newPasswordHash = await hashPassword(input.newPassword);
-      await client.query(
-        `UPDATE ims.users 
-         SET password_hash = $1, 
-             reset_code_hash = NULL, 
-             reset_code_expires = NULL,
-             refresh_token_hash = NULL
-         WHERE user_id = $2`,
-        [newPasswordHash, user.user_id]
-      );
-    });
+    resetStore.delete(identifier);
   }
 }
 

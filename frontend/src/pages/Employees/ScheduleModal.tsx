@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Modal } from '../../components/ui/modal/Modal';
-import { Calendar, Clock, FileText, AlertCircle, Check, X } from 'lucide-react';
+import { Calendar, Clock, FileText, Check, X } from 'lucide-react';
 import { scheduleService, Schedule, ScheduleInput } from '../../services/schedule.service';
 import { employeeService, Employee } from '../../services/employee.service';
 import { useToast } from '../../components/ui/toast/Toast';
@@ -132,13 +132,13 @@ const ScheduleModal = ({ isOpen, onClose, selectedEmployee }: Props) => {
     }
   };
 
-  const getStatusColor = (status: string) => {
+  const getStatusColor = (status: string): 'success' | 'warning' | 'error' | 'info' | 'light' => {
     switch (status) {
       case 'approved': return 'success';
       case 'pending': return 'warning';
       case 'rejected': return 'error';
-      case 'cancelled': return 'default';
-      default: return 'default';
+      case 'cancelled': return 'info';
+      default: return 'light';
     }
   };
 
@@ -157,13 +157,8 @@ const ScheduleModal = ({ isOpen, onClose, selectedEmployee }: Props) => {
     <Modal 
       isOpen={isOpen} 
       onClose={onClose} 
-      title={
-        <div className="flex items-center gap-2">
-          <Calendar className="w-5 h-5 text-primary-600" />
-          <span>Employee Schedule & Leave Management</span>
-        </div>
-      }
-      size="large"
+      title="Employee Schedule & Leave Management"
+      size="lg"
     >
       <div className="space-y-6">
         {/* Create New Schedule Form */}

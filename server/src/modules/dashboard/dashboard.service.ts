@@ -1,141 +1,214 @@
-import { DashboardWidget, DashboardCard, DashboardChart, DashboardRecentRow } from './dashboard.types';
 import { queryMany, queryOne } from '../../db/query';
+import {
+  DashboardCard,
+  DashboardChart,
+  DashboardRecentRow,
+  DashboardWidget,
+} from './dashboard.types';
 
 const ALL_WIDGETS: DashboardWidget[] = [
-  {
-    id: 'overview',
-    name: 'Overview',
-    permission: 'home.view',
-    description: 'Core dashboard overview',
-  },
-  {
-    id: 'sales_summary',
-    name: 'Sales Summary',
-    permission: 'sales.view',
-    description: 'Sales totals and recent transactions',
-  },
-  {
-    id: 'stock_alerts',
-    name: 'Stock Alerts',
-    permission: 'stock.view',
-    description: 'Low stock and reorder alerts',
-  },
-  {
-    id: 'purchases_status',
-    name: 'Purchases Status',
-    permission: 'purchases.view',
-    description: 'Purchase order status and activity',
-  },
-  {
-    id: 'finance_overview',
-    name: 'Finance Overview',
-    permission: 'finance.view',
-    description: 'Payments, expenses, and cash flow',
-  },
-  {
-    id: 'customers_overview',
-    name: 'Customers Overview',
-    permission: 'customers.view',
-    description: 'Customer activity and totals',
-  },
-  {
-    id: 'employees_overview',
-    name: 'Employees Overview',
-    permission: 'employees.view',
-    description: 'Employee metrics and shifts',
-  },
-  {
-    id: 'system_health',
-    name: 'System Health',
-    permission: 'system.users',
-    description: 'System access and audit summary',
-  },
+  { id: 'overview', name: 'Overview', permission: 'home.view' },
+  { id: 'sales_summary', name: 'Sales Summary', permission: 'sales.view' },
+  { id: 'stock_alerts', name: 'Stock Alerts', permission: 'stock.view' },
+  { id: 'purchases_status', name: 'Purchases Status', permission: 'purchases.view' },
+  { id: 'finance_overview', name: 'Finance Overview', permission: 'finance.view' },
+  { id: 'customers_overview', name: 'Customers Overview', permission: 'customers.view' },
+  { id: 'employees_overview', name: 'Employees Overview', permission: 'employees.view' },
 ];
 
+type WarehouseStockShape = {
+  itemColumn: 'item_id' | 'product_id';
+  hasBranchId: boolean;
+};
+
+let warehouseStockShapeCache: WarehouseStockShape | null = null;
+
+const alternateItemColumn = (
+  itemColumn: WarehouseStockShape['itemColumn']
+): WarehouseStockShape['itemColumn'] => (itemColumn === 'item_id' ? 'product_id' : 'item_id');
+
+const buildWarehouseShapeCandidates = (
+  detected: WarehouseStockShape
+): WarehouseStockShape[] => {
+  const candidates: WarehouseStockShape[] = [
+    detected,
+    { ...detected, hasBranchId: !detected.hasBranchId },
+    { ...detected, itemColumn: alternateItemColumn(detected.itemColumn) },
+    {
+      itemColumn: alternateItemColumn(detected.itemColumn),
+      hasBranchId: !detected.hasBranchId,
+    },
+  ];
+
+  const seen = new Set<string>();
+  return candidates.filter((shape) => {
+    const key = `${shape.itemColumn}-${shape.hasBranchId ? 'b1' : 'b0'}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const hasPermission = (permissions: string[], key: string) => {
+  if (permissions.includes(key)) return true;
+  if (key.startsWith('items.')) {
+    return permissions.includes(key.replace('items.', 'products.'));
+  }
+  if (key.startsWith('products.')) {
+    return permissions.includes(key.replace('products.', 'items.'));
+  }
+  return false;
+};
+
+const detectWarehouseStockShape = async (): Promise<WarehouseStockShape> => {
+  if (warehouseStockShapeCache) return warehouseStockShapeCache;
+
+  const columns = await queryMany<{ column_name: string }>(
+    `SELECT column_name
+       FROM information_schema.columns
+      WHERE table_schema = 'ims'
+        AND table_name = 'warehouse_stock'`
+  );
+  const names = new Set(columns.map((row) => row.column_name));
+
+  warehouseStockShapeCache = {
+    itemColumn: names.has('item_id') ? 'item_id' : 'product_id',
+    hasBranchId: names.has('branch_id'),
+  };
+
+  return warehouseStockShapeCache;
+};
+
 export class DashboardService {
-  /**
-   * Build dashboard widgets based on permissions
-   */
   getDashboardWidgets(permissions: string[]): DashboardWidget[] {
-    const permSet = new Set(permissions);
-    return ALL_WIDGETS.filter((widget) => permSet.has(widget.permission));
+    return ALL_WIDGETS.filter((widget) => hasPermission(permissions, widget.permission));
   }
 
-  /**
-   * Build cards from database metrics
-   */
-  async getDashboardCards(branchId: number, permissions: string[]): Promise<DashboardCard[]> {
-    const permSet = new Set(permissions);
+  async getDashboardCards(
+    branchId: number,
+    permissions: string[]
+  ): Promise<DashboardCard[]> {
     const cards: DashboardCard[] = [];
 
-    if (permSet.has('sales.view')) {
-      const todaySales = await queryOne<{ total: number }>(
-        `SELECT COALESCE(SUM(total), 0) AS total
-         FROM ims.sales
-         WHERE branch_id = $1
-           AND status <> 'void'
-           AND sale_date::date = CURRENT_DATE`,
+    if (permissions.includes('sales.view')) {
+      const row = await queryOne<{ total: string }>(
+        `SELECT COALESCE(SUM(total), 0)::text AS total
+           FROM ims.sales
+          WHERE branch_id = $1
+            AND status <> 'void'
+            AND sale_date::date = CURRENT_DATE`,
         [branchId]
       );
       cards.push({
         id: 'today-sales',
         title: "Today's Sales",
-        value: Number(todaySales?.total || 0),
+        value: Number(row?.total || 0),
         subtitle: 'Sales collected today',
         icon: 'TrendingUp',
         format: 'currency',
       });
     }
 
-    if (permSet.has('purchases.view')) {
-      const monthPurchases = await queryOne<{ total: number }>(
-        `SELECT COALESCE(SUM(total), 0) AS total
-         FROM ims.purchases
-         WHERE branch_id = $1
-           AND status <> 'void'
-           AND date_trunc('month', purchase_date) = date_trunc('month', CURRENT_DATE)`,
+    if (permissions.includes('purchases.view')) {
+      const row = await queryOne<{ total: string }>(
+        `SELECT COALESCE(SUM(total), 0)::text AS total
+           FROM ims.purchases
+          WHERE branch_id = $1
+            AND status <> 'void'
+            AND purchase_date::date >= date_trunc('month', CURRENT_DATE)::date`,
         [branchId]
       );
       cards.push({
         id: 'month-purchases',
         title: 'Monthly Purchases',
-        value: Number(monthPurchases?.total || 0),
+        value: Number(row?.total || 0),
         subtitle: 'Purchases this month',
         icon: 'ReceiptText',
         format: 'currency',
       });
     }
 
-    if (permSet.has('products.view')) {
-      const products = await queryOne<{ count: number }>(
-        `SELECT COUNT(*)::int AS count
-         FROM ims.products
-         WHERE is_active = TRUE`
+    if (hasPermission(permissions, 'items.view') || hasPermission(permissions, 'products.view')) {
+      const row = await queryOne<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+           FROM ims.items
+          WHERE branch_id = $1
+            AND is_active = TRUE`,
+        [branchId]
       );
       cards.push({
         id: 'active-products',
-        title: 'Active Products',
-        value: Number(products?.count || 0),
-        subtitle: 'Products available',
+        title: 'Active Items',
+        value: Number(row?.count || 0),
+        subtitle: 'Items available',
         icon: 'Package',
         format: 'number',
       });
     }
 
-    if (permSet.has('stock.view')) {
-      const lowStock = await queryOne<{ count: number }>(
-        `SELECT COUNT(*)::int AS count
-         FROM ims.branch_stock bs
-         JOIN ims.products p ON p.product_id = bs.product_id
-         WHERE bs.branch_id = $1
-           AND p.is_active = TRUE
-           AND bs.quantity <= p.reorder_level`,
-        [branchId]
-      );
+    if (hasPermission(permissions, 'stock.view')) {
+      const runLowStockCount = async (
+        stockShape: WarehouseStockShape
+      ): Promise<{ row: { count: string } | null; shape: WarehouseStockShape }> => {
+        const stockJoins = stockShape.hasBranchId
+          ? `LEFT JOIN ims.warehouse_stock ws
+               ON ws.${stockShape.itemColumn} = i.item_id
+              AND ws.branch_id = i.branch_id`
+          : `LEFT JOIN ims.warehouse_stock ws
+               ON ws.${stockShape.itemColumn} = i.item_id
+             LEFT JOIN ims.warehouses w
+               ON w.wh_id = ws.wh_id`;
+        const totalStockExpr = stockShape.hasBranchId
+          ? 'COALESCE(SUM(ws.quantity), 0)'
+          : 'COALESCE(SUM(CASE WHEN w.branch_id = i.branch_id THEN ws.quantity ELSE 0 END), 0)';
+
+        const row = await queryOne<{ count: string }>(
+          `SELECT COUNT(*)::text AS count
+             FROM (
+               SELECT i.item_id
+                  FROM ims.items i
+                  ${stockJoins}
+                 WHERE i.branch_id = $1
+                   AND i.is_active = TRUE
+                 GROUP BY i.item_id, i.reorder_level
+                HAVING ${totalStockExpr} <= COALESCE(i.reorder_level, 0)
+             ) AS x`,
+          [branchId]
+        );
+
+        return { row, shape: stockShape };
+      };
+
+      const detectedShape = await detectWarehouseStockShape();
+      const candidates = buildWarehouseShapeCandidates(detectedShape);
+      let row: { count: string } | null = null;
+      let appliedShape = detectedShape;
+      let lastShapeError: any = null;
+
+      for (const candidate of candidates) {
+        try {
+          const result = await runLowStockCount(candidate);
+          row = result.row;
+          appliedShape = result.shape;
+          lastShapeError = null;
+          break;
+        } catch (error: any) {
+          if (error?.code !== '42703') {
+            throw error;
+          }
+          lastShapeError = error;
+        }
+      }
+
+      if (lastShapeError) {
+        throw lastShapeError;
+      }
+      warehouseStockShapeCache = appliedShape;
+
       cards.push({
         id: 'low-stock',
         title: 'Low Stock Alerts',
-        value: Number(lowStock?.count || 0),
+        value: Number(row?.count || 0),
         subtitle: 'Needs reorder soon',
         icon: 'AlertTriangle',
         format: 'number',
@@ -145,69 +218,51 @@ export class DashboardService {
     return cards;
   }
 
-  /**
-   * Build charts from database metrics
-   */
-  async getDashboardCharts(branchId: number, permissions: string[]): Promise<DashboardChart[]> {
-    const permSet = new Set(permissions);
+  async getDashboardCharts(
+    branchId: number,
+    permissions: string[]
+  ): Promise<DashboardChart[]> {
     const charts: DashboardChart[] = [];
 
-    if (permSet.has('sales.view')) {
-      const rows = await queryMany<{ label: string; month: string; total: number }>(
-        `SELECT to_char(date_trunc('month', sale_date), 'Mon') AS label,
-                date_trunc('month', sale_date) AS month,
-                COALESCE(SUM(total), 0) AS total
-         FROM ims.sales
-         WHERE branch_id = $1
-           AND status <> 'void'
-           AND sale_date >= date_trunc('month', CURRENT_DATE) - INTERVAL '11 months'
-         GROUP BY 1, 2
-         ORDER BY 2`,
+    if (permissions.includes('sales.view')) {
+      const rows = await queryMany<{ label: string; total: string }>(
+        `SELECT to_char(date_trunc('month', sale_date), 'YYYY-MM') AS label,
+                COALESCE(SUM(total), 0)::text AS total
+           FROM ims.sales
+          WHERE branch_id = $1
+            AND status <> 'void'
+            AND sale_date >= date_trunc('month', CURRENT_DATE) - INTERVAL '5 months'
+          GROUP BY date_trunc('month', sale_date)
+          ORDER BY date_trunc('month', sale_date)`,
         [branchId]
       );
 
-      const labels: string[] = [];
-      const data: number[] = [];
-      for (let i = 11; i >= 0; i -= 1) {
-        const date = new Date();
-        date.setMonth(date.getMonth() - i);
-        const label = date.toLocaleString('en-US', { month: 'short' });
-        labels.push(label);
-        const row = rows.find((r) => r.label === label);
-        data.push(Number(row?.total || 0));
-      }
+      const labels = rows.map((row) => row.label);
+      const data = rows.map((row) => Number(row.total || 0));
 
       charts.push({
-        id: 'sales-12m',
-        name: 'Sales (Last 12 Months)',
+        id: 'sales-6m',
+        name: 'Sales (Last 6 Months)',
         type: 'bar',
         labels,
         series: [{ name: 'Sales', data }],
       });
     }
 
-    if (permSet.has('stock.view')) {
-      const rows = await queryMany<{ day: string; qty: number }>(
-        `SELECT to_char(date_trunc('day', move_date), 'DD Mon') AS day,
-                COALESCE(SUM(qty_in - qty_out), 0) AS qty
-         FROM ims.inventory_movements
-         WHERE branch_id = $1
-           AND move_date >= NOW() - INTERVAL '14 days'
-         GROUP BY 1, date_trunc('day', move_date)
-         ORDER BY date_trunc('day', move_date)`,
+    if (permissions.includes('stock.view')) {
+      const rows = await queryMany<{ label: string; qty: string }>(
+        `SELECT to_char(date_trunc('day', move_date), 'YYYY-MM-DD') AS label,
+                COALESCE(SUM(qty_in - qty_out), 0)::text AS qty
+           FROM ims.inventory_movements
+          WHERE branch_id = $1
+            AND move_date >= CURRENT_DATE - INTERVAL '13 days'
+          GROUP BY date_trunc('day', move_date)
+          ORDER BY date_trunc('day', move_date)`,
         [branchId]
       );
 
-      const labels: string[] = [];
-      const data: number[] = [];
-      for (let i = 13; i >= 0; i -= 1) {
-        const date = new Date();
-        date.setDate(date.getDate() - i);
-        const label = date.toLocaleString('en-US', { day: '2-digit', month: 'short' });
-        labels.push(label);
-        const row = rows.find((r) => r.day === label);
-        data.push(Number(row?.qty || 0));
-      }
+      const labels = rows.map((row) => row.label);
+      const data = rows.map((row) => Number(row.qty || 0));
 
       charts.push({
         id: 'stock-14d',
@@ -218,100 +273,72 @@ export class DashboardService {
       });
     }
 
-    return charts.slice(0, 2);
+    return charts;
   }
 
-  /**
-   * Build recent activity table from database
-   */
-  async getRecentActivity(branchId: number, permissions: string[]): Promise<DashboardRecentRow[]> {
-    const permSet = new Set(permissions);
+  async getRecentActivity(
+    branchId: number,
+    permissions: string[]
+  ): Promise<DashboardRecentRow[]> {
     const rows: DashboardRecentRow[] = [];
 
-    if (permSet.has('sales.view')) {
+    if (permissions.includes('sales.view')) {
       const sales = await queryMany<{
         sale_id: number;
-        total: number;
+        total: string;
         sale_date: string;
         status: string;
       }>(
-        `SELECT sale_id, total, sale_date, status
-         FROM ims.sales
-         WHERE branch_id = $1
-         ORDER BY sale_date DESC
-         LIMIT 5`,
+        `SELECT sale_id, total::text, sale_date::text, status::text
+           FROM ims.sales
+          WHERE branch_id = $1
+          ORDER BY sale_date DESC
+          LIMIT 5`,
         [branchId]
       );
-      sales.forEach((s) => {
+
+      sales.forEach((sale) => {
         rows.push({
-          id: `sale-${s.sale_id}`,
-          type: 'Sale',
-          ref: `S-${s.sale_id}`,
-          amount: Number(s.total || 0),
-          date: s.sale_date,
-          status: s.status,
+          id: `sale-${sale.sale_id}`,
+          type: 'sale',
+          ref: `SAL-${sale.sale_id}`,
+          amount: Number(sale.total || 0),
+          date: sale.sale_date,
+          status: sale.status,
         });
       });
     }
 
-    if (permSet.has('purchases.view')) {
+    if (permissions.includes('purchases.view')) {
       const purchases = await queryMany<{
         purchase_id: number;
-        total: number;
+        total: string;
         purchase_date: string;
         status: string;
       }>(
-        `SELECT purchase_id, total, purchase_date, status
-         FROM ims.purchases
-         WHERE branch_id = $1
-         ORDER BY purchase_date DESC
-         LIMIT 5`,
+        `SELECT purchase_id, total::text, purchase_date::text, status::text
+           FROM ims.purchases
+          WHERE branch_id = $1
+          ORDER BY purchase_date DESC
+          LIMIT 5`,
         [branchId]
       );
-      purchases.forEach((p) => {
-        rows.push({
-          id: `purchase-${p.purchase_id}`,
-          type: 'Purchase',
-          ref: `P-${p.purchase_id}`,
-          amount: Number(p.total || 0),
-          date: p.purchase_date,
-          status: p.status,
-        });
-      });
-    }
 
-    if (permSet.has('stock.adjust')) {
-      const adjustments = await queryMany<{
-        adj_id: number;
-        adj_date: string;
-        amount: number;
-      }>(
-        `SELECT a.adj_id,
-                a.adj_date,
-                COALESCE(SUM(ai.qty_change * ai.unit_cost), 0) AS amount
-         FROM ims.stock_adjustments a
-         LEFT JOIN ims.stock_adjustment_items ai ON ai.adj_id = a.adj_id
-         WHERE a.branch_id = $1
-         GROUP BY a.adj_id, a.adj_date
-         ORDER BY a.adj_date DESC
-         LIMIT 5`,
-        [branchId]
-      );
-      adjustments.forEach((a) => {
+      purchases.forEach((purchase) => {
         rows.push({
-          id: `adjust-${a.adj_id}`,
-          type: 'Adjustment',
-          ref: `ADJ-${a.adj_id}`,
-          amount: Number(a.amount || 0),
-          date: a.adj_date,
-          status: 'posted',
+          id: `purchase-${purchase.purchase_id}`,
+          type: 'purchase',
+          ref: `PUR-${purchase.purchase_id}`,
+          amount: Number(purchase.total || 0),
+          date: purchase.purchase_date,
+          status: purchase.status,
         });
       });
     }
 
     return rows
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-      .slice(0, 8);
+      .slice(0, 10);
   }
 }
 

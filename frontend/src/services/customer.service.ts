@@ -10,6 +10,7 @@ export interface Customer {
   sex?: string | null;
   is_active: boolean;
   balance: number;
+  remaining_balance?: number;
   registered_date?: string;
 }
 
@@ -31,6 +32,7 @@ export const customerService = {
       address: data.address,
       sex: data.sex,
       isActive: data.is_active,
+      remainingBalance: data.remaining_balance,
     });
   },
 
@@ -42,6 +44,7 @@ export const customerService = {
       address: data.address,
       sex: data.sex,
       isActive: data.is_active,
+      remainingBalance: data.remaining_balance,
     });
   },
 

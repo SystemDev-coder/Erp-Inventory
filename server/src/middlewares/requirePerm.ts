@@ -4,6 +4,16 @@ import { ApiError } from '../utils/ApiError';
 import { queryMany } from '../db/query';
 import { config } from '../config/env';
 
+const expandPermissionKeys = (permKey: string): string[] => {
+  if (permKey.startsWith('items.')) {
+    return [permKey, permKey.replace('items.', 'products.')];
+  }
+  if (permKey.startsWith('products.')) {
+    return [permKey, permKey.replace('products.', 'items.')];
+  }
+  return [permKey];
+};
+
 /**
  * Middleware to check if authenticated user has specific permission
  * Formula: effective = (role_permissions ∪ user_permissions ∪ overrides_allow) - overrides_deny
@@ -22,14 +32,15 @@ export const requirePerm = (permKey: string) => {
 
       const userId = req.user.userId;
       const roleId = req.user.roleId;
+      const effectivePermKeys = expandPermissionKeys(permKey);
 
       // Check for explicit deny first
       const denyCheck = await queryMany<{ perm_key: string }>(
         `SELECT DISTINCT p.perm_key
          FROM ims.user_permission_overrides upo
          JOIN ims.permissions p ON upo.perm_id = p.perm_id
-         WHERE upo.user_id = $1 AND p.perm_key = $2 AND upo.effect = 'deny'`,
-        [userId, permKey]
+         WHERE upo.user_id = $1 AND p.perm_key = ANY($2) AND upo.effect = 'deny'`,
+        [userId, effectivePermKeys]
       );
 
       if (denyCheck.length > 0) {
@@ -41,24 +52,24 @@ export const requirePerm = (permKey: string) => {
         `SELECT DISTINCT p.perm_key
          FROM ims.role_permissions rp
          JOIN ims.permissions p ON rp.perm_id = p.perm_id
-         WHERE rp.role_id = $1 AND p.perm_key = $2`,
-        [roleId, permKey]
+         WHERE rp.role_id = $1 AND p.perm_key = ANY($2)`,
+        [roleId, effectivePermKeys]
       );
 
       const userPerms = await queryMany<{ perm_key: string }>(
         `SELECT DISTINCT p.perm_key
          FROM ims.user_permissions up
          JOIN ims.permissions p ON up.perm_id = p.perm_id
-         WHERE up.user_id = $1 AND p.perm_key = $2`,
-        [userId, permKey]
+         WHERE up.user_id = $1 AND p.perm_key = ANY($2)`,
+        [userId, effectivePermKeys]
       );
 
       const allowOverrides = await queryMany<{ perm_key: string }>(
         `SELECT DISTINCT p.perm_key
          FROM ims.user_permission_overrides upo
          JOIN ims.permissions p ON upo.perm_id = p.perm_id
-         WHERE upo.user_id = $1 AND p.perm_key = $2 AND upo.effect = 'allow'`,
-        [userId, permKey]
+         WHERE upo.user_id = $1 AND p.perm_key = ANY($2) AND upo.effect = 'allow'`,
+        [userId, effectivePermKeys]
       );
 
       // Check if user has permission from any source
@@ -90,6 +101,9 @@ export const requireAnyPerm = (permKeys: string[]) => {
 
       const userId = req.user.userId;
       const roleId = req.user.roleId;
+      const effectivePermKeys = Array.from(
+        new Set(permKeys.flatMap((permKey) => expandPermissionKeys(permKey)))
+      );
 
       // Get denied permissions
       const deniedPerms = await queryMany<{ perm_key: string }>(
@@ -97,7 +111,7 @@ export const requireAnyPerm = (permKeys: string[]) => {
          FROM ims.user_permission_overrides upo
          JOIN ims.permissions p ON upo.perm_id = p.perm_id
          WHERE upo.user_id = $1 AND p.perm_key = ANY($2) AND upo.effect = 'deny'`,
-        [userId, permKeys]
+        [userId, effectivePermKeys]
       );
 
       const deniedSet = new Set(deniedPerms.map((p) => p.perm_key));
@@ -108,7 +122,7 @@ export const requireAnyPerm = (permKeys: string[]) => {
          FROM ims.role_permissions rp
          JOIN ims.permissions p ON rp.perm_id = p.perm_id
          WHERE rp.role_id = $1 AND p.perm_key = ANY($2)`,
-        [roleId, permKeys]
+        [roleId, effectivePermKeys]
       );
 
       // Get legacy user permissions
@@ -117,7 +131,7 @@ export const requireAnyPerm = (permKeys: string[]) => {
          FROM ims.user_permissions up
          JOIN ims.permissions p ON up.perm_id = p.perm_id
          WHERE up.user_id = $1 AND p.perm_key = ANY($2)`,
-        [userId, permKeys]
+        [userId, effectivePermKeys]
       );
 
       // Get allow overrides
@@ -126,7 +140,7 @@ export const requireAnyPerm = (permKeys: string[]) => {
          FROM ims.user_permission_overrides upo
          JOIN ims.permissions p ON upo.perm_id = p.perm_id
          WHERE upo.user_id = $1 AND p.perm_key = ANY($2) AND upo.effect = 'allow'`,
-        [userId, permKeys]
+        [userId, effectivePermKeys]
       );
 
       // Combine all allowed permissions

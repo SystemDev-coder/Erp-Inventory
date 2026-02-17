@@ -54,14 +54,14 @@ export const PayrollModal: React.FC<PayrollModalProps> = ({
   // Calculate totals
   const calculatePayrollAmount = () => {
     if (formData.payrollType === 'specific' && selectedEmployee) {
-      return Number(selectedEmployee.salary);
+      return Number(selectedEmployee.basic_salary || 0);
     }
     
     const employeesToPay = formData.includeInactive 
       ? employees 
       : activeEmployees;
     
-    return employeesToPay.reduce((sum, emp) => sum + Number(emp.salary), 0);
+    return employeesToPay.reduce((sum, emp) => sum + Number(emp.basic_salary || 0), 0);
   };
 
   const totalAmount = calculatePayrollAmount();
@@ -189,13 +189,18 @@ export const PayrollModal: React.FC<PayrollModalProps> = ({
               <select
                 required
                 value={formData.employeeId}
-                onChange={(e) => setFormData({ ...formData, employeeId: Number(e.target.value) })}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    employeeId: e.target.value ? Number(e.target.value) : '',
+                  })
+                }
                 className="w-full px-4 py-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
               >
                 <option value="">-- Select an Employee --</option>
                 {activeEmployees.map((emp) => (
                   <option key={emp.emp_id} value={emp.emp_id}>
-                    {emp.name} - {emp.job_title || 'Employee'} (${Number(emp.salary).toLocaleString()}/month)
+                    {emp.full_name} - {emp.role_name || 'Employee'} (${Number(emp.basic_salary || 0).toLocaleString()}/month)
                   </option>
                 ))}
               </select>
@@ -204,13 +209,13 @@ export const PayrollModal: React.FC<PayrollModalProps> = ({
                 <div className="mt-3 p-3 bg-white dark:bg-slate-800 rounded-lg">
                   <div className="flex items-center justify-between">
                     <div>
-                      <div className="font-semibold text-slate-900 dark:text-white">{selectedEmployee.name}</div>
-                      <div className="text-sm text-slate-600 dark:text-slate-400">{selectedEmployee.job_title}</div>
+                      <div className="font-semibold text-slate-900 dark:text-white">{selectedEmployee.full_name}</div>
+                      <div className="text-sm text-slate-600 dark:text-slate-400">{selectedEmployee.role_name || 'Employee'}</div>
                     </div>
                     <div className="text-right">
                       <div className="text-sm text-slate-600 dark:text-slate-400">Monthly Salary</div>
                       <div className="text-lg font-bold text-green-600 dark:text-green-400">
-                        ${Number(selectedEmployee.salary).toLocaleString()}
+                        ${Number(selectedEmployee.basic_salary || 0).toLocaleString()}
                       </div>
                     </div>
                   </div>
@@ -316,7 +321,7 @@ export const PayrollModal: React.FC<PayrollModalProps> = ({
                   <span className="text-purple-100">
                     {formData.includeInactive ? 'All' : 'Active'} employees will be paid
                   </span>
-                  <Badge variant="success">
+                  <Badge color="success">
                     <CheckCircle className="w-3 h-3 inline mr-1" />
                     Ready to Process
                   </Badge>

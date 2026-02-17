@@ -1,5 +1,18 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Users, DollarSign, Phone, Briefcase, Calendar, Search, Plus, Edit, Trash2, ToggleLeft, ToggleRight, UserPlus, Check, Shield } from 'lucide-react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import {
+  Users,
+  DollarSign,
+  Phone,
+  Calendar,
+  Search,
+  Plus,
+  Edit,
+  Trash2,
+  ToggleLeft,
+  ToggleRight,
+  BriefcaseBusiness,
+} from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router';
 import { ColumnDef } from '@tanstack/react-table';
 import { PageHeader } from '../../components/ui/layout';
 import { DataTable } from '../../components/ui/table/DataTable';
@@ -8,30 +21,30 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { employeeService, Employee } from '../../services/employee.service';
 import { userService, RoleRow } from '../../services/user.service';
 import { EmployeeModal } from './EmployeeModal';
-import ScheduleModal from './ScheduleModal';
-import { GenerateUserModal, UserGenerationData } from './GenerateUserModal';
+import ShiftModal from './ShiftModal';
 import DeleteConfirmModal from '../../components/ui/modal/DeleteConfirmModal';
-import GenerateUsersListModal from '../Settings/GenerateUsersListModal';
+import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 
 const Employees = () => {
   const { showToast } = useToast();
+  const navigate = useNavigate();
+  const location = useLocation();
+
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [roles, setRoles] = useState<RoleRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  
-  // Modal states
+
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
-  const [isGenerateUserModalOpen, setIsGenerateUserModalOpen] = useState(false);
-  const [isGenerateUsersListModalOpen, setIsGenerateUsersListModalOpen] = useState(false);
+  const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isStatusChangeModalOpen, setIsStatusChangeModalOpen] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
+  const [employeeToToggleStatus, setEmployeeToToggleStatus] = useState<Employee | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Stats
   const [stats, setStats] = useState({
     total: 0,
     active: 0,
@@ -49,23 +62,31 @@ const Employees = () => {
 
       if (response.success && response.data?.employees) {
         setEmployees(response.data.employees);
-        
-        // Calculate stats
         const total = response.data.employees.length;
-        const active = response.data.employees.filter(e => e.status === 'active').length;
-        const inactive = response.data.employees.filter(e => e.status === 'inactive').length;
+        const active = response.data.employees.filter((e) => e.status === 'active').length;
+        const inactive = response.data.employees.filter((e) => e.status === 'inactive').length;
         const totalSalaries = response.data.employees
-          .filter(e => e.status === 'active')
+          .filter((e) => e.status === 'active')
           .reduce((sum, e) => sum + Number(e.basic_salary || 0), 0);
-        
         setStats({ total, active, inactive, totalSalaries });
       } else {
         showToast('error', 'Failed to load employees', response.error || 'Unknown error');
       }
-    } catch (error) {
+    } catch (_error) {
       showToast('error', 'Error', 'Failed to fetch employees');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchRoles = async () => {
+    try {
+      const response = await userService.listRoles();
+      if (response.success && response.data?.roles) {
+        setRoles(response.data.roles);
+      }
+    } catch (_error) {
+      // no-op
     }
   };
 
@@ -74,16 +95,13 @@ const Employees = () => {
     fetchRoles();
   }, [statusFilter]);
 
-  const fetchRoles = async () => {
-    try {
-      const response = await userService.listRoles();
-      if (response.success && response.data?.roles) {
-        setRoles(response.data.roles);
-      }
-    } catch (error) {
-      // Silent fail - not critical
+  useEffect(() => {
+    if (location.pathname.endsWith('/shifts')) {
+      setIsShiftModalOpen(true);
+      return;
     }
-  };
+    setIsShiftModalOpen(false);
+  }, [location.pathname]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -107,11 +125,9 @@ const Employees = () => {
 
   const handleDeleteConfirm = async () => {
     if (!selectedEmployee) return;
-
     setIsDeleting(true);
     try {
       const response = await employeeService.delete(selectedEmployee.emp_id);
-      
       if (response.success) {
         showToast('success', 'Success', 'Employee deleted successfully');
         setIsDeleteModalOpen(false);
@@ -120,7 +136,7 @@ const Employees = () => {
       } else {
         showToast('error', 'Error', response.error || 'Failed to delete employee');
       }
-    } catch (error) {
+    } catch (_error) {
       showToast('error', 'Error', 'Failed to delete employee');
     } finally {
       setIsDeleting(false);
@@ -141,246 +157,179 @@ const Employees = () => {
       } else {
         showToast('error', 'Failed', response.error || 'Could not save employee');
       }
-    } catch (error) {
+    } catch (_error) {
       showToast('error', 'Error', 'Failed to save employee');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleScheduleClick = () => {
-    setSelectedEmployee(null);
-    setIsScheduleModalOpen(true);
-  };
+  const handleStatusChangeClick = useCallback((employee: Employee) => {
+    setEmployeeToToggleStatus(employee);
+    setIsStatusChangeModalOpen(true);
+  }, []);
 
-  const handleGenerateUsersClick = () => {
-    setIsGenerateUsersListModalOpen(true);
-  };
+  const handleToggleStatusConfirm = async () => {
+    const employee = employeeToToggleStatus;
+    if (!employee) return;
 
-
-  const handleToggleStatus = async (employee: Employee) => {
     const newStatus = employee.status === 'active' ? 'inactive' : 'active';
-    
+
     try {
       const response = await employeeService.update(employee.emp_id, { status: newStatus });
       if (response.success) {
-        showToast(
-          'success', 
-          'Status Updated', 
-          `${employee.full_name} is now ${newStatus}`
-        );
+        showToast('success', 'Status Updated', `${employee.full_name} is now ${newStatus}`);
         fetchEmployees();
       } else {
         showToast('error', 'Update failed', response.error || 'Could not update status');
       }
-    } catch (error) {
+    } catch (_error) {
       showToast('error', 'Error', 'Failed to update employee status');
     }
   };
 
-  const handleGenerateUser = (employee: Employee) => {
-    setSelectedEmployee(employee);
-    setIsGenerateUserModalOpen(true);
+  const handleShiftClick = () => {
+    navigate('/employees/shifts');
   };
 
-  const handleGenerateUserSubmit = async (data: UserGenerationData) => {
-    setIsSubmitting(true);
-    try {
-      // TODO: Call actual API endpoint to create user
-      // const response = await userService.generateFromEmployee(data);
-      
-      // For now, simulate success
-      showToast(
-        'success',
-        'User Account Generated',
-        `User account created for ${selectedEmployee?.name}.\nUsername: ${data.username}\nRole: ${data.role}\nPassword: ${data.password}`
-      );
-      
-      // Store the user mapping locally (in real app, this comes from API)
-      if (selectedEmployee) {
-        setEmployeeUsers(prev => ({
-          ...prev,
-          [selectedEmployee.emp_id]: {
-            user_id: Date.now(),
-            username: data.username,
-            email: data.email,
-            role: data.role,
-          }
-        }));
-      }
-      
-      setIsGenerateUserModalOpen(false);
-      
-      // In real implementation:
-      // if (response.success) {
-      //   showToast('success', 'User Generated', `User account created for ${selectedEmployee?.name}`);
-      //   setIsGenerateUserModalOpen(false);
-      //   fetchEmployees(); // Refresh to get updated user links
-      // }
-    } catch (error) {
-      showToast('error', 'Error', 'Failed to generate user account');
-    } finally {
-      setIsSubmitting(false);
+  const handleShiftClose = () => {
+    setIsShiftModalOpen(false);
+    if (location.pathname.endsWith('/shifts')) {
+      navigate('/employees');
     }
   };
 
-  const columns: ColumnDef<Employee>[] = useMemo(() => [
-    {
-      accessorKey: 'name',
-      header: 'Name',
-      cell: ({ row }) => (
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
-            <Users className="w-5 h-5 text-primary-600 dark:text-primary-400" />
-          </div>
-          <div>
-            <div className="font-semibold text-slate-900 dark:text-white">{row.original.full_name}</div>
-            {row.original.role && (
-              <div className="text-xs text-slate-500 dark:text-slate-400">{row.original.role}</div>
-            )}
-          </div>
-        </div>
-      ),
-    },
-    {
-      accessorKey: 'phone',
-      header: 'Phone',
-      cell: ({ row }) => (
-        <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
-          <Phone className="w-4 h-4" />
-          {row.original.phone || '-'}
-        </div>
-      ),
-    },
-    {
-      accessorKey: 'basic_salary',
-      header: 'Salary',
-      cell: ({ row }) => (
-        <div className="font-semibold text-green-600 dark:text-green-400">
-          ${Number(row.original.basic_salary || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-        </div>
-      ),
-    },
-    {
-      accessorKey: 'hire_date',
-      header: 'Hire Date',
-      cell: ({ row }) => (
-        <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
-          <Calendar className="w-4 h-4" />
-          {new Date(row.original.hire_date).toLocaleDateString()}
-        </div>
-      ),
-    },
-    {
-      accessorKey: 'status',
-      header: 'Status',
-      cell: ({ row }) => {
-        const status = row.original.status;
-        const statusColors: Record<string, 'success' | 'warning' | 'error'> = {
-          active: 'success',
-          inactive: 'warning',
-          terminated: 'error',
-        };
-        return (
-          <div className="flex items-center gap-2">
-            <Badge color={statusColors[status] || 'warning'}>
-              {status.charAt(0).toUpperCase() + status.slice(1)}
-            </Badge>
-            {status !== 'terminated' && (
-              <button
-                onClick={() => handleToggleStatus(row.original)}
-                className={`p-1.5 rounded-lg transition-colors ${
-                  status === 'active'
-                    ? 'hover:bg-orange-50 dark:hover:bg-orange-900/20 text-orange-600'
-                    : 'hover:bg-green-50 dark:hover:bg-green-900/20 text-green-600'
-                }`}
-                title={status === 'active' ? 'Deactivate' : 'Activate'}
-              >
-                {status === 'active' ? (
-                  <ToggleRight className="w-5 h-5" />
-                ) : (
-                  <ToggleLeft className="w-5 h-5" />
-                )}
-              </button>
-            )}
-          </div>
-        );
-      },
-    },
-    {
-      id: 'user_account',
-      header: 'User Link',
-      cell: ({ row }) => {
-        const hasUser = row.original.user_id && row.original.username;
-        return (
-          <div className="flex items-center gap-2">
-            {hasUser ? (
-              <div className="flex items-center gap-2">
-                <Badge color="success" className="text-xs">
-                  <Shield className="w-3 h-3 inline mr-1" />
-                  {row.original.username}
-                </Badge>
+  const columns: ColumnDef<Employee>[] = useMemo(
+    () => [
+      {
+        accessorKey: 'full_name',
+        header: 'Name',
+        cell: ({ row }) => (
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
+              <Users className="w-5 h-5 text-primary-600 dark:text-primary-400" />
+            </div>
+            <div>
+              <div className="font-semibold text-slate-900 dark:text-white">
+                {row.original.full_name}
               </div>
-            ) : (
-              <Badge color="warning" className="text-xs">
-                No User
-              </Badge>
-            )}
+              {row.original.role_name && (
+                <div className="text-xs text-slate-500 dark:text-slate-400">{row.original.role_name}</div>
+              )}
+            </div>
           </div>
-        );
+        ),
       },
-    },
-    {
-      id: 'actions',
-      header: 'Actions',
-      cell: ({ row }) => (
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => handleEdit(row.original)}
-            className="p-2 hover:bg-blue-50 dark:hover:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-lg transition-colors"
-            title="Edit"
-          >
-            <Edit className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => handleDeleteClick(row.original)}
-            className="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg transition-colors"
-            title="Delete"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-        </div>
-      ),
-    },
-  ], []);
+      {
+        accessorKey: 'phone',
+        header: 'Phone',
+        cell: ({ row }) => (
+          <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+            <Phone className="w-4 h-4" />
+            {row.original.phone || '-'}
+          </div>
+        ),
+      },
+      {
+        accessorKey: 'basic_salary',
+        header: 'Salary',
+        cell: ({ row }) => (
+          <div className="font-semibold text-green-600 dark:text-green-400">
+            $
+            {Number(row.original.basic_salary || 0).toLocaleString('en-US', {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}
+          </div>
+        ),
+      },
+      {
+        accessorKey: 'hire_date',
+        header: 'Hire Date',
+        cell: ({ row }) => (
+          <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+            <Calendar className="w-4 h-4" />
+            {new Date(row.original.hire_date).toLocaleDateString()}
+          </div>
+        ),
+      },
+      {
+        accessorKey: 'status',
+        header: 'Status',
+        cell: ({ row }) => {
+          const status = row.original.status;
+          const statusColors: Record<string, 'success' | 'warning' | 'error'> = {
+            active: 'success',
+            inactive: 'warning',
+            terminated: 'error',
+          };
+          return (
+            <div className="flex items-center gap-2">
+              <Badge color={statusColors[status] || 'warning'}>
+                {status.charAt(0).toUpperCase() + status.slice(1)}
+              </Badge>
+              {status !== 'terminated' && (
+                <button
+                  onClick={() => handleStatusChangeClick(row.original)}
+                  className={`p-1.5 rounded-lg transition-colors ${
+                    status === 'active'
+                      ? 'hover:bg-orange-50 dark:hover:bg-orange-900/20 text-orange-600'
+                      : 'hover:bg-green-50 dark:hover:bg-green-900/20 text-green-600'
+                  }`}
+                  title={status === 'active' ? 'Deactivate' : 'Activate'}
+                >
+                  {status === 'active' ? (
+                    <ToggleRight className="w-5 h-5" />
+                  ) : (
+                    <ToggleLeft className="w-5 h-5" />
+                  )}
+                </button>
+              )}
+            </div>
+          );
+        },
+      },
+      {
+        id: 'actions',
+        header: 'Actions',
+        cell: ({ row }) => (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handleEdit(row.original)}
+              className="p-2 hover:bg-blue-50 dark:hover:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-lg transition-colors"
+              title="Edit"
+            >
+              <Edit className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => handleDeleteClick(row.original)}
+              className="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg transition-colors"
+              title="Delete"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        ),
+      },
+    ],
+    [handleStatusChangeClick]
+  );
 
   return (
     <div className="space-y-6">
-      {/* Page Header with Action Buttons */}
       <PageHeader
         title="Employees"
         description="Manage your staff, their information, and employment details"
         actions={
           <div className="flex items-center gap-3">
-            {/* Schedule Button */}
             <button
-              onClick={handleScheduleClick}
-              className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-purple-500 to-purple-600 text-white font-semibold rounded-xl hover:from-purple-600 hover:to-purple-700 transition-all shadow-lg shadow-purple-500/20 active:scale-95"
+              onClick={handleShiftClick}
+              className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-indigo-500 to-indigo-600 text-white font-semibold rounded-xl hover:from-indigo-600 hover:to-indigo-700 transition-all shadow-lg shadow-indigo-500/20 active:scale-95"
             >
-              <Calendar className="w-5 h-5" />
-              Schedule
+              <BriefcaseBusiness className="w-5 h-5" />
+              Shift
             </button>
 
-            {/* Generate Users Button */}
-            <button
-              onClick={handleGenerateUsersClick}
-              className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold rounded-xl hover:from-blue-600 hover:to-blue-700 transition-all shadow-lg shadow-blue-500/20 active:scale-95"
-            >
-              <UserPlus className="w-5 h-5" />
-              Generate Users
-            </button>
-
-            {/* Add Employee Button */}
             <button
               onClick={handleAdd}
               className="flex items-center gap-2 px-6 py-2.5 bg-primary-600 text-white font-bold rounded-xl hover:bg-primary-700 transition-all shadow-lg shadow-primary-500/20 active:scale-95"
@@ -392,7 +341,6 @@ const Employees = () => {
         }
       />
 
-      {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl p-6 text-white shadow-lg">
           <div className="flex items-center justify-between mb-2">
@@ -427,9 +375,7 @@ const Employees = () => {
         </div>
       </div>
 
-      {/* Employees List Tab */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-lg">
-        {/* Tab Header */}
         <div className="border-b border-slate-200 dark:border-slate-800 px-6 py-4">
           <div className="flex items-center gap-3">
             <Users className="w-5 h-5 text-primary-600 dark:text-primary-400" />
@@ -437,16 +383,14 @@ const Employees = () => {
           </div>
         </div>
 
-        {/* Toolbar */}
         <div className="p-6 border-b border-slate-200 dark:border-slate-800">
           <div className="flex flex-col md:flex-row gap-4">
-            {/* Search */}
             <form onSubmit={handleSearch} className="flex-1">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" />
                 <input
                   type="text"
-                  placeholder="Search employees by name, phone, or job title..."
+                  placeholder="Search employees by name, phone, or role..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
@@ -454,7 +398,6 @@ const Employees = () => {
               </div>
             </form>
 
-            {/* Status Filter */}
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
@@ -466,7 +409,6 @@ const Employees = () => {
               <option value="terminated">Terminated</option>
             </select>
 
-            {/* Search Button */}
             <button
               onClick={handleSearch}
               className="px-6 py-2.5 bg-primary-600 text-white font-medium rounded-xl hover:bg-primary-700 transition-colors"
@@ -476,7 +418,6 @@ const Employees = () => {
           </div>
         </div>
 
-        {/* Table */}
         <div className="p-6">
           {loading ? (
             <div className="flex items-center justify-center py-20">
@@ -485,7 +426,9 @@ const Employees = () => {
           ) : employees.length === 0 ? (
             <div className="text-center py-20">
               <Users className="w-16 h-16 mx-auto text-slate-300 dark:text-slate-700 mb-4" />
-              <h3 className="text-lg font-semibold text-slate-600 dark:text-slate-400 mb-2">No employees found</h3>
+              <h3 className="text-lg font-semibold text-slate-600 dark:text-slate-400 mb-2">
+                No employees found
+              </h3>
               <p className="text-sm text-slate-500 dark:text-slate-500 mb-6">
                 {search ? 'Try adjusting your search criteria' : 'Get started by adding your first employee'}
               </p>
@@ -511,7 +454,6 @@ const Employees = () => {
         </div>
       </div>
 
-      {/* Employee Modal */}
       <EmployeeModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
@@ -521,32 +463,25 @@ const Employees = () => {
         isLoading={isSubmitting}
       />
 
-      {/* Schedule Modal */}
-      <ScheduleModal
-        isOpen={isScheduleModalOpen}
-        onClose={() => setIsScheduleModalOpen(false)}
-        selectedEmployee={selectedEmployee}
-      />
+      <ShiftModal isOpen={isShiftModalOpen} onClose={handleShiftClose} />
 
-      {/* Generate User Modal */}
-      <GenerateUserModal
-        isOpen={isGenerateUserModalOpen}
-        onClose={() => setIsGenerateUserModalOpen(false)}
-        onSubmit={handleGenerateUserSubmit}
-        employee={selectedEmployee}
-        isLoading={isSubmitting}
-      />
-
-      {/* Generate Users List Modal */}
-      <GenerateUsersListModal
-        isOpen={isGenerateUsersListModalOpen}
-        onClose={() => setIsGenerateUsersListModalOpen(false)}
-        onSuccess={() => {
-          fetchEmployees();
+      <ConfirmDialog
+        isOpen={isStatusChangeModalOpen}
+        onClose={() => {
+          setIsStatusChangeModalOpen(false);
+          setEmployeeToToggleStatus(null);
         }}
+        onConfirm={handleToggleStatusConfirm}
+        title="Change Status?"
+        message={
+          employeeToToggleStatus
+            ? `Are you sure you want to change ${employeeToToggleStatus.full_name}'s status from ${employeeToToggleStatus.status} to ${employeeToToggleStatus.status === 'active' ? 'inactive' : 'active'}?`
+            : ''
+        }
+        confirmText="Yes, Change"
+        variant="warning"
       />
 
-      {/* Delete Confirmation Modal */}
       <DeleteConfirmModal
         isOpen={isDeleteModalOpen}
         onClose={() => {
@@ -559,54 +494,9 @@ const Employees = () => {
         itemName={selectedEmployee?.full_name}
         isDeleting={isDeleting}
       />
-
-      {/* Generated Users Section - at bottom */}
-      <div className="mt-8 bg-white dark:bg-slate-900 rounded-2xl shadow-xl p-6 border border-slate-200 dark:border-slate-800">
-        <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-          <UserPlus className="w-5 h-5 text-green-600" />
-          Generated User Accounts ({employees.filter(e => e.user_id).length})
-        </h3>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {employees
-            .filter(emp => emp.user_id)
-            .map((emp) => (
-              <div
-                key={emp.emp_id}
-                className="bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 rounded-lg p-4 border border-green-200 dark:border-green-800"
-              >
-                <div className="flex items-start justify-between mb-2">
-                  <div className="flex-1">
-                    <div className="font-semibold text-slate-900 dark:text-white">{emp.full_name}</div>
-                    {emp.username && (
-                      <div className="text-sm text-slate-600 dark:text-slate-400 font-mono">@{emp.username}</div>
-                    )}
-                  </div>
-                  <Badge color="success" variant="solid">
-                    <Check className="w-3 h-3 inline mr-1" />
-                    Active
-                  </Badge>
-                </div>
-                
-                {emp.role_name && (
-                  <div className="text-xs text-slate-600 dark:text-slate-400">
-                    Role: <span className="font-medium">{emp.role_name}</span>
-                  </div>
-                )}
-              </div>
-            ))}
-        </div>
-
-        {employees.filter(e => e.user_id).length === 0 && (
-          <div className="text-center py-8 text-slate-500 dark:text-slate-400">
-            <UserPlus className="w-12 h-12 mx-auto mb-2 opacity-50" />
-            <p>No user accounts have been generated yet.</p>
-            <p className="text-sm mt-1">Click "Generate User" button above for any employee to create their account.</p>
-          </div>
-        )}
-      </div>
     </div>
   );
 };
 
 export default Employees;
+

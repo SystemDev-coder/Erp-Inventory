@@ -126,7 +126,7 @@ const Purchases = () => {
     {
       accessorKey: 'supplier_name',
       header: 'Supplier',
-      cell: ({ row }) => row.original.supplier_name || '-',
+      cell: ({ row }) => row.original.supplier_name || (row.original.supplier_id == null ? 'Walk-in' : '-'),
     },
     {
       accessorKey: 'purchase_type',

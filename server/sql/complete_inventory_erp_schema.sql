@@ -495,6 +495,63 @@ CREATE TABLE IF NOT EXISTS ims.branch_stock (
 );
 
 -- =========================================================
+-- 5b) STORES (Branch-Specific - physical locations for items)
+-- =========================================================
+CREATE TABLE IF NOT EXISTS ims.stores (
+    store_id BIGSERIAL PRIMARY KEY,
+    branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id),
+    store_name VARCHAR(120) NOT NULL,
+    store_code VARCHAR(40),
+    address TEXT,
+    phone VARCHAR(30),
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_by BIGINT REFERENCES ims.users(user_id),
+    updated_by BIGINT REFERENCES ims.users(user_id),
+    CONSTRAINT uq_store_per_branch UNIQUE (branch_id, store_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_stores_branch ON ims.stores(branch_id);
+
+-- Store items: items (products) in each store with quantity
+CREATE TABLE IF NOT EXISTS ims.store_items (
+    store_item_id BIGSERIAL PRIMARY KEY,
+    store_id BIGINT NOT NULL REFERENCES ims.stores(store_id) ON DELETE CASCADE,
+    product_id BIGINT NOT NULL REFERENCES ims.products(product_id) ON DELETE CASCADE,
+    quantity NUMERIC(14,3) NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_by BIGINT REFERENCES ims.users(user_id),
+    updated_by BIGINT REFERENCES ims.users(user_id),
+    CONSTRAINT chk_store_item_qty CHECK (quantity >= 0),
+    CONSTRAINT uq_store_product UNIQUE (store_id, product_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_store_items_store ON ims.store_items(store_id);
+CREATE INDEX IF NOT EXISTS idx_store_items_product ON ims.store_items(product_id);
+
+-- Link products to stores (optional)
+ALTER TABLE ims.products ADD COLUMN IF NOT EXISTS store_id BIGINT REFERENCES ims.stores(store_id);
+CREATE INDEX IF NOT EXISTS idx_products_store ON ims.products(store_id) WHERE store_id IS NOT NULL;
+
+-- Walking supplier helper for purchases without supplier
+CREATE OR REPLACE FUNCTION ims.fn_get_or_create_walking_supplier(p_branch_id BIGINT)
+RETURNS BIGINT
+LANGUAGE plpgsql AS $$
+DECLARE v_supplier_id BIGINT;
+BEGIN
+    SELECT supplier_id INTO v_supplier_id FROM ims.suppliers
+    WHERE branch_id = p_branch_id AND LOWER(COALESCE(supplier_name,'')) = 'walking supplier' LIMIT 1;
+    IF v_supplier_id IS NOT NULL THEN RETURN v_supplier_id; END IF;
+    INSERT INTO ims.suppliers (branch_id, supplier_name, company_name, is_active)
+    VALUES (p_branch_id, 'Walking Supplier', 'Walk-in / No Supplier', TRUE)
+    RETURNING supplier_id INTO v_supplier_id;
+    RETURN v_supplier_id;
+END;
+$$;
+
+-- =========================================================
 -- 6) CUSTOMERS (Branch-Specific)
 -- =========================================================
 CREATE TABLE IF NOT EXISTS ims.customers (
@@ -506,6 +563,10 @@ CREATE TABLE IF NOT EXISTS ims.customers (
     address TEXT,
     registered_date DATE NOT NULL DEFAULT CURRENT_DATE,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    external_id VARCHAR(120),
+    source_system VARCHAR(80),
+    migrated_at TIMESTAMPTZ,
+    remaining_balance NUMERIC(14,2) NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     created_by BIGINT REFERENCES ims.users(user_id),
@@ -656,7 +717,7 @@ CREATE TABLE IF NOT EXISTS ims.purchases (
     branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id),
     wh_id BIGINT REFERENCES ims.warehouses(wh_id),
     user_id BIGINT NOT NULL REFERENCES ims.users(user_id),
-    supplier_id BIGINT NOT NULL REFERENCES ims.suppliers(supplier_id),
+    supplier_id BIGINT REFERENCES ims.suppliers(supplier_id),
     currency_code CHAR(3) NOT NULL DEFAULT 'USD' REFERENCES ims.currencies(currency_code),
     fx_rate NUMERIC(18,6) NOT NULL DEFAULT 1 CHECK (fx_rate > 0),
     purchase_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1705,6 +1766,9 @@ CREATE TRIGGER trg_auto_branch_categories BEFORE INSERT OR UPDATE ON ims.categor
   FOR EACH ROW EXECUTE FUNCTION ims.trg_auto_branch_id();
 
 CREATE TRIGGER trg_auto_branch_suppliers BEFORE INSERT OR UPDATE ON ims.suppliers
+  FOR EACH ROW EXECUTE FUNCTION ims.trg_auto_branch_id();
+
+CREATE TRIGGER trg_auto_branch_stores BEFORE INSERT OR UPDATE ON ims.stores
   FOR EACH ROW EXECUTE FUNCTION ims.trg_auto_branch_id();
 
 CREATE TRIGGER trg_auto_branch_customers BEFORE INSERT OR UPDATE ON ims.customers

@@ -26,7 +26,7 @@ export interface PurchaseItemView extends PurchaseItem {
 }
 export interface Purchase {
   purchase_id: number;
-  supplier_id: number;
+  supplier_id: number | null;
   supplier_name?: string | null;
   purchase_date: string;
   purchase_type: 'cash' | 'credit';
@@ -42,7 +42,7 @@ export interface Purchase {
 
 export interface PurchaseCreateInput {
   branchId?: number;
-  supplierId: number;
+  supplierId?: number | null;
   whId?: number | null;
   purchaseDate?: string;
   purchaseType?: 'cash' | 'credit';

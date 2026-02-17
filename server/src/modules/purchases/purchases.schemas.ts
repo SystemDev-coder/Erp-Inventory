@@ -13,7 +13,7 @@ export const purchaseItemSchema = z.object({
 
 export const purchaseSchema = z.object({
   branchId: z.coerce.number().int().positive().optional(),
-  supplierId: z.coerce.number().int().positive(),
+  supplierId: z.coerce.number().int().positive().optional().nullable(),
   whId: z.coerce.number().int().positive().nullable().optional(),
   purchaseDate: z.string().optional(),
   subtotal: z.coerce.number().nonnegative().default(0),

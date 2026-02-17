@@ -26,6 +26,13 @@ export class ApiResponse {
     return ApiResponse.success(res, data, message, 201);
   }
 
+  static unauthorized(res: Response, message: string = 'Unauthorized') {
+    return res.status(401).json({
+      success: false,
+      message,
+    });
+  }
+
   static noContent(res: Response) {
     return res.status(204).send();
   }

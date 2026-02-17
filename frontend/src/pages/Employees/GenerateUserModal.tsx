@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
-import { X, UserPlus, Mail, Lock, Shield, User, Briefcase, CheckCircle, AlertCircle } from 'lucide-react';
+import { X, UserPlus, Mail, Lock, Shield, User, Briefcase, AlertCircle } from 'lucide-react';
 import { Employee } from '../../services/employee.service';
-import Badge from '../../components/ui/badge/Badge';
 
 interface GenerateUserModalProps {
   isOpen: boolean;
@@ -38,9 +37,10 @@ export const GenerateUserModal: React.FC<GenerateUserModalProps> = ({
   useEffect(() => {
     if (employee && isOpen) {
       // Generate default values from employee
-      const defaultUsername = employee.name.toLowerCase().replace(/\s+/g, '.');
-      const defaultEmail = `${employee.name.toLowerCase().replace(/\s+/g, '.')}@company.com`;
-      const defaultRole = employee.job_title || 'employee';
+      const nameSlug = (employee.full_name || '').toLowerCase().replace(/\s+/g, '.');
+      const defaultUsername = nameSlug;
+      const defaultEmail = `${nameSlug}@company.com`;
+      const defaultRole = employee.role_name || 'employee';
       
       // Generate new user defaults
       setFormData({
@@ -112,10 +112,10 @@ export const GenerateUserModal: React.FC<GenerateUserModalProps> = ({
                 <User className="w-8 h-8 text-primary-600 dark:text-primary-400" />
               </div>
               <div>
-                <h3 className="text-xl font-bold text-slate-900 dark:text-white">{employee.name}</h3>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white">{employee.full_name}</h3>
                 <div className="flex items-center gap-2 mt-1">
                   <Briefcase className="w-4 h-4 text-slate-500" />
-                  <span className="text-slate-600 dark:text-slate-400">{employee.job_title || 'Employee'}</span>
+                  <span className="text-slate-600 dark:text-slate-400">{employee.role_name || 'Employee'}</span>
                 </div>
                 <div className="flex items-center gap-2 mt-1">
                   <Shield className="w-4 h-4 text-slate-500" />
@@ -241,7 +241,7 @@ export const GenerateUserModal: React.FC<GenerateUserModalProps> = ({
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <span className="text-slate-600 dark:text-slate-400">Employee:</span>
-                <span className="font-medium text-slate-900 dark:text-white">{employee.name}</span>
+                <span className="font-medium text-slate-900 dark:text-white">{employee.full_name}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-600 dark:text-slate-400">Username:</span>

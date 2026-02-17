@@ -1,4 +1,5 @@
 import { queryMany, queryOne } from '../../db/query';
+import { BranchScope } from '../../utils/branchScope';
 
 export interface Customer {
   customer_id: number;
@@ -10,6 +11,7 @@ export interface Customer {
   registered_date: string;
   is_active: boolean;
   balance: number;
+  remaining_balance: number;
 }
 
 export interface CustomerInput {
@@ -19,128 +21,255 @@ export interface CustomerInput {
   address?: string | null;
   sex?: string | null;
   isActive?: boolean;
+  remainingBalance?: number;
 }
 
+let customerBalanceColumn: 'open_balance' | 'remaining_balance' | null = null;
+
+const detectCustomerBalanceColumn = async (): Promise<'open_balance' | 'remaining_balance'> => {
+  if (customerBalanceColumn) return customerBalanceColumn;
+
+  const columns = await queryMany<{ column_name: string }>(
+    `SELECT column_name
+       FROM information_schema.columns
+      WHERE table_schema = 'ims'
+        AND table_name = 'customers'`
+  );
+  const names = new Set(columns.map((row) => row.column_name));
+
+  customerBalanceColumn = names.has('open_balance') ? 'open_balance' : 'remaining_balance';
+  return customerBalanceColumn;
+};
+
+const mapCustomer = (row: {
+  customer_id: number;
+  full_name: string;
+  phone: string | null;
+  address: string | null;
+  sex: string | null;
+  registered_date: string;
+  is_active: boolean;
+  balance_value: string | number;
+}): Customer => ({
+  customer_id: Number(row.customer_id),
+  full_name: row.full_name,
+  phone: row.phone,
+  customer_type: 'regular',
+  address: row.address,
+  sex: row.sex,
+  registered_date: row.registered_date,
+  is_active: Boolean(row.is_active),
+  balance: Number(row.balance_value || 0),
+  remaining_balance: Number(row.balance_value || 0),
+});
+
+const scopedCustomer = async (
+  id: number,
+  scope: BranchScope
+): Promise<Customer | null> => {
+  const balanceColumn = await detectCustomerBalanceColumn();
+  const row = scope.isAdmin
+    ? await queryOne<{
+        customer_id: number;
+        full_name: string;
+        phone: string | null;
+        address: string | null;
+        sex: string | null;
+        registered_date: string;
+        is_active: boolean;
+        balance_value: string;
+      }>(
+        `SELECT customer_id, full_name, phone, address, sex, registered_date::text, is_active, ${balanceColumn}::text AS balance_value
+           FROM ims.customers
+          WHERE customer_id = $1`,
+        [id]
+      )
+    : await queryOne<{
+        customer_id: number;
+        full_name: string;
+        phone: string | null;
+        address: string | null;
+        sex: string | null;
+        registered_date: string;
+        is_active: boolean;
+        balance_value: string;
+      }>(
+        `SELECT customer_id, full_name, phone, address, sex, registered_date::text, is_active, ${balanceColumn}::text AS balance_value
+           FROM ims.customers
+          WHERE customer_id = $1
+            AND branch_id = ANY($2)`,
+        [id, scope.branchIds]
+      );
+
+  return row ? mapCustomer(row) : null;
+};
+
 export const customersService = {
-  async listCustomers(search?: string): Promise<Customer[]> {
-    const params: any[] = [];
-    let filter = '';
-    if (search) {
-      params.push(`%${search}%`);
-      filter = 'WHERE c.full_name ILIKE $1 OR c.phone ILIKE $1';
+  async listCustomers(scope: BranchScope, search?: string): Promise<Customer[]> {
+    const balanceColumn = await detectCustomerBalanceColumn();
+    const params: unknown[] = [];
+    const where: string[] = [];
+
+    if (!scope.isAdmin) {
+      params.push(scope.branchIds);
+      where.push(`branch_id = ANY($${params.length})`);
     }
 
-    return queryMany<Customer>(
-      `WITH charge_totals AS (
-         SELECT customer_id, SUM(amount) AS total_charges
-           FROM ims.charges
-          GROUP BY customer_id
-       ), receipt_totals AS (
-         SELECT customer_id, SUM(amount) AS total_receipts
-           FROM ims.receipts
-          GROUP BY customer_id
-       )
-       SELECT 
-         c.customer_id,
-         c.full_name,
-         c.phone,
-         c.customer_type,
-         c.address,
-         c.sex,
-         c.registered_date,
-         c.is_active,
-         COALESCE(ct.total_charges, 0) - COALESCE(rt.total_receipts, 0) AS balance
-       FROM ims.customers c
-       LEFT JOIN charge_totals ct ON ct.customer_id = c.customer_id
-       LEFT JOIN receipt_totals rt ON rt.customer_id = c.customer_id
-       ${filter}
-       ORDER BY c.full_name`,
+    if (search) {
+      params.push(`%${search}%`);
+      where.push(
+        `(full_name ILIKE $${params.length} OR COALESCE(phone, '') ILIKE $${params.length})`
+      );
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const rows = await queryMany<{
+      customer_id: number;
+      full_name: string;
+      phone: string | null;
+      address: string | null;
+      sex: string | null;
+      registered_date: string;
+      is_active: boolean;
+      balance_value: string;
+    }>(
+      `SELECT
+          customer_id,
+          full_name,
+          phone,
+          address,
+          sex,
+          registered_date::text,
+          is_active,
+          ${balanceColumn}::text AS balance_value
+       FROM ims.customers
+       ${whereSql}
+       ORDER BY full_name`,
       params
     );
+
+    return rows.map(mapCustomer);
   },
 
-  async getCustomer(id: number): Promise<Customer | null> {
-    return queryOne<Customer>(
-      `SELECT 
-          c.*,
-          COALESCE(ct.total_charges, 0) - COALESCE(rt.total_receipts, 0) AS balance
-       FROM ims.customers c
-       LEFT JOIN (
-         SELECT customer_id, SUM(amount) AS total_charges
-         FROM ims.charges GROUP BY customer_id
-       ) ct ON ct.customer_id = c.customer_id
-       LEFT JOIN (
-         SELECT customer_id, SUM(amount) AS total_receipts
-         FROM ims.receipts GROUP BY customer_id
-       ) rt ON rt.customer_id = c.customer_id
-       WHERE c.customer_id = $1`,
-      [id]
-    );
+  async getCustomer(id: number, scope: BranchScope): Promise<Customer | null> {
+    return scopedCustomer(id, scope);
   },
 
-  async createCustomer(input: CustomerInput): Promise<Customer> {
-    return queryOne<Customer>(
-      `INSERT INTO ims.customers (
-         full_name, phone, customer_type, address, sex, is_active
-       ) VALUES ($1, $2, COALESCE($3, 'regular'), $4, $5, COALESCE($6, TRUE))
-       RETURNING *`,
+  async createCustomer(
+    input: CustomerInput,
+    context: { branchId: number }
+  ): Promise<Customer> {
+    const balanceColumn = await detectCustomerBalanceColumn();
+    const row = await queryOne<{
+      customer_id: number;
+      full_name: string;
+      phone: string | null;
+      address: string | null;
+      sex: string | null;
+      registered_date: string;
+      is_active: boolean;
+      balance_value: string;
+    }>(
+      `INSERT INTO ims.customers
+         (branch_id, full_name, phone, sex, address, ${balanceColumn}, is_active)
+       VALUES
+         ($1, $2, $3, $4::ims.sex_enum, $5, COALESCE($6, 0), COALESCE($7, TRUE))
+       RETURNING customer_id, full_name, phone, address, sex::text, registered_date::text, is_active, ${balanceColumn}::text AS balance_value`,
       [
+        context.branchId,
         input.fullName,
-        input.phone || null,
-        input.customerType || 'regular',
-        input.address || null,
-        input.sex || null,
-        input.isActive !== undefined ? input.isActive : true,
+        input.phone ?? null,
+        input.sex ?? null,
+        input.address ?? null,
+        input.remainingBalance ?? 0,
+        input.isActive ?? true,
       ]
-    ) as Promise<Customer>;
+    );
+
+    if (!row) {
+      throw new Error('Failed to create customer');
+    }
+    return mapCustomer(row);
   },
 
-  async updateCustomer(id: number, input: Partial<CustomerInput>): Promise<Customer | null> {
+  async updateCustomer(
+    id: number,
+    input: Partial<CustomerInput>,
+    scope: BranchScope
+  ): Promise<Customer | null> {
+    const balanceColumn = await detectCustomerBalanceColumn();
     const updates: string[] = [];
-    const values: any[] = [];
-    let param = 1;
+    const values: unknown[] = [];
+    let parameter = 1;
 
     if (input.fullName !== undefined) {
-      updates.push(`full_name = $${param++}`);
+      updates.push(`full_name = $${parameter++}`);
       values.push(input.fullName);
     }
     if (input.phone !== undefined) {
-      updates.push(`phone = $${param++}`);
-      values.push(input.phone);
-    }
-    if (input.customerType !== undefined) {
-      updates.push(`customer_type = $${param++}`);
-      values.push(input.customerType);
+      updates.push(`phone = $${parameter++}`);
+      values.push(input.phone ?? null);
     }
     if (input.address !== undefined) {
-      updates.push(`address = $${param++}`);
-      values.push(input.address);
+      updates.push(`address = $${parameter++}`);
+      values.push(input.address ?? null);
     }
     if (input.sex !== undefined) {
-      updates.push(`sex = $${param++}`);
-      values.push(input.sex);
+      updates.push(`sex = $${parameter++}::ims.sex_enum`);
+      values.push(input.sex ?? null);
     }
     if (input.isActive !== undefined) {
-      updates.push(`is_active = $${param++}`);
+      updates.push(`is_active = $${parameter++}`);
       values.push(input.isActive);
     }
+    if (input.remainingBalance !== undefined) {
+      updates.push(`${balanceColumn} = $${parameter++}`);
+      values.push(input.remainingBalance);
+    }
 
-    if (updates.length === 0) {
-      return this.getCustomer(id);
+    if (!updates.length) {
+      return scopedCustomer(id, scope);
     }
 
     values.push(id);
+    let whereSql = `customer_id = $${parameter++}`;
+    if (!scope.isAdmin) {
+      values.push(scope.branchIds);
+      whereSql += ` AND branch_id = ANY($${parameter++})`;
+    }
 
-    return queryOne<Customer>(
+    const row = await queryOne<{
+      customer_id: number;
+      full_name: string;
+      phone: string | null;
+      address: string | null;
+      sex: string | null;
+      registered_date: string;
+      is_active: boolean;
+      balance_value: string;
+    }>(
       `UPDATE ims.customers
-          SET ${updates.join(', ')}, updated_at = NOW()
-        WHERE customer_id = $${param}
-        RETURNING *`,
+          SET ${updates.join(', ')}
+        WHERE ${whereSql}
+        RETURNING customer_id, full_name, phone, address, sex::text, registered_date::text, is_active, ${balanceColumn}::text AS balance_value`,
       values
     );
+
+    return row ? mapCustomer(row) : null;
   },
 
-  async deleteCustomer(id: number): Promise<void> {
-    await queryOne(`DELETE FROM ims.customers WHERE customer_id = $1`, [id]);
+  async deleteCustomer(id: number, scope: BranchScope): Promise<void> {
+    if (scope.isAdmin) {
+      await queryOne(`DELETE FROM ims.customers WHERE customer_id = $1`, [id]);
+      return;
+    }
+
+    await queryOne(
+      `DELETE FROM ims.customers
+        WHERE customer_id = $1
+          AND branch_id = ANY($2)`,
+      [id, scope.branchIds]
+    );
   },
 };
