@@ -20,6 +20,7 @@ export interface Product {
   price: number;
   cost: number;
   stock: number;
+  opening_balance?: number;
   is_active: boolean;
   status: string;
   reorder_level: number;
@@ -29,99 +30,187 @@ export interface Product {
   updated_at: string;
 }
 
+let productsHaveOpeningBalanceColumn: boolean | null = null;
+
+const detectProductsOpeningBalanceColumn = async (): Promise<boolean> => {
+  if (productsHaveOpeningBalanceColumn !== null) return productsHaveOpeningBalanceColumn;
+  const rows = await queryMany<{ column_name: string }>(
+    `SELECT column_name
+       FROM information_schema.columns
+      WHERE table_schema = 'ims'
+        AND table_name = 'items'`
+  );
+  productsHaveOpeningBalanceColumn = rows.some((row) => row.column_name === 'opening_balance');
+  return productsHaveOpeningBalanceColumn;
+};
+
 export const productsService = {
   async listCategories(): Promise<Category[]> {
     return queryMany<Category>(
-      `SELECT c.*
+      `SELECT
+         c.cat_id AS category_id,
+         c.cat_name AS name,
+         c.description,
+         NULL::BIGINT AS parent_id,
+         TRUE AS is_active,
+         NOW()::text AS created_at,
+         NOW()::text AS updated_at
        FROM ims.categories c
-       ORDER BY COALESCE(c.name, c.cat_name)`
+       ORDER BY c.cat_name`
     );
   },
 
   async createCategory(input: CategoryInput): Promise<Category> {
-    const parentId = input.parentId ?? null;
-    return queryOne<Category>(
-      `INSERT INTO ims.categories (name, cat_name, description, parent_id, is_active)
-       VALUES ($1, $1, $2, $3, COALESCE($4, TRUE))
-       RETURNING *`,
-      [input.name, input.description || null, parentId, input.isActive]
-    ) as Promise<Category>;
+    const row = await queryOne<{ cat_id: number }>(
+      `INSERT INTO ims.categories (branch_id, cat_name, description)
+       VALUES ((SELECT branch_id FROM ims.current_context LIMIT 1), $1, $2)
+       RETURNING cat_id`,
+      [input.name, input.description || null]
+    );
+    return (await this.getCategory(row!.cat_id)) as Category;
   },
 
   async updateCategory(id: number, input: CategoryInput): Promise<Category | null> {
-    const parentId = input.parentId ?? null;
-    return queryOne<Category>(
+    await queryOne(
       `UPDATE ims.categories
-       SET name = $2,
-           cat_name = $2,
-           description = $3,
-           parent_id = $4,
-           is_active = COALESCE($5, is_active),
-           updated_at = NOW()
-       WHERE category_id = $1
-       RETURNING *`,
-      [id, input.name, input.description || null, parentId, input.isActive]
+       SET cat_name = $2,
+           description = $3
+       WHERE cat_id = $1`,
+      [id, input.name, input.description || null]
     );
+    return this.getCategory(id);
   },
 
   async deleteCategory(id: number): Promise<void> {
     await queryOne(
-      `DELETE FROM ims.categories WHERE category_id = $1`,
+      `DELETE FROM ims.categories WHERE cat_id = $1`,
       [id]
     );
   },
 
-  async listProducts(search?: string): Promise<Product[]> {
+  async getCategory(id: number): Promise<Category | null> {
+    return queryOne<Category>(
+      `SELECT
+         c.cat_id AS category_id,
+         c.cat_name AS name,
+         c.description,
+         NULL::BIGINT AS parent_id,
+         TRUE AS is_active,
+         NOW()::text AS created_at,
+         NOW()::text AS updated_at
+       FROM ims.categories c
+       WHERE c.cat_id = $1`,
+      [id]
+    );
+  },
+
+  async listProducts(search?: string, categoryId?: number): Promise<Product[]> {
     const params: any[] = [];
-    let where = '';
+    const filters: string[] = [];
     if (search) {
       params.push(`%${search}%`);
-      where = `WHERE p.name ILIKE $${params.length} OR p.sku ILIKE $${params.length}`;
+      filters.push(`(i.name ILIKE $${params.length} OR i.barcode ILIKE $${params.length})`);
     }
+    if (categoryId) {
+      params.push(categoryId);
+      filters.push(`i.cat_id = $${params.length}`);
+    }
+    const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
     return queryMany<Product>(
-      `SELECT p.*,
-              COALESCE(c.name, c.cat_name) AS category_name
-       FROM ims.products p
-       LEFT JOIN ims.categories c ON c.category_id = p.category_id OR c.cat_id = p.cat_id
+      `SELECT
+         i.item_id AS product_id,
+         i.name,
+         i.barcode AS sku,
+         i.cat_id AS category_id,
+         c.cat_name AS category_name,
+         i.sell_price AS price,
+         i.cost_price AS cost,
+         i.opening_balance AS stock,
+         i.opening_balance,
+         i.is_active,
+         CASE WHEN i.is_active THEN 'active' ELSE 'inactive' END AS status,
+         i.reorder_level,
+         NULL::text AS description,
+         NULL::text AS product_image_url,
+         i.created_at::text AS created_at,
+         i.created_at::text AS updated_at
+       FROM ims.items i
+       LEFT JOIN ims.categories c ON c.cat_id = i.cat_id
        ${where}
-       ORDER BY COALESCE(p.updated_at, p.created_at) DESC`,
+       ORDER BY i.created_at DESC`,
       params
     );
   },
 
   async getProduct(id: number): Promise<Product | null> {
     return queryOne<Product>(
-      `SELECT p.*,
-              COALESCE(c.name, c.cat_name) AS category_name
-       FROM ims.products p
-       LEFT JOIN ims.categories c ON c.category_id = p.category_id OR c.cat_id = p.cat_id
-       WHERE p.product_id = $1`,
+      `SELECT
+         i.item_id AS product_id,
+         i.name,
+         i.barcode AS sku,
+         i.cat_id AS category_id,
+         c.cat_name AS category_name,
+         i.sell_price AS price,
+         i.cost_price AS cost,
+         i.opening_balance AS stock,
+         i.opening_balance,
+         i.is_active,
+         CASE WHEN i.is_active THEN 'active' ELSE 'inactive' END AS status,
+         i.reorder_level,
+         NULL::text AS description,
+         NULL::text AS product_image_url,
+         i.created_at::text AS created_at,
+         i.created_at::text AS updated_at
+       FROM ims.items i
+       LEFT JOIN ims.categories c ON c.cat_id = i.cat_id
+       WHERE i.item_id = $1`,
       [id]
     );
   },
 
   async createProduct(input: ProductInput & { productImageUrl?: string }): Promise<Product> {
     const categoryId = input.categoryId ?? null;
-    return queryOne<Product>(
-      `INSERT INTO ims.products (name, sku, category_id, cat_id, price, cost, stock, status, reorder_level, description, product_image_url)
-       VALUES ($1, NULLIF($2, ''), $3, $3, $4, $5, $6, $7, $8, $9, $10)
-       RETURNING *`,
-      [
-        input.name,
-        input.sku || null,
-        categoryId,
-        input.price ?? 0,
-        input.cost ?? 0,
-        input.stock ?? 0,
-        input.status ?? 'active',
-        input.reorderLevel ?? 0,
-        input.description || null,
-        input.productImageUrl || null,
-      ]
-    ) as Promise<Product>;
+    if (!categoryId) {
+      throw new Error('Category is required');
+    }
+    const hasOpeningBalance = await detectProductsOpeningBalanceColumn();
+    const openingBalance = input.openingBalance ?? input.stock ?? 0;
+    const isActive = input.status !== 'inactive';
+    const insert = hasOpeningBalance
+      ? await queryOne<{ item_id: number }>(
+          `INSERT INTO ims.items (branch_id, cat_id, name, barcode, reorder_level, opening_balance, cost_price, sell_price, is_active)
+           VALUES ((SELECT branch_id FROM ims.current_context LIMIT 1), $1, $2, NULLIF($3, ''), $4, $5, $6, $7, $8)
+           RETURNING item_id`,
+          [
+            categoryId,
+            input.name,
+            input.sku || null,
+            input.reorderLevel ?? 0,
+            openingBalance,
+            input.cost ?? 0,
+            input.price ?? 0,
+            isActive,
+          ]
+        )
+      : await queryOne<{ item_id: number }>(
+          `INSERT INTO ims.items (branch_id, cat_id, name, barcode, reorder_level, cost_price, sell_price, is_active)
+           VALUES ((SELECT branch_id FROM ims.current_context LIMIT 1), $1, $2, NULLIF($3, ''), $4, $5, $6, $7)
+           RETURNING item_id`,
+          [
+            categoryId,
+            input.name,
+            input.sku || null,
+            input.reorderLevel ?? 0,
+            input.cost ?? 0,
+            input.price ?? 0,
+            isActive,
+          ]
+        );
+    return (await this.getProduct(insert!.item_id)) as Product;
   },
 
   async updateProduct(id: number, input: Partial<ProductInput & { productImageUrl?: string; description?: string }>): Promise<Product | null> {
+    const hasOpeningBalance = await detectProductsOpeningBalanceColumn();
     const updates: string[] = [];
     const values: any[] = [id];
     let paramCount = 2;
@@ -131,56 +220,54 @@ export const productsService = {
       values.push(input.name);
     }
     if (input.sku !== undefined) {
-      updates.push(`sku = NULLIF($${paramCount++}, '')`);
+      updates.push(`barcode = NULLIF($${paramCount++}, '')`);
       values.push(input.sku);
     }
     if (input.categoryId !== undefined) {
-      updates.push(`category_id = $${paramCount}, cat_id = $${paramCount++}`);
+      updates.push(`cat_id = $${paramCount++}`);
       values.push(input.categoryId ?? null);
     }
     if (input.price !== undefined) {
-      updates.push(`price = $${paramCount++}`);
+      updates.push(`sell_price = $${paramCount++}`);
       values.push(input.price);
     }
     if (input.cost !== undefined) {
-      updates.push(`cost = $${paramCount++}`);
+      updates.push(`cost_price = $${paramCount++}`);
       values.push(input.cost);
     }
-    if (input.stock !== undefined) {
-      updates.push(`stock = $${paramCount++}`);
-      values.push(input.stock);
+    if (input.openingBalance !== undefined) {
+      if (hasOpeningBalance) {
+        updates.push(`opening_balance = $${paramCount++}`);
+        values.push(input.openingBalance);
+      }
     }
     if (input.status !== undefined) {
-      updates.push(`status = $${paramCount++}`);
-      values.push(input.status);
+      updates.push(`is_active = $${paramCount++}`);
+      values.push(input.status !== 'inactive');
+    }
+    if (input.isActive !== undefined) {
+      updates.push(`is_active = $${paramCount++}`);
+      values.push(input.isActive);
     }
     if (input.reorderLevel !== undefined) {
       updates.push(`reorder_level = $${paramCount++}`);
       values.push(input.reorderLevel);
-    }
-    if (input.description !== undefined) {
-      updates.push(`description = $${paramCount++}`);
-      values.push(input.description);
-    }
-    if (input.productImageUrl !== undefined) {
-      updates.push(`product_image_url = $${paramCount++}`);
-      values.push(input.productImageUrl || null);
     }
 
     if (updates.length === 0) {
       return this.getProduct(id);
     }
 
-    return queryOne<Product>(
-      `UPDATE ims.products
-       SET ${updates.join(', ')}, updated_at = NOW()
-       WHERE product_id = $1
-       RETURNING *`,
+    await queryOne(
+      `UPDATE ims.items
+       SET ${updates.join(', ')}
+       WHERE item_id = $1`,
       values
     );
+    return this.getProduct(id);
   },
 
   async deleteProduct(id: number): Promise<void> {
-    await queryOne(`DELETE FROM ims.products WHERE product_id = $1`, [id]);
+    await queryOne(`DELETE FROM ims.items WHERE item_id = $1`, [id]);
   },
 };

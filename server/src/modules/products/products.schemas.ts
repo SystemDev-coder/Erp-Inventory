@@ -14,9 +14,11 @@ export const productSchema = z.object({
   price: z.coerce.number().nonnegative().default(0),
   cost: z.coerce.number().nonnegative().default(0),
   stock: z.coerce.number().nonnegative().default(0),
+  openingBalance: z.coerce.number().nonnegative().default(0),
   status: z.enum(['active', 'inactive']).default('active'),
   reorderLevel: z.coerce.number().nonnegative().default(0),
   isActive: z.boolean().optional(),
+  description: z.string().max(1000).optional().or(z.literal('')),
 });
 
 export type CategoryInput = z.infer<typeof categorySchema>;

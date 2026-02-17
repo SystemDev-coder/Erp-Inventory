@@ -104,17 +104,22 @@ CONSTRAINT chk_company_single_row CHECK (company_id = 1)
 );
 
 CREATE TABLE IF NOT EXISTS ims.roles (
-role_id   BIGSERIAL PRIMARY KEY,
-role_name VARCHAR(60) NOT NULL UNIQUE
+role_id     BIGSERIAL PRIMARY KEY,
+role_code   VARCHAR(40) NOT NULL UNIQUE,
+role_name   VARCHAR(60) NOT NULL,
+description TEXT,
+is_system   BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE TABLE IF NOT EXISTS ims.permissions (
-perm_id SERIAL PRIMARY KEY,
-perm_key VARCHAR(100) UNIQUE NOT NULL,
-perm_name VARCHAR(150) NOT NULL,
-module VARCHAR(50) NOT NULL,
-description TEXT,
-created_at TIMESTAMPTZ DEFAULT NOW()
+    perm_id     SERIAL PRIMARY KEY,
+    perm_key    VARCHAR(100) UNIQUE NOT NULL,
+    perm_name   VARCHAR(150) NOT NULL,
+    module      VARCHAR(50) NOT NULL,
+    sub_module  VARCHAR(50),
+    action_type VARCHAR(50),
+    description TEXT,
+    created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- =========================================================
@@ -135,6 +140,8 @@ CREATE TABLE IF NOT EXISTS ims.users (
 user_id       BIGSERIAL PRIMARY KEY,
 role_id       BIGINT NOT NULL REFERENCES ims.roles(role_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 name          VARCHAR(120) NOT NULL,
+full_name     VARCHAR(200), -- for sample users
+email         VARCHAR(150), -- for sample users
 username      VARCHAR(80) NOT NULL UNIQUE,
 password_hash TEXT NOT NULL,
 is_active     BOOLEAN NOT NULL DEFAULT TRUE,
@@ -233,13 +240,24 @@ branch_id       BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CAS
 full_name       VARCHAR(160) NOT NULL,
 phone           VARCHAR(30),
 sex             ims.sex_enum,
+gender          VARCHAR(20),
 address         TEXT,
 open_balance    NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (open_balance >= 0),
 registered_date DATE NOT NULL DEFAULT CURRENT_DATE,
+external_id     VARCHAR(120),
+source_system   VARCHAR(80),
+migrated_at     TIMESTAMPTZ,
 is_active       BOOLEAN NOT NULL DEFAULT TRUE,
 created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 CONSTRAINT uq_customer_branch_phone UNIQUE (branch_id, phone)
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_external_per_branch
+    ON ims.customers(branch_id, external_id, source_system)
+    WHERE external_id IS NOT NULL AND source_system IS NOT NULL;
+COMMENT ON COLUMN ims.customers.external_id IS 'ID from source system when migrating from another ERP';
+COMMENT ON COLUMN ims.customers.source_system IS 'Name of source system (e.g. legacy_erp, excel_import)';
+ALTER TABLE ims.customers ADD COLUMN IF NOT EXISTS gender VARCHAR(20);
 
 CREATE TABLE IF NOT EXISTS ims.accounts (
 acc_id      BIGSERIAL PRIMARY KEY,
@@ -258,6 +276,7 @@ branch_id       BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CAS
 cat_id          BIGINT NOT NULL REFERENCES ims.categories(cat_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 unit_id         BIGINT REFERENCES ims.units(unit_id) ON UPDATE CASCADE ON DELETE SET NULL,
 tax_id          BIGINT REFERENCES ims.taxes(tax_id) ON UPDATE CASCADE ON DELETE SET NULL,
+store_id        BIGINT, -- FK added later after stores table is defined
 name            VARCHAR(160) NOT NULL,
 barcode         VARCHAR(80),
 reorder_level   NUMERIC(14,3) NOT NULL DEFAULT 0 CHECK (reorder_level >= 0),
@@ -291,6 +310,28 @@ is_active  BOOLEAN NOT NULL DEFAULT TRUE,
 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 CONSTRAINT uq_wh_branch_name UNIQUE (branch_id, wh_name)
 );
+
+CREATE TABLE IF NOT EXISTS ims.stores (
+    store_id BIGSERIAL PRIMARY KEY,
+    branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id),
+    store_name VARCHAR(120) NOT NULL,
+    store_code VARCHAR(40),
+    address TEXT,
+    phone VARCHAR(30),
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_by BIGINT REFERENCES ims.users(user_id),
+    updated_by BIGINT REFERENCES ims.users(user_id),
+    CONSTRAINT uq_store_per_branch UNIQUE (branch_id, store_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_stores_branch ON ims.stores(branch_id);
+COMMENT ON TABLE ims.stores IS 'Physical store locations within branches where items can be managed';
+
+-- Add FK and index for store_id in items
+ALTER TABLE ims.items ADD CONSTRAINT fk_items_store FOREIGN KEY (store_id) REFERENCES ims.stores(store_id);
+CREATE INDEX IF NOT EXISTS idx_items_store ON ims.items(store_id) WHERE store_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS ims.warehouse_stock (
 branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
@@ -360,7 +401,7 @@ purchase_id   BIGSERIAL PRIMARY KEY,
 branch_id     BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 wh_id         BIGINT REFERENCES ims.warehouses(wh_id) ON UPDATE CASCADE ON DELETE SET NULL,
 user_id       BIGINT NOT NULL REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-supplier_id   BIGINT NOT NULL REFERENCES ims.suppliers(supplier_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+supplier_id   BIGINT REFERENCES ims.suppliers(supplier_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 purchase_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 purchase_type ims.purchase_type_enum NOT NULL DEFAULT 'cash',
 subtotal      NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (subtotal >= 0),
@@ -580,10 +621,12 @@ user_id BIGINT UNIQUE REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE 
 full_name VARCHAR(160) NOT NULL,
 phone VARCHAR(30),
 address TEXT,
+gender VARCHAR(20),
 hire_date DATE NOT NULL DEFAULT CURRENT_DATE,
 status ims.employment_status_enum NOT NULL DEFAULT 'active',
 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE ims.employees ADD COLUMN IF NOT EXISTS gender VARCHAR(20);
 
 CREATE TABLE IF NOT EXISTS ims.salary_types (
 sal_type_id BIGSERIAL PRIMARY KEY,
@@ -681,6 +724,41 @@ closing_cash  NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (closing_cash >= 0),
 status        ims.shift_status_enum NOT NULL DEFAULT 'open',
 note          TEXT
 );
+
+CREATE TABLE IF NOT EXISTS ims.employee_shift_assignments (
+assignment_id BIGSERIAL PRIMARY KEY,
+branch_id     BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+emp_id        BIGINT NOT NULL REFERENCES ims.employees(emp_id) ON UPDATE CASCADE ON DELETE CASCADE,
+shift_type    VARCHAR(20) NOT NULL CHECK (shift_type IN ('Morning', 'Night', 'Evening')),
+effective_date DATE NOT NULL DEFAULT CURRENT_DATE,
+is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+created_by    BIGINT REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE SET NULL,
+created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_emp_shift_assignments_emp ON ims.employee_shift_assignments(emp_id);
+
+-- Notifications
+CREATE TABLE IF NOT EXISTS ims.notifications (
+    notification_id BIGSERIAL PRIMARY KEY,
+    branch_id BIGINT REFERENCES ims.branches(branch_id),
+    user_id BIGINT NOT NULL REFERENCES ims.users(user_id),
+    created_by BIGINT REFERENCES ims.users(user_id),
+    title VARCHAR(160) NOT NULL,
+    message TEXT NOT NULL,
+    category VARCHAR(50) NOT NULL DEFAULT 'system',
+    link VARCHAR(240),
+    is_read BOOLEAN NOT NULL DEFAULT FALSE,
+    read_at TIMESTAMPTZ,
+    meta JSONB,
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    deleted_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_user ON ims.notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON ims.notifications(created_at);
+CREATE INDEX IF NOT EXISTS idx_notifications_unread ON ims.notifications(user_id, is_read)
+WHERE is_deleted = FALSE;
 
 -- =========================================================
 -- 4) INDEXES (core)
@@ -1548,6 +1626,32 @@ VALUES(p_branch_id, p_supplier_id, 'return', 'purchase_returns', v_pr_id, NULL, 
 RETURN v_pr_id;
 END $$;
 
+-- Walking Supplier helper
+CREATE OR REPLACE FUNCTION ims.fn_get_or_create_walking_supplier(p_branch_id BIGINT)
+RETURNS BIGINT
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_supplier_id BIGINT;
+BEGIN
+    SELECT supplier_id INTO v_supplier_id
+    FROM ims.suppliers
+    WHERE branch_id = p_branch_id
+      AND LOWER(COALESCE(name, '')) = 'walking supplier'
+    LIMIT 1;
+
+    IF v_supplier_id IS NOT NULL THEN
+        RETURN v_supplier_id;
+    END IF;
+
+    INSERT INTO ims.suppliers (branch_id, name, is_active)
+    VALUES (p_branch_id, 'Walking Supplier', TRUE)
+    RETURNING supplier_id INTO v_supplier_id;
+
+    RETURN v_supplier_id;
+END;
+$$;
+COMMENT ON FUNCTION ims.fn_get_or_create_walking_supplier IS 'Returns supplier_id for Walking Supplier; creates one per branch if needed';
+
 -- =========================================================
 -- 8) REPORTS (branch-based)
 -- =========================================================
@@ -1767,7 +1871,7 @@ BEGIN
         ORDER BY tablename
     LOOP
         -- Generate VIEW permission
-        INSERT INTO ims.permissions (perm_code, perm_name, module, sub_module, action_type, description)
+        INSERT INTO ims.permissions (perm_key, perm_name, module, sub_module, action_type, description)
         VALUES (
             r.tablename || '.view',
             'View ' || initcap(replace(r.tablename, '_', ' ')),
@@ -1775,10 +1879,10 @@ BEGIN
             r.submodule,
             'view',
             'View ' || r.tablename || ' records'
-        ) ON CONFLICT (perm_code) DO NOTHING;
+        ) ON CONFLICT (perm_key) DO NOTHING;
         
         -- Generate CREATE permission
-        INSERT INTO ims.permissions (perm_code, perm_name, module, sub_module, action_type, description)
+        INSERT INTO ims.permissions (perm_key, perm_name, module, sub_module, action_type, description)
         VALUES (
             r.tablename || '.create',
             'Create ' || initcap(replace(r.tablename, '_', ' ')),
@@ -1786,10 +1890,10 @@ BEGIN
             r.submodule,
             'create',
             'Create new ' || r.tablename || ' records'
-        ) ON CONFLICT (perm_code) DO NOTHING;
+        ) ON CONFLICT (perm_key) DO NOTHING;
         
         -- Generate UPDATE permission
-        INSERT INTO ims.permissions (perm_code, perm_name, module, sub_module, action_type, description)
+        INSERT INTO ims.permissions (perm_key, perm_name, module, sub_module, action_type, description)
         VALUES (
             r.tablename || '.update',
             'Update ' || initcap(replace(r.tablename, '_', ' ')),
@@ -1797,10 +1901,10 @@ BEGIN
             r.submodule,
             'update',
             'Update existing ' || r.tablename || ' records'
-        ) ON CONFLICT (perm_code) DO NOTHING;
+        ) ON CONFLICT (perm_key) DO NOTHING;
         
         -- Generate DELETE permission
-        INSERT INTO ims.permissions (perm_code, perm_name, module, sub_module, action_type, description)
+        INSERT INTO ims.permissions (perm_key, perm_name, module, sub_module, action_type, description)
         VALUES (
             r.tablename || '.delete',
             'Delete ' || initcap(replace(r.tablename, '_', ' ')),
@@ -1808,10 +1912,10 @@ BEGIN
             r.submodule,
             'delete',
             'Delete ' || r.tablename || ' records'
-        ) ON CONFLICT (perm_code) DO NOTHING;
+        ) ON CONFLICT (perm_key) DO NOTHING;
         
         -- Generate EXPORT permission
-        INSERT INTO ims.permissions (perm_code, perm_name, module, sub_module, action_type, description)
+        INSERT INTO ims.permissions (perm_key, perm_name, module, sub_module, action_type, description)
         VALUES (
             r.tablename || '.export',
             'Export ' || initcap(replace(r.tablename, '_', ' ')),
@@ -1819,14 +1923,14 @@ BEGIN
             r.submodule,
             'export',
             'Export ' || r.tablename || ' data'
-        ) ON CONFLICT (perm_code) DO NOTHING;
+        ) ON CONFLICT (perm_key) DO NOTHING;
         
         v_count := v_count + 5;
     END LOOP;
     
     -- Generate SPECIAL permissions for specific modules
     -- Sales Special Permissions
-    INSERT INTO ims.permissions (perm_code, perm_name, module, sub_module, action_type, description) VALUES
+    INSERT INTO ims.permissions (perm_key, perm_name, module, sub_module, action_type, description) VALUES
     ('sales.void', 'Void Sales', 'Sales & POS', 'Sales', 'void', 'Void sales transactions'),
     ('sales.refund', 'Refund Sales', 'Sales & POS', 'Sales', 'refund', 'Process sales refunds'),
     ('sales.discount', 'Apply Discounts', 'Sales & POS', 'Sales', 'discount', 'Apply discounts to sales'),
@@ -1834,10 +1938,10 @@ BEGIN
     ('sales.pos.close', 'Close POS', 'Sales & POS', 'POS', 'close', 'Close POS shift'),
     ('sales.reports', 'Sales Reports', 'Sales & POS', 'Reports', 'report', 'View sales reports'),
     ('customers.credit', 'Manage Credit', 'Sales & POS', 'Customers', 'credit', 'Manage customer credit limits')
-    ON CONFLICT (perm_code) DO NOTHING;
+    ON CONFLICT (perm_key) DO NOTHING;
     
     -- Inventory Special Permissions
-    INSERT INTO ims.permissions (perm_code, perm_name, module, sub_module, action_type, description) VALUES
+    INSERT INTO ims.permissions (perm_key, perm_name, module, sub_module, action_type, description) VALUES
     ('stock.opening', 'Opening Stock', 'Inventory', 'Stock', 'opening', 'Post opening stock'),
     ('stock.adjust', 'Adjust Stock', 'Inventory', 'Stock', 'adjust', 'Manual stock adjustments'),
     ('stock.transfer', 'Transfer Stock', 'Inventory', 'Stock', 'transfer', 'Transfer stock between locations'),
@@ -1845,19 +1949,19 @@ BEGIN
     ('stock.reorder', 'Reorder Stock', 'Inventory', 'Stock', 'reorder', 'Generate reorder reports'),
     ('inventory.reports', 'Inventory Reports', 'Inventory', 'Reports', 'report', 'View inventory reports'),
     ('items.price', 'Manage Prices', 'Inventory', 'Items', 'price', 'Update item prices')
-    ON CONFLICT (perm_code) DO NOTHING;
+    ON CONFLICT (perm_key) DO NOTHING;
     
     -- Purchases Special Permissions
-    INSERT INTO ims.permissions (perm_code, perm_name, module, sub_module, action_type, description) VALUES
+    INSERT INTO ims.permissions (perm_key, perm_name, module, sub_module, action_type, description) VALUES
     ('purchases.void', 'Void Purchases', 'Purchases', 'Purchases', 'void', 'Void purchase transactions'),
     ('purchases.approve', 'Approve Purchases', 'Purchases', 'Purchases', 'approve', 'Approve purchase orders'),
     ('purchases.receive', 'Receive Items', 'Purchases', 'Purchases', 'receive', 'Receive purchase items'),
     ('purchases.reports', 'Purchase Reports', 'Purchases', 'Reports', 'report', 'View purchase reports'),
     ('suppliers.credit', 'Supplier Credit', 'Purchases', 'Suppliers', 'credit', 'Manage supplier credit')
-    ON CONFLICT (perm_code) DO NOTHING;
+    ON CONFLICT (perm_key) DO NOTHING;
     
     -- Finance Special Permissions
-    INSERT INTO ims.permissions (perm_code, perm_name, module, sub_module, action_type, description) VALUES
+    INSERT INTO ims.permissions (perm_key, perm_name, module, sub_module, action_type, description) VALUES
     ('accounts.transfer', 'Transfer Funds', 'Finance', 'Accounts', 'transfer', 'Transfer between accounts'),
     ('accounts.reconcile', 'Reconcile Accounts', 'Finance', 'Accounts', 'reconcile', 'Reconcile bank accounts'),
     ('expenses.approve', 'Approve Expenses', 'Finance', 'Expenses', 'approve', 'Approve expense claims'),
@@ -1866,10 +1970,10 @@ BEGIN
     ('finance.income', 'Income Statement', 'Finance', 'Reports', 'report', 'View income statement'),
     ('finance.cashflow', 'Cash Flow', 'Finance', 'Reports', 'report', 'View cash flow statement'),
     ('ledgers.view', 'View Ledgers', 'Finance', 'Ledgers', 'view', 'View all ledgers')
-    ON CONFLICT (perm_code) DO NOTHING;
+    ON CONFLICT (perm_key) DO NOTHING;
     
     -- HR Special Permissions
-    INSERT INTO ims.permissions (perm_code, perm_name, module, sub_module, action_type, description) VALUES
+    INSERT INTO ims.permissions (perm_key, perm_name, module, sub_module, action_type, description) VALUES
     ('payroll.process', 'Process Payroll', 'Human Resources', 'Payroll', 'process', 'Process payroll runs'),
     ('payroll.approve', 'Approve Payroll', 'Human Resources', 'Payroll', 'approve', 'Approve payroll'),
     ('payroll.pay', 'Pay Salaries', 'Human Resources', 'Payroll', 'pay', 'Process salary payments'),
@@ -1878,24 +1982,24 @@ BEGIN
     ('loans.approve', 'Approve Loans', 'Human Resources', 'Loans', 'approve', 'Approve employee loans'),
     ('hr.reports', 'HR Reports', 'Human Resources', 'Reports', 'report', 'View HR reports'),
     ('attendance.manage', 'Manage Attendance', 'Human Resources', 'Attendance', 'manage', 'Manage employee attendance')
-    ON CONFLICT (perm_code) DO NOTHING;
+    ON CONFLICT (perm_key) DO NOTHING;
     
     -- Returns Special Permissions
-    INSERT INTO ims.permissions (perm_code, perm_name, module, sub_module, action_type, description) VALUES
+    INSERT INTO ims.permissions (perm_key, perm_name, module, sub_module, action_type, description) VALUES
     ('returns.approve', 'Approve Returns', 'Returns Management', 'Returns', 'approve', 'Approve return requests'),
     ('returns.refund', 'Process Refunds', 'Returns Management', 'Returns', 'refund', 'Process refunds'),
     ('returns.reports', 'Returns Reports', 'Returns Management', 'Reports', 'report', 'View returns reports')
-    ON CONFLICT (perm_code) DO NOTHING;
+    ON CONFLICT (perm_key) DO NOTHING;
     
     -- Transfers Special Permissions
-    INSERT INTO ims.permissions (perm_code, perm_name, module, sub_module, action_type, description) VALUES
+    INSERT INTO ims.permissions (perm_key, perm_name, module, sub_module, action_type, description) VALUES
     ('transfers.approve', 'Approve Transfers', 'Transfers', 'Transfers', 'approve', 'Approve stock transfers'),
     ('transfers.receive', 'Receive Transfers', 'Transfers', 'Transfers', 'receive', 'Receive transferred stock'),
     ('transfers.reports', 'Transfer Reports', 'Transfers', 'Reports', 'report', 'View transfer reports')
-    ON CONFLICT (perm_code) DO NOTHING;
+    ON CONFLICT (perm_key) DO NOTHING;
     
     -- System Special Permissions
-    INSERT INTO ims.permissions (perm_code, perm_name, module, sub_module, action_type, description) VALUES
+    INSERT INTO ims.permissions (perm_key, perm_name, module, sub_module, action_type, description) VALUES
     ('system.users.manage', 'Manage Users', 'System Administration', 'Users', 'manage', 'Create and manage users'),
     ('system.roles.manage', 'Manage Roles', 'System Administration', 'Roles', 'manage', 'Create and manage roles'),
     ('system.permissions.manage', 'Manage Permissions', 'System Administration', 'Permissions', 'manage', 'Assign permissions'),
@@ -1906,7 +2010,7 @@ BEGIN
     ('system.settings', 'System Settings', 'System Administration', 'System', 'settings', 'Configure system settings'),
     ('dashboard.view', 'View Dashboard', 'System Administration', 'Dashboard', 'view', 'Access main dashboard'),
     ('reports.all', 'All Reports', 'System Administration', 'Reports', 'report', 'Access all reports')
-    ON CONFLICT (perm_code) DO NOTHING;
+    ON CONFLICT (perm_key) DO NOTHING;
     
     -- Return counts by module
     RETURN QUERY
@@ -1988,88 +2092,88 @@ BEGIN
     RETURNING role_id INTO v_viewer_id;
     
     -- Assign permissions to Administrator (ALL permissions)
-    DELETE FROM role_permissions WHERE role_id = v_admin_id;
-    INSERT INTO role_permissions (role_id, perm_id)
-    SELECT v_admin_id, perm_id FROM permissions;
+    DELETE FROM ims.role_permissions WHERE role_id = v_admin_id;
+    INSERT INTO ims.role_permissions (role_id, perm_id)
+    SELECT v_admin_id, perm_id FROM ims.permissions;
     GET DIAGNOSTICS v_count = ROW_COUNT;
     role_name := 'Administrator'; permissions_assigned := v_count; RETURN NEXT;
     
     -- Assign permissions to Store Manager
-    DELETE FROM role_permissions WHERE role_id = v_manager_id;
-    INSERT INTO role_permissions (role_id, perm_id)
-    SELECT v_manager_id, perm_id FROM permissions 
+    DELETE FROM ims.role_permissions WHERE role_id = v_manager_id;
+    INSERT INTO ims.role_permissions (role_id, perm_id)
+    SELECT v_manager_id, perm_id FROM ims.permissions 
     WHERE module IN ('Sales & POS', 'Inventory', 'Purchases', 'Returns Management', 'Transfers')
-       OR perm_code LIKE 'dashboard.%'
-       OR perm_code LIKE 'reports.%'
-       OR (module = 'Finance' AND perm_code IN ('finance.reports', 'ledgers.view'));
+       OR perm_key LIKE 'dashboard.%'
+       OR perm_key LIKE 'reports.%'
+       OR (module = 'Finance' AND perm_key IN ('finance.reports', 'ledgers.view'));
     GET DIAGNOSTICS v_count = ROW_COUNT;
     role_name := 'Store Manager'; permissions_assigned := v_count; RETURN NEXT;
     
     -- Assign permissions to Sales Associate
-    DELETE FROM role_permissions WHERE role_id = v_sales_id;
-    INSERT INTO role_permissions (role_id, perm_id)
-    SELECT v_sales_id, perm_id FROM permissions 
+    DELETE FROM ims.role_permissions WHERE role_id = v_sales_id;
+    INSERT INTO ims.role_permissions (role_id, perm_id)
+    SELECT v_sales_id, perm_id FROM ims.permissions 
     WHERE (module = 'Sales & POS' AND action_type IN ('view', 'create', 'update'))
-       OR (module = 'Sales & POS' AND perm_code IN ('sales.pos.access', 'sales.discount'))
-       OR perm_code IN ('customers.view', 'customers.create', 'customers.update')
-       OR perm_code IN ('items.view', 'dashboard.view');
+       OR (module = 'Sales & POS' AND perm_key IN ('sales.pos.access', 'sales.discount'))
+       OR perm_key IN ('customers.view', 'customers.create', 'customers.update')
+       OR perm_key IN ('items.view', 'dashboard.view');
     GET DIAGNOSTICS v_count = ROW_COUNT;
     role_name := 'Sales Associate'; permissions_assigned := v_count; RETURN NEXT;
     
     -- Assign permissions to Inventory Clerk
-    DELETE FROM role_permissions WHERE role_id = v_inventory_id;
-    INSERT INTO role_permissions (role_id, perm_id)
-    SELECT v_inventory_id, perm_id FROM permissions 
+    DELETE FROM ims.role_permissions WHERE role_id = v_inventory_id;
+    INSERT INTO ims.role_permissions (role_id, perm_id)
+    SELECT v_inventory_id, perm_id FROM ims.permissions 
     WHERE module = 'Inventory' 
-       OR perm_code LIKE 'warehouse%.%'
-       OR perm_code IN ('items.view', 'items.create', 'items.update', 'categories.view', 'units.view', 'taxes.view')
-       OR perm_code IN ('stock.opening', 'stock.adjust', 'stock.transfer', 'stock.count', 'inventory.reports')
-       OR perm_code = 'dashboard.view';
+       OR perm_key LIKE 'warehouse%.%'
+       OR perm_key IN ('items.view', 'items.create', 'items.update', 'categories.view', 'units.view', 'taxes.view')
+       OR perm_key IN ('stock.opening', 'stock.adjust', 'stock.transfer', 'stock.count', 'inventory.reports')
+       OR perm_key = 'dashboard.view';
     GET DIAGNOSTICS v_count = ROW_COUNT;
     role_name := 'Inventory Clerk'; permissions_assigned := v_count; RETURN NEXT;
     
     -- Assign permissions to Purchasing Agent
-    DELETE FROM role_permissions WHERE role_id = v_purchases_id;
-    INSERT INTO role_permissions (role_id, perm_id)
-    SELECT v_purchases_id, perm_id FROM permissions 
+    DELETE FROM ims.role_permissions WHERE role_id = v_purchases_id;
+    INSERT INTO ims.role_permissions (role_id, perm_id)
+    SELECT v_purchases_id, perm_id FROM ims.permissions 
     WHERE module = 'Purchases'
-       OR perm_code LIKE 'suppliers.%'
-       OR perm_code IN ('items.view', 'purchases.reports')
-       OR perm_code = 'dashboard.view';
+       OR perm_key LIKE 'suppliers.%'
+       OR perm_key IN ('items.view', 'purchases.reports')
+       OR perm_key = 'dashboard.view';
     GET DIAGNOSTICS v_count = ROW_COUNT;
     role_name := 'Purchasing Agent'; permissions_assigned := v_count; RETURN NEXT;
     
     -- Assign permissions to Accountant
-    DELETE FROM role_permissions WHERE role_id = v_accountant_id;
-    INSERT INTO role_permissions (role_id, perm_id)
-    SELECT v_accountant_id, perm_id FROM permissions 
+    DELETE FROM ims.role_permissions WHERE role_id = v_accountant_id;
+    INSERT INTO ims.role_permissions (role_id, perm_id)
+    SELECT v_accountant_id, perm_id FROM ims.permissions 
     WHERE module = 'Finance'
-       OR perm_code LIKE 'expense%'
-       OR perm_code LIKE 'account%'
-       OR perm_code LIKE 'ledgers.%'
-       OR perm_code IN ('finance.reports', 'dashboard.view', 'sales.view', 'purchases.view');
+       OR perm_key LIKE 'expense%'
+       OR perm_key LIKE 'account%'
+       OR perm_key LIKE 'ledgers.%'
+       OR perm_key IN ('finance.reports', 'dashboard.view', 'sales.view', 'purchases.view');
     GET DIAGNOSTICS v_count = ROW_COUNT;
     role_name := 'Accountant'; permissions_assigned := v_count; RETURN NEXT;
     
     -- Assign permissions to HR Manager
-    DELETE FROM role_permissions WHERE role_id = v_hr_id;
-    INSERT INTO role_permissions (role_id, perm_id)
-    SELECT v_hr_id, perm_id FROM permissions 
+    DELETE FROM ims.role_permissions WHERE role_id = v_hr_id;
+    INSERT INTO ims.role_permissions (role_id, perm_id)
+    SELECT v_hr_id, perm_id FROM ims.permissions 
     WHERE module = 'Human Resources'
-       OR perm_code LIKE 'payroll%'
-       OR perm_code LIKE 'employee%'
-       OR perm_code LIKE 'loans%'
-       OR perm_code IN ('hr.reports', 'dashboard.view');
+       OR perm_key LIKE 'payroll%'
+       OR perm_key LIKE 'employee%'
+       OR perm_key LIKE 'loans%'
+       OR perm_key IN ('hr.reports', 'dashboard.view');
     GET DIAGNOSTICS v_count = ROW_COUNT;
     role_name := 'HR Manager'; permissions_assigned := v_count; RETURN NEXT;
     
     -- Assign permissions to Viewer (Read Only)
-    DELETE FROM role_permissions WHERE role_id = v_viewer_id;
-    INSERT INTO role_permissions (role_id, perm_id)
-    SELECT v_viewer_id, perm_id FROM permissions 
+    DELETE FROM ims.role_permissions WHERE role_id = v_viewer_id;
+    INSERT INTO ims.role_permissions (role_id, perm_id)
+    SELECT v_viewer_id, perm_id FROM ims.permissions 
     WHERE action_type = 'view' 
-       OR perm_code LIKE 'reports.%'
-       OR perm_code = 'dashboard.view';
+       OR perm_key LIKE 'reports.%'
+       OR perm_key = 'dashboard.view';
     GET DIAGNOSTICS v_count = ROW_COUNT;
     role_name := 'Viewer'; permissions_assigned := v_count; RETURN NEXT;
 END;
@@ -2089,15 +2193,15 @@ DECLARE
     v_role_id BIGINT;
 BEGIN
     -- Get user's role
-    SELECT role_id INTO v_role_id FROM users WHERE user_id = p_user_id;
+    SELECT role_id INTO v_role_id FROM ims.users WHERE user_id = p_user_id;
     
     -- Build menu structure based on permissions
     WITH user_perms AS (
-        SELECT DISTINCT p.module, p.sub_module, p.perm_code, p.action_type
-        FROM permissions p
-        LEFT JOIN role_permissions rp ON rp.perm_id = p.perm_id AND rp.role_id = v_role_id
-        LEFT JOIN user_permissions up ON up.perm_id = p.perm_id AND up.user_id = p_user_id
-        LEFT JOIN user_permission_overrides upo ON upo.perm_id = p.perm_id AND upo.user_id = p_user_id
+        SELECT DISTINCT p.module, p.sub_module, p.perm_key, p.action_type
+        FROM ims.permissions p
+        LEFT JOIN ims.role_permissions rp ON rp.perm_id = p.perm_id AND rp.role_id = v_role_id
+        LEFT JOIN ims.user_permissions up ON up.perm_id = p.perm_id AND up.user_id = p_user_id
+        LEFT JOIN ims.user_permission_overrides upo ON upo.perm_id = p.perm_id AND upo.user_id = p_user_id
         WHERE (rp.perm_id IS NOT NULL OR up.perm_id IS NOT NULL)
           AND (upo.effect IS NULL OR upo.effect = 'allow')
     ),
@@ -2157,7 +2261,7 @@ BEGIN
                                 ELSE initcap(action_type || ' ' || sub_module)
                             END,
                             'path', '/' || lower(replace(module, ' ', '-')) || '/' || lower(replace(sub_module, ' ', '-')) || '/' || action_type,
-                            'permission', perm_code
+                            'permission', perm_key
                         )
                         ORDER BY 
                             CASE action_type
@@ -2214,7 +2318,7 @@ $$;
 -- Function to check if user has permission
 CREATE OR REPLACE FUNCTION ims.fn_has_permission(
     p_user_id BIGINT,
-    p_perm_code VARCHAR(100)
+    p_perm_key VARCHAR(100)
 ) RETURNS BOOLEAN
 LANGUAGE plpgsql
 AS $$
@@ -2225,14 +2329,14 @@ DECLARE
     v_has_perm BOOLEAN := FALSE;
 BEGIN
     -- Get permission ID
-    SELECT perm_id INTO v_perm_id FROM permissions WHERE perm_code = p_perm_code;
+    SELECT perm_id INTO v_perm_id FROM ims.permissions WHERE perm_key = p_perm_key;
     IF v_perm_id IS NULL THEN
         RETURN FALSE;
     END IF;
     
     -- Check for override first
     SELECT effect INTO v_override
-    FROM user_permission_overrides
+    FROM ims.user_permission_overrides
     WHERE user_id = p_user_id AND perm_id = v_perm_id
       AND (expires_at IS NULL OR expires_at > NOW());
     
@@ -2244,7 +2348,7 @@ BEGIN
     
     -- Check direct user permissions
     SELECT EXISTS(
-        SELECT 1 FROM user_permissions 
+        SELECT 1 FROM ims.user_permissions 
         WHERE user_id = p_user_id AND perm_id = v_perm_id
     ) INTO v_has_perm;
     
@@ -2253,11 +2357,11 @@ BEGIN
     END IF;
     
     -- Check role permissions
-    SELECT role_id INTO v_role_id FROM users WHERE user_id = p_user_id;
+    SELECT role_id INTO v_role_id FROM ims.users WHERE user_id = p_user_id;
     
     IF v_role_id IS NOT NULL THEN
         SELECT EXISTS(
-            SELECT 1 FROM role_permissions 
+            SELECT 1 FROM ims.role_permissions 
             WHERE role_id = v_role_id AND perm_id = v_perm_id
         ) INTO v_has_perm;
     END IF;
@@ -2271,7 +2375,7 @@ CREATE OR REPLACE FUNCTION ims.fn_get_user_permissions(p_user_id BIGINT)
 RETURNS TABLE(
     module TEXT,
     sub_module TEXT,
-    perm_code VARCHAR,
+    perm_key VARCHAR,
     perm_name VARCHAR,
     action_type VARCHAR,
     has_access BOOLEAN
@@ -2283,11 +2387,11 @@ BEGIN
     SELECT 
         p.module::TEXT,
         p.sub_module::TEXT,
-        p.perm_code,
+        p.perm_key,
         p.perm_name,
         p.action_type,
-        ims.fn_has_permission(p_user_id, p.perm_code)
-    FROM permissions p
+        ims.fn_has_permission(p_user_id, p.perm_key)
+    FROM ims.permissions p
     ORDER BY p.module, p.sub_module, p.action_type;
 END;
 $$;
@@ -2299,37 +2403,37 @@ $$;
 -- Procedure to assign permissions to role
 CREATE OR REPLACE FUNCTION ims.sp_assign_role_permissions(
     p_role_code VARCHAR(30),
-    p_perm_codes TEXT[]
+    p_perm_keys TEXT[]
 ) RETURNS TABLE(permission_code TEXT, status TEXT)
 LANGUAGE plpgsql
 AS $$
 DECLARE
     v_role_id BIGINT;
     v_perm_id INT;
-    v_perm_code TEXT;
+    v_perm_key TEXT;
 BEGIN
     -- Get role ID
-    SELECT role_id INTO v_role_id FROM roles WHERE role_code = p_role_code;
+    SELECT role_id INTO v_role_id FROM ims.roles WHERE role_code = p_role_code;
     IF v_role_id IS NULL THEN
         RAISE EXCEPTION 'Role % not found', p_role_code;
     END IF;
     
     -- Clear existing permissions for this role
-    DELETE FROM role_permissions WHERE role_id = v_role_id;
+    DELETE FROM ims.role_permissions WHERE role_id = v_role_id;
     
     -- Assign new permissions
-    FOREACH v_perm_code IN ARRAY p_perm_codes
+    FOREACH v_perm_key IN ARRAY p_perm_keys
     LOOP
-        SELECT perm_id INTO v_perm_id FROM permissions WHERE perm_code = v_perm_code;
+        SELECT perm_id INTO v_perm_id FROM ims.permissions WHERE perm_key = v_perm_key;
         
         IF v_perm_id IS NOT NULL THEN
-            INSERT INTO role_permissions (role_id, perm_id)
+            INSERT INTO ims.role_permissions (role_id, perm_id)
             VALUES (v_role_id, v_perm_id);
-            permission_code := v_perm_code;
+            permission_code := v_perm_key;
             status := 'Assigned';
             RETURN NEXT;
         ELSE
-            permission_code := v_perm_code;
+            permission_code := v_perm_key;
             status := 'Permission not found';
             RETURN NEXT;
         END IF;
@@ -2340,31 +2444,31 @@ $$;
 -- Procedure to assign permissions to user
 CREATE OR REPLACE FUNCTION ims.sp_assign_user_permissions(
     p_user_id BIGINT,
-    p_perm_codes TEXT[],
+    p_perm_keys TEXT[],
     p_granted_by BIGINT DEFAULT NULL
 ) RETURNS TABLE(permission_code TEXT, status TEXT)
 LANGUAGE plpgsql
 AS $$
 DECLARE
     v_perm_id INT;
-    v_perm_code TEXT;
+    v_perm_key TEXT;
 BEGIN
     -- Clear existing direct permissions for this user
-    DELETE FROM user_permissions WHERE user_id = p_user_id;
+    DELETE FROM ims.user_permissions WHERE user_id = p_user_id;
     
     -- Assign new permissions
-    FOREACH v_perm_code IN ARRAY p_perm_codes
+    FOREACH v_perm_key IN ARRAY p_perm_keys
     LOOP
-        SELECT perm_id INTO v_perm_id FROM permissions WHERE perm_code = v_perm_code;
+        SELECT perm_id INTO v_perm_id FROM ims.permissions WHERE perm_key = v_perm_key;
         
         IF v_perm_id IS NOT NULL THEN
-            INSERT INTO user_permissions (user_id, perm_id, granted_by)
+            INSERT INTO ims.user_permissions (user_id, perm_id, granted_by)
             VALUES (p_user_id, v_perm_id, p_granted_by);
-            permission_code := v_perm_code;
+            permission_code := v_perm_key;
             status := 'Assigned';
             RETURN NEXT;
         ELSE
-            permission_code := v_perm_code;
+            permission_code := v_perm_key;
             status := 'Permission not found';
             RETURN NEXT;
         END IF;
@@ -2401,7 +2505,7 @@ BEGIN
         COUNT(CASE WHEN p.action_type = 'delete' THEN 1 END)::BIGINT as delete,
         COUNT(CASE WHEN p.action_type = 'export' THEN 1 END)::BIGINT as export,
         COUNT(CASE WHEN p.action_type NOT IN ('view', 'create', 'update', 'delete', 'export') THEN 1 END)::BIGINT as special
-    FROM permissions p
+    FROM ims.permissions p
     GROUP BY p.module
     ORDER BY p.module;
 END;
@@ -2414,7 +2518,7 @@ RETURNS TABLE(
     role_name VARCHAR,
     module TEXT,
     sub_module TEXT,
-    perm_code VARCHAR,
+    perm_key VARCHAR,
     perm_name VARCHAR,
     action_type VARCHAR
 )
@@ -2427,12 +2531,12 @@ BEGIN
         r.role_name,
         p.module::TEXT,
         p.sub_module::TEXT,
-        p.perm_code,
+        p.perm_key,
         p.perm_name,
         p.action_type
-    FROM roles r
-    JOIN role_permissions rp ON rp.role_id = r.role_id
-    JOIN permissions p ON p.perm_id = rp.perm_id
+    FROM ims.roles r
+    JOIN ims.role_permissions rp ON rp.role_id = r.role_id
+    JOIN ims.permissions p ON p.perm_id = rp.perm_id
     WHERE (p_role_code IS NULL OR r.role_code = p_role_code)
     ORDER BY r.role_code, p.module, p.sub_module, p.action_type;
 END;
@@ -2444,7 +2548,7 @@ $$;
 
 -- Procedure to create sample users with different roles
 CREATE OR REPLACE FUNCTION ims.sp_create_sample_users()
-RETURNS TABLE(username TEXT, role TEXT, status TEXT)
+RETURNS TABLE(out_username TEXT, out_role TEXT, out_status TEXT)
 LANGUAGE plpgsql
 AS $$
 DECLARE
@@ -2452,75 +2556,98 @@ DECLARE
     v_manager_id BIGINT;
     v_sales_id BIGINT;
     v_inventory_id BIGINT;
+    v_accountant_id BIGINT;
+    v_hr_id BIGINT;
+    v_branch_id BIGINT;
+    v_user_id BIGINT;
+    v_pwd VARCHAR := '$2a$10$l4GiG4IwG3TwvyaOfEjbUujvPmDB/ulFpWhpOP9CFCrZP9608gqWC'; -- Hash for Admin@123
 BEGIN
+    -- Get default branch
+    SELECT branch_id INTO v_branch_id FROM ims.branches WHERE is_active = true ORDER BY branch_id LIMIT 1;
+    IF v_branch_id IS NULL THEN
+        RAISE NOTICE 'No active branch found during sample data creation';
+        RETURN;
+    END IF;
+
     -- Get role IDs
-    SELECT role_id INTO v_admin_id FROM roles WHERE role_code = 'ADMIN';
-    SELECT role_id INTO v_manager_id FROM roles WHERE role_code = 'STORE_MGR';
-    SELECT role_id INTO v_sales_id FROM roles WHERE role_code = 'SALES';
-    SELECT role_id INTO v_inventory_id FROM roles WHERE role_code = 'INVENTORY';
+    SELECT role_id INTO v_admin_id FROM ims.roles WHERE role_code = 'ADMIN';
+    SELECT role_id INTO v_manager_id FROM ims.roles WHERE role_code = 'STORE_MGR';
+    SELECT role_id INTO v_sales_id FROM ims.roles WHERE role_code = 'SALES';
+    SELECT role_id INTO v_inventory_id FROM ims.roles WHERE role_code = 'INVENTORY';
+    SELECT role_id INTO v_accountant_id FROM ims.roles WHERE role_code = 'ACCOUNTANT';
+    SELECT role_id INTO v_hr_id FROM ims.roles WHERE role_code = 'HR';
     
-    -- Create Admin User
-    INSERT INTO users (username, password_hash, full_name, email, role_id, is_active)
-    VALUES (
-        'admin',
-        '$2a$10$YourHashedPasswordHere', -- Replace with actual hash
-        'System Administrator',
-        'admin@example.com',
-        v_admin_id,
-        true
-    ) ON CONFLICT (username) DO NOTHING
-    RETURNING username INTO username;
+    -- Function to create user & employee & branch link
+    -- Create Admin
+    INSERT INTO ims.users (role_id, name, full_name, username, password_hash, email, is_active)
+    VALUES (v_admin_id, 'Admin', 'System Administrator', 'admin', v_pwd, 'admin@example.com', true)
+    ON CONFLICT (username) DO UPDATE SET password_hash = v_pwd, role_id = EXCLUDED.role_id
+    RETURNING user_id, username INTO v_user_id, out_username;
     
-    IF username IS NOT NULL THEN
-        username := 'admin'; role := 'Administrator'; status := 'Created'; RETURN NEXT;
+    IF v_user_id IS NOT NULL THEN
+        INSERT INTO ims.user_branches (user_id, branch_id, is_default) VALUES (v_user_id, v_branch_id, true) ON CONFLICT DO NOTHING;
+        INSERT INTO ims.employees (branch_id, user_id, full_name, phone, status) VALUES (v_branch_id, v_user_id, 'System Administrator', '111222333', 'active') ON CONFLICT (user_id) DO NOTHING;
+        out_role := 'Administrator'; out_status := 'Created/Updated'; RETURN NEXT;
     END IF;
     
-    -- Create Store Manager
-    INSERT INTO users (username, password_hash, full_name, email, role_id, is_active)
-    VALUES (
-        'manager',
-        '$2a$10$YourHashedPasswordHere',
-        'Store Manager',
-        'manager@example.com',
-        v_manager_id,
-        true
-    ) ON CONFLICT (username) DO NOTHING
-    RETURNING username INTO username;
+    -- Create Cabdi (Store Manager)
+    INSERT INTO ims.users (role_id, name, full_name, username, password_hash, email, is_active)
+    VALUES (v_manager_id, 'Cabdi', 'Cabdi Maxamed', 'cabdi', v_pwd, 'cabdi@example.com', true)
+    ON CONFLICT (username) DO UPDATE SET password_hash = v_pwd, role_id = EXCLUDED.role_id
+    RETURNING user_id, username INTO v_user_id, out_username;
     
-    IF username IS NOT NULL THEN
-        username := 'manager'; role := 'Store Manager'; status := 'Created'; RETURN NEXT;
+    IF v_user_id IS NOT NULL THEN
+        INSERT INTO ims.user_branches (user_id, branch_id, is_default) VALUES (v_user_id, v_branch_id, true) ON CONFLICT DO NOTHING;
+        INSERT INTO ims.employees (branch_id, user_id, full_name, phone, status) VALUES (v_branch_id, v_user_id, 'Cabdi Maxamed', '222333444', 'active') ON CONFLICT (user_id) DO NOTHING;
+        out_role := 'Store Manager'; out_status := 'Created/Updated'; RETURN NEXT;
     END IF;
     
-    -- Create Sales User
-    INSERT INTO users (username, password_hash, full_name, email, role_id, is_active)
-    VALUES (
-        'sales',
-        '$2a$10$YourHashedPasswordHere',
-        'Sales Associate',
-        'sales@example.com',
-        v_sales_id,
-        true
-    ) ON CONFLICT (username) DO NOTHING
-    RETURNING username INTO username;
+    -- Create Deeqa (Sales)
+    INSERT INTO ims.users (role_id, name, full_name, username, password_hash, email, is_active)
+    VALUES (v_sales_id, 'Deeqa', 'Deeqa Warsame', 'deeqa', v_pwd, 'deeqa@example.com', true)
+    ON CONFLICT (username) DO UPDATE SET password_hash = v_pwd, role_id = EXCLUDED.role_id
+    RETURNING user_id, username INTO v_user_id, out_username;
     
-    IF username IS NOT NULL THEN
-        username := 'sales'; role := 'Sales Associate'; status := 'Created'; RETURN NEXT;
+    IF v_user_id IS NOT NULL THEN
+        INSERT INTO ims.user_branches (user_id, branch_id, is_default) VALUES (v_user_id, v_branch_id, true) ON CONFLICT DO NOTHING;
+        INSERT INTO ims.employees (branch_id, user_id, full_name, phone, status) VALUES (v_branch_id, v_user_id, 'Deeqa Warsame', '333444555', 'active') ON CONFLICT (user_id) DO NOTHING;
+        out_role := 'Sales Associate'; out_status := 'Created/Updated'; RETURN NEXT;
     END IF;
     
-    -- Create Inventory User
-    INSERT INTO users (username, password_hash, full_name, email, role_id, is_active)
-    VALUES (
-        'inventory',
-        '$2a$10$YourHashedPasswordHere',
-        'Inventory Clerk',
-        'inventory@example.com',
-        v_inventory_id,
-        true
-    ) ON CONFLICT (username) DO NOTHING
-    RETURNING username INTO username;
+    -- Create Faarax (Inventory)
+    INSERT INTO ims.users (role_id, name, full_name, username, password_hash, email, is_active)
+    VALUES (v_inventory_id, 'Faarax', 'Faarax Siciid', 'faarax', v_pwd, 'faarax@example.com', true)
+    ON CONFLICT (username) DO UPDATE SET password_hash = v_pwd, role_id = EXCLUDED.role_id
+    RETURNING user_id, username INTO v_user_id, out_username;
     
-    IF username IS NOT NULL THEN
-        username := 'inventory'; role := 'Inventory Clerk'; status := 'Created'; RETURN NEXT;
+    IF v_user_id IS NOT NULL THEN
+        INSERT INTO ims.user_branches (user_id, branch_id, is_default) VALUES (v_user_id, v_branch_id, true) ON CONFLICT DO NOTHING;
+        INSERT INTO ims.employees (branch_id, user_id, full_name, phone, status) VALUES (v_branch_id, v_user_id, 'Faarax Siciid', '444555666', 'active') ON CONFLICT (user_id) DO NOTHING;
+        out_role := 'Inventory Clerk'; out_status := 'Created/Updated'; RETURN NEXT;
+    END IF;
+
+    -- Create Xasan (Accountant)
+    INSERT INTO ims.users (role_id, name, full_name, username, password_hash, email, is_active)
+    VALUES (v_accountant_id, 'Xasan', 'Xasan Jaamac', 'xasan', v_pwd, 'xasan@example.com', true)
+    ON CONFLICT (username) DO UPDATE SET password_hash = v_pwd, role_id = EXCLUDED.role_id
+    RETURNING user_id, username INTO v_user_id, out_username;
+    
+    IF v_user_id IS NOT NULL THEN
+        INSERT INTO ims.user_branches (user_id, branch_id, is_default) VALUES (v_user_id, v_branch_id, true) ON CONFLICT DO NOTHING;
+        INSERT INTO ims.employees (branch_id, user_id, full_name, phone, status) VALUES (v_branch_id, v_user_id, 'Xasan Jaamac', '555666777', 'active') ON CONFLICT (user_id) DO NOTHING;
+        out_role := 'Accountant'; out_status := 'Created/Updated'; RETURN NEXT;
+    END IF;
+
+    -- Create Sahra (HR)
+    INSERT INTO ims.users (role_id, name, full_name, username, password_hash, email, is_active)
+    VALUES (v_hr_id, 'Sahra', 'Sahra Ismaaciil', 'sahra', v_pwd, 'sahra@example.com', true)
+    ON CONFLICT (username) DO UPDATE SET password_hash = v_pwd, role_id = EXCLUDED.role_id
+    RETURNING user_id, username INTO v_user_id, out_username;
+    
+    IF v_user_id IS NOT NULL THEN
+        INSERT INTO ims.user_branches (user_id, branch_id, is_default) VALUES (v_user_id, v_branch_id, true) ON CONFLICT DO NOTHING;
+        INSERT INTO ims.employees (branch_id, user_id, full_name, phone, status) VALUES (v_branch_id, v_user_id, 'Sahra Ismaaciil', '666777888', 'active') ON CONFLICT (user_id) DO NOTHING;
+        out_role := 'HR Manager'; out_status := 'Created/Updated'; RETURN NEXT;
     END IF;
 END;
 $$;
@@ -2534,6 +2661,16 @@ BEGIN
     RAISE NOTICE '========================================';
     RAISE NOTICE 'Starting Permission System Setup...';
     RAISE NOTICE '========================================';
+    
+    -- Ensure at least one company exists
+    IF NOT EXISTS (SELECT 1 FROM ims.company) THEN
+        INSERT INTO ims.company (company_name) VALUES ('My Inventory ERP');
+    END IF;
+
+    -- Ensure at least one branch exists
+    IF NOT EXISTS (SELECT 1 FROM ims.branches) THEN
+        INSERT INTO ims.branches (branch_name, is_active) VALUES ('Main Branch', true);
+    END IF;
 END $$;
 
 -- Generate all permissions
@@ -2551,14 +2688,14 @@ SELECT * FROM ims.sp_permission_summary();
 -- Show role permissions count
 SELECT 'Roles Created with Permissions:' as report;
 SELECT r.role_name, COUNT(rp.perm_id) as permissions_count
-FROM roles r
-LEFT JOIN role_permissions rp ON rp.role_id = r.role_id
+FROM ims.roles r
+LEFT JOIN ims.role_permissions rp ON rp.role_id = r.role_id
 GROUP BY r.role_name
 ORDER BY r.role_name;
 
 -- Create sample users (optional - comment out if not needed)
--- SELECT 'Creating sample users...' as status;
--- SELECT * FROM ims.sp_create_sample_users();
+SELECT 'Creating sample users...' as status;
+SELECT * FROM ims.sp_create_sample_users();
 
 -- Test sidebar menu for admin (will work after users are created)
 DO $$
@@ -2566,7 +2703,7 @@ DECLARE
     v_user_id BIGINT;
     v_menu JSONB;
 BEGIN
-    SELECT user_id INTO v_user_id FROM users WHERE username = 'admin' LIMIT 1;
+    SELECT user_id INTO v_user_id FROM ims.users WHERE username = 'admin' LIMIT 1;
     IF v_user_id IS NOT NULL THEN
         v_menu := ims.fn_get_user_menu(v_user_id);
         RAISE NOTICE 'Admin Menu Structure: %', v_menu;

@@ -6,9 +6,25 @@ import { productsService } from './products.service';
 import { categorySchema, productSchema } from './products.schemas';
 import { AuthRequest } from '../../middlewares/requireAuth';
 
+const normalizeProductBody = (body: any) => ({
+  name: body?.name,
+  sku: body?.sku,
+  categoryId: body?.categoryId ?? body?.category_id ?? null,
+  price: body?.price,
+  cost: body?.cost,
+  stock: body?.stock,
+  openingBalance: body?.openingBalance ?? body?.opening_balance ?? body?.stock ?? 0,
+  status: body?.status,
+  reorderLevel: body?.reorderLevel ?? body?.reorder_level ?? 0,
+  isActive: body?.isActive ?? body?.is_active,
+  description: body?.description,
+});
+
 export const listProducts = asyncHandler(async (req: AuthRequest, res: Response) => {
   const search = (req.query.search as string) || undefined;
-  const products = await productsService.listProducts(search);
+  const categoryIdRaw = (req.query.categoryId as string) ?? (req.query.category_id as string);
+  const categoryId = categoryIdRaw ? Number(categoryIdRaw) : undefined;
+  const products = await productsService.listProducts(search, Number.isFinite(categoryId as number) ? categoryId : undefined);
   return ApiResponse.success(res, { products });
 });
 
@@ -22,14 +38,14 @@ export const getProduct = asyncHandler(async (req: AuthRequest, res: Response) =
 });
 
 export const createProduct = asyncHandler(async (req: AuthRequest, res: Response) => {
-  const input = productSchema.parse(req.body);
+  const input = productSchema.parse(normalizeProductBody(req.body));
   const product = await productsService.createProduct(input);
   return ApiResponse.created(res, { product }, 'Product created');
 });
 
 export const updateProduct = asyncHandler(async (req: AuthRequest, res: Response) => {
   const id = Number(req.params.id);
-  const input = productSchema.parse(req.body);
+  const input = productSchema.parse(normalizeProductBody(req.body));
   const product = await productsService.updateProduct(id, input);
   if (!product) {
     throw ApiError.notFound('Product not found');

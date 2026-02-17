@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
 import { Filter, Plus, RefreshCw } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
@@ -17,7 +17,7 @@ const inputClass =
   'h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
 const labelClass = 'mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400';
 
-const StockAdjustmentsPage = () => {
+const StockAdjustmentsPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const { showToast } = useToast();
   const [rows, setRows] = useState<StockAdjustmentRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -134,10 +134,6 @@ const StockAdjustmentsPage = () => {
     setMastersLoading(false);
   };
 
-  useEffect(() => {
-    loadMasters();
-  }, []);
-
   const loadAdjustments = async () => {
     setLoading(true);
     const res = await inventoryService.listAdjustments({
@@ -203,30 +199,65 @@ const StockAdjustmentsPage = () => {
 
   return (
     <div>
-      <PageHeader
-        title="Stock Adjustments"
-        description="Create manual item adjustments and review adjustment history."
-        actions={
-          <div className="flex items-center gap-2">
-            <button
-              onClick={loadAdjustments}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              disabled={loading}
-            >
-              <RefreshCw className="h-4 w-4" />
-              Display
-            </button>
-            <button
-              onClick={() => setIsModalOpen(true)}
-              className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-white"
-              disabled={mastersLoading}
-            >
-              <Plus className="h-4 w-4" />
-              New Adjustment
-            </button>
-          </div>
-        }
-      />
+      {!embedded && (
+        <PageHeader
+          title="Stock Adjustments"
+          description="Create manual item adjustments and review adjustment history."
+          actions={
+            <div className="flex items-center gap-2">
+              <button
+                onClick={async () => {
+                  await loadMasters();
+                  await loadAdjustments();
+                }}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                disabled={loading}
+              >
+                <RefreshCw className="h-4 w-4" />
+                Display
+              </button>
+              <button
+                onClick={async () => {
+                  await loadMasters();
+                  setIsModalOpen(true);
+                }}
+                className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-white"
+                disabled={mastersLoading}
+              >
+                <Plus className="h-4 w-4" />
+                New Adjustment
+              </button>
+            </div>
+          }
+        />
+      )}
+
+      {embedded && (
+        <div className="mb-4 flex items-center justify-end gap-2">
+          <button
+            onClick={async () => {
+              await loadMasters();
+              await loadAdjustments();
+            }}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            disabled={loading}
+          >
+            <RefreshCw className="h-4 w-4" />
+            Display
+          </button>
+          <button
+            onClick={async () => {
+              await loadMasters();
+              setIsModalOpen(true);
+            }}
+            className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-white"
+            disabled={mastersLoading}
+          >
+            <Plus className="h-4 w-4" />
+            New Adjustment
+          </button>
+        </div>
+      )}
 
       <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">

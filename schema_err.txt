@@ -1,0 +1,349 @@
+time="2026-02-17T19:26:10+03:00" level=warning msg="C:\\Users\\Hp\\Desktop\\ims\\Erp-Inventory\\docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion"
+psql:/app/sql/Full_complete_scheme.sql:18: NOTICE:  schema "ims" already exists, skipping
+CREATE SCHEMA
+SET
+DO
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:104: NOTICE:  relation "company" already exists, skipping
+psql:/app/sql/Full_complete_scheme.sql:112: NOTICE:  relation "roles" already exists, skipping
+CREATE TABLE
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:123: NOTICE:  relation "permissions" already exists, skipping
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:137: NOTICE:  relation "branches" already exists, skipping
+psql:/app/sql/Full_complete_scheme.sql:149: NOTICE:  relation "users" already exists, skipping
+CREATE TABLE
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:157: NOTICE:  relation "user_branches" already exists, skipping
+psql:/app/sql/Full_complete_scheme.sql:164: NOTICE:  relation "role_permissions" already exists, skipping
+CREATE TABLE
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:171: NOTICE:  relation "user_permissions" already exists, skipping
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:180: NOTICE:  relation "user_permission_overrides" already exists, skipping
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:194: NOTICE:  relation "audit_logs" already exists, skipping
+psql:/app/sql/Full_complete_scheme.sql:202: NOTICE:  relation "categories" already exists, skipping
+CREATE TABLE
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:212: NOTICE:  relation "units" already exists, skipping
+psql:/app/sql/Full_complete_scheme.sql:223: NOTICE:  relation "taxes" already exists, skipping
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:235: NOTICE:  relation "suppliers" already exists, skipping
+CREATE TABLE
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:252: NOTICE:  relation "customers" already exists, skipping
+CREATE INDEX
+psql:/app/sql/Full_complete_scheme.sql:256: NOTICE:  relation "idx_customers_external_per_branch" already exists, skipping
+COMMENT
+COMMENT
+psql:/app/sql/Full_complete_scheme.sql:269: NOTICE:  relation "accounts" already exists, skipping
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:289: NOTICE:  relation "items" already exists, skipping
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:300: NOTICE:  relation "item_suppliers" already exists, skipping
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:310: NOTICE:  relation "warehouses" already exists, skipping
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:325: NOTICE:  relation "stores" already exists, skipping
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:327: NOTICE:  relation "idx_stores_branch" already exists, skipping
+CREATE INDEX
+COMMENT
+psql:/app/sql/Full_complete_scheme.sql:331: ERROR:  constraint "fk_items_store" for relation "items" already exists
+CREATE INDEX
+psql:/app/sql/Full_complete_scheme.sql:332: NOTICE:  relation "idx_items_store" already exists, skipping
+psql:/app/sql/Full_complete_scheme.sql:340: NOTICE:  relation "warehouse_stock" already exists, skipping
+psql:/app/sql/Full_complete_scheme.sql:356: NOTICE:  relation "inventory_movements" already exists, skipping
+CREATE TABLE
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:373: NOTICE:  relation "sales" already exists, skipping
+psql:/app/sql/Full_complete_scheme.sql:383: NOTICE:  relation "sale_items" already exists, skipping
+CREATE TABLE
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:395: NOTICE:  relation "sale_payments" already exists, skipping
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:410: NOTICE:  relation "purchases" already exists, skipping
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:422: NOTICE:  relation "purchase_items" already exists, skipping
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:434: NOTICE:  relation "supplier_payments" already exists, skipping
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:449: NOTICE:  relation "customer_ledger" already exists, skipping
+psql:/app/sql/Full_complete_scheme.sql:464: NOTICE:  relation "supplier_ledger" already exists, skipping
+psql:/app/sql/Full_complete_scheme.sql:478: NOTICE:  relation "account_transactions" already exists, skipping
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:492: NOTICE:  relation "account_transfers" already exists, skipping
+CREATE TABLE
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:501: NOTICE:  relation "expense_types" already exists, skipping
+psql:/app/sql/Full_complete_scheme.sql:511: NOTICE:  relation "expenses" already exists, skipping
+CREATE TABLE
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:523: NOTICE:  relation "expense_payments" already exists, skipping
+psql:/app/sql/Full_complete_scheme.sql:537: NOTICE:  relation "sales_returns" already exists, skipping
+CREATE TABLE
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:547: NOTICE:  relation "sales_return_items" already exists, skipping
+psql:/app/sql/Full_complete_scheme.sql:560: NOTICE:  relation "purchase_returns" already exists, skipping
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:570: NOTICE:  relation "purchase_return_items" already exists, skipping
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:582: NOTICE:  relation "transfers" already exists, skipping
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:590: NOTICE:  relation "transfer_items" already exists, skipping
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:603: NOTICE:  relation "warehouse_transfers" already exists, skipping
+psql:/app/sql/Full_complete_scheme.sql:612: NOTICE:  relation "warehouse_transfer_items" already exists, skipping
+CREATE TABLE
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:625: NOTICE:  relation "employees" already exists, skipping
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:634: NOTICE:  relation "salary_types" already exists, skipping
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:646: NOTICE:  relation "employee_salary" already exists, skipping
+CREATE TABLE
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:661: NOTICE:  relation "payroll_runs" already exists, skipping
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:674: NOTICE:  relation "payroll_lines" already exists, skipping
+psql:/app/sql/Full_complete_scheme.sql:688: NOTICE:  relation "employee_payments" already exists, skipping
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:698: NOTICE:  relation "employee_loans" already exists, skipping
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:710: NOTICE:  relation "loan_payments" already exists, skipping
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:722: NOTICE:  relation "shifts" already exists, skipping
+CREATE TABLE
+psql:/app/sql/Full_complete_scheme.sql:740: NOTICE:  relation "notifications" already exists, skipping
+CREATE TABLE
+CREATE INDEX
+psql:/app/sql/Full_complete_scheme.sql:742: NOTICE:  relation "idx_notifications_user" already exists, skipping
+psql:/app/sql/Full_complete_scheme.sql:743: NOTICE:  relation "idx_notifications_created_at" already exists, skipping
+CREATE INDEX
+psql:/app/sql/Full_complete_scheme.sql:745: NOTICE:  relation "idx_notifications_unread" already exists, skipping
+CREATE INDEX
+psql:/app/sql/Full_complete_scheme.sql:750: NOTICE:  relation "idx_user_branches_user" already exists, skipping
+CREATE INDEX
+psql:/app/sql/Full_complete_scheme.sql:751: NOTICE:  relation "idx_items_branch" already exists, skipping
+CREATE INDEX
+CREATE INDEX
+psql:/app/sql/Full_complete_scheme.sql:752: NOTICE:  relation "idx_wh_stock_item" already exists, skipping
+psql:/app/sql/Full_complete_scheme.sql:753: NOTICE:  relation "idx_sales_branch_date" already exists, skipping
+CREATE INDEX
+psql:/app/sql/Full_complete_scheme.sql:754: NOTICE:  relation "idx_purchases_branch_date" already exists, skipping
+CREATE INDEX
+psql:/app/sql/Full_complete_scheme.sql:755: NOTICE:  relation "idx_acctxn_branch_date" already exists, skipping
+CREATE INDEX
+psql:/app/sql/Full_complete_scheme.sql:756: NOTICE:  relation "idx_audit_logs_created_at" already exists, skipping
+CREATE INDEX
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+psql:/app/sql/Full_complete_scheme.sql:877: ERROR:  syntax error at or near "BEGIN"
+LINE 15:   BEGIN
+           ^
+psql:/app/sql/Full_complete_scheme.sql:885: ERROR:  syntax error at or near "$$;
+$f$, tname, fq);
+
+EXECUTE format($f$
+  CREATE OR REPLACE FUNCTION ims.sp_%I_get(p_where JSONB)
+  RETURNS JSONB LANGUAGE plpgsql AS $$"
+LINE 1: END $$;
+            ^
+psql:/app/sql/Full_complete_scheme.sql:893: ERROR:  syntax error at or near "$$;
+$f$, tname, fq);
+
+EXECUTE format($f$
+  CREATE OR REPLACE FUNCTION ims.sp_%I_list(p_limit INT DEFAULT 200, p_offset INT DEFAULT 0)
+  RETURNS SETOF JSONB LANGUAGE plpgsql AS $$"
+LINE 1: END $$;
+            ^
+psql:/app/sql/Full_complete_scheme.sql:901: ERROR:  syntax error at or near "$$;
+$f$, tname, fq);
+
+EXECUTE format($f$
+  CREATE OR REPLACE FUNCTION ims.sp_%I_del(p_where JSONB)
+  RETURNS VOID LANGUAGE plpgsql AS $$"
+LINE 1: END $$;
+            ^
+psql:/app/sql/Full_complete_scheme.sql:906: ERROR:  syntax error at or near "$$;
+$f$, tname, fq);
+
+END LOOP;
+END $$"
+LINE 1: END $$;
+            ^
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+psql:/app/sql/Full_complete_scheme.sql:1200: ERROR:  input parameters after one with a default value must also have defaults
+psql:/app/sql/Full_complete_scheme.sql:1314: ERROR:  input parameters after one with a default value must also have defaults
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+COMMENT
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+psql:/app/sql/Full_complete_scheme.sql:2658: NOTICE:  ========================================
+psql:/app/sql/Full_complete_scheme.sql:2658: NOTICE:  Starting Permission System Setup...
+psql:/app/sql/Full_complete_scheme.sql:2658: NOTICE:  ========================================
+            status             
+-------------------------------
+ Generating all permissions...
+(1 row)
+
+psql:/app/sql/Full_complete_scheme.sql:2658: ERROR:  column "email" of relation "company" does not exist
+LINE 1: INSERT INTO ims.company (company_name, email) VALUES ('My In...
+                                               ^
+QUERY:  INSERT INTO ims.company (company_name, email) VALUES ('My Inventory ERP', 'info@example.com')
+CONTEXT:  PL/pgSQL function inline_code_block line 9 at SQL statement
+      module_name      | permission_count 
+-----------------------+------------------
+ Finance               |               43
+ Human Resources       |               33
+ Inventory             |               37
+ Other                 |               75
+ Purchases             |               30
+ Returns Management    |                3
+ Sales & POS           |               42
+ System Administration |               40
+ Transfers             |               13
+(9 rows)
+
+          status           
+---------------------------
+ Creating default roles...
+(1 row)
+
+    role_name     | permissions_assigned 
+------------------+----------------------
+ Administrator    |                  316
+ Store Manager    |                  129
+ Sales Associate  |                   25
+ Inventory Clerk  |                   58
+ Purchasing Agent |                   32
+ Accountant       |                   51
+ HR Manager       |                   44
+ Viewer           |                   57
+(8 rows)
+
+            report             
+-------------------------------
+ Permission Summary by Module:
+(1 row)
+
+        module         | total_permissions | view_permissions | create_permissions | update_permissions | delete_permissions | export_permissions | special_permissions 
+-----------------------+-------------------+------------------+--------------------+--------------------+--------------------+--------------------+---------------------
+ Finance               |                43 |                8 |                  7 |                  7 |                  7 |                  7 |                   7
+ Human Resources       |                33 |                5 |                  5 |                  5 |                  5 |                  5 |                   8
+ Inventory             |                37 |                6 |                  6 |                  6 |                  6 |                  6 |                   7
+ Other                 |                75 |               15 |                 15 |                 15 |                 15 |                 15 |                   0
+ Purchases             |                30 |                5 |                  5 |                  5 |                  5 |                  5 |                   5
+ Returns Management    |                 3 |                0 |                  0 |                  0 |                  0 |                  0 |                   3
+ Sales & POS           |                42 |                7 |                  7 |                  7 |                  7 |                  7 |                   7
+ System Administration |                40 |                8 |                  6 |                  6 |                  6 |                  6 |                   8
+ Transfers             |                13 |                2 |                  2 |                  2 |                  2 |                  2 |                   3
+(9 rows)
+
+             report              
+---------------------------------
+ Roles Created with Permissions:
+(1 row)
+
+    role_name     | permissions_count 
+------------------+-------------------
+ Accountant       |                51
+ Administrator    |               316
+ HR Manager       |                44
+ Inventory Clerk  |                58
+ Purchasing Agent |                32
+ Sales Associate  |                25
+ Store Manager    |               129
+ Viewer           |                57
+(8 rows)
+
+          status          
+--------------------------
+ Creating sample users...
+(1 row)
+
+ username | role | status 
+----------+------+--------
+(0 rows)
+
+psql:/app/sql/Full_complete_scheme.sql:2682: NOTICE:  No active branch found during sample data creation
+DO
+                  status                  
+------------------------------------------
+ ========================================
+(1 row)
+
+              status               
+-----------------------------------
+ PERMISSION SYSTEM SETUP COMPLETE!
+(1 row)
+
+                  status                  
+------------------------------------------
+ ========================================
+(1 row)
+
+      info       
+-----------------
+ Usage Examples:
+(1 row)
+
+                                     example                                     
+---------------------------------------------------------------------------------
+ 1. Check if user has permission: SELECT ims.fn_has_permission(1, 'sales.view');
+(1 row)
+
+                      example                      
+---------------------------------------------------
+ 2. Get user menu: SELECT ims.fn_get_user_menu(1);
+(1 row)
+
+                                example                                 
+------------------------------------------------------------------------
+ 3. Get user permissions: SELECT * FROM ims.fn_get_user_permissions(1);
+(1 row)
+
+                                 example                                  
+--------------------------------------------------------------------------
+ 4. Get role permissions: SELECT * FROM ims.sp_role_permissions('SALES');
+(1 row)
+
+                  status                  
+------------------------------------------
+ ========================================
+(1 row)
+

@@ -2,7 +2,6 @@ import { queryMany, queryOne } from '../../db/query';
 import { withTransaction } from '../../db/withTx';
 import { ApiError } from '../../utils/ApiError';
 import { BranchScope } from '../../utils/branchScope';
-import { syncLowStockNotifications } from '../../utils/stockAlerts';
 import { PoolClient } from 'pg';
 
 type AuthContext = { userId?: number | null } | undefined;
@@ -14,12 +13,11 @@ const ensureItemBranchWarehouse = async (
   whId?: number | null
 ) => {
   const product = await client.query(
-    `SELECT product_id
-       FROM ims.products
-      WHERE product_id = $1
+    `SELECT item_id
+       FROM ims.items
+      WHERE item_id = $1
         AND branch_id = $2
-        AND is_active = TRUE
-        AND (is_deleted IS NULL OR is_deleted = FALSE)`,
+        AND is_active = TRUE`,
     [productId, branchId]
   );
   if (!product.rows[0]) {
@@ -30,8 +28,7 @@ const ensureItemBranchWarehouse = async (
     `SELECT branch_id
        FROM ims.branches
       WHERE branch_id = $1
-        AND is_active = TRUE
-        AND (is_deleted IS NULL OR is_deleted = FALSE)`,
+        AND is_active = TRUE`,
     [branchId]
   );
   if (!branch.rows[0]) {
@@ -44,8 +41,7 @@ const ensureItemBranchWarehouse = async (
          FROM ims.warehouses
         WHERE wh_id = $1
           AND branch_id = $2
-          AND is_active = TRUE
-          AND (is_deleted IS NULL OR is_deleted = FALSE)`,
+          AND is_active = TRUE`,
       [whId, branchId]
     );
     if (!warehouse.rows[0]) {
@@ -71,6 +67,7 @@ const hasAdjustmentTrigger = async (client: PoolClient): Promise<boolean> => {
 };
 
 let cachedInventoryMovementSoftDelete: boolean | null = null;
+let cachedStockAdjustmentTables: boolean | null = null;
 
 const hasInventoryMovementSoftDelete = async (): Promise<boolean> => {
   if (cachedInventoryMovementSoftDelete !== null) {
@@ -91,6 +88,23 @@ const hasInventoryMovementSoftDelete = async (): Promise<boolean> => {
   return cachedInventoryMovementSoftDelete;
 };
 
+const hasStockAdjustmentTables = async (): Promise<boolean> => {
+  if (cachedStockAdjustmentTables !== null) return cachedStockAdjustmentTables;
+  const result = await queryOne<{ has_tables: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'ims'
+          AND table_name = 'stock_adjustments'
+     ) AND EXISTS (
+       SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'ims'
+          AND table_name = 'stock_adjustment_items'
+     ) AS has_tables`
+  );
+  cachedStockAdjustmentTables = Boolean(result?.has_tables);
+  return cachedStockAdjustmentTables;
+};
+
 const createAdjustmentEntry = async (
   client: PoolClient,
   payload: {
@@ -109,6 +123,64 @@ const createAdjustmentEntry = async (
   }
 
   await ensureItemBranchWarehouse(client, payload.productId, payload.branchId, payload.whId);
+
+  if (!(await hasStockAdjustmentTables())) {
+    const qtyIn = payload.qty > 0 ? payload.qty : 0;
+    const qtyOut = payload.qty < 0 ? Math.abs(payload.qty) : 0;
+    const movement = await client.query<{
+      move_id: number;
+      branch_id: number;
+      wh_id: number | null;
+      move_date: string;
+      note: string | null;
+    }>(
+      `INSERT INTO ims.inventory_movements
+         (branch_id, wh_id, item_id, move_type, ref_table, ref_id, qty_in, qty_out, unit_cost, note)
+       VALUES ($1, $2, $3, 'adjustment', 'inventory_adjustments', $8, $4, $5, $6, NULLIF($7, ''))
+       RETURNING move_id, branch_id, wh_id, move_date, note`,
+      [
+        payload.branchId,
+        payload.whId ?? null,
+        payload.productId,
+        qtyIn,
+        qtyOut,
+        payload.unitCost ?? 0,
+        payload.note || payload.reason || '',
+        payload.userId ?? null,
+      ]
+    );
+
+    if (payload.whId) {
+      if (payload.qty > 0) {
+        await client.query(`SELECT ims.fn_stock_add($1, $2, $3, $4)`, [
+          payload.branchId,
+          payload.whId,
+          payload.productId,
+          payload.qty,
+        ]);
+      } else {
+        await client.query(`SELECT ims.fn_stock_sub($1, $2, $3, $4)`, [
+          payload.branchId,
+          payload.whId,
+          payload.productId,
+          Math.abs(payload.qty),
+        ]);
+      }
+    }
+
+    return {
+      adj_id: movement.rows[0].move_id,
+      branch_id: movement.rows[0].branch_id,
+      wh_id: movement.rows[0].wh_id,
+      user_id: payload.userId ?? null,
+      reason: payload.reason,
+      note: movement.rows[0].note,
+      adj_date: movement.rows[0].move_date,
+      item_id: payload.productId,
+      qty_delta: payload.qty,
+      unit_cost: payload.unitCost ?? 0,
+    };
+  }
 
   const adjustment = await client.query<{
     adj_id: number;
@@ -158,12 +230,6 @@ const createAdjustmentEntry = async (
     );
   }
 
-  await syncLowStockNotifications(client, {
-    branchId: payload.branchId,
-    productIds: [payload.productId],
-    actorUserId: payload.userId ?? null,
-  });
-
   return {
     ...adjustment.rows[0],
     item_id: payload.productId,
@@ -176,88 +242,53 @@ export const inventoryService = {
   async listPurchasedItems(filters: any) {
     const { branchId, branchIds, search } = filters;
     const params: any[] = [];
-    const where: string[] = [
-      '(p.is_deleted IS NULL OR p.is_deleted = FALSE)',
-      'p.is_active = TRUE',
-    ];
+    const where: string[] = ['i.is_active = TRUE'];
 
     if (branchId) {
       params.push(branchId);
-      where.push(`p.branch_id = $${params.length}`);
+      where.push(`i.branch_id = $${params.length}`);
     } else if (Array.isArray(branchIds) && branchIds.length) {
       params.push(branchIds);
-      where.push(`p.branch_id = ANY($${params.length})`);
+      where.push(`i.branch_id = ANY($${params.length})`);
     }
 
     if (search) {
       params.push(`%${search}%`);
-      where.push(`p.name ILIKE $${params.length}`);
+      where.push(`i.name ILIKE $${params.length}`);
     }
 
     return queryMany(
       `WITH purchase_cost AS (
          SELECT
-           pi.product_id,
-           MAX(pu.purchase_date) AS last_purchase_date,
-           (ARRAY_AGG(COALESCE(NULLIF(pi.unit_cost, 0), 0) ORDER BY pu.purchase_date DESC, pi.purchase_item_id DESC))[1] AS latest_cost,
-           (SUM(CASE WHEN pi.quantity > 0 THEN pi.quantity * COALESCE(pi.unit_cost, 0) ELSE 0 END)
-             / NULLIF(SUM(CASE WHEN pi.quantity > 0 THEN pi.quantity ELSE 0 END), 0)) AS weighted_cost,
-           (ARRAY_AGG(
-              COALESCE(
-                NULLIF(pi.sale_price, 0),
-                NULLIF(p.sell_price, 0),
-                NULLIF(p.price, 0),
-                NULLIF(pi.unit_cost, 0),
-                COALESCE(p.cost_price, p.cost, 0)
-              )
-              ORDER BY pu.purchase_date DESC, pi.purchase_item_id DESC
-            ))[1] AS latest_sale_price
+          pi.item_id,
+          MAX(pu.purchase_date) AS last_purchase_date,
+          (ARRAY_AGG(COALESCE(NULLIF(pi.unit_cost, 0), 0) ORDER BY pu.purchase_date DESC, pi.purchase_item_id DESC))[1] AS latest_cost
          FROM ims.purchase_items pi
          JOIN ims.purchases pu ON pu.purchase_id = pi.purchase_id
-         JOIN ims.products p ON p.product_id = pi.product_id
-         WHERE pi.product_id IS NOT NULL
+         WHERE pi.item_id IS NOT NULL
            AND COALESCE(pu.status::text, 'received') <> 'void'
            AND COALESCE(pi.quantity, 0) > 0
-         GROUP BY pi.product_id
+         GROUP BY pi.item_id
        )
        SELECT
-          p.product_id AS item_id,
-          p.product_id,
-          p.branch_id,
-          p.name AS item_name,
-          COALESCE(
-            pc.weighted_cost,
-            pc.latest_cost,
-            NULLIF(p.cost_price, 0),
-            NULLIF(p.cost, 0),
-            0
-          )::numeric(14,2) AS cost_price,
-          COALESCE(
-            pc.latest_sale_price,
-            NULLIF(p.sell_price, 0),
-            NULLIF(p.price, 0),
-            COALESCE(pc.weighted_cost, pc.latest_cost, NULLIF(p.cost_price, 0), NULLIF(p.cost, 0), 0)
-          )::numeric(14,2) AS sale_price,
+          i.item_id,
+          i.item_id AS product_id,
+          i.branch_id,
+          i.name AS item_name,
+          COALESCE(pc.latest_cost, i.cost_price, 0)::numeric(14,2) AS cost_price,
+          COALESCE(i.sell_price, i.cost_price, 0)::numeric(14,2) AS sale_price,
+          COALESCE(pc.latest_cost, i.cost_price, 0)::numeric(14,2) AS last_unit_cost,
           COALESCE(
             pc.latest_cost,
-            pc.weighted_cost,
-            NULLIF(p.cost_price, 0),
-            NULLIF(p.cost, 0),
-            0
-          )::numeric(14,2) AS last_unit_cost,
-          COALESCE(
-            pc.weighted_cost,
-            pc.latest_cost,
-            NULLIF(p.cost_price, 0),
-            NULLIF(p.cost, 0),
+            i.cost_price,
             0
           )::numeric(14,2) AS weighted_unit_cost,
-          COALESCE(p.reorder_level, 0)::numeric(14,3) AS min_stock_threshold,
+          COALESCE(i.reorder_level, 0)::numeric(14,3) AS min_stock_threshold,
           pc.last_purchase_date
-       FROM ims.products p
-       JOIN purchase_cost pc ON pc.product_id = p.product_id
+       FROM ims.items i
+       LEFT JOIN purchase_cost pc ON pc.item_id = i.item_id
       WHERE ${where.join(' AND ')}
-      ORDER BY p.name`,
+      ORDER BY i.name`,
       params
     );
   },
@@ -265,17 +296,12 @@ export const inventoryService = {
   async listStock(filters: any) {
     const { branchId, branchIds, whId, productId, search, page, limit } = filters;
     const params: any[] = [];
-    const where: string[] = [
-      '(bs.is_deleted IS NULL OR bs.is_deleted = FALSE)',
-      '(p.is_deleted IS NULL OR p.is_deleted = FALSE)',
-      '(b.is_deleted IS NULL OR b.is_deleted = FALSE)',
-      'p.is_active = TRUE',
-    ];
+    const where: string[] = ['i.is_active = TRUE'];
 
-    if (branchId) { params.push(branchId); where.push(`bs.branch_id = $${params.length}`); }
+    if (branchId) { params.push(branchId); where.push(`i.branch_id = $${params.length}`); }
     else if (Array.isArray(branchIds) && branchIds.length) {
       params.push(branchIds);
-      where.push(`bs.branch_id = ANY($${params.length})`);
+      where.push(`i.branch_id = ANY($${params.length})`);
     }
     if (whId) {
       params.push(whId);
@@ -283,50 +309,22 @@ export const inventoryService = {
         `EXISTS (
            SELECT 1
              FROM ims.warehouse_stock wsf
-             JOIN ims.warehouses wf ON wf.wh_id = wsf.wh_id
-            WHERE wsf.product_id = p.product_id
-              AND wf.branch_id = bs.branch_id
+            WHERE wsf.item_id = i.item_id
               AND wsf.wh_id = $${params.length}
-              AND COALESCE(wsf.is_deleted, FALSE) = FALSE
-              AND COALESCE(wf.is_deleted, FALSE) = FALSE
          )`
       );
     }
-    if (productId) { params.push(productId); where.push(`p.product_id = $${params.length}`); }
-    if (search) { params.push(`%${search}%`); where.push(`p.name ILIKE $${params.length}`); }
+    if (productId) { params.push(productId); where.push(`i.item_id = $${params.length}`); }
+    if (search) { params.push(`%${search}%`); where.push(`i.name ILIKE $${params.length}`); }
 
     const offset = (page - 1) * limit;
     params.push(limit, offset);
 
     return queryMany(
-      `WITH purchase_cost AS (
-         SELECT
-           pi.product_id,
-           (ARRAY_AGG(COALESCE(NULLIF(pi.unit_cost, 0), 0) ORDER BY pu.purchase_date DESC, pi.purchase_item_id DESC))[1] AS latest_cost,
-           (SUM(CASE WHEN pi.quantity > 0 THEN pi.quantity * COALESCE(pi.unit_cost, 0) ELSE 0 END)
-            / NULLIF(SUM(CASE WHEN pi.quantity > 0 THEN pi.quantity ELSE 0 END), 0)) AS weighted_cost,
-           (ARRAY_AGG(
-              COALESCE(
-                NULLIF(pi.sale_price, 0),
-                NULLIF(p.sell_price, 0),
-                NULLIF(p.price, 0),
-                NULLIF(pi.unit_cost, 0),
-                COALESCE(p.cost_price, p.cost, 0)
-              )
-              ORDER BY pu.purchase_date DESC, pi.purchase_item_id DESC
-            ))[1] AS latest_sale_price
-         FROM ims.purchase_items pi
-         JOIN ims.purchases pu ON pu.purchase_id = pi.purchase_id
-         JOIN ims.products p ON p.product_id = pi.product_id
-         WHERE pi.product_id IS NOT NULL
-           AND COALESCE(pu.status::text, 'received') <> 'void'
-           AND COALESCE(pi.quantity, 0) > 0
-         GROUP BY pi.product_id
-       ),
-       warehouse_totals AS (
+      `WITH warehouse_totals AS (
          SELECT
            w.branch_id,
-           ws.product_id,
+           ws.item_id,
            COALESCE(SUM(ws.quantity), 0)::numeric(14,3) AS warehouse_qty,
            json_agg(
              json_build_object(
@@ -338,66 +336,34 @@ export const inventoryService = {
            ) AS warehouse_breakdown
          FROM ims.warehouse_stock ws
          JOIN ims.warehouses w ON w.wh_id = ws.wh_id
-         WHERE COALESCE(ws.is_deleted, FALSE) = FALSE
-           AND COALESCE(w.is_deleted, FALSE) = FALSE
-         GROUP BY w.branch_id, ws.product_id
+         GROUP BY w.branch_id, ws.item_id
        )
        SELECT
-              p.product_id,
-              p.product_id AS item_id,
-              p.name,
-              p.name AS item_name,
-              p.barcode,
-              b.branch_id,
-              b.branch_name,
-              COALESCE(wt.warehouse_qty, 0)::numeric(14,3) AS warehouse_qty,
-              GREATEST(COALESCE(bs.quantity, 0) - COALESCE(wt.warehouse_qty, 0), 0)::numeric(14,3) AS branch_qty,
-              (
-                COALESCE(wt.warehouse_qty, 0)
-                + GREATEST(COALESCE(bs.quantity, 0) - COALESCE(wt.warehouse_qty, 0), 0)
-              )::numeric(14,3) AS total_qty,
-              COALESCE(
-                pc.weighted_cost,
-                pc.latest_cost,
-                NULLIF(p.cost_price, 0),
-                NULLIF(p.cost, 0),
-                0
-              )::numeric(14,2) AS cost_price,
-              COALESCE(
-                pc.latest_sale_price,
-                NULLIF(p.sell_price, 0),
-                NULLIF(p.price, 0),
-                COALESCE(pc.weighted_cost, pc.latest_cost, NULLIF(p.cost_price, 0), NULLIF(p.cost, 0), 0)
-              )::numeric(14,2) AS sale_price,
-              (
-                (
-                  COALESCE(wt.warehouse_qty, 0)
-                  + GREATEST(COALESCE(bs.quantity, 0) - COALESCE(wt.warehouse_qty, 0), 0)
-                )
-                * COALESCE(pc.weighted_cost, pc.latest_cost, NULLIF(p.cost_price, 0), NULLIF(p.cost, 0), 0)
-              )::numeric(14,2) AS stock_value,
-              GREATEST(COALESCE(NULLIF(p.reorder_level, 0), 5), 1)::numeric(14,3) AS min_stock_threshold,
-              (
-                (
-                  COALESCE(wt.warehouse_qty, 0)
-                  + GREATEST(COALESCE(bs.quantity, 0) - COALESCE(wt.warehouse_qty, 0), 0)
-                )
-                <= GREATEST(COALESCE(NULLIF(p.reorder_level, 0), 5), 1)
-              ) AS low_stock,
-              (
-                COALESCE(bs.quantity, 0) + 0.0001 < COALESCE(wt.warehouse_qty, 0)
-              ) AS qty_mismatch,
-              COALESCE(wt.warehouse_breakdown, '[]'::json) AS warehouse_breakdown
-         FROM ims.products p
-         JOIN ims.branch_stock bs ON bs.product_id = p.product_id
-         JOIN ims.branches b ON b.branch_id = bs.branch_id
+             i.item_id AS product_id,
+             i.item_id AS item_id,
+             i.name,
+             i.name AS item_name,
+             i.barcode,
+             b.branch_id,
+             b.branch_name,
+             COALESCE(wt.warehouse_qty, 0)::numeric(14,3) AS warehouse_qty,
+             0::numeric(14,3) AS branch_qty,
+             COALESCE(wt.warehouse_qty, 0)::numeric(14,3) AS total_qty,
+             COALESCE(i.cost_price, 0)::numeric(14,2) AS cost_price,
+             COALESCE(i.sell_price, i.cost_price, 0)::numeric(14,2) AS sale_price,
+             (COALESCE(wt.warehouse_qty, 0) * COALESCE(i.cost_price, 0))::numeric(14,2) AS stock_value,
+             GREATEST(COALESCE(NULLIF(i.reorder_level, 0), 5), 1)::numeric(14,3) AS min_stock_threshold,
+             (COALESCE(wt.warehouse_qty, 0) <= GREATEST(COALESCE(NULLIF(i.reorder_level, 0), 5), 1)) AS low_stock,
+             FALSE AS qty_mismatch,
+             COALESCE(wt.warehouse_breakdown, '[]'::json) AS warehouse_breakdown
+        FROM ims.items i
+        JOIN ims.branches b ON b.branch_id = i.branch_id
          LEFT JOIN warehouse_totals wt
-           ON wt.product_id = p.product_id
-          AND wt.branch_id = bs.branch_id
-         LEFT JOIN purchase_cost pc ON pc.product_id = p.product_id
-        WHERE ${where.join(' AND ')}
-        ORDER BY p.name, b.branch_name
-        LIMIT $${params.length-1} OFFSET $${params.length}`,
+          ON wt.item_id = i.item_id
+         AND wt.branch_id = i.branch_id
+       WHERE ${where.join(' AND ')}
+       ORDER BY i.name, b.branch_name
+       LIMIT $${params.length-1} OFFSET $${params.length}`,
       params
     );
   },
@@ -406,11 +372,7 @@ export const inventoryService = {
     const { branchId, branchIds, whId, productId, search, page, limit } = filters;
     const movementHasSoftDelete = await hasInventoryMovementSoftDelete();
     const params: any[] = [];
-    const where: string[] = [
-      '(p.is_deleted IS NULL OR p.is_deleted = FALSE)',
-      '(b.is_deleted IS NULL OR b.is_deleted = FALSE)',
-      '(w.is_deleted IS NULL OR w.is_deleted = FALSE)',
-    ];
+    const where: string[] = ['1=1'];
     if (movementHasSoftDelete) {
       where.unshift('(m.is_deleted IS NULL OR m.is_deleted = FALSE)');
     }
@@ -420,7 +382,7 @@ export const inventoryService = {
       where.push(`m.branch_id = ANY($${params.length})`);
     }
     if (whId)    { params.push(whId);    where.push(`m.wh_id = $${params.length}`); }
-    if (productId) { params.push(productId); where.push(`m.product_id = $${params.length}`); }
+    if (productId) { params.push(productId); where.push(`m.item_id = $${params.length}`); }
     if (search) { params.push(`%${search}%`); where.push(`p.name ILIKE $${params.length}`); }
     const offset = (page - 1) * limit;
     params.push(limit, offset);
@@ -428,7 +390,7 @@ export const inventoryService = {
     return queryMany(
       `SELECT m.*, p.name AS product_name, p.name AS item_name, w.wh_name, b.branch_name
          FROM ims.inventory_movements m
-         JOIN ims.products p ON p.product_id = m.product_id
+         JOIN ims.items p ON p.item_id = m.item_id
          LEFT JOIN ims.warehouses w ON w.wh_id = m.wh_id
          LEFT JOIN ims.branches b ON b.branch_id = m.branch_id
         WHERE ${where.join(' AND ')}
@@ -440,30 +402,33 @@ export const inventoryService = {
 
   async listAdjustments(filters: any) {
     const { branchId, branchIds, whId, productId, search, page, limit } = filters;
+    const hasLegacyAdjustmentTables = await hasStockAdjustmentTables();
+    const movementHasSoftDelete = await hasInventoryMovementSoftDelete();
+    const rootAlias = hasLegacyAdjustmentTables ? 'a' : 'm';
     const params: any[] = [];
     const where: string[] = ['1=1'];
 
     if (branchId) {
       params.push(branchId);
-      where.push(`a.branch_id = $${params.length}`);
+      where.push(`${rootAlias}.branch_id = $${params.length}`);
     } else if (Array.isArray(branchIds) && branchIds.length) {
       params.push(branchIds);
-      where.push(`a.branch_id = ANY($${params.length})`);
+      where.push(`${rootAlias}.branch_id = ANY($${params.length})`);
     }
     if (whId) {
       params.push(whId);
-      where.push(`a.wh_id = $${params.length}`);
+      where.push(`${rootAlias}.wh_id = $${params.length}`);
     }
     if (productId) {
       params.push(productId);
-      where.push(`ai.product_id = $${params.length}`);
+      where.push(`${hasLegacyAdjustmentTables ? 'ai.product_id' : 'm.item_id'} = $${params.length}`);
     }
     if (search) {
       params.push(`%${search}%`);
       where.push(`(
         p.name ILIKE $${params.length}
-        OR a.reason ILIKE $${params.length}
-        OR COALESCE(a.note,'') ILIKE $${params.length}
+        OR ${hasLegacyAdjustmentTables ? 'a.reason' : `'Manual Adjustment'`} ILIKE $${params.length}
+        OR COALESCE(${hasLegacyAdjustmentTables ? 'a.note' : 'm.note'},'') ILIKE $${params.length}
         OR b.branch_name ILIKE $${params.length}
         OR COALESCE(w.wh_name,'') ILIKE $${params.length}
       )`);
@@ -472,8 +437,9 @@ export const inventoryService = {
     const offset = (page - 1) * limit;
     params.push(limit, offset);
 
-    return queryMany(
-      `SELECT
+    if (hasLegacyAdjustmentTables) {
+      return queryMany(
+        `SELECT
           a.adj_id,
           a.adj_date,
           a.branch_id,
@@ -489,7 +455,7 @@ export const inventoryService = {
           COUNT(ai.adj_item_id) AS line_count
        FROM ims.stock_adjustments a
        LEFT JOIN ims.stock_adjustment_items ai ON ai.adj_id = a.adj_id
-       LEFT JOIN ims.products p ON p.product_id = ai.product_id
+       LEFT JOIN ims.items p ON p.item_id = ai.product_id
        LEFT JOIN ims.branches b ON b.branch_id = a.branch_id
        LEFT JOIN ims.warehouses w ON w.wh_id = a.wh_id
        LEFT JOIN ims.users u ON u.user_id = a.user_id
@@ -497,6 +463,38 @@ export const inventoryService = {
       GROUP BY
         a.adj_id, a.adj_date, a.branch_id, b.branch_name, a.wh_id, w.wh_name, a.reason, a.note, u.name
       ORDER BY a.adj_date DESC
+      LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        params
+      );
+    }
+
+    if (movementHasSoftDelete) {
+      where.push('(m.is_deleted IS NULL OR m.is_deleted = FALSE)');
+    }
+    where.push(`m.move_type = 'adjustment'`);
+
+    return queryMany(
+      `SELECT
+          m.move_id AS adj_id,
+          m.move_date AS adj_date,
+          m.branch_id,
+          b.branch_name,
+          m.wh_id,
+          w.wh_name,
+          'Manual Adjustment'::text AS reason,
+          m.note,
+          COALESCE(u.name, u.username, 'System') AS created_by,
+          COALESCE(p.name, '-') AS item_names,
+          (COALESCE(m.qty_in, 0) - COALESCE(m.qty_out, 0))::numeric(14,3) AS qty_delta,
+          ((COALESCE(m.qty_in, 0) - COALESCE(m.qty_out, 0)) * COALESCE(m.unit_cost, 0))::numeric(14,2) AS value_delta,
+          1::bigint AS line_count
+       FROM ims.inventory_movements m
+       LEFT JOIN ims.items p ON p.item_id = m.item_id
+       LEFT JOIN ims.branches b ON b.branch_id = m.branch_id
+       LEFT JOIN ims.warehouses w ON w.wh_id = m.wh_id
+       LEFT JOIN ims.users u ON u.user_id = m.ref_id
+      WHERE ${where.join(' AND ')}
+      ORDER BY m.move_date DESC
       LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
@@ -504,29 +502,34 @@ export const inventoryService = {
 
   async listRecounts(filters: any) {
     const { branchId, branchIds, whId, productId, search, page, limit } = filters;
+    const hasLegacyAdjustmentTables = await hasStockAdjustmentTables();
+    const movementHasSoftDelete = await hasInventoryMovementSoftDelete();
+    const rootAlias = hasLegacyAdjustmentTables ? 'a' : 'm';
     const params: any[] = [];
-    const where: string[] = [`LOWER(a.reason) LIKE 'stock recount%'`];
+    const where: string[] = hasLegacyAdjustmentTables
+      ? [`LOWER(a.reason) LIKE 'stock recount%'`]
+      : [`m.move_type = 'adjustment'`, `LOWER(COALESCE(m.note, '')) LIKE 'recount current %'`];
 
     if (branchId) {
       params.push(branchId);
-      where.push(`a.branch_id = $${params.length}`);
+      where.push(`${rootAlias}.branch_id = $${params.length}`);
     } else if (Array.isArray(branchIds) && branchIds.length) {
       params.push(branchIds);
-      where.push(`a.branch_id = ANY($${params.length})`);
+      where.push(`${rootAlias}.branch_id = ANY($${params.length})`);
     }
     if (whId) {
       params.push(whId);
-      where.push(`a.wh_id = $${params.length}`);
+      where.push(`${rootAlias}.wh_id = $${params.length}`);
     }
     if (productId) {
       params.push(productId);
-      where.push(`ai.product_id = $${params.length}`);
+      where.push(`${hasLegacyAdjustmentTables ? 'ai.product_id' : 'm.item_id'} = $${params.length}`);
     }
     if (search) {
       params.push(`%${search}%`);
       where.push(`(
         p.name ILIKE $${params.length}
-        OR COALESCE(a.note,'') ILIKE $${params.length}
+        OR COALESCE(${hasLegacyAdjustmentTables ? 'a.note' : 'm.note'},'') ILIKE $${params.length}
         OR b.branch_name ILIKE $${params.length}
         OR COALESCE(w.wh_name,'') ILIKE $${params.length}
       )`);
@@ -535,8 +538,9 @@ export const inventoryService = {
     const offset = (page - 1) * limit;
     params.push(limit, offset);
 
-    return queryMany(
-      `SELECT
+    if (hasLegacyAdjustmentTables) {
+      return queryMany(
+        `SELECT
           a.adj_id,
           a.adj_date,
           a.branch_id,
@@ -552,7 +556,7 @@ export const inventoryService = {
           COUNT(ai.adj_item_id) AS line_count
        FROM ims.stock_adjustments a
        LEFT JOIN ims.stock_adjustment_items ai ON ai.adj_id = a.adj_id
-       LEFT JOIN ims.products p ON p.product_id = ai.product_id
+       LEFT JOIN ims.items p ON p.item_id = ai.product_id
        LEFT JOIN ims.branches b ON b.branch_id = a.branch_id
        LEFT JOIN ims.warehouses w ON w.wh_id = a.wh_id
        LEFT JOIN ims.users u ON u.user_id = a.user_id
@@ -561,13 +565,44 @@ export const inventoryService = {
         a.adj_id, a.adj_date, a.branch_id, b.branch_name, a.wh_id, w.wh_name, a.reason, a.note, u.name
       ORDER BY a.adj_date DESC
       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        params
+      );
+    }
+
+    if (movementHasSoftDelete) {
+      where.push('(m.is_deleted IS NULL OR m.is_deleted = FALSE)');
+    }
+
+    return queryMany(
+      `SELECT
+          m.move_id AS adj_id,
+          m.move_date AS adj_date,
+          m.branch_id,
+          b.branch_name,
+          m.wh_id,
+          w.wh_name,
+          'Stock Recount'::text AS reason,
+          m.note,
+          COALESCE(u.name, u.username, 'System') AS created_by,
+          COALESCE(p.name, '-') AS item_names,
+          (COALESCE(m.qty_in, 0) - COALESCE(m.qty_out, 0))::numeric(14,3) AS qty_delta,
+          ((COALESCE(m.qty_in, 0) - COALESCE(m.qty_out, 0)) * COALESCE(m.unit_cost, 0))::numeric(14,2) AS value_delta,
+          1::bigint AS line_count
+       FROM ims.inventory_movements m
+       LEFT JOIN ims.items p ON p.item_id = m.item_id
+       LEFT JOIN ims.branches b ON b.branch_id = m.branch_id
+       LEFT JOIN ims.warehouses w ON w.wh_id = m.wh_id
+       LEFT JOIN ims.users u ON u.user_id = m.ref_id
+      WHERE ${where.join(' AND ')}
+      ORDER BY m.move_date DESC
+      LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
   },
 
   async listBranches(filters: any) {
     const { includeInactive, branchIds } = filters;
-    const where: string[] = ['(is_deleted IS NULL OR is_deleted = FALSE)'];
+    const where: string[] = ['1=1'];
     const params: any[] = [];
     if (Array.isArray(branchIds) && branchIds.length) {
       params.push(branchIds);
@@ -578,7 +613,7 @@ export const inventoryService = {
     }
 
     return queryMany(
-      `SELECT branch_id, branch_name, COALESCE(location, address) AS location, phone, is_active, created_at
+      `SELECT branch_id, branch_name, address AS location, phone, is_active, created_at
          FROM ims.branches
         WHERE ${where.join(' AND ')}
         ORDER BY branch_name`,
@@ -590,8 +625,7 @@ export const inventoryService = {
     const duplicate = await queryOne(
       `SELECT branch_id
          FROM ims.branches
-        WHERE LOWER(branch_name) = LOWER($1)
-          AND (is_deleted IS NULL OR is_deleted = FALSE)`,
+        WHERE LOWER(branch_name) = LOWER($1)`,
       [input.branchName]
     );
     if (duplicate) {
@@ -599,9 +633,9 @@ export const inventoryService = {
     }
 
     return queryOne(
-      `INSERT INTO ims.branches (branch_name, location, address, phone, is_active)
-       VALUES ($1, NULLIF($2,''), NULLIF($2,''), NULLIF($3,''), COALESCE($4, TRUE))
-       RETURNING branch_id, branch_name, COALESCE(location, address) AS location, phone, is_active, created_at`,
+      `INSERT INTO ims.branches (branch_name, address, phone, is_active)
+       VALUES ($1, NULLIF($2,''), NULLIF($3,''), COALESCE($4, TRUE))
+       RETURNING branch_id, branch_name, address AS location, phone, is_active, created_at`,
       [input.branchName, input.location || '', input.phone || '', input.isActive]
     );
   },
@@ -612,8 +646,7 @@ export const inventoryService = {
         `SELECT branch_id
            FROM ims.branches
           WHERE LOWER(branch_name) = LOWER($1)
-            AND branch_id <> $2
-            AND (is_deleted IS NULL OR is_deleted = FALSE)`,
+            AND branch_id <> $2`,
         [input.branchName, id]
       );
       if (duplicate) {
@@ -630,7 +663,6 @@ export const inventoryService = {
       params.push(input.branchName);
     }
     if (input.location !== undefined) {
-      updates.push(`location = NULLIF($${p},'')`);
       updates.push(`address = NULLIF($${p},'')`);
       params.push(input.location || '');
       p += 1;
@@ -646,22 +678,18 @@ export const inventoryService = {
 
     if (!updates.length) {
       return queryOne(
-        `SELECT branch_id, branch_name, COALESCE(location, address) AS location, phone, is_active, created_at
+        `SELECT branch_id, branch_name, address AS location, phone, is_active, created_at
            FROM ims.branches
-          WHERE branch_id = $1
-            AND (is_deleted IS NULL OR is_deleted = FALSE)`,
+          WHERE branch_id = $1`,
         [id]
       );
     }
-
-    updates.push('updated_at = NOW()');
 
     return queryOne(
       `UPDATE ims.branches
           SET ${updates.join(', ')}
         WHERE branch_id = $1
-          AND (is_deleted IS NULL OR is_deleted = FALSE)
-        RETURNING branch_id, branch_name, COALESCE(location, address) AS location, phone, is_active, created_at`,
+        RETURNING branch_id, branch_name, address AS location, phone, is_active, created_at`,
       params
     );
   },
@@ -670,25 +698,14 @@ export const inventoryService = {
     const hasWarehouses = await queryOne<{ total: string }>(
       `SELECT COUNT(*)::text AS total
          FROM ims.warehouses
-        WHERE branch_id = $1
-          AND (is_deleted IS NULL OR is_deleted = FALSE)`,
+        WHERE branch_id = $1`,
       [id]
     );
     if (Number(hasWarehouses?.total || '0') > 0) {
       throw ApiError.badRequest('Delete or move warehouses first');
     }
 
-    const deleted = await queryOne(
-      `UPDATE ims.branches
-          SET is_deleted = TRUE,
-              deleted_at = NOW(),
-              is_active = FALSE,
-              updated_at = NOW()
-        WHERE branch_id = $1
-          AND (is_deleted IS NULL OR is_deleted = FALSE)
-        RETURNING branch_id`,
-      [id]
-    );
+    const deleted = await queryOne(`DELETE FROM ims.branches WHERE branch_id = $1 RETURNING branch_id`, [id]);
     if (!deleted) {
       throw ApiError.notFound('Branch not found');
     }
@@ -697,10 +714,7 @@ export const inventoryService = {
   async listWarehouses(filters: any) {
     const { branchId, branchIds, includeInactive } = filters;
     const params: any[] = [];
-    const where: string[] = [
-      '(w.is_deleted IS NULL OR w.is_deleted = FALSE)',
-      '(b.is_deleted IS NULL OR b.is_deleted = FALSE)',
-    ];
+    const where: string[] = ['1=1'];
 
     if (branchId) {
       params.push(branchId);
@@ -727,8 +741,7 @@ export const inventoryService = {
     const branch = await queryOne(
       `SELECT branch_id
          FROM ims.branches
-        WHERE branch_id = $1
-          AND (is_deleted IS NULL OR is_deleted = FALSE)`,
+        WHERE branch_id = $1`,
       [input.branchId]
     );
     if (!branch) {
@@ -739,8 +752,7 @@ export const inventoryService = {
       `SELECT wh_id
          FROM ims.warehouses
         WHERE branch_id = $1
-          AND LOWER(wh_name) = LOWER($2)
-          AND (is_deleted IS NULL OR is_deleted = FALSE)`,
+          AND LOWER(wh_name) = LOWER($2)`,
       [input.branchId, input.whName]
     );
     if (duplicate) {
@@ -759,8 +771,7 @@ export const inventoryService = {
     const current = await queryOne<{ wh_id: number; branch_id: number }>(
       `SELECT wh_id, branch_id
          FROM ims.warehouses
-        WHERE wh_id = $1
-          AND (is_deleted IS NULL OR is_deleted = FALSE)`,
+        WHERE wh_id = $1`,
       [id]
     );
     if (!current) {
@@ -775,8 +786,7 @@ export const inventoryService = {
       const branch = await queryOne(
         `SELECT branch_id
            FROM ims.branches
-          WHERE branch_id = $1
-            AND (is_deleted IS NULL OR is_deleted = FALSE)`,
+          WHERE branch_id = $1`,
         [input.branchId]
       );
       if (!branch) {
@@ -790,8 +800,7 @@ export const inventoryService = {
            FROM ims.warehouses
           WHERE branch_id = $1
             AND LOWER(wh_name) = LOWER($2)
-            AND wh_id <> $3
-            AND (is_deleted IS NULL OR is_deleted = FALSE)`,
+            AND wh_id <> $3`,
         [targetBranchId, input.whName, id]
       );
       if (duplicate) {
@@ -824,8 +833,7 @@ export const inventoryService = {
       return queryOne(
         `SELECT wh_id, branch_id, wh_name, location, is_active, created_at
            FROM ims.warehouses
-          WHERE wh_id = $1
-            AND (is_deleted IS NULL OR is_deleted = FALSE)`,
+          WHERE wh_id = $1`,
         [id]
       );
     }
@@ -834,7 +842,6 @@ export const inventoryService = {
       `UPDATE ims.warehouses
           SET ${updates.join(', ')}
         WHERE wh_id = $1
-          AND (is_deleted IS NULL OR is_deleted = FALSE)
         RETURNING wh_id, branch_id, wh_name, location, is_active, created_at`,
       params
     );
@@ -844,8 +851,7 @@ export const inventoryService = {
     const current = await queryOne<{ wh_id: number; branch_id: number }>(
       `SELECT wh_id, branch_id
          FROM ims.warehouses
-        WHERE wh_id = $1
-          AND (is_deleted IS NULL OR is_deleted = FALSE)`,
+        WHERE wh_id = $1`,
       [id]
     );
     if (!current) {
@@ -855,28 +861,10 @@ export const inventoryService = {
       throw ApiError.forbidden('You can only delete warehouses in your branch');
     }
 
-    const deleted = await queryOne(
-      `UPDATE ims.warehouses
-          SET is_deleted = TRUE,
-              deleted_at = NOW(),
-              is_active = FALSE
-        WHERE wh_id = $1
-          AND (is_deleted IS NULL OR is_deleted = FALSE)
-        RETURNING wh_id`,
-      [id]
-    );
+    const deleted = await queryOne(`DELETE FROM ims.warehouses WHERE wh_id = $1 RETURNING wh_id`, [id]);
     if (!deleted) {
       throw ApiError.notFound('Warehouse not found');
     }
-
-    await queryMany(
-      `UPDATE ims.warehouse_stock
-          SET is_deleted = TRUE, deleted_at = NOW()
-        WHERE wh_id = $1
-          AND (is_deleted IS NULL OR is_deleted = FALSE)
-        RETURNING wh_id`,
-      [id]
-    );
   },
 
   async adjust(input: any, user: AuthContext) {
@@ -903,18 +891,16 @@ export const inventoryService = {
             `SELECT COALESCE(quantity, 0)::text AS qty
                FROM ims.warehouse_stock
               WHERE wh_id = $1
-                AND product_id = $2
-                AND (is_deleted IS NULL OR is_deleted = FALSE)
+                AND item_id = $2
               LIMIT 1`,
             [input.whId, input.productId]
           )
         : await client.query<{ qty: string }>(
-            `SELECT COALESCE(quantity, 0)::text AS qty
-               FROM ims.branch_stock
-              WHERE branch_id = $1
-                AND product_id = $2
-                AND (is_deleted IS NULL OR is_deleted = FALSE)
-              LIMIT 1`,
+            `SELECT COALESCE(SUM(ws.quantity), 0)::text AS qty
+               FROM ims.warehouse_stock ws
+               JOIN ims.warehouses w ON w.wh_id = ws.wh_id
+              WHERE w.branch_id = $1
+                AND ws.item_id = $2`,
             [input.branchId, input.productId]
           );
 
@@ -963,12 +949,11 @@ export const inventoryService = {
         throw ApiError.badRequest('Quantity must be greater than zero');
       }
 
-      const productResult = await client.query<{ product_id: number }>(
-        `SELECT product_id
-           FROM ims.products
-          WHERE product_id = $1
-            AND is_active = TRUE
-            AND (is_deleted IS NULL OR is_deleted = FALSE)`,
+      const productResult = await client.query<{ item_id: number }>(
+        `SELECT item_id
+           FROM ims.items
+          WHERE item_id = $1
+            AND is_active = TRUE`,
         [input.productId]
       );
       if (!productResult.rows[0]) {
@@ -991,8 +976,7 @@ export const inventoryService = {
             `SELECT wh_id, branch_id
                FROM ims.warehouses
               WHERE wh_id = $1
-                AND is_active = TRUE
-                AND (is_deleted IS NULL OR is_deleted = FALSE)`,
+                AND is_active = TRUE`,
             [locationId]
           );
           const row = warehouse.rows[0];
@@ -1006,8 +990,7 @@ export const inventoryService = {
           `SELECT branch_id
              FROM ims.branches
             WHERE branch_id = $1
-              AND is_active = TRUE
-              AND (is_deleted IS NULL OR is_deleted = FALSE)`,
+              AND is_active = TRUE`,
           [locationId]
         );
         const row = branch.rows[0];
@@ -1020,8 +1003,7 @@ export const inventoryService = {
                FROM ims.warehouses
               WHERE wh_id = $1
                 AND branch_id = $2
-                AND is_active = TRUE
-                AND (is_deleted IS NULL OR is_deleted = FALSE)`,
+                AND is_active = TRUE`,
             [overrideWarehouseId, locationId]
           );
           const branchWarehouseRow = branchWarehouse.rows[0];
@@ -1086,19 +1068,6 @@ export const inventoryService = {
           input.unitCost || 0,
         ]
       );
-
-      await syncLowStockNotifications(client, {
-        branchId: fromLocation.branchId,
-        productIds: [input.productId],
-        actorUserId: _user?.userId ?? null,
-      });
-      if (toLocation.branchId !== fromLocation.branchId) {
-        await syncLowStockNotifications(client, {
-          branchId: toLocation.branchId,
-          productIds: [input.productId],
-          actorUserId: _user?.userId ?? null,
-        });
-      }
 
       return {
         ok: true,

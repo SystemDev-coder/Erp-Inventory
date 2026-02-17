@@ -21,93 +21,61 @@ export class SidebarService {
       if (perm.startsWith('products.')) {
         return permissions.includes(perm.replace('products.', 'items.'));
       }
+      if (perm === 'stock.view' && permissions.includes('warehouse_stock.view')) return true;
+      if (perm === 'stock.adjust' && permissions.includes('inventory_movements.create')) return true;
+      if (perm === 'stock.recount' && permissions.includes('inventory_movements.create')) return true;
       return false;
     };
     const modules: SidebarMenuItem[] = [];
 
-    if (has('home.view')) {
+    // Exact top-to-bottom order required by product:
+    // 1) Customers
+    // 2) Store
+    // 3) Products
+    // 4) Purchases
+    // 5) Sales
+    // 6) Stock / Inventory
+    // 7) Suppliers
+    // 8) Employees / Users
+    // 9) Finance (bottom)
+    // 10) Reports (bottom)
+    // 11) System (bottom)
+    // 12) Settings (bottom)
+    if (has('customers.view')) {
       modules.push({
-        id: 'home',
-        name: 'Home',
-        nameSo: 'Guriga',
-        icon: 'Home',
-        route: '/',
-        permission: 'home.view',
+        id: 'customers',
+        name: 'Customers',
+        nameSo: 'Macaamiisha',
+        icon: 'Users',
+        route: '/customers',
+        permission: 'customers.view',
       });
     }
 
-    if (has('items.view') || has('products.view') || has('stock.view')) {
-      const storePermission =
-        has('items.view') || has('products.view') ? 'items.view' : 'stock.view';
+    if (
+      has('stores.view') ||
+      has('warehouse_stock.view') ||
+      has('stock.view') ||
+      has('inventory_movements.view')
+    ) {
       modules.push({
-        id: 'store-management',
-        name: 'Store Management',
-        nameSo: 'Maareynta Dukaanka',
+        id: 'store',
+        name: 'Store',
+        nameSo: 'Dukaan',
         icon: 'Box',
         route: '/store-management',
-        permission: storePermission,
-        items: [
-          {
-            id: 'store-items',
-            name: 'Items',
-            nameSo: 'Alaabta',
-            route: '/store-management/items',
-            permission: 'items.view',
-          },
-          {
-            id: 'store-categories',
-            name: 'Categories',
-            nameSo: 'Qaybaha',
-            route: '/store-management/categories',
-            permission: 'items.view',
-          },
-          {
-            id: 'store-units',
-            name: 'Units',
-            nameSo: 'Cabbirrada',
-            route: '/store-management/units',
-            permission: 'items.view',
-          },
-          {
-            id: 'store-stock-levels',
-            name: 'Stock Levels',
-            nameSo: 'Heerarka Kaydka',
-            route: '/store-management/stock',
-            permission: 'stock.view',
-          },
-          {
-            id: 'store-stock-adjustments',
-            name: 'Adjustments',
-            nameSo: 'Hagaajinta',
-            route: '/store-management/stock/adjustments',
-            permission: 'stock.adjust',
-          },
-          {
-            id: 'store-stock-recount',
-            name: 'Stock Recount',
-            nameSo: 'Tirinta Kaydka',
-            route: '/store-management/stock/recount',
-            permission: 'stock.recount',
-          },
-          {
-            id: 'store-stores',
-            name: 'Stores',
-            nameSo: 'Dukaamyada',
-            route: '/store-management/stores',
-            permission: 'stock.view',
-          },
-        ].filter((item) => has(item.permission)),
+        permission: 'warehouse_stock.view',
       });
     }
 
-    if (has('sales.view')) {
+    if (has('items.view') || has('products.view')) {
       modules.push({
-        id: 'sales',
-        name: 'Sales',
-        nameSo: 'Iibka',
-        icon: 'ShoppingCart',
-        route: '/sales',
-        permission: 'sales.view',
+        id: 'products',
+        name: 'Products',
+        nameSo: 'Alaab',
+        icon: 'Package',
+        route: '/products',
+        permission: 'items.view',
       });
     }
 
@@ -122,18 +90,40 @@ export class SidebarService {
       });
     }
 
-    if (has('customers.view')) {
+    if (has('sales.view')) {
       modules.push({
-        id: 'customers',
-        name: 'Customers',
-        nameSo: 'Macaamiisha',
-        icon: 'Users',
-        route: '/customers',
-        permission: 'customers.view',
+        id: 'sales',
+        name: 'Sales',
+        nameSo: 'Iibka',
+        icon: 'ShoppingCart',
+        route: '/sales',
+        permission: 'sales.view',
       });
     }
 
-    if (has('employees.view')) {
+    if (has('warehouse_stock.view') || has('stock.view')) {
+      modules.push({
+        id: 'inventory',
+        name: 'Inventory',
+        nameSo: 'Kayd',
+        icon: 'BarChart3',
+        route: '/inventory',
+        permission: 'warehouse_stock.view',
+      });
+    }
+
+    if (has('suppliers.view')) {
+      modules.push({
+        id: 'suppliers',
+        name: 'Suppliers',
+        nameSo: 'Alaab-qeybiyeyaal',
+        icon: 'Users',
+        route: '/suppliers',
+        permission: 'suppliers.view',
+      });
+    }
+
+    if (has('employees.view') || has('users.view')) {
       modules.push({
         id: 'employees',
         name: 'Employees',
@@ -141,80 +131,44 @@ export class SidebarService {
         icon: 'UserCircle',
         route: '/employees',
         permission: 'employees.view',
-        items: [
-          {
-            id: 'employees-list',
-            name: 'Employees List',
-            nameSo: 'Liiska Shaqaalaha',
-            route: '/employees',
-            permission: 'employees.view',
-          },
-          {
-            id: 'employees-shifts',
-            name: 'Shifts',
-            nameSo: 'Wareegyada',
-            route: '/employees/shifts',
-            permission: 'employees.view',
-          },
-        ].filter((item) => has(item.permission)),
       });
     }
 
-    if (has('finance.view')) {
-      modules.push({
+    // Required to be visible for all authenticated users.
+    modules.push(
+      {
         id: 'finance',
         name: 'Finance',
         nameSo: 'Maaliyadda',
         icon: 'DollarSign',
         route: '/finance',
-        permission: 'finance.view',
-        items: [
-          {
-            id: 'finance-overview',
-            name: 'Overview',
-            nameSo: 'Dulmar',
-            route: '/finance',
-            permission: 'finance.view',
-          },
-          {
-            id: 'finance-payroll',
-            name: 'Payroll',
-            nameSo: 'Mushaharka',
-            route: '/finance/payroll',
-            permission: 'finance.view',
-          },
-          {
-            id: 'finance-expense',
-            name: 'Expense',
-            nameSo: 'Kharash',
-            route: '/finance/expense',
-            permission: 'finance.view',
-          },
-        ].filter((item) => has(item.permission)),
-      });
-    }
-
-    if (has('reports.view')) {
-      modules.push({
+        permission: 'accounts.view',
+      },
+      {
         id: 'reports',
         name: 'Reports',
         nameSo: 'Warbixinno',
         icon: 'BarChart3',
         route: '/reports',
-        permission: 'reports.view',
-      });
-    }
-
-    if (has('settings.view')) {
-      modules.push({
+        permission: 'reports.all',
+      },
+      {
+        id: 'system',
+        name: 'System',
+        nameSo: 'Nidaamka',
+        icon: 'Settings',
+        route: '/system',
+        permission: 'system.users.manage',
+      },
+      {
         id: 'settings',
         name: 'Settings',
         nameSo: 'Dejinta',
         icon: 'Cog',
         route: '/settings',
-        permission: 'settings.view',
-      });
-    }
+        permission: 'system.settings',
+      }
+    );
 
     return modules;
   }

@@ -136,13 +136,13 @@ const createStorage = (folder: string) => {
 const createDummyUpload = () => ({
   single:
     (_field?: string) =>
-    (_req: Request, _res: Response, next: NextFunction) => {
-      next(new Error('Image upload not available. Install Cloudinary packages.'));
-    },
+      (_req: Request, _res: Response, next: NextFunction) => {
+        next(new Error('Image upload not available. Install Cloudinary packages.'));
+      },
 });
 
 // Multer middleware for different upload types
-export const uploadSystemImage = multer && cloudinary ? multer({
+export const uploadSystemImage = (multer && cloudinary && CloudinaryStorage) ? multer({
   storage: createStorage('system'),
   limits: { fileSize: 15 * 1024 * 1024 },
   fileFilter: (_req: Request, file: MulterFile, cb: FileFilterCallback) => {
@@ -154,7 +154,7 @@ export const uploadSystemImage = multer && cloudinary ? multer({
   },
 }) : createDummyUpload();
 
-export const uploadProductImage = multer && cloudinary ? multer({
+export const uploadProductImage = (multer && cloudinary && CloudinaryStorage) ? multer({
   storage: createStorage('products'),
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req: Request, file: MulterFile, cb: FileFilterCallback) => {
@@ -165,7 +165,7 @@ export const uploadProductImage = multer && cloudinary ? multer({
   },
 }) : createDummyUpload();
 
-export const uploadSupplierImage = multer && cloudinary ? multer({
+export const uploadSupplierImage = (multer && cloudinary && CloudinaryStorage) ? multer({
   storage: createStorage('suppliers'),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req: Request, file: MulterFile, cb: FileFilterCallback) => {

@@ -185,7 +185,7 @@ export const purchasesService = {
     }
     if (search) {
       params.push(`%${search}%`);
-      clauses.push(`(s.supplier_name ILIKE $${params.length} OR p.note ILIKE $${params.length})`);
+      clauses.push(`(s.name ILIKE $${params.length} OR p.note ILIKE $${params.length})`);
     }
     if (status && status !== 'all') {
       params.push(status);
@@ -195,7 +195,7 @@ export const purchasesService = {
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 
     return queryMany<Purchase>(
-      `SELECT p.*, s.supplier_name
+      `SELECT p.*, s.name AS supplier_name
          FROM ims.purchases p
          LEFT JOIN ims.suppliers s ON s.supplier_id = p.supplier_id
          ${where}
@@ -207,7 +207,7 @@ export const purchasesService = {
   async getPurchase(id: number, scope: BranchScope): Promise<Purchase | null> {
     if (scope.isAdmin) {
       return queryOne<Purchase>(
-        `SELECT p.*, s.supplier_name
+        `SELECT p.*, s.name AS supplier_name
            FROM ims.purchases p
            LEFT JOIN ims.suppliers s ON s.supplier_id = p.supplier_id
           WHERE p.purchase_id = $1`,
@@ -216,7 +216,7 @@ export const purchasesService = {
     }
 
     return queryOne<Purchase>(
-      `SELECT p.*, s.supplier_name
+      `SELECT p.*, s.name AS supplier_name
          FROM ims.purchases p
          LEFT JOIN ims.suppliers s ON s.supplier_id = p.supplier_id
         WHERE p.purchase_id = $1
@@ -255,7 +255,7 @@ export const purchasesService = {
 
     if (filters.search) {
       params.push(`%${filters.search}%`);
-      clauses.push(`(COALESCE(pi.description,'') ILIKE $${params.length} OR COALESCE(pr.name,'') ILIKE $${params.length} OR COALESCE(s.supplier_name,'') ILIKE $${params.length})`);
+      clauses.push(`(COALESCE(pi.description,'') ILIKE $${params.length} OR COALESCE(pr.name,'') ILIKE $${params.length} OR COALESCE(s.name,'') ILIKE $${params.length})`);
     }
     if (filters.supplierId) addClause(`p.supplier_id = $1`, filters.supplierId);
     if (filters.productId) addClause(`pi.product_id = $1`, filters.productId);
@@ -265,7 +265,7 @@ export const purchasesService = {
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 
     return queryMany<PurchaseItemView>(
-      `SELECT pi.*, p.purchase_date, p.purchase_type, p.supplier_id, s.supplier_name, pr.name AS product_name,
+      `SELECT pi.*, p.purchase_date, p.purchase_type, p.supplier_id, s.name AS supplier_name, pr.name AS product_name,
               COALESCE(pr.cost, pr.cost_price, 0) AS cost_price,
               COALESCE(pi.sale_price, NULLIF(pr.price, 0), pr.sell_price, COALESCE(pr.cost, pr.cost_price, 0)) AS sale_price
          FROM ims.purchase_items pi
@@ -573,7 +573,7 @@ export const purchasesService = {
       }
 
       const updated = await client.query<Purchase>(
-        `SELECT p.*, s.supplier_name
+        `SELECT p.*, s.name AS supplier_name
            FROM ims.purchases p
            LEFT JOIN ims.suppliers s ON s.supplier_id = p.supplier_id
           WHERE p.purchase_id = $1`,

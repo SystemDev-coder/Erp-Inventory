@@ -13,6 +13,7 @@ export interface Employee {
   full_name: string;
   phone: string | null;
   address: string | null;
+  gender?: 'male' | 'female' | null;
   hire_date: string;
   status: 'active' | 'inactive' | 'terminated';
   created_at?: string;
@@ -26,6 +27,7 @@ export interface EmployeeInput {
   name: string;
   phone?: string;
   address?: string;
+  gender?: 'male' | 'female';
   role_id?: number;
   salary?: number;
   hire_date?: string;
@@ -68,6 +70,17 @@ export interface EmployeeLoanInput {
   amount: number;
   loan_date?: string;
   notes?: string;
+}
+
+export interface ShiftAssignment {
+  assignment_id: number;
+  branch_id: number;
+  emp_id: number;
+  employee_name: string;
+  shift_type: 'Morning' | 'Night' | 'Evening';
+  effective_date: string;
+  is_active: boolean;
+  created_at: string;
 }
 
 class EmployeeService {
@@ -151,6 +164,43 @@ class EmployeeService {
     totalSalaries: number;
   }>> {
     return apiClient.get('/api/employees/stats');
+  }
+
+  async updateState(data: {
+    targetType: 'employee' | 'customer' | 'item';
+    targetId: number;
+    status: 'active' | 'inactive';
+  }): Promise<ApiResponse<void>> {
+    return apiClient.patch<void>('/api/employees/state', data);
+  }
+
+  async listShiftAssignments(): Promise<ApiResponse<{ assignments: ShiftAssignment[] }>> {
+    return apiClient.get<{ assignments: ShiftAssignment[] }>('/api/employees/shift-assignments');
+  }
+
+  async createShiftAssignment(data: {
+    emp_id: number;
+    shift_type: 'Morning' | 'Night' | 'Evening';
+    effective_date?: string;
+    is_active?: boolean;
+  }): Promise<ApiResponse<{ assignment: ShiftAssignment }>> {
+    return apiClient.post<{ assignment: ShiftAssignment }>('/api/employees/shift-assignments', data);
+  }
+
+  async updateShiftAssignment(
+    id: number,
+    data: Partial<{
+      emp_id: number;
+      shift_type: 'Morning' | 'Night' | 'Evening';
+      effective_date: string;
+      is_active: boolean;
+    }>
+  ): Promise<ApiResponse<{ assignment: ShiftAssignment }>> {
+    return apiClient.put<{ assignment: ShiftAssignment }>(`/api/employees/shift-assignments/${id}`, data);
+  }
+
+  async deleteShiftAssignment(id: number): Promise<ApiResponse<void>> {
+    return apiClient.delete<void>(`/api/employees/shift-assignments/${id}`);
   }
 }
 

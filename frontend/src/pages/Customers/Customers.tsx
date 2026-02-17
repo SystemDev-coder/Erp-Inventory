@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useParams } from 'react-router';
 import { ColumnDef } from '@tanstack/react-table';
 import { Users, UserPlus, UserCheck } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
@@ -10,27 +11,13 @@ import { useToast } from '../../components/ui/toast/Toast';
 import Badge from '../../components/ui/badge/Badge';
 import { customerService, Customer } from '../../services/customer.service';
 
-// Lightweight debounce (mirrors Products page)
-const debounce = (fn: (...args: any[]) => void, wait = 300) => {
-    let t: ReturnType<typeof setTimeout> | null = null;
-    const wrapped = (...args: any[]) => {
-        if (t) clearTimeout(t);
-        t = setTimeout(() => fn(...args), wait);
-    };
-    wrapped.cancel = () => {
-        if (t) clearTimeout(t);
-        t = null;
-    };
-    return wrapped as typeof fn & { cancel: () => void };
-};
-
 type CustomerForm = {
     customer_id?: number;
     full_name: string;
     phone: string;
     customer_type: 'regular' | 'one-time';
     address?: string;
-    sex?: 'male' | 'female';
+    gender: 'male' | 'female';
     is_active: boolean;
     remaining_balance: number;
 };
@@ -40,12 +27,13 @@ const emptyForm: CustomerForm = {
     phone: '',
     customer_type: 'regular',
     address: '',
-    sex: undefined,
+    gender: 'male',
     is_active: true,
     remaining_balance: 0,
 };
 
 const Customers = () => {
+    const { tab } = useParams();
     const { showToast } = useToast();
     const [isAddOpen, setIsAddOpen] = useState(false);
     const [customers, setCustomers] = useState<Customer[]>([]);
@@ -66,19 +54,14 @@ const Customers = () => {
         setLoading(false);
     };
 
-    const debouncedSearch = useMemo(
-        () =>
-            debounce((term: string) => {
-                fetchCustomers(term);
-            }, 300),
-        []
-    );
-
-    useEffect(() => () => debouncedSearch.cancel(), [debouncedSearch]);
-
     const columns: ColumnDef<Customer>[] = useMemo(() => [
         { accessorKey: 'full_name', header: 'Customer Name' },
         { accessorKey: 'phone', header: 'Phone Number' },
+        {
+            accessorKey: 'gender',
+            header: 'Gender',
+            cell: ({ row }) => row.original.gender || row.original.sex || '-',
+        },
         {
             accessorKey: 'customer_type',
             header: 'Customer Type',
@@ -114,7 +97,8 @@ const Customers = () => {
             phone: form.phone || null,
             customer_type: form.customer_type,
             address: form.address || null,
-            sex: form.sex,
+            sex: form.gender,
+            gender: form.gender,
             is_active: form.is_active,
             remaining_balance: Number(form.remaining_balance) || 0,
         };
@@ -141,7 +125,7 @@ const Customers = () => {
             phone: row.phone || '',
             customer_type: (row.customer_type as 'regular' | 'one-time') || 'regular',
             address: row.address || '',
-            sex: row.sex as 'male' | 'female' | undefined,
+            gender: (row.gender as 'male' | 'female') || (row.sex as 'male' | 'female') || 'male',
             is_active: row.is_active,
             remaining_balance: Number(row.remaining_balance ?? 0),
         });
@@ -171,7 +155,7 @@ const Customers = () => {
     const tabs = [
         {
             id: 'all',
-            label: 'All Customers',
+            label: 'All',
             icon: Users,
             content: (
                 <div className="space-y-2">
@@ -181,7 +165,6 @@ const Customers = () => {
                         onDisplay={() => fetchCustomers()}
                         onSearch={(value: string) => {
                             setSearch(value);
-                            debouncedSearch(value);
                         }}
                         onExport={() => showToast('info', 'Export', 'Customer export coming soon')}
                     />
@@ -198,10 +181,18 @@ const Customers = () => {
         },
         {
             id: 'regular',
-            label: 'Regular Customers',
+            label: 'Regular',
             icon: UserCheck,
             content: (
                 <div className="space-y-2">
+                    <TabActionToolbar
+                        title="Regular Customers"
+                        primaryAction={{ label: 'New Customer', onClick: () => { setForm(emptyForm); setIsAddOpen(true); } }}
+                        onDisplay={() => fetchCustomers(search)}
+                        onSearch={(value: string) => {
+                            setSearch(value);
+                        }}
+                    />
                     <DataTable
                         data={customers.filter(c => c.customer_type !== 'one-time')}
                         columns={columns}
@@ -214,10 +205,18 @@ const Customers = () => {
         },
         {
             id: 'walking',
-            label: 'Walking Customers',
+            label: 'Walking',
             icon: UserPlus,
             content: (
                 <div className="space-y-2">
+                    <TabActionToolbar
+                        title="Walking Customers"
+                        primaryAction={{ label: 'New Customer', onClick: () => { setForm(emptyForm); setIsAddOpen(true); } }}
+                        onDisplay={() => fetchCustomers(search)}
+                        onSearch={(value: string) => {
+                            setSearch(value);
+                        }}
+                    />
                     <DataTable
                         data={customers.filter(c => c.customer_type === 'one-time')}
                         columns={columns}
@@ -234,9 +233,9 @@ const Customers = () => {
         <div>
             <PageHeader
                 title="Customers"
-                description="Manage the people who buy from your shop."                
+                description="Manage the people who buy from your shop."
             />
-            <Tabs tabs={tabs} defaultTab="all" />
+            <Tabs tabs={tabs} defaultTab={tab === 'regular' || tab === 'walking' ? tab : 'all'} />
 
             <Modal
                 isOpen={isAddOpen}
@@ -281,6 +280,18 @@ const Customers = () => {
                         </select>
                     </div>
                     <div className="space-y-2">
+                        <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Gender</label>
+                        <select
+                            required
+                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 dark:bg-slate-800 focus:ring-2 focus:ring-primary-500 outline-none transition-all"
+                            value={form.gender}
+                            onChange={(e) => setForm({ ...form, gender: e.target.value as 'male' | 'female' })}
+                        >
+                            <option value="male">Male</option>
+                            <option value="female">Female</option>
+                        </select>
+                    </div>
+                    <div className="space-y-2">
                         <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Address</label>
                         <input
                             type="text"
@@ -320,7 +331,7 @@ const Customers = () => {
                 title="Delete Customer?"
                 message={
                     customerToDelete
-                        ? `⚠️ Deleting "${customerToDelete.full_name}" will remove their balance history links. This cannot be undone.`
+                        ? `Deleting "${customerToDelete.full_name}" will remove their balance history links. This cannot be undone.`
                         : 'Are you sure you want to delete this customer?'
                 }
                 confirmText="Delete"

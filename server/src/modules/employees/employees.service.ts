@@ -1,5 +1,11 @@
 import { queryMany, queryOne } from '../../db/query';
-import { EmployeeInput, EmployeeUpdateInput } from './employees.schemas';
+import {
+  EmployeeInput,
+  EmployeeUpdateInput,
+  ShiftAssignmentInput,
+  ShiftAssignmentUpdateInput,
+  StateUpdateInput,
+} from './employees.schemas';
 
 export interface Employee {
   emp_id: number;
@@ -9,6 +15,7 @@ export interface Employee {
   full_name: string;
   phone: string | null;
   address: string | null;
+  gender: string | null;
   hire_date: string;
   status: 'active' | 'inactive' | 'terminated';
   created_at?: string;
@@ -18,20 +25,47 @@ export interface Employee {
   basic_salary?: number;
 }
 
+export interface ShiftAssignment {
+  assignment_id: number;
+  branch_id: number;
+  emp_id: number;
+  employee_name: string;
+  shift_type: 'Morning' | 'Night' | 'Evening';
+  effective_date: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+let employeesHaveGenderColumn: boolean | null = null;
+
+const detectEmployeesGenderColumn = async (): Promise<boolean> => {
+  if (employeesHaveGenderColumn !== null) return employeesHaveGenderColumn;
+  const rows = await queryMany<{ column_name: string }>(
+    `SELECT column_name
+       FROM information_schema.columns
+      WHERE table_schema = 'ims'
+        AND table_name = 'employees'`
+  );
+  employeesHaveGenderColumn = rows.some((row) => row.column_name === 'gender');
+  return employeesHaveGenderColumn;
+};
+
 export const employeesService = {
   /**
    * List all employees with optional filtering
    */
   async list(params?: { search?: string; status?: string; branchIds?: number[] }): Promise<Employee[]> {
+    const hasGender = await detectEmployeesGenderColumn();
     let query = `
       SELECT 
         e.emp_id,
         e.branch_id,
         e.user_id,
-        e.role_id,
+        u.role_id,
         e.full_name,
         e.phone,
         e.address,
+        ${hasGender ? 'e.gender' : 'NULL::varchar AS gender'},
         e.hire_date,
         e.status,
         e.created_at,
@@ -40,7 +74,7 @@ export const employeesService = {
         COALESCE(es.basic_salary, 0) as basic_salary
       FROM ims.employees e
       LEFT JOIN ims.users u ON e.user_id = u.user_id
-      LEFT JOIN ims.roles r ON e.role_id = r.role_id
+      LEFT JOIN ims.roles r ON u.role_id = r.role_id
       LEFT JOIN ims.employee_salary es ON e.emp_id = es.emp_id AND es.is_active = TRUE
       WHERE 1=1
     `;
@@ -85,12 +119,13 @@ export const employeesService = {
     return queryOne<Employee>(
       `SELECT 
         e.*,
+        u.role_id,
         u.username,
         r.role_name,
         COALESCE(es.basic_salary, 0) as basic_salary
       FROM ims.employees e
       LEFT JOIN ims.users u ON e.user_id = u.user_id
-      LEFT JOIN ims.roles r ON e.role_id = r.role_id
+      LEFT JOIN ims.roles r ON u.role_id = r.role_id
       LEFT JOIN ims.employee_salary es ON e.emp_id = es.emp_id AND es.is_active = TRUE
       WHERE e.emp_id = $1`,
       [id]
@@ -101,20 +136,47 @@ export const employeesService = {
    * Create new employee
    */
   async create(input: EmployeeInput): Promise<Employee> {
+    const hasGender = await detectEmployeesGenderColumn();
     // branch_id will be added automatically by trigger
-    const result = await queryOne<Employee>(
-      `INSERT INTO ims.employees (full_name, phone, address, role_id, hire_date, status)
-       VALUES ($1, $2, $3, $4, $5, $6::ims.employment_status_enum) 
-       RETURNING *`,
-      [
-        input.name,
-        input.phone || null,
-        input.address || null,
-        input.role_id || null,
-        input.hire_date || new Date().toISOString().split('T')[0],
-        input.status || 'active',
-      ]
-    ) as Promise<Employee>;
+    const result = hasGender
+      ? await queryOne<Employee>(
+          `INSERT INTO ims.employees (user_id, full_name, phone, address, gender, hire_date, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7::ims.employment_status_enum) 
+           RETURNING *`,
+          [
+            input.user_id || null,
+            input.name,
+            input.phone || null,
+            input.address || null,
+            input.gender || null,
+            input.hire_date || new Date().toISOString().split('T')[0],
+            input.status || 'active',
+          ]
+        )
+      : await queryOne<Employee>(
+          `INSERT INTO ims.employees (user_id, full_name, phone, address, hire_date, status)
+           VALUES ($1, $2, $3, $4, $5, $6::ims.employment_status_enum) 
+           RETURNING *`,
+          [
+            input.user_id || null,
+            input.name,
+            input.phone || null,
+            input.address || null,
+            input.hire_date || new Date().toISOString().split('T')[0],
+            input.status || 'active',
+          ]
+        );
+
+    if (!result) {
+      throw new Error('Failed to create employee');
+    }
+
+    if (input.role_id !== undefined && input.user_id) {
+      await queryOne(
+        `UPDATE ims.users SET role_id = $1 WHERE user_id = $2`,
+        [input.role_id || null, input.user_id]
+      );
+    }
 
     // If salary provided, create employee_salary record
     if (input.salary && input.salary > 0) {
@@ -127,7 +189,7 @@ export const employeesService = {
         []
       );
 
-      if (salType && result) {
+      if (salType) {
         await queryOne(
           `INSERT INTO ims.employee_salary (emp_id, sal_type_id, basic_salary, start_date)
            VALUES ($1, $2, $3, $4)`,
@@ -136,13 +198,18 @@ export const employeesService = {
       }
     }
 
-    return this.getById(result.emp_id) as Promise<Employee>;
+    const created = await this.getById(result.emp_id);
+    if (!created) {
+      throw new Error('Employee created but could not be loaded');
+    }
+    return created;
   },
 
   /**
    * Update employee
    */
   async update(id: number, input: EmployeeUpdateInput): Promise<Employee | null> {
+    const hasGender = await detectEmployeesGenderColumn();
     const updates: string[] = [];
     const values: any[] = [];
     let paramCount = 1;
@@ -159,9 +226,9 @@ export const employeesService = {
       updates.push(`address = $${paramCount++}`);
       values.push(input.address || null);
     }
-    if (input.role_id !== undefined) {
-      updates.push(`role_id = $${paramCount++}`);
-      values.push(input.role_id || null);
+    if (hasGender && input.gender !== undefined) {
+      updates.push(`gender = $${paramCount++}`);
+      values.push(input.gender || null);
     }
     if (input.hire_date !== undefined) {
       updates.push(`hire_date = $${paramCount++}`);
@@ -177,6 +244,17 @@ export const employeesService = {
       await queryOne(
         `UPDATE ims.employees SET ${updates.join(', ')} WHERE emp_id = $${paramCount}`,
         values
+      );
+    }
+
+    if (input.role_id !== undefined) {
+      await queryOne(
+        `UPDATE ims.users u
+            SET role_id = $1
+           FROM ims.employees e
+          WHERE e.emp_id = $2
+            AND e.user_id = u.user_id`,
+        [input.role_id || null, id]
       );
     }
 
@@ -216,6 +294,153 @@ export const employeesService = {
    */
   async delete(id: number): Promise<void> {
     await queryOne('DELETE FROM ims.employees WHERE emp_id = $1', [id]);
+  },
+
+  async updateState(input: StateUpdateInput, branchIds?: number[]): Promise<void> {
+    if (input.targetType === 'employee') {
+      const hasBranches = Boolean(branchIds && branchIds.length > 0);
+      await queryOne(
+        `UPDATE ims.employees
+            SET status = $2::ims.employment_status_enum
+          WHERE emp_id = $1 ${hasBranches ? 'AND branch_id = ANY($3)' : ''}`,
+        hasBranches ? [input.targetId, input.status, branchIds] : [input.targetId, input.status]
+      );
+      return;
+    }
+
+    if (input.targetType === 'customer') {
+      const hasBranches = Boolean(branchIds && branchIds.length > 0);
+      await queryOne(
+        `UPDATE ims.customers
+            SET is_active = $2
+          WHERE customer_id = $1 ${hasBranches ? 'AND branch_id = ANY($3)' : ''}`,
+        hasBranches ? [input.targetId, input.status === 'active', branchIds] : [input.targetId, input.status === 'active']
+      );
+      return;
+    }
+
+    await queryOne(
+      `UPDATE ims.items
+          SET is_active = $2
+        WHERE item_id = $1`,
+      [input.targetId, input.status === 'active']
+    );
+  },
+
+  async listShiftAssignments(branchIds?: number[]): Promise<ShiftAssignment[]> {
+    const values: any[] = [];
+    let where = '';
+    if (branchIds && branchIds.length > 0) {
+      values.push(branchIds);
+      where = 'WHERE a.branch_id = ANY($1)';
+    }
+
+    return queryMany<ShiftAssignment>(
+      `SELECT
+         a.assignment_id,
+         a.branch_id,
+         a.emp_id,
+         e.full_name AS employee_name,
+         a.shift_type,
+         a.effective_date::text AS effective_date,
+         a.is_active,
+         a.created_at::text AS created_at
+       FROM ims.employee_shift_assignments a
+       JOIN ims.employees e ON e.emp_id = a.emp_id
+       ${where}
+       ORDER BY a.created_at DESC`,
+      values
+    );
+  },
+
+  async createShiftAssignment(
+    input: ShiftAssignmentInput,
+    context: { branchId: number; userId?: number }
+  ): Promise<ShiftAssignment> {
+    const row = await queryOne<ShiftAssignment>(
+      `INSERT INTO ims.employee_shift_assignments
+         (branch_id, emp_id, shift_type, effective_date, is_active, created_by)
+       VALUES ($1, $2, $3, COALESCE($4::date, CURRENT_DATE), COALESCE($5, TRUE), $6)
+       RETURNING assignment_id, branch_id, emp_id, shift_type, effective_date::text, is_active, created_at::text, ''::text AS employee_name`,
+      [
+        context.branchId,
+        input.emp_id,
+        input.shift_type,
+        input.effective_date ?? null,
+        input.is_active ?? true,
+        context.userId ?? null,
+      ]
+    );
+
+    if (!row) {
+      throw new Error('Failed to create shift assignment');
+    }
+    const assignments = await this.listShiftAssignments([context.branchId]);
+    return assignments.find((assignment) => assignment.assignment_id === row.assignment_id) || row;
+  },
+
+  async updateShiftAssignment(
+    id: number,
+    input: ShiftAssignmentUpdateInput,
+    branchIds?: number[]
+  ): Promise<ShiftAssignment | null> {
+    const updates: string[] = [];
+    const values: any[] = [];
+    let p = 1;
+
+    if (input.emp_id !== undefined) {
+      updates.push(`emp_id = $${p++}`);
+      values.push(input.emp_id);
+    }
+    if (input.shift_type !== undefined) {
+      updates.push(`shift_type = $${p++}`);
+      values.push(input.shift_type);
+    }
+    if (input.effective_date !== undefined) {
+      updates.push(`effective_date = $${p++}::date`);
+      values.push(input.effective_date);
+    }
+    if (input.is_active !== undefined) {
+      updates.push(`is_active = $${p++}`);
+      values.push(input.is_active);
+    }
+
+    if (!updates.length) {
+      const list = await this.listShiftAssignments(branchIds);
+      return list.find((row) => row.assignment_id === id) || null;
+    }
+
+    values.push(id);
+    let where = `assignment_id = $${p++}`;
+    if (branchIds && branchIds.length > 0) {
+      values.push(branchIds);
+      where += ` AND branch_id = ANY($${p++})`;
+    }
+
+    const row = await queryOne<{ assignment_id: number }>(
+      `UPDATE ims.employee_shift_assignments
+          SET ${updates.join(', ')}
+        WHERE ${where}
+        RETURNING assignment_id`,
+      values
+    );
+    if (!row) return null;
+
+    const list = await this.listShiftAssignments(branchIds);
+    return list.find((assignment) => assignment.assignment_id === id) || null;
+  },
+
+  async deleteShiftAssignment(id: number, branchIds?: number[]): Promise<void> {
+    if (branchIds && branchIds.length > 0) {
+      await queryOne(
+        `DELETE FROM ims.employee_shift_assignments
+          WHERE assignment_id = $1
+            AND branch_id = ANY($2)`,
+        [id, branchIds]
+      );
+      return;
+    }
+    await queryOne('DELETE FROM ims.employee_shift_assignments WHERE assignment_id = $1', [id]);
   },
 
   /**

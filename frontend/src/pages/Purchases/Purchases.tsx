@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router';
+import { useMemo, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router';
 import { ColumnDef } from '@tanstack/react-table';
 import { ShoppingBag, Users } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
@@ -11,16 +11,6 @@ import Badge from '../../components/ui/badge/Badge';
 import { useToast } from '../../components/ui/toast/Toast';
 import { purchaseService, Purchase, PurchaseItemView } from '../../services/purchase.service';
 import { supplierService, Supplier } from '../../services/supplier.service';
-
-const debounce = (fn: (...args: any[]) => void, wait = 300) => {
-  let t: ReturnType<typeof setTimeout> | null = null;
-  const wrapped = (...args: any[]) => {
-    if (t) clearTimeout(t);
-    t = setTimeout(() => fn(...args), wait);
-  };
-  wrapped.cancel = () => { if (t) clearTimeout(t); t = null; };
-  return wrapped as typeof fn & { cancel: () => void };
-};
 
 type PurchaseForm = {
   purchase_id?: number;
@@ -35,6 +25,7 @@ type PurchaseForm = {
 };
 
 const Purchases = () => {
+  const location = useLocation();
   const navigate = useNavigate();
   const { showToast } = useToast();
   const [purchases, setPurchases] = useState<Purchase[]>([]);
@@ -93,28 +84,6 @@ const Purchases = () => {
     }
     setLoading(false);
   };
-
-  // Stop automatic loading on mount; data will load via explicit Display/search/filter actions
-  useEffect(() => { /* no initial fetch on mount */ }, []);
-
-  const debouncedPurchaseSearch = useMemo(
-    () =>
-      debounce((term: string) => {
-        loadPurchases(term, statusFilter);
-      }, 300),
-    [statusFilter]
-  );
-
-  const debouncedSupplierSearch = useMemo(
-    () =>
-      debounce((term: string) => {
-        loadSuppliers(term);
-      }, 300),
-    []
-  );
-
-  useEffect(() => () => debouncedPurchaseSearch.cancel(), [debouncedPurchaseSearch]);
-  useEffect(() => () => debouncedSupplierSearch.cancel(), [debouncedSupplierSearch]);
 
   const columns: ColumnDef<Purchase>[] = useMemo(() => [
     {
@@ -280,48 +249,6 @@ const Purchases = () => {
 
   const tabs = [
     {
-      id: 'list',
-      label: 'Purchases',
-      icon: ShoppingBag,
-      content: (
-        <div className="space-y-2">
-          <TabActionToolbar
-            title="Purchase Orders"
-            primaryAction={{ label: 'New Purchase', onClick: () => navigate('/purchases/new') }}
-            onDisplay={() => loadPurchases(search, statusFilter)}
-            onSearch={(value: string) => { setSearch(value); debouncedPurchaseSearch(value); }}
-            onExport={() => showToast('info', 'Export', 'Export coming soon')}
-          />
-          <div className="flex flex-wrap gap-2 px-1">
-            {statusFilters.map((s) => (
-              <button
-                key={s}
-                onClick={() => {
-                  setStatusFilter(s);
-                  loadPurchases(search, s);
-                }}
-                className={`px-3 py-1 rounded-full text-sm border ${
-                  statusFilter === s
-                    ? 'bg-primary-600 text-white border-primary-600'
-                    : 'border-slate-200 text-slate-600 hover:bg-slate-100'
-                }`}
-              >
-                {s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
-              </button>
-            ))}
-          </div>
-          <DataTable
-            data={filteredPurchases}
-            columns={columns}
-            isLoading={loading}
-            searchPlaceholder="Find by supplier or note..."
-            onEdit={onEdit}
-            onDelete={onDelete}
-          />
-        </div>
-      ),
-    },
-    {
       id: 'suppliers',
       label: 'Suppliers',
       icon: Users,
@@ -347,7 +274,7 @@ const Purchases = () => {
               },
             }}
             onDisplay={() => loadSuppliers(search)}
-            onSearch={(value: string) => { setSearch(value); debouncedSupplierSearch(value); }}
+            onSearch={(value: string) => { setSearch(value); }}
           />
           <DataTable
             data={suppliers}
@@ -383,6 +310,47 @@ const Purchases = () => {
         </div>
       ),
     },
+    {
+      id: 'list',
+      label: 'Purchases',
+      icon: ShoppingBag,
+      content: (
+        <div className="space-y-2">
+          <TabActionToolbar
+            title="Purchase Orders"
+            primaryAction={{ label: 'New Purchase', onClick: () => navigate('/purchases/new') }}
+            onDisplay={() => loadPurchases(search, statusFilter)}
+            onSearch={(value: string) => { setSearch(value); }}
+            onExport={() => showToast('info', 'Export', 'Export coming soon')}
+          />
+          <div className="flex flex-wrap gap-2 px-1">
+            {statusFilters.map((s) => (
+              <button
+                key={s}
+                onClick={() => {
+                  setStatusFilter(s);
+                }}
+                className={`px-3 py-1 rounded-full text-sm border ${
+                  statusFilter === s
+                    ? 'bg-primary-600 text-white border-primary-600'
+                    : 'border-slate-200 text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                {s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
+              </button>
+            ))}
+          </div>
+          <DataTable
+            data={filteredPurchases}
+            columns={columns}
+            isLoading={loading}
+            searchPlaceholder="Find by supplier or note..."
+            onEdit={onEdit}
+            onDelete={onDelete}
+          />
+        </div>
+      ),
+    },
   ];
 
   return (
@@ -392,7 +360,16 @@ const Purchases = () => {
         description="Track incoming stock and supplier bills."
       />
 
-      <Tabs tabs={tabs} defaultTab="list" />
+      <Tabs
+        tabs={tabs}
+        defaultTab={
+          location.pathname.endsWith('/suppliers')
+            ? 'suppliers'
+            : location.pathname.endsWith('/items')
+            ? 'items'
+            : 'list'
+        }
+      />
 
       <ConfirmDialog
         isOpen={deleteOpen}

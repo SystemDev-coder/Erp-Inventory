@@ -20,6 +20,9 @@ export interface RoleRow {
 }
 
 export const userService = {
+  async getPermissions() {
+    return apiClient.get<{ permissions: string[] }>(API.USER.PERMISSIONS);
+  },
   async getSidebar() {
     return apiClient.get<{ modules: any[] }>(API.USER.SIDEBAR);
   },

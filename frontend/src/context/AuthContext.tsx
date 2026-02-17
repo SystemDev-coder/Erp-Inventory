@@ -5,6 +5,7 @@
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { authService, User, LoginCredentials, RegisterData } from '../services/auth.service';
+import { userService } from '../services/user.service';
 import { ApiResponse } from '../services/api';
 import { setAccessToken, clearAccessToken, getAccessToken } from '../services/authStore';
 
@@ -12,6 +13,7 @@ interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  permissions: string[];
   login: (credentials: LoginCredentials) => Promise<ApiResponse>;
   register: (data: RegisterData) => Promise<ApiResponse>;
   logout: () => Promise<void>;
@@ -27,6 +29,7 @@ interface AuthProviderProps {
 
 export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null);
+  const [permissions, setPermissions] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   // Check if user is authenticated on mount
@@ -44,11 +47,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
       const response = await authService.getCurrentUser();
       if (response.success && response.data) {
         setUser(response.data.user);
+        const permsRes = await userService.getPermissions();
+        setPermissions(permsRes.success && permsRes.data?.permissions ? permsRes.data.permissions : []);
       } else {
         setUser(null);
+        setPermissions([]);
       }
     } catch (error) {
       setUser(null);
+      setPermissions([]);
     } finally {
       setIsLoading(false);
     }
@@ -60,6 +67,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
     if (response.success && response.data) {
       setAccessToken(response.data.accessToken, !!credentials.rememberMe);
       setUser(response.data.user);
+      const permsRes = await userService.getPermissions();
+      setPermissions(permsRes.success && permsRes.data?.permissions ? permsRes.data.permissions : []);
     }
 
     return response;
@@ -71,6 +80,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
     if (response.success && response.data) {
       setAccessToken(response.data.accessToken, false);
       setUser(response.data.user);
+      const permsRes = await userService.getPermissions();
+      setPermissions(permsRes.success && permsRes.data?.permissions ? permsRes.data.permissions : []);
     }
 
     return response;
@@ -84,6 +95,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } finally {
       clearAccessToken();
       setUser(null);
+      setPermissions([]);
     }
   };
 
@@ -95,6 +107,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     user,
     isAuthenticated: !!user,
     isLoading,
+    permissions,
     login,
     register,
     logout,

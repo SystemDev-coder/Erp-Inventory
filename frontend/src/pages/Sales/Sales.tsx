@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
 import { Ban, Edit3, FileCheck2, Printer, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router';
@@ -135,21 +135,19 @@ const Sales = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [sales, setSales] = useState<Sale[]>([]);
+  const [hasLoaded, setHasLoaded] = useState(false);
 
   const loadSales = useCallback(async () => {
     setLoading(true);
     const res = await salesService.list({ includeVoided: true });
     if (res.success && res.data?.sales) {
       setSales(res.data.sales);
+      setHasLoaded(true);
     } else {
       showToast('error', 'Sales', res.error || 'Failed to load sales');
     }
     setLoading(false);
   }, [showToast]);
-
-  useEffect(() => {
-    void loadSales();
-  }, [loadSales]);
 
   const printSaleInvoice = useCallback(
     async (sale: Sale) => {
@@ -379,6 +377,11 @@ const Sales = () => {
           isLoading={loading}
           searchPlaceholder="Search by customer or note..."
         />
+        {!loading && !hasLoaded && (
+          <div className="text-sm text-slate-500 px-1">
+            No data loaded yet. Click Display to fetch sales documents.
+          </div>
+        )}
       </div>
     </div>
   );

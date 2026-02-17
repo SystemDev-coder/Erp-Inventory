@@ -37,17 +37,7 @@ const normalizeIdentifier = (value: string) => value.trim().toLowerCase();
 
 const now = () => new Date();
 
-const defaultPermissions = [
-  'home.view',
-  'items.view',
-  'stock.view',
-  'sales.view',
-  'purchases.view',
-  'customers.view',
-  'suppliers.view',
-  'finance.view',
-  'settings.view',
-];
+const defaultPermissions: string[] = [];
 
 const ensureRole = async (requestedRoleId?: number): Promise<number> => {
   if (requestedRoleId) {
@@ -379,10 +369,6 @@ export class AuthService {
     ]);
 
     denyOverrides.forEach((row) => permissionSet.delete(row.perm_key));
-
-    if (!permissionSet.size) {
-      defaultPermissions.forEach((perm) => permissionSet.add(perm));
-    }
 
     return {
       user,

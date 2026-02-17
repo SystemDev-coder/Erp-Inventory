@@ -1,92 +1,58 @@
-﻿import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import {
-  Home,
-  Package,
-  ShoppingCart,
-  BarChart3,
-  Box,
-  ShoppingBag,
-  RotateCcw,
-  Undo2,
-  ArrowLeftRight,
-  DollarSign,
-  Users,
-  UserCog,
-  Settings,
+  BriefcaseBusiness,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
-  ChevronDown,
+  Cog,
+  DollarSign,
+  FileText,
+  LayoutDashboard,
   LucideIcon,
+  ReceiptText,
+  Settings,
+  ShoppingBag,
+  ShoppingCart,
+  Store,
+  Users,
 } from 'lucide-react';
 import { useSidebar } from '../context/SidebarContext';
-import { userService } from '../services/user.service';
+import { useAuth } from '../context/AuthContext';
 
-type SidebarItem = { id: string; name: string; route: string };
-type SidebarModule = { id: string; name: string; icon: string; route: string; items?: SidebarItem[] };
-
-const ICON_MAP: Record<string, LucideIcon> = {
-  Home,
-  Package,
-  BarChart3,
-  Warehouse: BarChart3,
-  ShoppingCart,
-  Box,
-  ShoppingBag,
-  Undo2,
-  RotateCcw,
-  ArrowLeftRight,
-  DollarSign,
-  Users,
-  UserCircle: UserCog,
-  Settings,
-  Cog: Settings,
-  Reports: BarChart3,
+type SidebarSubItem = {
+  id: string;
+  label: string;
+  to: string;
+  exact?: boolean;
+  permissionAny?: string[];
 };
 
-function getIcon(iconName: string): LucideIcon {
-  return ICON_MAP[iconName] ?? ShoppingCart;
-}
+type SidebarItem = {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  to?: string;
+  permissionAny?: string[];
+  exact?: boolean;
+  expandable?: boolean;
+  subItems?: SidebarSubItem[];
+};
 
 const AppSidebar: React.FC = () => {
   const { isExpanded, isMobileOpen, isHovered, setIsHovered, toggleSidebar } = useSidebar();
+  const { permissions } = useAuth();
   const location = useLocation();
-  const [modules, setModules] = useState<SidebarModule[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [openSection, setOpenSection] = useState<string | null>(null);
-
-  const toggleSection = useCallback((id: string) => {
-    setOpenSection((prev) => (prev === id ? null : id));
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    userService
-      .getSidebar()
-      .then((res) => {
-        if (cancelled) return;
-        if (res.success && res.data?.modules) {
-          setModules(res.data.modules);
-        } else {
-          setModules([]);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setModules([]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
+    items: false,
+    sales: false,
+    finance: false,
+  });
 
   const isActive = useCallback(
     (path: string, exact = false) => {
       const current = location.pathname.replace(/\/+$/, '') || '/';
       const target = path.replace(/\/+$/, '') || '/';
-
       if (target === '/') return current === '/';
       if (exact) return current === target;
       return current === target || current.startsWith(`${target}/`);
@@ -94,24 +60,73 @@ const AppSidebar: React.FC = () => {
     [location.pathname]
   );
 
-  const showExpanded = isExpanded || isHovered || isMobileOpen;
-
-  const isSectionOpen = useCallback(
-    (mod: SidebarModule) => {
-      if (openSection === mod.id) return true;
-      const activeInSub = mod.items?.some((sub) => isActive(sub.route));
-      return !!activeInSub;
+  const hasAnyPerm = useCallback(
+    (required?: string[]) => {
+      if (!required || required.length === 0) return true;
+      return required.some((perm) => permissions.includes(perm));
     },
-    [openSection, location.pathname]
+    [permissions]
   );
 
-  useEffect(() => {
-    if (!modules.length) return;
-    const activeParent = modules.find((mod) => mod.items?.some((sub) => isActive(sub.route)));
-    if (activeParent) {
-      setOpenSection(activeParent.id);
-    }
-  }, [modules, location.pathname, isActive]);
+  const items = useMemo<SidebarItem[]>(
+    () => [
+      { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: '/', exact: true },
+      { id: 'customers', label: 'Customers', icon: Users, to: '/customers', permissionAny: ['customers.view'] },
+      {
+        id: 'items',
+        label: 'Items',
+        icon: Store,
+        expandable: true,
+        permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'],
+        subItems: [
+          { id: 'items-store', label: 'STORE', to: '/store-management', permissionAny: ['items.view', 'stock.view', 'inventory.view'] },
+          { id: 'items-adjustments', label: 'ADJUSTMENT ITEMS', to: '/store-management/adjustment-items', permissionAny: ['items.view', 'stock.view', 'inventory.view'] },
+        ],
+      },
+      { id: 'purchases', label: 'Purchases', icon: ShoppingBag, to: '/purchases', permissionAny: ['purchases.view', 'suppliers.view'] },
+      {
+        id: 'sales',
+        label: 'Sales',
+        icon: ReceiptText,
+        expandable: true,
+        permissionAny: ['sales.view'],
+        subItems: [
+          { id: 'sales-transactions', label: 'Transactions', to: '/sales', permissionAny: ['sales.view'] },
+          { id: 'sales-pos', label: 'POS', to: '/sales/pos', permissionAny: ['sales.create', 'sales.view'] },
+        ],
+      },
+      {
+        id: 'finance',
+        label: 'Finance',
+        icon: DollarSign,
+        expandable: true,
+        subItems: [
+          { id: 'finance-accounts', label: 'Accounts', to: '/finance/accounts' },
+          { id: 'finance-payroll', label: 'Payroll', to: '/finance/payroll' },
+          { id: 'finance-expense', label: 'Expense', to: '/finance/expense' },
+          { id: 'finance-loans', label: 'Loans', to: '/finance/loans' },
+        ],
+      },
+      { id: 'hr', label: 'HR', icon: BriefcaseBusiness, to: '/employees/registration', permissionAny: ['employees.view'] },
+      { id: 'reports', label: 'Reports', icon: FileText, to: '/reports' },
+      { id: 'system', label: 'System', icon: Settings, to: '/system' },
+      { id: 'setting', label: 'Setting', icon: Cog, to: '/settings' },
+    ],
+    []
+  );
+
+  const visibleItems = useMemo(
+    () =>
+      items
+        .map((item) => ({
+          ...item,
+          subItems: (item.subItems || []).filter((sub) => hasAnyPerm(sub.permissionAny)),
+        }))
+        .filter((item) => hasAnyPerm(item.permissionAny)),
+    [hasAnyPerm, items]
+  );
+
+  const showExpanded = isExpanded || isHovered || isMobileOpen;
 
   return (
     <aside
@@ -122,18 +137,17 @@ const AppSidebar: React.FC = () => {
       onMouseEnter={() => !isExpanded && setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      {/* Logo + collapse/expand */}
       <div
-        className={`py-5 flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 ${!showExpanded ? 'lg:justify-center px-2' : 'justify-between px-4'}`}
+        className={`py-5 flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 ${
+          !showExpanded ? 'lg:justify-center px-2' : 'justify-between px-4'
+        }`}
       >
         <Link to="/" className="flex items-center gap-3 min-w-0">
           <div className="w-8 h-8 shrink-0 bg-primary-600 dark:bg-primary-500 rounded-lg flex items-center justify-center">
             <ShoppingCart className="w-5 h-5 text-white" />
           </div>
           {showExpanded && (
-            <span className="text-lg font-semibold text-slate-800 dark:text-slate-100 truncate">
-              KeydMaal MS
-            </span>
+            <span className="text-lg font-semibold text-slate-800 dark:text-slate-100 truncate">KeydMaal MS</span>
           )}
         </Link>
 
@@ -142,96 +156,59 @@ const AppSidebar: React.FC = () => {
           aria-label={showExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
           className="hidden lg:flex shrink-0 p-1.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg transition-colors text-slate-500 dark:text-slate-400"
         >
-          {showExpanded ? (
-            <ChevronLeft className="w-5 h-5" />
-          ) : (
-            <ChevronRight className="w-5 h-5" />
-          )}
+          {showExpanded ? <ChevronLeft className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
         </button>
       </div>
 
-      {/* Section label + Navigation */}
       <div className="flex-1 overflow-y-auto custom-scrollbar">
-        {showExpanded && (
-          <div className="px-4 pt-4 pb-2">
-            <p className="text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Features
-            </p>
-            {/* <div className="mt-2 border-t border-slate-200 dark:border-slate-700" /> */}
-          </div>
-        )}
-        <nav className={`px-2 pb-4 ${showExpanded ? 'pt-2' : 'pt-4'}`}>
-          {loading ? (
-            <div className="py-4 text-center text-sm text-slate-500 dark:text-slate-400">
-              Loading...
-            </div>
-          ) : (
-            <ul className="space-y-0.5">
-              {modules.map((mod) => {
-                const Icon = getIcon(mod.icon);
-                const active = isActive(mod.route);
-                const hasChildren = mod.items && mod.items.length > 0;
-                const isOpen = hasChildren && isSectionOpen(mod);
+        <nav className={`px-2 pb-4 ${showExpanded ? 'pt-3' : 'pt-4'}`}>
+          <ul className="space-y-1">
+            {visibleItems.map((item) => {
+              const Icon = item.icon;
+              const hasSubs = Boolean(item.expandable && item.subItems && item.subItems.length > 0);
+              const active = item.to ? isActive(item.to, item.exact) : false;
 
+              if (hasSubs) {
+                const groupOpen = Boolean(openGroups[item.id]);
+                const hasActiveSub = (item.subItems || []).some((sub) => isActive(sub.to));
                 return (
-                  <li key={mod.id}>
-                    <div
-                      className={`flex items-center w-full gap-2 rounded-lg transition-colors ${
-                        active
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      onClick={() => setOpenGroups((prev) => ({ ...prev, [item.id]: !groupOpen }))}
+                      className={`flex items-center w-full rounded-lg px-3 py-2.5 transition-colors ${
+                        hasActiveSub
                           ? 'bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300'
                           : 'text-slate-700 dark:text-slate-300 hover:bg-slate-200/80 dark:hover:bg-slate-800'
-                      } ${!showExpanded ? 'lg:justify-center px-0' : 'px-3'}`}
+                      } ${!showExpanded ? 'lg:justify-center px-0' : ''}`}
                     >
-                      <Link
-                        to={mod.route}
-                        onClick={(e) => {
-                          if (hasChildren) {
-                            e.preventDefault();
-                            toggleSection(mod.id);
-                          }
-                        }}
-                        className={`flex items-center min-w-0 flex-1 py-2.5 ${!showExpanded ? 'lg:justify-center' : 'gap-3'}`}
-                      >
+                      <span className={`flex items-center min-w-0 flex-1 ${!showExpanded ? 'lg:justify-center' : 'gap-3'}`}>
                         <span className="flex-shrink-0 text-slate-600 dark:text-slate-400">
-                          <Icon className="w-5 h-5" />
+                          <Icon className="w-4 h-4" />
                         </span>
-                        {showExpanded && (
-                          <span className="text-sm font-medium truncate">{mod.name}</span>
-                        )}
-                      </Link>
-                      {showExpanded && hasChildren && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            toggleSection(mod.id);
-                          }}
-                          className="flex-shrink-0 p-1 rounded text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-                          aria-label={isOpen ? 'Collapse' : 'Expand'}
-                        >
-                          {isOpen ? (
-                            <ChevronDown className="w-4 h-4" />
-                          ) : (
-                            <ChevronRight className="w-4 h-4" />
-                          )}
-                        </button>
+                        {showExpanded && <span className="text-sm font-medium truncate">{item.label}</span>}
+                      </span>
+                      {showExpanded && (
+                        <ChevronDown
+                          className={`h-4 w-4 transition-transform ${groupOpen ? 'rotate-0' : '-rotate-90'}`}
+                        />
                       )}
-                    </div>
-                    {showExpanded && hasChildren && isOpen && (
-                      <ul className="ml-4 mt-0.5 pl-6 border-l border-slate-200 dark:border-slate-700 space-y-0.5">
-                        {mod.items!.map((sub) => {
-                          const subActive = isActive(sub.route, true);
+                    </button>
+                    {showExpanded && groupOpen && (
+                      <ul className="ml-10 mt-1 space-y-1">
+                        {(item.subItems || []).map((sub) => {
+                          const subActive = isActive(sub.to, sub.exact);
                           return (
                             <li key={sub.id}>
                               <Link
-                                to={sub.route}
-                                className={`block py-2 px-2 rounded-md text-sm transition-colors ${
+                                to={sub.to}
+                                className={`block rounded-lg px-3 py-2 text-sm transition-colors ${
                                   subActive
-                                    ? 'text-primary-600 dark:text-primary-400 font-medium'
-                                    : 'text-slate-600 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
+                                    ? 'bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300'
+                                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200/80 dark:hover:bg-slate-800'
                                 }`}
                               >
-                                {sub.name}
+                                {sub.label}
                               </Link>
                             </li>
                           );
@@ -240,17 +217,36 @@ const AppSidebar: React.FC = () => {
                     )}
                   </li>
                 );
-              })}
-            </ul>
-          )}
+              }
+
+              return (
+                <li key={item.id}>
+                  <Link
+                    to={item.to || '/'}
+                    className={`flex items-center w-full rounded-lg transition-colors ${
+                      active
+                        ? 'bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300'
+                        : 'text-slate-700 dark:text-slate-300 hover:bg-slate-200/80 dark:hover:bg-slate-800'
+                    } ${!showExpanded ? 'lg:justify-center px-0' : 'px-3'}`}
+                  >
+                    <span className={`flex items-center min-w-0 flex-1 py-2.5 ${!showExpanded ? 'lg:justify-center' : 'gap-3'}`}>
+                      <span className="flex-shrink-0 text-slate-600 dark:text-slate-400">
+                        <Icon className="w-4 h-4" />
+                      </span>
+                      {showExpanded && <span className="text-sm font-medium truncate">{item.label}</span>}
+                    </span>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
         </nav>
       </div>
 
-      {/* Footer */}
       {showExpanded && (
         <div className="p-4 border-t border-slate-200 dark:border-slate-800">
           <p className="text-xs text-slate-500 dark:text-slate-400 text-center">
-            © 2026 KeydMaal MS | All rights reserved
+            (c) 2026 KeydMaal MS | All rights reserved
           </p>
         </div>
       )}
@@ -259,5 +255,3 @@ const AppSidebar: React.FC = () => {
 };
 
 export default AppSidebar;
-
-

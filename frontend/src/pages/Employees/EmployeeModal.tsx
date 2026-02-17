@@ -28,6 +28,7 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
     salary: 0,
     hire_date: new Date().toISOString().split('T')[0],
     status: 'active',
+    gender: 'male',
   });
 
   useEffect(() => {
@@ -40,6 +41,7 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
         salary: Number(employee.basic_salary) || 0,
         hire_date: employee.hire_date.split('T')[0],
         status: employee.status,
+        gender: (employee.gender as 'male' | 'female') || 'male',
       });
     } else {
       setFormData({
@@ -50,6 +52,7 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
         salary: 0,
         hire_date: new Date().toISOString().split('T')[0],
         status: 'active',
+        gender: 'male',
       });
     }
   }, [employee, isOpen]);
@@ -116,8 +119,24 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
             />
           </div>
 
-          {/* Address */}
-          <div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                Gender *
+              </label>
+              <select
+                required
+                value={formData.gender || 'male'}
+                onChange={(e) => setFormData({ ...formData, gender: e.target.value as 'male' | 'female' })}
+                className="w-full px-4 py-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
+              >
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+              </select>
+            </div>
+
+            {/* Address */}
+            <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
               <Briefcase className="w-4 h-4 inline mr-2" />
               Address
@@ -129,6 +148,7 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
               className="w-full px-4 py-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
               placeholder="Enter employee address"
             />
+          </div>
           </div>
 
           {/* Role */}

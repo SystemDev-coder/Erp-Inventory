@@ -2,12 +2,32 @@ import { Navigate, useLocation } from "react-router";
 import { useAuth } from "../../context/AuthContext";
 
 /**
- * Wraps routes that require authentication.
- * Redirects to /signin when not logged in; shows nothing while checking.
+ * Wraps routes that require authentication and optional permission.
  */
-export default function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading } = useAuth();
+export default function ProtectedRoute({
+  children,
+  permission
+}: {
+  children: React.ReactNode;
+  permission?: string;
+}) {
+  const { isAuthenticated, isLoading, permissions } = useAuth();
   const location = useLocation();
+  const expandPermissionKeys = (permKey: string): string[] => {
+    if (permKey.startsWith('items.')) {
+      return [permKey, permKey.replace('items.', 'products.')];
+    }
+    if (permKey.startsWith('products.')) {
+      return [permKey, permKey.replace('products.', 'items.')];
+    }
+    if (permKey === 'stock.view') {
+      return [permKey, 'warehouse_stock.view'];
+    }
+    if (permKey === 'warehouse_stock.view') {
+      return [permKey, 'stock.view'];
+    }
+    return [permKey];
+  };
 
   if (isLoading) {
     return (
@@ -19,6 +39,10 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
 
   if (!isAuthenticated) {
     return <Navigate to="/signin" state={{ from: location }} replace />;
+  }
+
+  if (permission && !expandPermissionKeys(permission).some((key) => permissions.includes(key))) {
+    return <Navigate to="/" replace />; // Or to a forbidden page
   }
 
   return <>{children}</>;

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import Chart from 'react-apexcharts';
 import { ApexOptions } from 'apexcharts';
 import {
@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { apiClient, ApiResponse } from '../../services/api';
 import { API } from '../../config/env';
+import { PageHeader } from '../../components/ui/layout';
 
 type DashboardCard = {
   id: string;
@@ -71,30 +72,23 @@ const formatValue = (value: number, format?: 'currency' | 'number') => {
 
 const Dashboard = () => {
   const [data, setData] = useState<DashboardResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [hasLoaded, setHasLoaded] = useState(false);
 
-  useEffect(() => {
-    let active = true;
-    apiClient
-      .get<DashboardResponse>(API.DASHBOARD)
-      .then((res: ApiResponse<DashboardResponse>) => {
-        if (!active) return;
-        if (res.success && res.data) {
-          setData(res.data);
-        } else {
-          setData(null);
-        }
-      })
-      .catch(() => {
-        if (active) setData(null);
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
+  const loadDashboard = async () => {
+    setLoading(true);
+    setError(null);
+    const res: ApiResponse<DashboardResponse> = await apiClient.get<DashboardResponse>(API.DASHBOARD);
+    if (res.success && res.data) {
+      setData(res.data);
+    } else {
+      setData(null);
+      setError(res.error || 'Failed to load dashboard data');
+    }
+    setHasLoaded(true);
+    setLoading(false);
+  };
 
   const chartOptions = useMemo(() => {
     if (!data?.charts) return {};
@@ -156,6 +150,20 @@ const Dashboard = () => {
 
   return (
     <div className="space-y-10">
+      <PageHeader
+        title="Dashboard"
+        description="Click Display to load dashboard metrics and activity."
+        actions={
+          <button
+            onClick={() => void loadDashboard()}
+            disabled={loading}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-60"
+          >
+            Display
+          </button>
+        }
+      />
+
       <section className="relative overflow-hidden rounded-3xl border border-slate-800 bg-[radial-gradient(circle_at_top_left,_#0f172a,_#0b1120_60%)] px-6 py-8 sm:px-10">
         <div className="absolute inset-0 opacity-40">
           <div className="absolute -top-24 -right-20 h-64 w-64 rounded-full bg-cyan-500/20 blur-3xl" />
@@ -187,6 +195,12 @@ const Dashboard = () => {
       {loading && (
         <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-900/60 p-8 text-slate-500">
           Loading dashboard...
+        </div>
+      )}
+
+      {!loading && hasLoaded && error && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800/60 dark:bg-red-950/30 dark:text-red-200">
+          {error}
         </div>
       )}
 
@@ -311,6 +325,12 @@ const Dashboard = () => {
             </div>
           </section>
         </>
+      )}
+
+      {!loading && !hasLoaded && (
+        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-900/60 p-8 text-slate-500">
+          No data loaded yet. Use the Display button.
+        </div>
       )}
     </div>
   );

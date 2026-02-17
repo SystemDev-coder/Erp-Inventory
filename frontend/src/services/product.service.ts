@@ -18,6 +18,7 @@ export interface Product {
   price: number;
   cost: number;
   stock: number;
+  opening_balance?: number;
   is_active: boolean;
   status: string;
   reorder_level: number;
@@ -26,8 +27,11 @@ export interface Product {
 }
 
 export const productService = {
-  async list(search?: string) {
-    const qs = search ? `?search=${encodeURIComponent(search)}` : '';
+  async list(search?: string, categoryId?: number) {
+    const params = new URLSearchParams();
+    if (search) params.set('search', search);
+    if (categoryId) params.set('categoryId', String(categoryId));
+    const qs = params.toString() ? `?${params.toString()}` : '';
     return apiClient.get<{ products: Product[] }>(`${API.PRODUCTS.LIST}${qs}`);
   },
 

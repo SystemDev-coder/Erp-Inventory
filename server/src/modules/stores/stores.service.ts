@@ -82,8 +82,8 @@ export const storesService = {
   async listItems(storeId: number, scope: BranchScope): Promise<StoreItem[]> {
     await this.get(storeId, scope);
     return queryMany<StoreItem>(
-      `SELECT si.*, p.name AS product_name FROM ims.store_items si
-       LEFT JOIN ims.products p ON p.product_id = si.product_id
+      `SELECT si.*, i.name AS product_name FROM ims.store_items si
+       LEFT JOIN ims.items i ON i.item_id = si.product_id
        WHERE si.store_id = $1 ORDER BY si.store_item_id`,
       [storeId]
     );
@@ -98,7 +98,7 @@ export const storesService = {
     if (existing) {
       const newQty = Number(existing.quantity) + Number(input.quantity);
       await queryOne(`UPDATE ims.store_items SET quantity = $1, updated_at = NOW() WHERE store_item_id = $2`, [newQty, existing.store_item_id]);
-      const row = await queryOne<StoreItem>(`SELECT si.*, p.name AS product_name FROM ims.store_items si LEFT JOIN ims.products p ON p.product_id = si.product_id WHERE si.store_item_id = $1`, [existing.store_item_id]);
+      const row = await queryOne<StoreItem>(`SELECT si.*, i.name AS product_name FROM ims.store_items si LEFT JOIN ims.items i ON i.item_id = si.product_id WHERE si.store_item_id = $1`, [existing.store_item_id]);
       if (!row) throw ApiError.internal('Failed to read store item');
       return row;
     }
@@ -107,14 +107,14 @@ export const storesService = {
       [storeId, input.productId, input.quantity]
     );
     if (!inserted) throw ApiError.internal('Failed to add store item');
-    const withName = await queryOne<StoreItem>(`SELECT si.*, p.name AS product_name FROM ims.store_items si LEFT JOIN ims.products p ON p.product_id = si.product_id WHERE si.store_item_id = $1`, [inserted.store_item_id]);
+    const withName = await queryOne<StoreItem>(`SELECT si.*, i.name AS product_name FROM ims.store_items si LEFT JOIN ims.items i ON i.item_id = si.product_id WHERE si.store_item_id = $1`, [inserted.store_item_id]);
     return withName ?? inserted;
   },
 
   async updateItemQuantity(storeId: number, storeItemId: number, quantity: number, scope: BranchScope): Promise<StoreItem | null> {
     await this.get(storeId, scope);
     await queryOne(`UPDATE ims.store_items SET quantity = $1, updated_at = NOW() WHERE store_item_id = $2 AND store_id = $3`, [quantity, storeItemId, storeId]);
-    return queryOne<StoreItem>(`SELECT si.*, p.name AS product_name FROM ims.store_items si LEFT JOIN ims.products p ON p.product_id = si.product_id WHERE si.store_item_id = $1`, [storeItemId]);
+    return queryOne<StoreItem>(`SELECT si.*, i.name AS product_name FROM ims.store_items si LEFT JOIN ims.items i ON i.item_id = si.product_id WHERE si.store_item_id = $1`, [storeItemId]);
   },
 
   async removeItem(storeId: number, storeItemId: number, scope: BranchScope): Promise<void> {

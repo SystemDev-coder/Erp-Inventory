@@ -44,6 +44,56 @@ apply_base_schema() {
   psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 -c "INSERT INTO ${DB_SCHEMA}.schema_migrations (filename) VALUES ('${file_name}')"
 }
 
+run_bootstrap_seed() {
+  echo "Running bootstrap seed checks (company, branch, roles, sample users)"
+  psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 <<SQL
+SET search_path TO "${DB_SCHEMA}", public;
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM ims.company) THEN
+    INSERT INTO ims.company (company_name) VALUES ('My Inventory ERP');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM ims.branches WHERE is_active = TRUE) THEN
+    INSERT INTO ims.branches (branch_name, is_active)
+    VALUES ('Main Branch', TRUE)
+    ON CONFLICT (branch_name) DO UPDATE SET is_active = EXCLUDED.is_active;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname = 'ims'
+       AND p.proname = 'sp_generate_all_permissions'
+  ) THEN
+    PERFORM ims.sp_generate_all_permissions();
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname = 'ims'
+       AND p.proname = 'sp_create_default_roles'
+  ) THEN
+    PERFORM ims.sp_create_default_roles();
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname = 'ims'
+       AND p.proname = 'sp_create_sample_users'
+  ) THEN
+    PERFORM ims.sp_create_sample_users();
+  END IF;
+END
+\$\$;
+SQL
+}
+
 BASE_SCHEMA_PATH="${MIGRATIONS_DIR}/${BASE_SCHEMA_FILE}"
 
 if [ -f "${BASE_SCHEMA_PATH}" ]; then
@@ -52,6 +102,8 @@ else
   echo "ERROR: base schema file not found at ${BASE_SCHEMA_PATH}"
   exit 1
 fi
+
+run_bootstrap_seed
 
 echo "Starting dev server..."
 exec npm run dev

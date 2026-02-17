@@ -8,6 +8,7 @@ export interface Customer {
   customer_type: 'regular' | 'one-time' | string;
   address?: string | null;
   sex?: string | null;
+  gender?: string | null;
   is_active: boolean;
   balance: number;
   remaining_balance?: number;
@@ -30,7 +31,8 @@ export const customerService = {
       phone: data.phone,
       customerType: data.customer_type,
       address: data.address,
-      sex: data.sex,
+      sex: data.sex ?? data.gender,
+      gender: data.gender ?? data.sex,
       isActive: data.is_active,
       remainingBalance: data.remaining_balance,
     });
@@ -42,7 +44,8 @@ export const customerService = {
       phone: data.phone,
       customerType: data.customer_type,
       address: data.address,
-      sex: data.sex,
+      sex: data.sex ?? data.gender,
+      gender: data.gender ?? data.sex,
       isActive: data.is_active,
       remainingBalance: data.remaining_balance,
     });
