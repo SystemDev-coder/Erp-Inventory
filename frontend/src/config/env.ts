@@ -72,6 +72,10 @@ export const API = {
     ITEM: (id: number) => `/api/products/${id}`,
     CATEGORIES: '/api/products/categories',
     CATEGORY: (id: number) => `/api/products/categories/${id}`,
+    UNITS: '/api/products/units',
+    UNIT: (id: number) => `/api/products/units/${id}`,
+    TAXES: '/api/products/taxes',
+    TAX: (id: number) => `/api/products/taxes/${id}`,
   },
 
   // Customers endpoints

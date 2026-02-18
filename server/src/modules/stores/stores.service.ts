@@ -1,7 +1,13 @@
 import { queryMany, queryOne } from '../../db/query';
 import { BranchScope } from '../../utils/branchScope';
 import { ApiError } from '../../utils/ApiError';
-import { StoreCreateInput, StoreUpdateInput, StoreItemInput } from './stores.schemas';
+import {
+  StoreCreateInput,
+  StoreUpdateInput,
+  StoreItemInput,
+  StoreListQueryInput,
+  StoreItemListQueryInput,
+} from './stores.schemas';
 
 export interface Store {
   store_id: number;
@@ -24,13 +30,61 @@ export interface StoreItem {
   created_at: string;
 }
 
+type Paged<T> = {
+  rows: T[];
+  total: number;
+  page: number;
+  limit: number;
+};
+
 export const storesService = {
-  async list(scope: BranchScope, branchId?: number): Promise<Store[]> {
-    const params: any[] = [];
-    const clause = branchId ? 'WHERE s.branch_id = $1' : scope.isAdmin ? '' : 'WHERE s.branch_id = ANY($1)';
-    if (branchId) params.push(branchId);
-    else if (!scope.isAdmin) params.push(scope.branchIds);
-    return queryMany<Store>(`SELECT s.* FROM ims.stores s ${clause} ORDER BY s.store_name`, params);
+  async list(scope: BranchScope, filters: StoreListQueryInput): Promise<Paged<Store>> {
+    const params: unknown[] = [];
+    const where: string[] = [];
+
+    if (filters.branchId) {
+      if (!scope.isAdmin && !scope.branchIds.includes(filters.branchId)) {
+        throw ApiError.forbidden('Cannot access stores for this branch');
+      }
+      params.push(filters.branchId);
+      where.push(`s.branch_id = $${params.length}`);
+    } else if (!scope.isAdmin) {
+      params.push(scope.branchIds);
+      where.push(`s.branch_id = ANY($${params.length})`);
+    }
+
+    if (filters.search?.trim()) {
+      params.push(`%${filters.search.trim()}%`);
+      where.push(`(s.store_name ILIKE $${params.length} OR COALESCE(s.store_code,'') ILIKE $${params.length})`);
+    }
+
+    if (!filters.includeInactive) {
+      where.push('s.is_active = TRUE');
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const count = await queryOne<{ total: string }>(
+      `SELECT COUNT(*)::text AS total FROM ims.stores s ${whereSql}`,
+      params
+    );
+
+    const offset = (filters.page - 1) * filters.limit;
+    const rows = await queryMany<Store>(
+      `SELECT s.*
+         FROM ims.stores s
+         ${whereSql}
+        ORDER BY s.store_name
+        LIMIT $${params.length + 1}
+       OFFSET $${params.length + 2}`,
+      [...params, filters.limit, offset]
+    );
+
+    return {
+      rows,
+      total: Number(count?.total || 0),
+      page: filters.page,
+      limit: filters.limit,
+    };
   },
 
   async get(id: number, scope: BranchScope): Promise<Store | null> {
@@ -79,18 +133,62 @@ export const storesService = {
     await queryOne(`DELETE FROM ims.stores WHERE store_id = $1`, [id]);
   },
 
-  async listItems(storeId: number, scope: BranchScope): Promise<StoreItem[]> {
+  async listItems(
+    storeId: number,
+    scope: BranchScope,
+    filters: StoreItemListQueryInput
+  ): Promise<Paged<StoreItem>> {
     await this.get(storeId, scope);
-    return queryMany<StoreItem>(
-      `SELECT si.*, i.name AS product_name FROM ims.store_items si
-       LEFT JOIN ims.items i ON i.item_id = si.product_id
-       WHERE si.store_id = $1 ORDER BY si.store_item_id`,
-      [storeId]
+
+    const params: unknown[] = [storeId];
+    let whereSql = 'WHERE si.store_id = $1';
+
+    if (filters.search?.trim()) {
+      params.push(`%${filters.search.trim()}%`);
+      whereSql += ` AND i.name ILIKE $${params.length}`;
+    }
+
+    const count = await queryOne<{ total: string }>(
+      `SELECT COUNT(*)::text AS total
+         FROM ims.store_items si
+         LEFT JOIN ims.items i ON i.item_id = si.product_id
+         ${whereSql}`,
+      params
     );
+
+    const offset = (filters.page - 1) * filters.limit;
+    const rows = await queryMany<StoreItem>(
+      `SELECT si.*, i.name AS product_name
+         FROM ims.store_items si
+         LEFT JOIN ims.items i ON i.item_id = si.product_id
+         ${whereSql}
+        ORDER BY si.store_item_id
+        LIMIT $${params.length + 1}
+       OFFSET $${params.length + 2}`,
+      [...params, filters.limit, offset]
+    );
+
+    return {
+      rows,
+      total: Number(count?.total || 0),
+      page: filters.page,
+      limit: filters.limit,
+    };
   },
 
   async addItem(storeId: number, input: StoreItemInput, scope: BranchScope): Promise<StoreItem> {
-    await this.get(storeId, scope);
+    const store = await this.get(storeId, scope);
+    if (!store) throw ApiError.notFound('Store not found');
+    const product = await queryOne<{ item_id: number }>(
+      `SELECT item_id
+         FROM ims.items
+        WHERE item_id = $1
+          AND branch_id = $2`,
+      [input.productId, store.branch_id]
+    );
+    if (!product) {
+      throw ApiError.badRequest('Item not found in this store branch');
+    }
     const existing = await queryOne<{ store_item_id: number; quantity: string }>(
       `SELECT store_item_id, quantity FROM ims.store_items WHERE store_id = $1 AND product_id = $2`,
       [storeId, input.productId]

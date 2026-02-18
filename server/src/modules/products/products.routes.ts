@@ -12,6 +12,14 @@ import {
   createCategory,
   updateCategory,
   deleteCategory,
+  listUnits,
+  createUnit,
+  updateUnit,
+  deleteUnit,
+  listTaxes,
+  createTax,
+  updateTax,
+  deleteTax,
   uploadProductImage,
   deleteProductImage,
 } from './products.controller';
@@ -25,6 +33,18 @@ router.get('/categories', requirePerm('items.view'), listCategories);
 router.post('/categories', requirePerm('items.create'), createCategory);
 router.put('/categories/:id', requirePerm('items.update'), updateCategory);
 router.delete('/categories/:id', requirePerm('items.delete'), deleteCategory);
+
+// Units
+router.get('/units', requirePerm('items.view'), listUnits);
+router.post('/units', requirePerm('items.create'), createUnit);
+router.put('/units/:id', requirePerm('items.update'), updateUnit);
+router.delete('/units/:id', requirePerm('items.delete'), deleteUnit);
+
+// Taxes
+router.get('/taxes', requirePerm('items.view'), listTaxes);
+router.post('/taxes', requirePerm('items.create'), createTax);
+router.put('/taxes/:id', requirePerm('items.update'), updateTax);
+router.delete('/taxes/:id', requirePerm('items.delete'), deleteTax);
 
 // Products
 router.get('/', requirePerm('items.view'), listProducts);

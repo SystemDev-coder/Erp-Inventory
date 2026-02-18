@@ -22,9 +22,36 @@ export interface StoreItem {
   created_at: string;
 }
 
+export interface PaginationMeta {
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+type StoreListOptions = {
+  branchId?: number;
+  search?: string;
+  includeInactive?: boolean;
+  page?: number;
+  limit?: number;
+};
+
+type StoreItemListOptions = {
+  search?: string;
+  page?: number;
+  limit?: number;
+};
+
 export const storeService = {
-  async list(branchId?: number) {
-    const qs = branchId != null ? `?branchId=${branchId}` : '';
+  async list(options: StoreListOptions = {}) {
+    const params = new URLSearchParams();
+    if (options.branchId != null) params.set('branchId', String(options.branchId));
+    if (options.search) params.set('search', options.search);
+    if (options.includeInactive !== undefined) params.set('includeInactive', String(options.includeInactive));
+    if (options.page) params.set('page', String(options.page));
+    if (options.limit) params.set('limit', String(options.limit));
+    const qs = params.toString() ? `?${params.toString()}` : '';
     return apiClient.get<{ stores: Store[] }>(`${API.STORES.LIST}${qs}`);
   },
 
@@ -44,8 +71,13 @@ export const storeService = {
     return apiClient.delete<{ message: string }>(API.STORES.ITEM(id));
   },
 
-  async listItems(storeId: number) {
-    return apiClient.get<{ items: StoreItem[] }>(API.STORES.ITEMS(storeId));
+  async listItems(storeId: number, options: StoreItemListOptions = {}) {
+    const params = new URLSearchParams();
+    if (options.search) params.set('search', options.search);
+    if (options.page) params.set('page', String(options.page));
+    if (options.limit) params.set('limit', String(options.limit));
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    return apiClient.get<{ items: StoreItem[]; pagination?: PaginationMeta }>(`${API.STORES.ITEMS(storeId)}${qs}`);
   },
 
   async addItem(storeId: number, data: { productId: number; quantity: number }) {

@@ -5,13 +5,27 @@ import { ApiError } from '../../utils/ApiError';
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { resolveBranchScope } from '../../utils/branchScope';
 import { storesService } from './stores.service';
-import { storeCreateSchema, storeUpdateSchema, storeItemSchema } from './stores.schemas';
+import {
+  storeCreateSchema,
+  storeItemListQuerySchema,
+  storeItemSchema,
+  storeListQuerySchema,
+  storeUpdateSchema,
+} from './stores.schemas';
 
 export const listStores = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
-  const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
-  const stores = await storesService.list(scope, branchId);
-  return ApiResponse.success(res, { stores });
+  const filters = storeListQuerySchema.parse(req.query);
+  const result = await storesService.list(scope, filters);
+  return ApiResponse.success(res, {
+    stores: result.rows,
+    pagination: {
+      total: result.total,
+      page: result.page,
+      limit: result.limit,
+      totalPages: result.limit > 0 ? Math.ceil(result.total / result.limit) : 0,
+    },
+  });
 });
 
 export const getStore = asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -48,8 +62,17 @@ export const deleteStore = asyncHandler(async (req: AuthRequest, res: Response) 
 export const listStoreItems = asyncHandler(async (req: AuthRequest, res: Response) => {
   const storeId = Number(req.params.id);
   const scope = await resolveBranchScope(req);
-  const items = await storesService.listItems(storeId, scope);
-  return ApiResponse.success(res, { items });
+  const filters = storeItemListQuerySchema.parse(req.query);
+  const result = await storesService.listItems(storeId, scope, filters);
+  return ApiResponse.success(res, {
+    items: result.rows,
+    pagination: {
+      total: result.total,
+      page: result.page,
+      limit: result.limit,
+      totalPages: result.limit > 0 ? Math.ceil(result.total / result.limit) : 0,
+    },
+  });
 });
 
 export const addStoreItem = asyncHandler(async (req: AuthRequest, res: Response) => {

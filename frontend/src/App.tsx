@@ -55,7 +55,12 @@ function AppRoutes() {
           <Route path="/store-management" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
           <Route path="/store-management/store" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
           <Route path="/store-management/items" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
+          <Route path="/store-management/stock-adjustments" element={<ProtectedRoute><StockAdjustmentsPage /></ProtectedRoute>} />
+          <Route path="/store-management/transfer-items" element={<ProtectedRoute><Transfers /></ProtectedRoute>} />
+          <Route path="/store-management/returns" element={<ProtectedRoute><Returns /></ProtectedRoute>} />
           <Route path="/store-management/categories" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
+          <Route path="/store-management/units" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
+          <Route path="/store-management/taxes" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
           <Route path="/store-management/item-state" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
           <Route path="/store-management/stores" element={<ProtectedRoute><Products /></ProtectedRoute>} />
           <Route path="/store-management/adjustment-items" element={<ProtectedRoute><Products /></ProtectedRoute>} />

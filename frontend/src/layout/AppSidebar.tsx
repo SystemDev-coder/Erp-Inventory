@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import {
   BriefcaseBusiness,
@@ -49,6 +49,30 @@ const AppSidebar: React.FC = () => {
     finance: false,
   });
 
+  const closeAllGroups = useCallback(() => {
+    setOpenGroups((prev) => {
+      const next: Record<string, boolean> = {};
+      Object.keys(prev).forEach((key) => {
+        next[key] = false;
+      });
+      return next;
+    });
+  }, []);
+
+  const toggleGroup = useCallback((groupId: string) => {
+    setOpenGroups((prev) => {
+      const willOpen = !prev[groupId];
+      const next: Record<string, boolean> = {};
+      Object.keys(prev).forEach((key) => {
+        next[key] = false;
+      });
+      if (willOpen) {
+        next[groupId] = true;
+      }
+      return next;
+    });
+  }, []);
+
   const isActive = useCallback(
     (path: string, exact = false) => {
       const current = location.pathname.replace(/\/+$/, '') || '/';
@@ -74,43 +98,39 @@ const AppSidebar: React.FC = () => {
       { id: 'customers', label: 'Customers', icon: Users, to: '/customers', permissionAny: ['customers.view'] },
       {
         id: 'items',
-        label: 'Items',
+        label: 'Store Management',
         icon: Store,
-        expandable: true,
+        to: '/store-management',
+        exact: true,
         permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'],
+        expandable: true,
         subItems: [
-          { id: 'items-store', label: 'STORE', to: '/store-management', permissionAny: ['items.view', 'stock.view', 'inventory.view'] },
-          { id: 'items-adjustments', label: 'ADJUSTMENT ITEMS', to: '/store-management/adjustment-items', permissionAny: ['items.view', 'stock.view', 'inventory.view'] },
-        ],
+          { id: 'items-list', label: 'Items', to: '/store-management/items', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
+          { id: 'Stock Adjustments', label: 'Stock Adjustments', to: '/store-management/stock-adjustments', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
+          { id: 'Transfer Items', label: 'Transfer Items', to: '/store-management/transfer-items', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
+          { id: 'Returns', label: 'Returns', to: '/store-management/returns', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
+        ], 
       },
       { id: 'purchases', label: 'Purchases', icon: ShoppingBag, to: '/purchases', permissionAny: ['purchases.view', 'suppliers.view'] },
       {
         id: 'sales',
         label: 'Sales',
         icon: ReceiptText,
-        expandable: true,
+        to: '/sales',
+        exact: true,
         permissionAny: ['sales.view'],
-        subItems: [
-          { id: 'sales-transactions', label: 'Transactions', to: '/sales', permissionAny: ['sales.view'] },
-          { id: 'sales-pos', label: 'POS', to: '/sales/pos', permissionAny: ['sales.create', 'sales.view'] },
-        ],
       },
       {
         id: 'finance',
         label: 'Finance',
         icon: DollarSign,
-        expandable: true,
-        subItems: [
-          { id: 'finance-accounts', label: 'Accounts', to: '/finance/accounts' },
-          { id: 'finance-payroll', label: 'Payroll', to: '/finance/payroll' },
-          { id: 'finance-expense', label: 'Expense', to: '/finance/expense' },
-          { id: 'finance-loans', label: 'Loans', to: '/finance/loans' },
-        ],
+        to: '/finance',
+        exact: true,
       },
       { id: 'hr', label: 'HR', icon: BriefcaseBusiness, to: '/employees/registration', permissionAny: ['employees.view'] },
-      { id: 'reports', label: 'Reports', icon: FileText, to: '/reports' },
       { id: 'system', label: 'System', icon: Settings, to: '/system' },
       { id: 'setting', label: 'Setting', icon: Cog, to: '/settings' },
+      { id: 'reports', label: 'Reports', icon: FileText, to: '/reports' },
     ],
     []
   );
@@ -125,6 +145,28 @@ const AppSidebar: React.FC = () => {
         .filter((item) => hasAnyPerm(item.permissionAny)),
     [hasAnyPerm, items]
   );
+
+  const activeExpandableGroupId = useMemo(() => {
+    const activeGroup = visibleItems.find((item) => {
+      if (!item.expandable || !item.subItems || item.subItems.length === 0) return false;
+      return item.subItems.some((sub) => isActive(sub.to, sub.exact));
+    });
+    return activeGroup?.id ?? null;
+  }, [visibleItems, isActive]);
+
+  useEffect(() => {
+    if (!activeExpandableGroupId) {
+      closeAllGroups();
+      return;
+    }
+    setOpenGroups((prev) => {
+      const next: Record<string, boolean> = {};
+      Object.keys(prev).forEach((key) => {
+        next[key] = key === activeExpandableGroupId;
+      });
+      return next;
+    });
+  }, [activeExpandableGroupId, closeAllGroups]);
 
   const showExpanded = isExpanded || isHovered || isMobileOpen;
 
@@ -160,7 +202,7 @@ const AppSidebar: React.FC = () => {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto custom-scrollbar">
+      <div className="flex-1 overflow-y-auto sidebar-scrollbar">
         <nav className={`px-2 pb-4 ${showExpanded ? 'pt-3' : 'pt-4'}`}>
           <ul className="space-y-1">
             {visibleItems.map((item) => {
@@ -170,20 +212,24 @@ const AppSidebar: React.FC = () => {
 
               if (hasSubs) {
                 const groupOpen = Boolean(openGroups[item.id]);
-                const hasActiveSub = (item.subItems || []).some((sub) => isActive(sub.to));
+                const hasActiveSub = (item.subItems || []).some((sub) => isActive(sub.to, sub.exact));
                 return (
                   <li key={item.id}>
                     <button
                       type="button"
-                      onClick={() => setOpenGroups((prev) => ({ ...prev, [item.id]: !groupOpen }))}
+                      onClick={() => toggleGroup(item.id)}
                       className={`flex items-center w-full rounded-lg px-3 py-2.5 transition-colors ${
                         hasActiveSub
-                          ? 'bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300'
+                          ? 'bg-primary-50 text-primary-700 dark:bg-primary-500/10 dark:text-primary-300'
                           : 'text-slate-700 dark:text-slate-300 hover:bg-slate-200/80 dark:hover:bg-slate-800'
                       } ${!showExpanded ? 'lg:justify-center px-0' : ''}`}
                     >
                       <span className={`flex items-center min-w-0 flex-1 ${!showExpanded ? 'lg:justify-center' : 'gap-3'}`}>
-                        <span className="flex-shrink-0 text-slate-600 dark:text-slate-400">
+                        <span
+                          className={`flex-shrink-0 ${
+                            hasActiveSub ? 'text-primary-600 dark:text-primary-300' : 'text-slate-600 dark:text-slate-400'
+                          }`}
+                        >
                           <Icon className="w-4 h-4" />
                         </span>
                         {showExpanded && <span className="text-sm font-medium truncate">{item.label}</span>}
@@ -195,7 +241,7 @@ const AppSidebar: React.FC = () => {
                       )}
                     </button>
                     {showExpanded && groupOpen && (
-                      <ul className="ml-10 mt-1 space-y-1">
+                      <ul className="ml-5 mt-2 space-y-1 border-l border-slate-300/50 pl-3 dark:border-slate-700/60">
                         {(item.subItems || []).map((sub) => {
                           const subActive = isActive(sub.to, sub.exact);
                           return (
@@ -204,7 +250,7 @@ const AppSidebar: React.FC = () => {
                                 to={sub.to}
                                 className={`block rounded-lg px-3 py-2 text-sm transition-colors ${
                                   subActive
-                                    ? 'bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300'
+                                    ? 'bg-primary-50 text-primary-700 dark:bg-primary-500/10 dark:text-primary-300'
                                     : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200/80 dark:hover:bg-slate-800'
                                 }`}
                               >

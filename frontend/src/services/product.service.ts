@@ -1,20 +1,58 @@
 import { apiClient } from './api';
 import { API } from '../config/env';
 
+export interface PaginationMeta {
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
 export interface Category {
   category_id: number;
+  branch_id?: number;
   name: string;
   description?: string | null;
-  parent_id?: number | null;
   is_active: boolean;
+  created_at?: string;
+  updated_at?: string | null;
+}
+
+export interface Unit {
+  unit_id: number;
+  branch_id?: number;
+  unit_name: string;
+  symbol?: string | null;
+  is_active: boolean;
+  created_at?: string;
+}
+
+export interface Tax {
+  tax_id: number;
+  branch_id?: number;
+  tax_name: string;
+  rate_percent: number;
+  is_inclusive: boolean;
+  is_active: boolean;
+  created_at?: string;
 }
 
 export interface Product {
   product_id: number;
+  branch_id?: number;
   name: string;
   sku?: string | null;
   category_id?: number | null;
   category_name?: string | null;
+  unit_id?: number | null;
+  unit_name?: string | null;
+  unit_symbol?: string | null;
+  tax_id?: number | null;
+  tax_name?: string | null;
+  tax_rate_percent?: number | null;
+  tax_is_inclusive?: boolean | null;
+  store_id?: number | null;
+  store_name?: string | null;
   price: number;
   cost: number;
   stock: number;
@@ -22,17 +60,59 @@ export interface Product {
   is_active: boolean;
   status: string;
   reorder_level: number;
+  reorder_qty?: number;
   description?: string | null;
-  product_image_url?: string | null;
 }
 
+type ListOptions = {
+  search?: string;
+  categoryId?: number;
+  unitId?: number;
+  taxId?: number;
+  storeId?: number;
+  branchId?: number;
+  includeInactive?: boolean;
+  page?: number;
+  limit?: number;
+};
+
+type MasterListOptions = {
+  search?: string;
+  branchId?: number;
+  includeInactive?: boolean;
+  page?: number;
+  limit?: number;
+};
+
+const buildQuery = (params: Record<string, string | number | boolean | undefined>) => {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      qs.set(key, String(value));
+    }
+  });
+  const encoded = qs.toString();
+  return encoded ? `?${encoded}` : '';
+};
+
 export const productService = {
-  async list(search?: string, categoryId?: number) {
-    const params = new URLSearchParams();
-    if (search) params.set('search', search);
-    if (categoryId) params.set('categoryId', String(categoryId));
-    const qs = params.toString() ? `?${params.toString()}` : '';
-    return apiClient.get<{ products: Product[] }>(`${API.PRODUCTS.LIST}${qs}`);
+  async list(searchOrOptions?: string | ListOptions, categoryIdArg?: number) {
+    const options: ListOptions =
+      typeof searchOrOptions === 'string' || searchOrOptions === undefined
+        ? { search: searchOrOptions, categoryId: categoryIdArg }
+        : searchOrOptions;
+    const qs = buildQuery({
+      search: options.search,
+      categoryId: options.categoryId,
+      unitId: options.unitId,
+      taxId: options.taxId,
+      storeId: options.storeId,
+      branchId: options.branchId,
+      includeInactive: options.includeInactive,
+      page: options.page,
+      limit: options.limit,
+    });
+    return apiClient.get<{ products: Product[]; pagination?: PaginationMeta }>(`${API.PRODUCTS.LIST}${qs}`);
   },
 
   async get(id: number) {
@@ -51,8 +131,9 @@ export const productService = {
     return apiClient.delete<{ message: string }>(API.PRODUCTS.ITEM(id));
   },
 
-  async listCategories() {
-    return apiClient.get<{ categories: Category[] }>(API.PRODUCTS.CATEGORIES);
+  async listCategories(options: MasterListOptions = {}) {
+    const qs = buildQuery(options);
+    return apiClient.get<{ categories: Category[]; pagination?: PaginationMeta }>(`${API.PRODUCTS.CATEGORIES}${qs}`);
   },
 
   async createCategory(data: Partial<Category>) {
@@ -65,5 +146,39 @@ export const productService = {
 
   async removeCategory(id: number) {
     return apiClient.delete<{ message: string }>(API.PRODUCTS.CATEGORY(id));
+  },
+
+  async listUnits(options: MasterListOptions = {}) {
+    const qs = buildQuery(options);
+    return apiClient.get<{ units: Unit[]; pagination?: PaginationMeta }>(`${API.PRODUCTS.UNITS}${qs}`);
+  },
+
+  async createUnit(data: Partial<Unit>) {
+    return apiClient.post<{ unit: Unit }>(API.PRODUCTS.UNITS, data);
+  },
+
+  async updateUnit(id: number, data: Partial<Unit>) {
+    return apiClient.put<{ unit: Unit }>(API.PRODUCTS.UNIT(id), data);
+  },
+
+  async removeUnit(id: number) {
+    return apiClient.delete<{ message: string }>(API.PRODUCTS.UNIT(id));
+  },
+
+  async listTaxes(options: MasterListOptions = {}) {
+    const qs = buildQuery(options);
+    return apiClient.get<{ taxes: Tax[]; pagination?: PaginationMeta }>(`${API.PRODUCTS.TAXES}${qs}`);
+  },
+
+  async createTax(data: Partial<Tax>) {
+    return apiClient.post<{ tax: Tax }>(API.PRODUCTS.TAXES, data);
+  },
+
+  async updateTax(id: number, data: Partial<Tax>) {
+    return apiClient.put<{ tax: Tax }>(API.PRODUCTS.TAX(id), data);
+  },
+
+  async removeTax(id: number) {
+    return apiClient.delete<{ message: string }>(API.PRODUCTS.TAX(id));
   },
 };

@@ -166,6 +166,7 @@ created_at TIMESTAMPTZ DEFAULT NOW()
 CREATE TABLE IF NOT EXISTS ims.user_permissions (
 user_id BIGINT NOT NULL REFERENCES ims.users(user_id) ON DELETE CASCADE,
 perm_id INT NOT NULL REFERENCES ims.permissions(perm_id) ON DELETE CASCADE,
+granted_by BIGINT REFERENCES ims.users(user_id) ON DELETE SET NULL,
 PRIMARY KEY (user_id, perm_id),
 created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -174,10 +175,15 @@ CREATE TABLE IF NOT EXISTS ims.user_permission_overrides (
 user_id BIGINT NOT NULL REFERENCES ims.users(user_id) ON DELETE CASCADE,
 perm_id INT NOT NULL REFERENCES ims.permissions(perm_id) ON DELETE CASCADE,
 effect VARCHAR(10) NOT NULL CHECK (effect IN ('allow', 'deny')),
+expires_at TIMESTAMPTZ,
 PRIMARY KEY (user_id, perm_id),
 created_at TIMESTAMPTZ DEFAULT NOW(),
 updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+ALTER TABLE ims.user_permissions
+  ADD COLUMN IF NOT EXISTS granted_by BIGINT REFERENCES ims.users(user_id) ON DELETE SET NULL;
+ALTER TABLE ims.user_permission_overrides
+  ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS ims.audit_logs (
 log_id SERIAL PRIMARY KEY,
@@ -198,8 +204,19 @@ cat_id      BIGSERIAL PRIMARY KEY,
 branch_id   BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 cat_name    VARCHAR(120) NOT NULL,
 description TEXT,
+is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+updated_at  TIMESTAMPTZ DEFAULT NOW(),
 CONSTRAINT uq_category_branch_name UNIQUE (branch_id, cat_name)
 );
+
+-- Backward compatibility for legacy databases where categories was created without status/timestamps
+ALTER TABLE IF EXISTS ims.categories
+  ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE IF EXISTS ims.categories
+  ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE IF EXISTS ims.categories
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
 CREATE TABLE IF NOT EXISTS ims.units (
 unit_id    BIGSERIAL PRIMARY KEY,
@@ -327,11 +344,43 @@ CREATE TABLE IF NOT EXISTS ims.stores (
 );
 
 CREATE INDEX IF NOT EXISTS idx_stores_branch ON ims.stores(branch_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_stores_branch_code
+  ON ims.stores(branch_id, store_code)
+  WHERE store_code IS NOT NULL;
 COMMENT ON TABLE ims.stores IS 'Physical store locations within branches where items can be managed';
 
 -- Add FK and index for store_id in items
-ALTER TABLE ims.items ADD CONSTRAINT fk_items_store FOREIGN KEY (store_id) REFERENCES ims.stores(store_id);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'ims'
+      AND t.relname = 'items'
+      AND c.conname = 'fk_items_store'
+  ) THEN
+    ALTER TABLE ims.items
+      ADD CONSTRAINT fk_items_store FOREIGN KEY (store_id) REFERENCES ims.stores(store_id);
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_items_store ON ims.items(store_id) WHERE store_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_items_unit ON ims.items(unit_id) WHERE unit_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_items_tax ON ims.items(tax_id) WHERE tax_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS ims.store_items (
+    store_item_id BIGSERIAL PRIMARY KEY,
+    store_id      BIGINT NOT NULL REFERENCES ims.stores(store_id) ON UPDATE CASCADE ON DELETE CASCADE,
+    product_id    BIGINT NOT NULL REFERENCES ims.items(item_id) ON UPDATE CASCADE ON DELETE CASCADE,
+    quantity      NUMERIC(14,3) NOT NULL DEFAULT 0 CHECK (quantity >= 0),
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT uq_store_items_store_product UNIQUE (store_id, product_id)
+);
+CREATE INDEX IF NOT EXISTS idx_store_items_store ON ims.store_items(store_id);
+CREATE INDEX IF NOT EXISTS idx_store_items_product ON ims.store_items(product_id);
+COMMENT ON TABLE ims.store_items IS 'Store-specific stock allocation for each item';
 
 CREATE TABLE IF NOT EXISTS ims.warehouse_stock (
 branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
@@ -623,6 +672,8 @@ phone VARCHAR(30),
 address TEXT,
 gender VARCHAR(20),
 hire_date DATE NOT NULL DEFAULT CURRENT_DATE,
+salary_type VARCHAR(60) NOT NULL,
+salary_amount NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (salary_amount >= 0),
 status ims.employment_status_enum NOT NULL DEFAULT 'active',
 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -637,17 +688,18 @@ created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 CONSTRAINT uq_salary_type_branch_name UNIQUE (branch_id, type_name)
 );
 
+-- Compatibility table used by employee service for salary history tracking
 CREATE TABLE IF NOT EXISTS ims.employee_salary (
-emp_sal_id    BIGSERIAL PRIMARY KEY,
-branch_id     BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+emp_salary_id BIGSERIAL PRIMARY KEY,
 emp_id        BIGINT NOT NULL REFERENCES ims.employees(emp_id) ON UPDATE CASCADE ON DELETE CASCADE,
-sal_type_id   BIGINT NOT NULL REFERENCES ims.salary_types(sal_type_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+sal_type_id   BIGINT REFERENCES ims.salary_types(sal_type_id) ON UPDATE CASCADE ON DELETE SET NULL,
 basic_salary  NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (basic_salary >= 0),
 start_date    DATE NOT NULL DEFAULT CURRENT_DATE,
 end_date      DATE,
 is_active     BOOLEAN NOT NULL DEFAULT TRUE,
-CONSTRAINT chk_emp_salary_dates CHECK (end_date IS NULL OR end_date >= start_date)
+created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE INDEX IF NOT EXISTS idx_employee_salary_emp_active ON ims.employee_salary(emp_id, is_active);
 
 CREATE TABLE IF NOT EXISTS ims.payroll_runs (
 payroll_id   BIGSERIAL PRIMARY KEY,
@@ -711,18 +763,6 @@ pay_date        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 amount_paid     NUMERIC(14,2) NOT NULL CHECK (amount_paid > 0),
 reference_no    VARCHAR(80),
 note            TEXT
-);
-
-CREATE TABLE IF NOT EXISTS ims.shifts (
-shift_id      BIGSERIAL PRIMARY KEY,
-branch_id     BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-user_id       BIGINT NOT NULL REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-opened_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-closed_at     TIMESTAMPTZ,
-opening_cash  NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (opening_cash >= 0),
-closing_cash  NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (closing_cash >= 0),
-status        ims.shift_status_enum NOT NULL DEFAULT 'open',
-note          TEXT
 );
 
 CREATE TABLE IF NOT EXISTS ims.employee_shift_assignments (
@@ -875,7 +915,7 @@ p_table, GREATEST(COALESCE(p_limit,200),0), GREATEST(COALESCE(p_offset,0),0));
 RETURN QUERY EXECUTE v_sql;
 END $$;
 
-DO $$
+DO $crud$
 DECLARE
 r RECORD;
 tname TEXT;
@@ -919,7 +959,7 @@ EXECUTE format($f$
 $f$, tname, fq);
 
 END LOOP;
-END $$;
+END $crud$;
 
 -- =========================================================
 -- 6) VALIDATION + HELPERS (branch-safe)
@@ -1092,7 +1132,7 @@ p_customer_id BIGINT,
 p_sale_type ims.sale_type_enum,
 p_discount NUMERIC DEFAULT 0,
 p_tax_percent NUMERIC DEFAULT 0,
-p_items JSONB,
+p_items JSONB DEFAULT '[]'::jsonb,
 p_payments JSONB DEFAULT '[]'::jsonb,
 p_note TEXT DEFAULT NULL
 ) RETURNS BIGINT
@@ -1221,7 +1261,7 @@ p_wh_id BIGINT,
 p_user_id BIGINT,
 p_supplier_id BIGINT,
 p_discount NUMERIC DEFAULT 0,
-p_items JSONB,
+p_items JSONB DEFAULT '[]'::jsonb,
 p_payment JSONB DEFAULT NULL,
 p_note TEXT DEFAULT NULL
 ) RETURNS BIGINT
@@ -2586,7 +2626,7 @@ BEGIN
     
     IF v_user_id IS NOT NULL THEN
         INSERT INTO ims.user_branches (user_id, branch_id, is_default) VALUES (v_user_id, v_branch_id, true) ON CONFLICT DO NOTHING;
-        INSERT INTO ims.employees (branch_id, user_id, full_name, phone, status) VALUES (v_branch_id, v_user_id, 'System Administrator', '111222333', 'active') ON CONFLICT (user_id) DO NOTHING;
+        INSERT INTO ims.employees (branch_id, user_id, full_name, phone, salary_type, salary_amount, status) VALUES (v_branch_id, v_user_id, 'System Administrator', '111222333', 'monthly', 0, 'active') ON CONFLICT (user_id) DO NOTHING;
         out_role := 'Administrator'; out_status := 'Created/Updated'; RETURN NEXT;
     END IF;
     
@@ -2598,7 +2638,7 @@ BEGIN
     
     IF v_user_id IS NOT NULL THEN
         INSERT INTO ims.user_branches (user_id, branch_id, is_default) VALUES (v_user_id, v_branch_id, true) ON CONFLICT DO NOTHING;
-        INSERT INTO ims.employees (branch_id, user_id, full_name, phone, status) VALUES (v_branch_id, v_user_id, 'Cabdi Maxamed', '222333444', 'active') ON CONFLICT (user_id) DO NOTHING;
+        INSERT INTO ims.employees (branch_id, user_id, full_name, phone, salary_type, salary_amount, status) VALUES (v_branch_id, v_user_id, 'Cabdi Maxamed', '222333444', 'monthly', 0, 'active') ON CONFLICT (user_id) DO NOTHING;
         out_role := 'Store Manager'; out_status := 'Created/Updated'; RETURN NEXT;
     END IF;
     
@@ -2610,7 +2650,7 @@ BEGIN
     
     IF v_user_id IS NOT NULL THEN
         INSERT INTO ims.user_branches (user_id, branch_id, is_default) VALUES (v_user_id, v_branch_id, true) ON CONFLICT DO NOTHING;
-        INSERT INTO ims.employees (branch_id, user_id, full_name, phone, status) VALUES (v_branch_id, v_user_id, 'Deeqa Warsame', '333444555', 'active') ON CONFLICT (user_id) DO NOTHING;
+        INSERT INTO ims.employees (branch_id, user_id, full_name, phone, salary_type, salary_amount, status) VALUES (v_branch_id, v_user_id, 'Deeqa Warsame', '333444555', 'monthly', 0, 'active') ON CONFLICT (user_id) DO NOTHING;
         out_role := 'Sales Associate'; out_status := 'Created/Updated'; RETURN NEXT;
     END IF;
     
@@ -2622,7 +2662,7 @@ BEGIN
     
     IF v_user_id IS NOT NULL THEN
         INSERT INTO ims.user_branches (user_id, branch_id, is_default) VALUES (v_user_id, v_branch_id, true) ON CONFLICT DO NOTHING;
-        INSERT INTO ims.employees (branch_id, user_id, full_name, phone, status) VALUES (v_branch_id, v_user_id, 'Faarax Siciid', '444555666', 'active') ON CONFLICT (user_id) DO NOTHING;
+        INSERT INTO ims.employees (branch_id, user_id, full_name, phone, salary_type, salary_amount, status) VALUES (v_branch_id, v_user_id, 'Faarax Siciid', '444555666', 'monthly', 0, 'active') ON CONFLICT (user_id) DO NOTHING;
         out_role := 'Inventory Clerk'; out_status := 'Created/Updated'; RETURN NEXT;
     END IF;
 
@@ -2634,7 +2674,7 @@ BEGIN
     
     IF v_user_id IS NOT NULL THEN
         INSERT INTO ims.user_branches (user_id, branch_id, is_default) VALUES (v_user_id, v_branch_id, true) ON CONFLICT DO NOTHING;
-        INSERT INTO ims.employees (branch_id, user_id, full_name, phone, status) VALUES (v_branch_id, v_user_id, 'Xasan Jaamac', '555666777', 'active') ON CONFLICT (user_id) DO NOTHING;
+        INSERT INTO ims.employees (branch_id, user_id, full_name, phone, salary_type, salary_amount, status) VALUES (v_branch_id, v_user_id, 'Xasan Jaamac', '555666777', 'monthly', 0, 'active') ON CONFLICT (user_id) DO NOTHING;
         out_role := 'Accountant'; out_status := 'Created/Updated'; RETURN NEXT;
     END IF;
 
@@ -2646,7 +2686,7 @@ BEGIN
     
     IF v_user_id IS NOT NULL THEN
         INSERT INTO ims.user_branches (user_id, branch_id, is_default) VALUES (v_user_id, v_branch_id, true) ON CONFLICT DO NOTHING;
-        INSERT INTO ims.employees (branch_id, user_id, full_name, phone, status) VALUES (v_branch_id, v_user_id, 'Sahra Ismaaciil', '666777888', 'active') ON CONFLICT (user_id) DO NOTHING;
+        INSERT INTO ims.employees (branch_id, user_id, full_name, phone, salary_type, salary_amount, status) VALUES (v_branch_id, v_user_id, 'Sahra Ismaaciil', '666777888', 'monthly', 0, 'active') ON CONFLICT (user_id) DO NOTHING;
         out_role := 'HR Manager'; out_status := 'Created/Updated'; RETURN NEXT;
     END IF;
 END;
@@ -2672,6 +2712,44 @@ BEGIN
         INSERT INTO ims.branches (branch_name, is_active) VALUES ('Main Branch', true);
     END IF;
 END $$;
+
+DO $store_seed$
+DECLARE
+    v_branch_id BIGINT;
+BEGIN
+    FOR v_branch_id IN
+        SELECT branch_id
+          FROM ims.branches
+         WHERE is_active = TRUE
+    LOOP
+        INSERT INTO ims.categories (branch_id, cat_name, description)
+        VALUES
+            (v_branch_id, 'General', 'Default category'),
+            (v_branch_id, 'Electronics', 'Electronics and gadgets'),
+            (v_branch_id, 'Grocery', 'Grocery items')
+        ON CONFLICT (branch_id, cat_name) DO NOTHING;
+
+        INSERT INTO ims.units (branch_id, unit_name, symbol, is_active)
+        VALUES
+            (v_branch_id, 'Piece', 'pc', TRUE),
+            (v_branch_id, 'Box', 'box', TRUE),
+            (v_branch_id, 'Kilogram', 'kg', TRUE),
+            (v_branch_id, 'Liter', 'ltr', TRUE)
+        ON CONFLICT (branch_id, unit_name) DO NOTHING;
+
+        INSERT INTO ims.taxes (branch_id, tax_name, rate_percent, is_inclusive, is_active)
+        VALUES
+            (v_branch_id, 'No Tax', 0, FALSE, TRUE),
+            (v_branch_id, 'VAT 5%', 5, FALSE, TRUE),
+            (v_branch_id, 'VAT 10%', 10, FALSE, TRUE)
+        ON CONFLICT (branch_id, tax_name) DO NOTHING;
+
+        INSERT INTO ims.stores (branch_id, store_name, store_code, is_active)
+        VALUES
+            (v_branch_id, 'Main Store', 'MAIN', TRUE)
+        ON CONFLICT (branch_id, store_name) DO NOTHING;
+    END LOOP;
+END $store_seed$;
 
 -- Generate all permissions
 SELECT 'Generating all permissions...' as status;

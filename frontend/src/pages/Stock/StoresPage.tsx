@@ -1,5 +1,6 @@
 ﻿import { useState } from 'react';
 import { Store, Package, Plus, Trash2, ChevronDown, ChevronRight, Pencil, Eye } from 'lucide-react';
+import { useEffect } from 'react';
 import { PageHeader } from '../../components/ui/layout';
 import { useToast } from '../../components/ui/toast/Toast';
 import { storeService, Store as StoreType, StoreItem } from '../../services/store.service';
@@ -34,6 +35,11 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
     }
     setLoading(false);
   };
+
+  useEffect(() => {
+    void loadStores();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const loadStoreItems = async (storeId: number) => {
     const res = await storeService.listItems(storeId);

@@ -25,19 +25,18 @@ export const syncLowStockNotifications = async (
       threshold: string;
     }>(
       `SELECT
-          p.product_id,
-          p.name AS item_name,
-          COALESCE(bs.quantity, 0)::text AS qty,
-          GREATEST(COALESCE(NULLIF(p.reorder_level, 0), 5), 1)::text AS threshold
-       FROM ims.products p
-       LEFT JOIN ims.branch_stock bs
-         ON bs.branch_id = $1
-        AND bs.product_id = p.product_id
-        AND COALESCE(bs.is_deleted, FALSE) = FALSE
-      WHERE p.product_id = $2
-        AND p.branch_id = $1
-        AND p.is_active = TRUE
-        AND COALESCE(p.is_deleted, FALSE) = FALSE
+          i.item_id AS product_id,
+          i.name AS item_name,
+          COALESCE(SUM(ws.quantity), 0)::text AS qty,
+          GREATEST(COALESCE(NULLIF(i.reorder_level, 0), 5), 1)::text AS threshold
+       FROM ims.items i
+       LEFT JOIN ims.warehouse_stock ws ON ws.item_id = i.item_id
+       LEFT JOIN ims.warehouses w ON w.wh_id = ws.wh_id
+      WHERE i.item_id = $2
+        AND i.branch_id = $1
+        AND i.is_active = TRUE
+        AND (w.wh_id IS NULL OR w.branch_id = $1)
+      GROUP BY i.item_id, i.name, i.reorder_level
       LIMIT 1`,
       [branchId, productId]
     );
@@ -57,9 +56,9 @@ export const syncLowStockNotifications = async (
            SELECT DISTINCT u.user_id
              FROM ims.users u
              LEFT JOIN ims.roles r ON r.role_id = u.role_id
-             LEFT JOIN ims.user_branch ub
+             LEFT JOIN ims.user_branches ub
                ON ub.user_id = u.user_id
-              AND ub.branch_id = $1
+               AND ub.branch_id = $1
             WHERE u.is_active = TRUE
               AND (
                 LOWER(COALESCE(r.role_name, '')) = 'admin'

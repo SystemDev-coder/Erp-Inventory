@@ -62,12 +62,11 @@ const resolveProductForPurchaseItem = async (
       current_sale: string;
     }>(
       `SELECT
-          product_id,
-          COALESCE(NULLIF(price, 0), sell_price, COALESCE(cost, cost_price, 0))::text AS current_sale
-       FROM ims.products
-       WHERE product_id = $1
+          item_id AS product_id,
+          COALESCE(NULLIF(sell_price, 0), cost_price, 0)::text AS current_sale
+       FROM ims.items
+       WHERE item_id = $1
          AND branch_id = $2
-         AND (is_deleted IS NULL OR is_deleted = FALSE)
        LIMIT 1`,
       [item.productId, branchId]
     );
@@ -80,15 +79,12 @@ const resolveProductForPurchaseItem = async (
       : Number(existing.rows[0].current_sale || requestedCost);
 
     await client.query(
-      `UPDATE ims.products
+      `UPDATE ims.items
           SET cost_price = $2,
-              cost = $2,
               sell_price = $3,
-              price = $3,
-              supplier_id = COALESCE(supplier_id, $4::bigint),
               is_active = TRUE
-        WHERE product_id = $1`,
-      [item.productId, requestedCost, nextSale, supplierId ?? null]
+        WHERE item_id = $1`,
+      [item.productId, requestedCost, nextSale]
     );
     return Number(item.productId);
   }
@@ -103,13 +99,12 @@ const resolveProductForPurchaseItem = async (
     current_sale: string;
   }>(
     `SELECT
-        product_id,
-        COALESCE(NULLIF(price, 0), sell_price, COALESCE(cost, cost_price, 0))::text AS current_sale
-     FROM ims.products
+        item_id AS product_id,
+        COALESCE(NULLIF(sell_price, 0), cost_price, 0)::text AS current_sale
+     FROM ims.items
      WHERE branch_id = $1
        AND LOWER(name) = LOWER($2)
-       AND (is_deleted IS NULL OR is_deleted = FALSE)
-     ORDER BY product_id DESC
+     ORDER BY item_id DESC
      LIMIT 1`,
     [branchId, itemName]
   );
@@ -120,54 +115,43 @@ const resolveProductForPurchaseItem = async (
       ? Number(item.salePrice)
       : Number(existingByName.rows[0].current_sale || requestedCost);
     await client.query(
-      `UPDATE ims.products
+      `UPDATE ims.items
           SET cost_price = $2,
-              cost = $2,
               sell_price = $3,
-              price = $3,
-              supplier_id = COALESCE(supplier_id, $4::bigint),
               is_active = TRUE
-        WHERE product_id = $1`,
-      [productId, requestedCost, nextSale, supplierId ?? null]
+        WHERE item_id = $1`,
+      [productId, requestedCost, nextSale]
     );
     return productId;
   }
 
-  const categoryResult = await client.query<{ cat_id: number | null; category_id: number | null }>(
-    `SELECT cat_id, category_id
+  const categoryResult = await client.query<{ cat_id: number | null }>(
+    `SELECT cat_id
        FROM ims.categories
       WHERE branch_id = $1
-      ORDER BY COALESCE(category_id, cat_id)
+      ORDER BY cat_id
       LIMIT 1`,
     [branchId]
   );
 
-  let fallbackCatId = Number(
-    categoryResult.rows[0]?.cat_id ??
-      categoryResult.rows[0]?.category_id ??
-      0
-  ) || null;
+  let fallbackCatId = Number(categoryResult.rows[0]?.cat_id ?? 0) || null;
   if (!fallbackCatId) {
-    const anyCategory = await client.query<{ cat_id: number | null; category_id: number | null }>(
-      `SELECT cat_id, category_id
+    const anyCategory = await client.query<{ cat_id: number | null }>(
+      `SELECT cat_id
          FROM ims.categories
-        ORDER BY COALESCE(category_id, cat_id)
+        ORDER BY cat_id
         LIMIT 1`
     );
-    fallbackCatId = Number(
-      anyCategory.rows[0]?.cat_id ??
-        anyCategory.rows[0]?.category_id ??
-        0
-    ) || null;
+    fallbackCatId = Number(anyCategory.rows[0]?.cat_id ?? 0) || null;
   }
   const nextSale = item.salePrice !== undefined ? Number(item.salePrice) : requestedCost;
 
   const created = await client.query<{ product_id: number }>(
-    `INSERT INTO ims.products
-       (branch_id, cat_id, category_id, supplier_id, name, cost_price, sell_price, cost, price, is_active)
-     VALUES ($1, $2, $2, $3, $4, $5, $6, $5, $6, TRUE)
-     RETURNING product_id`,
-    [branchId, fallbackCatId, supplierId, itemName, requestedCost, nextSale]
+    `INSERT INTO ims.items
+       (branch_id, cat_id, name, cost_price, sell_price, is_active)
+     VALUES ($1, $2, $3, $4, $5, TRUE)
+     RETURNING item_id AS product_id`,
+    [branchId, fallbackCatId, itemName, requestedCost, nextSale]
   );
   return Number(created.rows[0].product_id);
 };
@@ -266,11 +250,11 @@ export const purchasesService = {
 
     return queryMany<PurchaseItemView>(
       `SELECT pi.*, p.purchase_date, p.purchase_type, p.supplier_id, s.name AS supplier_name, pr.name AS product_name,
-              COALESCE(pr.cost, pr.cost_price, 0) AS cost_price,
-              COALESCE(pi.sale_price, NULLIF(pr.price, 0), pr.sell_price, COALESCE(pr.cost, pr.cost_price, 0)) AS sale_price
+              COALESCE(pr.cost_price, 0) AS cost_price,
+              COALESCE(pi.sale_price, NULLIF(pr.sell_price, 0), COALESCE(pr.cost_price, 0)) AS sale_price
          FROM ims.purchase_items pi
          JOIN ims.purchases p ON p.purchase_id = pi.purchase_id
-         LEFT JOIN ims.products pr ON pr.product_id = pi.product_id
+         LEFT JOIN ims.items pr ON pr.item_id = pi.product_id
          LEFT JOIN ims.suppliers s ON s.supplier_id = p.supplier_id
          ${where}
         ORDER BY p.purchase_date DESC, pi.purchase_item_id DESC`,
@@ -301,7 +285,7 @@ export const purchasesService = {
              FROM ims.warehouses
             WHERE wh_id = $1
               AND branch_id = $2
-              AND (is_deleted IS NULL OR is_deleted = FALSE)`,
+              AND is_active = TRUE`,
           [input.whId, context.branchId]
         );
         if (!warehouse.rows[0]) {

@@ -90,7 +90,7 @@ const ensureWarehouse = async (client: PoolClient, branchId: number, whId?: numb
        FROM ims.warehouses
       WHERE wh_id = $1
         AND branch_id = $2
-        AND COALESCE(is_deleted, FALSE) = FALSE`,
+        AND is_active = TRUE`,
     [whId, branchId]
   );
   if (!warehouse.rows[0]) {
@@ -115,12 +115,11 @@ const ensureAccount = async (client: PoolClient, branchId: number, accId?: numbe
 
 const ensureProductInBranch = async (client: PoolClient, branchId: number, productId: number) => {
   const product = await client.query(
-    `SELECT product_id
-       FROM ims.products
-      WHERE product_id = $1
+    `SELECT item_id AS product_id
+       FROM ims.items
+      WHERE item_id = $1
         AND branch_id = $2
-        AND is_active = TRUE
-        AND COALESCE(is_deleted, FALSE) = FALSE`,
+        AND is_active = TRUE`,
     [productId, branchId]
   );
   if (!product.rows[0]) {
@@ -232,8 +231,8 @@ const applyStockByFunction = async (
 
     const product = await client.query<{ cost_price: string }>(
       `SELECT COALESCE(cost_price, 0)::text AS cost_price
-         FROM ims.products
-        WHERE product_id = $1`,
+         FROM ims.items
+        WHERE item_id = $1`,
       [item.product_id]
     );
     const costPrice = Number(product.rows[0]?.cost_price || 0);
@@ -390,7 +389,7 @@ export const salesService = {
     return queryMany<SaleItem>(
       `SELECT si.*, p.name AS product_name
          FROM ims.sale_items si
-         JOIN ims.products p ON p.product_id = si.product_id
+         JOIN ims.items p ON p.item_id = si.product_id
         WHERE si.sale_id = $1
         ORDER BY si.sale_item_id`,
       [saleId]
