@@ -28,6 +28,7 @@ export interface CustomerInput {
 
 let customerBalanceColumn: 'open_balance' | 'remaining_balance' | null = null;
 let customerHasGenderColumn: boolean | null = null;
+let customerHasTypeColumn: boolean | null = null;
 
 const detectCustomerBalanceColumn = async (): Promise<'open_balance' | 'remaining_balance'> => {
   if (customerBalanceColumn) return customerBalanceColumn;
@@ -42,6 +43,7 @@ const detectCustomerBalanceColumn = async (): Promise<'open_balance' | 'remainin
 
   customerBalanceColumn = names.has('open_balance') ? 'open_balance' : 'remaining_balance';
   customerHasGenderColumn = names.has('gender');
+  customerHasTypeColumn = names.has('customer_type');
   return customerBalanceColumn;
 };
 
@@ -54,12 +56,13 @@ const mapCustomer = (row: {
   gender: string | null;
   registered_date: string;
   is_active: boolean;
+  customer_type: string | null;
   balance_value: string | number;
 }): Customer => ({
   customer_id: Number(row.customer_id),
   full_name: row.full_name,
   phone: row.phone,
-  customer_type: 'regular',
+  customer_type: row.customer_type || 'regular',
   address: row.address,
   sex: row.sex,
   gender: row.gender,
@@ -71,6 +74,8 @@ const mapCustomer = (row: {
 
 const getGenderSelect = () =>
   customerHasGenderColumn ? 'COALESCE(gender, sex::text) AS gender' : 'sex::text AS gender';
+const getCustomerTypeSelect = () =>
+  customerHasTypeColumn ? 'customer_type' : `'regular'::text AS customer_type`;
 
 const scopedCustomer = async (
   id: number,
@@ -88,9 +93,10 @@ const scopedCustomer = async (
         gender: string | null;
         registered_date: string;
         is_active: boolean;
+        customer_type: string | null;
         balance_value: string;
       }>(
-        `SELECT customer_id, full_name, phone, sex::text AS sex, address, ${genderSelect}, registered_date::text, is_active, ${balanceColumn}::text AS balance_value
+        `SELECT customer_id, full_name, phone, sex::text AS sex, address, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect()}, ${balanceColumn}::text AS balance_value
            FROM ims.customers
           WHERE customer_id = $1`,
         [id]
@@ -104,9 +110,10 @@ const scopedCustomer = async (
         gender: string | null;
         registered_date: string;
         is_active: boolean;
+        customer_type: string | null;
         balance_value: string;
       }>(
-        `SELECT customer_id, full_name, phone, sex::text AS sex, address, ${genderSelect}, registered_date::text, is_active, ${balanceColumn}::text AS balance_value
+        `SELECT customer_id, full_name, phone, sex::text AS sex, address, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect()}, ${balanceColumn}::text AS balance_value
            FROM ims.customers
           WHERE customer_id = $1
             AND branch_id = ANY($2)`,
@@ -146,6 +153,7 @@ export const customersService = {
       gender: string | null;
       registered_date: string;
       is_active: boolean;
+      customer_type: string | null;
       balance_value: string;
     }>(
       `SELECT
@@ -157,6 +165,7 @@ export const customersService = {
           ${genderSelect},
           registered_date::text,
           is_active,
+          ${getCustomerTypeSelect()},
           ${balanceColumn}::text AS balance_value
        FROM ims.customers
        ${whereSql}
@@ -178,34 +187,34 @@ export const customersService = {
     const balanceColumn = await detectCustomerBalanceColumn();
     const genderSelect = getGenderSelect();
     const hasGender = Boolean(customerHasGenderColumn);
+    const hasType = Boolean(customerHasTypeColumn);
     const genderValue = input.gender ?? input.sex ?? null;
+    const customerType = input.customerType ?? 'regular';
 
-    const insertColumns = hasGender
-      ? `(branch_id, full_name, phone, sex, gender, address, ${balanceColumn}, is_active)`
-      : `(branch_id, full_name, phone, sex, address, ${balanceColumn}, is_active)`;
-    const insertValues = hasGender
-      ? `($1, $2, $3, $4::ims.sex_enum, $5, $6, COALESCE($7, 0), COALESCE($8, TRUE))`
-      : `($1, $2, $3, $4::ims.sex_enum, $5, COALESCE($6, 0), COALESCE($7, TRUE))`;
-    const values = hasGender
-      ? [
-          context.branchId,
-          input.fullName,
-          input.phone ?? null,
-          (genderValue ?? null) as 'male' | 'female' | null,
-          genderValue,
-          input.address ?? null,
-          input.remainingBalance ?? 0,
-          input.isActive ?? true,
-        ]
-      : [
-          context.branchId,
-          input.fullName,
-          input.phone ?? null,
-          (genderValue ?? null) as 'male' | 'female' | null,
-          input.address ?? null,
-          input.remainingBalance ?? 0,
-          input.isActive ?? true,
-        ];
+    let insertColumns = `(branch_id, full_name, phone, sex, `;
+    let insertValues = `($1, $2, $3, $4::ims.sex_enum, `;
+    const values: unknown[] = [
+      context.branchId,
+      input.fullName,
+      input.phone ?? null,
+      (genderValue ?? null) as 'male' | 'female' | null,
+    ];
+    let p = 5;
+
+    if (hasGender) {
+      insertColumns += `gender, `;
+      insertValues += `$${p++}, `;
+      values.push(genderValue);
+    }
+    if (hasType) {
+      insertColumns += `customer_type, `;
+      insertValues += `$${p++}, `;
+      values.push(customerType);
+    }
+
+    insertColumns += `address, ${balanceColumn}, is_active)`;
+    insertValues += `$${p++}, COALESCE($${p++}, 0), COALESCE($${p++}, TRUE))`;
+    values.push(input.address ?? null, input.remainingBalance ?? 0, input.isActive ?? true);
 
     const row = await queryOne<{
       customer_id: number;
@@ -216,13 +225,14 @@ export const customersService = {
       gender: string | null;
       registered_date: string;
       is_active: boolean;
+      customer_type: string | null;
       balance_value: string;
     }>(
       `INSERT INTO ims.customers
          ${insertColumns}
        VALUES
          ${insertValues}
-       RETURNING customer_id, full_name, phone, address, sex::text AS sex, ${genderSelect}, registered_date::text, is_active, ${balanceColumn}::text AS balance_value`,
+       RETURNING customer_id, full_name, phone, address, sex::text AS sex, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect()}, ${balanceColumn}::text AS balance_value`,
       values
     );
 
@@ -239,6 +249,7 @@ export const customersService = {
   ): Promise<Customer | null> {
     const balanceColumn = await detectCustomerBalanceColumn();
     const hasGender = Boolean(customerHasGenderColumn);
+    const hasType = Boolean(customerHasTypeColumn);
     const updates: string[] = [];
     const values: unknown[] = [];
     let parameter = 1;
@@ -268,6 +279,10 @@ export const customersService = {
       updates.push(`is_active = $${parameter++}`);
       values.push(input.isActive);
     }
+    if (input.customerType !== undefined && hasType) {
+      updates.push(`customer_type = $${parameter++}`);
+      values.push(input.customerType);
+    }
     if (input.remainingBalance !== undefined) {
       updates.push(`${balanceColumn} = $${parameter++}`);
       values.push(input.remainingBalance);
@@ -293,12 +308,13 @@ export const customersService = {
       gender: string | null;
       registered_date: string;
       is_active: boolean;
+      customer_type: string | null;
       balance_value: string;
     }>(
       `UPDATE ims.customers
           SET ${updates.join(', ')}
         WHERE ${whereSql}
-        RETURNING customer_id, full_name, phone, address, sex::text AS sex, ${getGenderSelect()}, registered_date::text, is_active, ${balanceColumn}::text AS balance_value`,
+        RETURNING customer_id, full_name, phone, address, sex::text AS sex, ${getGenderSelect()}, registered_date::text, is_active, ${getCustomerTypeSelect()}, ${balanceColumn}::text AS balance_value`,
       values
     );
 

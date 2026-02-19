@@ -7,6 +7,8 @@ export const employeeSchema = z.object({
   gender: z.enum(['male', 'female']).optional().nullable(),
   role_id: z.coerce.number().optional().nullable(),
   salary: z.coerce.number().min(0, 'Salary must be positive').optional(),
+  salary_type: z.enum(['Hourly', 'Monthly']).optional(),
+  shift_type: z.enum(['Morning', 'Night', 'Evening']).optional(),
   hire_date: z.string().optional(),
   status: z.enum(['active', 'inactive', 'terminated']).optional(),
   user_id: z.coerce.number().optional().nullable(),

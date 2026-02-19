@@ -158,6 +158,10 @@ export const settingsService = {
     return mapCompany(row);
   },
 
+  async deleteCompanyInfo(): Promise<void> {
+    await queryOne(`DELETE FROM ims.company WHERE company_id = 1`);
+  },
+
   async listBranches(): Promise<Branch[]> {
     return queryMany<Branch>(
       `SELECT

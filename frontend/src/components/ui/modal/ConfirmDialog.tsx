@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { AlertTriangle, Trash2, CheckCircle, Info } from 'lucide-react';
 
 interface ConfirmDialogProps {
@@ -7,6 +8,7 @@ interface ConfirmDialogProps {
     onConfirm: () => void;
     title: string;
     message: string;
+    highlightedName?: string;
     confirmText?: string;
     cancelText?: string;
     variant?: 'danger' | 'warning' | 'info' | 'success';
@@ -23,12 +25,28 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
     onConfirm,
     title,
     message,
+    highlightedName,
     confirmText = 'Confirm',
     cancelText = 'Cancel',
     variant = 'warning',
     isLoading = false,
     hideCancel = false,
 }) => {
+    useEffect(() => {
+        if (!isOpen) return;
+        const prevOverflow = document.body.style.overflow;
+        const prevPaddingRight = document.body.style.paddingRight;
+        const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+        document.body.style.overflow = 'hidden';
+        if (scrollbarWidth > 0) {
+            document.body.style.paddingRight = `${scrollbarWidth}px`;
+        }
+        return () => {
+            document.body.style.overflow = prevOverflow;
+            document.body.style.paddingRight = prevPaddingRight;
+        };
+    }, [isOpen]);
+
     if (!isOpen) return null;
 
     const variantStyles = {
@@ -65,8 +83,8 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
         onClose();
     };
 
-    return (
-        <div className="fixed inset-0 z-50 overflow-y-auto">
+    return createPortal(
+        <div className="fixed inset-0 z-[9999] overflow-y-auto" style={{ zIndex: 2147483647 }}>
             {/* Backdrop */}
             <div
                 className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity animate-[fadeIn_200ms_ease-out]"
@@ -93,6 +111,11 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
                         <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100 mb-2">
                             {title}
                         </h3>
+                        {highlightedName && (
+                            <p className="text-lg font-extrabold text-slate-900 dark:text-slate-100 mb-2">
+                                {highlightedName}
+                            </p>
+                        )}
                         <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
                             {message}
                         </p>
@@ -146,6 +169,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
                     }
                 }
             `}</style>
-        </div>
+        </div>,
+        document.body
     );
 };

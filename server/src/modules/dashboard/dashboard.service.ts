@@ -88,106 +88,76 @@ export class DashboardService {
     branchId: number,
     permissions: string[]
   ): Promise<DashboardCard[]> {
-    const cards: DashboardCard[] = [];
-
-    if (permissions.includes('sales.view')) {
-      const row = await queryOne<{ total: string }>(
-        `SELECT COALESCE(SUM(total), 0)::text AS total
-           FROM ims.sales
-          WHERE branch_id = $1
-            AND status <> 'void'
-            AND sale_date::date = CURRENT_DATE`,
-        [branchId]
-      );
-      cards.push({
-        id: 'today-sales',
-        title: "Today's Sales",
-        value: Number(row?.total || 0),
-        subtitle: 'Sales collected today',
-        icon: 'TrendingUp',
-        format: 'currency',
-      });
+    if (!permissions.includes('dashboard.view')) {
+      return [];
     }
 
-    if (permissions.includes('purchases.view')) {
-      const row = await queryOne<{ total: string }>(
-        `SELECT COALESCE(SUM(total), 0)::text AS total
-           FROM ims.purchases
-          WHERE branch_id = $1
-            AND status <> 'void'
-            AND purchase_date::date >= date_trunc('month', CURRENT_DATE)::date`,
-        [branchId]
-      );
-      cards.push({
-        id: 'month-purchases',
-        title: 'Monthly Purchases',
-        value: Number(row?.total || 0),
-        subtitle: 'Purchases this month',
-        icon: 'ReceiptText',
-        format: 'currency',
-      });
-    }
+    const detectedShape = await detectWarehouseStockShape();
+    const candidates = buildWarehouseShapeCandidates(detectedShape);
 
-    if (hasPermission(permissions, 'items.view') || hasPermission(permissions, 'products.view')) {
+    const runLowStockCount = async (
+      stockShape: WarehouseStockShape
+    ): Promise<{ row: { count: string } | null; shape: WarehouseStockShape }> => {
+      const stockJoins = stockShape.hasBranchId
+        ? `LEFT JOIN ims.warehouse_stock ws
+             ON ws.${stockShape.itemColumn} = i.item_id
+            AND ws.branch_id = i.branch_id`
+        : `LEFT JOIN ims.warehouse_stock ws
+             ON ws.${stockShape.itemColumn} = i.item_id
+           LEFT JOIN ims.warehouses w
+             ON w.wh_id = ws.wh_id`;
+      const totalStockExpr = stockShape.hasBranchId
+        ? 'COALESCE(SUM(ws.quantity), 0)'
+        : 'COALESCE(SUM(CASE WHEN w.branch_id = i.branch_id THEN ws.quantity ELSE 0 END), 0)';
+
       const row = await queryOne<{ count: string }>(
         `SELECT COUNT(*)::text AS count
-           FROM ims.items
-          WHERE branch_id = $1
-            AND is_active = TRUE`,
+           FROM (
+             SELECT i.item_id
+                FROM ims.items i
+                ${stockJoins}
+               WHERE i.branch_id = $1
+                 AND i.is_active = TRUE
+               GROUP BY i.item_id, i.reorder_level
+              HAVING ${totalStockExpr} <= COALESCE(i.reorder_level, 0)
+           ) AS x`,
         [branchId]
       );
-      cards.push({
-        id: 'active-products',
-        title: 'Active Items',
-        value: Number(row?.count || 0),
-        subtitle: 'Items available',
-        icon: 'Package',
-        format: 'number',
-      });
-    }
 
-    if (hasPermission(permissions, 'stock.view')) {
-      const runLowStockCount = async (
-        stockShape: WarehouseStockShape
-      ): Promise<{ row: { count: string } | null; shape: WarehouseStockShape }> => {
-        const stockJoins = stockShape.hasBranchId
-          ? `LEFT JOIN ims.warehouse_stock ws
-               ON ws.${stockShape.itemColumn} = i.item_id
-              AND ws.branch_id = i.branch_id`
-          : `LEFT JOIN ims.warehouse_stock ws
-               ON ws.${stockShape.itemColumn} = i.item_id
-             LEFT JOIN ims.warehouses w
-               ON w.wh_id = ws.wh_id`;
-        const totalStockExpr = stockShape.hasBranchId
-          ? 'COALESCE(SUM(ws.quantity), 0)'
-          : 'COALESCE(SUM(CASE WHEN w.branch_id = i.branch_id THEN ws.quantity ELSE 0 END), 0)';
+      return { row, shape: stockShape };
+    };
 
-        const row = await queryOne<{ count: string }>(
-          `SELECT COUNT(*)::text AS count
-             FROM (
-               SELECT i.item_id
-                  FROM ims.items i
-                  ${stockJoins}
-                 WHERE i.branch_id = $1
-                   AND i.is_active = TRUE
-                 GROUP BY i.item_id, i.reorder_level
-                HAVING ${totalStockExpr} <= COALESCE(i.reorder_level, 0)
-             ) AS x`,
-          [branchId]
-        );
+    const runInventoryStock = async (
+      stockShape: WarehouseStockShape
+    ): Promise<{ row: { total: string } | null; shape: WarehouseStockShape }> => {
+      const row = stockShape.hasBranchId
+        ? await queryOne<{ total: string }>(
+            `SELECT COALESCE(SUM(ws.quantity), 0)::text AS total
+               FROM ims.warehouse_stock ws
+              WHERE ws.branch_id = $1`,
+            [branchId]
+          )
+        : await queryOne<{ total: string }>(
+            `SELECT COALESCE(SUM(ws.quantity), 0)::text AS total
+               FROM ims.warehouse_stock ws
+               JOIN ims.warehouses w ON w.wh_id = ws.wh_id
+              WHERE w.branch_id = $1`,
+            [branchId]
+          );
 
-        return { row, shape: stockShape };
-      };
+      return { row, shape: stockShape };
+    };
 
-      const detectedShape = await detectWarehouseStockShape();
-      const candidates = buildWarehouseShapeCandidates(detectedShape);
-      let row: { count: string } | null = null;
+    const resolveByCandidates = async <T>(
+      fn: (shape: WarehouseStockShape) => Promise<{ row: T | null; shape: WarehouseStockShape }>
+    ): Promise<T | null> => {
+      let row: T | null = null;
       let appliedShape = detectedShape;
       let lastShapeError: any = null;
 
       for (const candidate of candidates) {
         try {
-          const result = await runLowStockCount(candidate);
+          const result = await fn(candidate);
           row = result.row;
           appliedShape = result.shape;
           lastShapeError = null;
@@ -200,22 +170,167 @@ export class DashboardService {
         }
       }
 
-      if (lastShapeError) {
-        throw lastShapeError;
-      }
+      if (lastShapeError) throw lastShapeError;
       warehouseStockShapeCache = appliedShape;
+      return row;
+    };
 
-      cards.push({
-        id: 'low-stock',
-        title: 'Low Stock Alerts',
-        value: Number(row?.count || 0),
-        subtitle: 'Needs reorder soon',
+    const [
+      totalCustomersRow,
+      totalEmployeesRow,
+      totalProductsRow,
+      todayIncomeRow,
+      monthlyIncomeRow,
+      todayPaymentsRow,
+      monthlyPaymentsRow,
+      balanceRow,
+    ] = await Promise.all([
+      queryOne<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+           FROM ims.customers
+          WHERE branch_id = $1`,
+        [branchId]
+      ),
+      queryOne<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+           FROM ims.employees
+          WHERE branch_id = $1
+            AND status = 'active'`,
+        [branchId]
+      ),
+      queryOne<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+           FROM ims.items
+          WHERE branch_id = $1
+            AND is_active = TRUE`,
+        [branchId]
+      ),
+      queryOne<{ total: string }>(
+        `SELECT COALESCE(SUM(total), 0)::text AS total
+           FROM ims.sales
+          WHERE branch_id = $1
+            AND status <> 'void'
+            AND sale_date::date = CURRENT_DATE`,
+        [branchId]
+      ),
+      queryOne<{ total: string }>(
+        `SELECT COALESCE(SUM(total), 0)::text AS total
+           FROM ims.sales
+          WHERE branch_id = $1
+            AND status <> 'void'
+            AND sale_date >= date_trunc('month', CURRENT_DATE)`,
+        [branchId]
+      ),
+      queryOne<{ total: string }>(
+        `SELECT (
+            COALESCE((SELECT SUM(ep.amount_paid) FROM ims.expense_payments ep WHERE ep.branch_id = $1 AND ep.pay_date::date = CURRENT_DATE), 0)
+            +
+            COALESCE((SELECT SUM(emp.amount_paid) FROM ims.employee_payments emp WHERE emp.branch_id = $1 AND emp.pay_date::date = CURRENT_DATE), 0)
+          )::text AS total`,
+        [branchId]
+      ),
+      queryOne<{ total: string }>(
+        `SELECT (
+            COALESCE((SELECT SUM(ep.amount_paid) FROM ims.expense_payments ep WHERE ep.branch_id = $1 AND ep.pay_date >= date_trunc('month', CURRENT_DATE)), 0)
+            +
+            COALESCE((SELECT SUM(emp.amount_paid) FROM ims.employee_payments emp WHERE emp.branch_id = $1 AND emp.pay_date >= date_trunc('month', CURRENT_DATE)), 0)
+          )::text AS total`,
+        [branchId]
+      ),
+      queryOne<{ total: string }>(
+        `SELECT COALESCE(SUM(balance), 0)::text AS total
+           FROM ims.accounts
+          WHERE branch_id = $1
+            AND is_active = TRUE`,
+        [branchId]
+      ),
+    ]);
+
+    const inventoryStockRow = await resolveByCandidates(runInventoryStock);
+    const lowStockRow = await resolveByCandidates(runLowStockCount);
+
+    return [
+      {
+        id: 'total-customers',
+        title: 'Total Customers',
+        value: Number(totalCustomersRow?.count || 0),
+        subtitle: 'Registered customers',
+        icon: 'Users',
+        format: 'number',
+      },
+      {
+        id: 'total-employees',
+        title: 'Total Employees',
+        value: Number(totalEmployeesRow?.count || 0),
+        subtitle: 'Active employees',
+        icon: 'BriefcaseBusiness',
+        format: 'number',
+      },
+      {
+        id: 'total-products',
+        title: 'Total Products',
+        value: Number(totalProductsRow?.count || 0),
+        subtitle: 'Active products',
+        icon: 'Package',
+        format: 'number',
+      },
+      {
+        id: 'inventory-stock',
+        title: 'Inventory Stock',
+        value: Number((inventoryStockRow as { total: string } | null)?.total || 0),
+        subtitle: 'Units in stock',
+        icon: 'Boxes',
+        format: 'number',
+      },
+      {
+        id: 'low-stock-alert',
+        title: 'Low Stock Alert',
+        value: Number((lowStockRow as { count: string } | null)?.count || 0),
+        subtitle: 'Items below reorder level',
         icon: 'AlertTriangle',
         format: 'number',
-      });
-    }
-
-    return cards;
+      },
+      {
+        id: 'today-income',
+        title: 'Today Income',
+        value: Number(todayIncomeRow?.total || 0),
+        subtitle: 'Sales today',
+        icon: 'TrendingUp',
+        format: 'currency',
+      },
+      {
+        id: 'monthly-income',
+        title: 'Monthly Income',
+        value: Number(monthlyIncomeRow?.total || 0),
+        subtitle: 'Sales this month',
+        icon: 'TrendingUp',
+        format: 'currency',
+      },
+      {
+        id: 'today-payment',
+        title: 'Today Payment',
+        value: Number(todayPaymentsRow?.total || 0),
+        subtitle: 'Expenses + salary',
+        icon: 'ReceiptText',
+        format: 'currency',
+      },
+      {
+        id: 'monthly-payment',
+        title: 'Monthly Payment',
+        value: Number(monthlyPaymentsRow?.total || 0),
+        subtitle: 'Expenses + salary this month',
+        icon: 'ReceiptText',
+        format: 'currency',
+      },
+      {
+        id: 'balance',
+        title: 'Balance',
+        value: Number(balanceRow?.total || 0),
+        subtitle: 'Current account balances',
+        icon: 'Wallet',
+        format: 'currency',
+      },
+    ];
   }
 
   async getDashboardCharts(

@@ -4,6 +4,7 @@
  */
 
 import { apiClient, ApiResponse } from './api';
+import { RoleRow } from './user.service';
 
 export interface Employee {
   emp_id: number;
@@ -14,6 +15,8 @@ export interface Employee {
   phone: string | null;
   address: string | null;
   gender?: 'male' | 'female' | null;
+  salary_type?: 'Hourly' | 'Monthly' | 'hourly' | 'monthly' | null;
+  shift_type?: 'Morning' | 'Night' | 'Evening' | null;
   hire_date: string;
   status: 'active' | 'inactive' | 'terminated';
   created_at?: string;
@@ -30,6 +33,8 @@ export interface EmployeeInput {
   gender?: 'male' | 'female';
   role_id?: number;
   salary?: number;
+  salary_type?: 'Hourly' | 'Monthly';
+  shift_type?: 'Morning' | 'Night' | 'Evening';
   hire_date?: string;
   status?: 'active' | 'inactive' | 'terminated';
   user_id?: number;
@@ -84,6 +89,10 @@ export interface ShiftAssignment {
 }
 
 class EmployeeService {
+  async listRoles(): Promise<ApiResponse<{ roles: RoleRow[] }>> {
+    return apiClient.get<{ roles: RoleRow[] }>('/api/employees/roles');
+  }
+
   /**
    * List all employees
    */

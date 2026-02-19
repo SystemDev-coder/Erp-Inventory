@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 interface ModalProps {
@@ -51,8 +52,8 @@ export const Modal: React.FC<ModalProps> = ({
         '2xl': 'max-w-[95vw] sm:max-w-6xl',
     };
 
-    return (
-        <div className="fixed inset-0 z-50 overflow-y-auto">
+    return createPortal(
+        <div className="fixed inset-0 z-[9999] overflow-y-auto" style={{ zIndex: 2147483647 }}>
             {/* Backdrop */}
             <div
                 className="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity"
@@ -60,7 +61,7 @@ export const Modal: React.FC<ModalProps> = ({
             />
 
             {/* Modal */}
-            <div className="flex min-h-full items-start justify-center p-4 sm:items-center sm:p-6">
+            <div className="flex min-h-screen items-center justify-center p-4 sm:p-6">
                 <div
                     className={`relative w-full ${sizeClasses[size]} max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-3rem)] bg-white dark:bg-slate-900 rounded-xl shadow-2xl transform transition-all flex flex-col ${resizable ? 'resize overflow-auto min-w-[320px] min-h-[240px]' : 'overflow-hidden'}`}
                     onClick={(e) => e.stopPropagation()}
@@ -84,6 +85,7 @@ export const Modal: React.FC<ModalProps> = ({
                     <div className="px-4 py-4 sm:px-6 overflow-y-auto">{children}</div>
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 };

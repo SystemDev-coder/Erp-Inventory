@@ -27,6 +27,11 @@ export const listEmployees = asyncHandler(async (req: AuthRequest, res: Response
   return ApiResponse.success(res, { employees });
 });
 
+export const listEmployeeRoles = asyncHandler(async (_req: AuthRequest, res: Response) => {
+  const roles = await employeesService.listRoles();
+  return ApiResponse.success(res, { roles });
+});
+
 export const getEmployee = asyncHandler(async (req: AuthRequest, res: Response) => {
   const id = Number(req.params.id);
   const employee = await employeesService.getById(id);
@@ -40,7 +45,9 @@ export const getEmployee = asyncHandler(async (req: AuthRequest, res: Response) 
 
 export const createEmployee = asyncHandler(async (req: AuthRequest, res: Response) => {
   const input = employeeSchema.parse(req.body);
-  const employee = await employeesService.create(input);
+  const branchId = Number((req as any).currentBranch || (req as any).primaryBranch || req.user?.branchId);
+  if (!branchId) throw ApiError.badRequest('Branch is required');
+  const employee = await employeesService.create(input, { branchId });
   
   return ApiResponse.created(res, { employee }, 'Employee created successfully');
 });

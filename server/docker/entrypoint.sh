@@ -176,6 +176,71 @@ BEGIN
         RAISE WARNING 'Skipping sp_create_sample_users: %', SQLERRM;
     END;
   END IF;
+
+  -- Hard guarantee: Admin can access Settings -> Company Info and Audit History
+  INSERT INTO ims.permissions (perm_key, perm_name, module, sub_module, action_type, description)
+  VALUES
+    ('system.settings', 'System Settings', 'System Administration', 'System', 'settings', 'Configure system settings'),
+    ('system.company.manage', 'Manage Company', 'System Administration', 'Company', 'manage', 'Update company profile'),
+    ('system.audit.view', 'View Audit Logs', 'System Administration', 'Audit', 'view', 'View audit trail'),
+    ('company.view', 'View Company', 'System Administration', 'Company', 'view', 'View company profile'),
+    ('company.create', 'Create Company', 'System Administration', 'Company', 'create', 'Create company profile'),
+    ('company.update', 'Update Company', 'System Administration', 'Company', 'update', 'Update company profile'),
+    ('company.delete', 'Delete Company', 'System Administration', 'Company', 'delete', 'Delete company profile'),
+    ('audit_logs.view', 'View Audit Logs', 'System Administration', 'Audit', 'view', 'View audit logs')
+  ON CONFLICT (perm_key) DO NOTHING;
+
+  INSERT INTO ims.role_permissions (role_id, perm_id)
+  SELECT r.role_id, p.perm_id
+  FROM ims.roles r
+  JOIN ims.permissions p
+    ON p.perm_key IN (
+      'system.settings',
+      'system.company.manage',
+      'system.audit.view',
+      'company.view',
+      'company.create',
+      'company.update',
+      'company.delete',
+      'audit_logs.view'
+    )
+  WHERE r.role_code = 'ADMIN'
+  ON CONFLICT (role_id, perm_id) DO NOTHING;
+
+  -- Also grant directly to the admin user to survive role drift in old datasets
+  INSERT INTO ims.user_permissions (user_id, perm_id, granted_by)
+  SELECT u.user_id, p.perm_id, u.user_id
+  FROM ims.users u
+  JOIN ims.permissions p
+    ON p.perm_key IN (
+      'system.settings',
+      'system.company.manage',
+      'system.audit.view',
+      'company.view',
+      'company.create',
+      'company.update',
+      'company.delete',
+      'audit_logs.view'
+    )
+  WHERE u.username = 'admin'
+  ON CONFLICT (user_id, perm_id) DO NOTHING;
+
+  DELETE FROM ims.user_permission_overrides upo
+  USING ims.users u, ims.permissions p
+  WHERE upo.user_id = u.user_id
+    AND upo.perm_id = p.perm_id
+    AND u.username = 'admin'
+    AND p.perm_key IN (
+      'system.settings',
+      'system.company.manage',
+      'system.audit.view',
+      'company.view',
+      'company.create',
+      'company.update',
+      'company.delete',
+      'audit_logs.view'
+    )
+    AND upo.effect = 'deny';
 END
 \$\$;
 SQL

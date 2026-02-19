@@ -91,6 +91,19 @@ export const updateCompanyInfo = asyncHandler(async (req: AuthRequest, res: Resp
   return ApiResponse.success(res, { company }, 'Company info saved');
 });
 
+export const deleteCompanyInfo = asyncHandler(async (req: AuthRequest, res: Response) => {
+  await settingsService.deleteCompanyInfo();
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'delete',
+    entity: 'company_info',
+    entityId: 1,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
+  return ApiResponse.success(res, null, 'Company info deleted');
+});
+
 export const listBranches = asyncHandler(async (_req: AuthRequest, res: Response) => {
   const branches = await settingsService.listBranches();
   return ApiResponse.success(res, { branches });

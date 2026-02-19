@@ -40,13 +40,16 @@ export const settingsService = {
   },
   async updateCompany(input: Partial<CompanyInfo> & { system_name?: string; systemName?: string }): Promise<ApiResponse<{ company: CompanyInfo }>> {
     const payload: any = {
-      companyName: input.company_name || input.systemName || input.system_name,
+      companyName: input.company_name ?? input.systemName ?? input.system_name,
       phone: input.phone,
       managerName: input.manager_name,
       logoImg: input.logo_img,
       bannerImg: input.banner_img,
     };
     return apiClient.put('/api/settings/company', payload);
+  },
+  async deleteCompany(): Promise<ApiResponse> {
+    return apiClient.delete('/api/settings/company');
   },
 
   async listBranches(): Promise<ApiResponse<{ branches: Branch[] }>> {

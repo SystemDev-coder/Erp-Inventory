@@ -51,7 +51,7 @@ function AppRoutes() {
             </ProtectedRoute>
           }
         >
-          <Route index path="/" element={<Home />} />
+          <Route index path="/" element={<ProtectedRoute permission="dashboard.view"><Home /></ProtectedRoute>} />
           <Route path="/store-management" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
           <Route path="/store-management/store" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
           <Route path="/store-management/items" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
@@ -92,9 +92,9 @@ function AppRoutes() {
           <Route path="/employees/job" element={<ProtectedRoute permission="employees.view"><Employees /></ProtectedRoute>} />
           <Route path="/employees/state" element={<ProtectedRoute permission="employees.view"><Employees /></ProtectedRoute>} />
           <Route path="/employees/shifts" element={<ProtectedRoute permission="employees.view"><Employees /></ProtectedRoute>} />
-          <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
+          <Route path="/reports" element={<ProtectedRoute permission="reports.all"><Reports /></ProtectedRoute>} />
           <Route path="/system" element={<ProtectedRoute><System /></ProtectedRoute>} />
-          <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+          <Route path="/settings" element={<ProtectedRoute permission="system.settings"><Settings /></ProtectedRoute>} />
           <Route path="/support" element={<ProtectedRoute><Support /></ProtectedRoute>} />
         </Route>
 

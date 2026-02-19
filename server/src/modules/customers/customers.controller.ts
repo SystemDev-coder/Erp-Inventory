@@ -6,6 +6,7 @@ import { ApiError } from '../../utils/ApiError';
 import { customersService } from './customers.service';
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { pickBranchForWrite, resolveBranchScope } from '../../utils/branchScope';
+import { logAudit } from '../../utils/audit';
 
 const genderSchema = z.enum(['male', 'female']);
 
@@ -59,23 +60,54 @@ export const createCustomer = asyncHandler(async (req: AuthRequest, res: Respons
   const input = customerCreateSchema.parse(req.body);
   const branchId = pickBranchForWrite(scope, undefined);
   const customer = await customersService.createCustomer(input, { branchId });
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'create',
+    entity: 'customers',
+    entityId: customer.customer_id,
+    branchId,
+    newValue: customer,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
   return ApiResponse.created(res, { customer }, 'Customer created');
 });
 
 export const updateCustomer = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
+  const before = await customersService.getCustomer(id, scope);
   const input = customerUpdateSchema.parse(req.body);
   const customer = await customersService.updateCustomer(id, input, scope);
   if (!customer) {
     throw ApiError.notFound('Customer not found');
   }
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'update',
+    entity: 'customers',
+    entityId: customer.customer_id,
+    oldValue: before,
+    newValue: customer,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
   return ApiResponse.success(res, { customer }, 'Customer updated');
 });
 
 export const deleteCustomer = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
+  const before = await customersService.getCustomer(id, scope);
   await customersService.deleteCustomer(id, scope);
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'delete',
+    entity: 'customers',
+    entityId: id,
+    oldValue: before,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
   return ApiResponse.success(res, null, 'Customer deleted');
 });

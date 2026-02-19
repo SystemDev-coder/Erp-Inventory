@@ -256,6 +256,7 @@ customer_id     BIGSERIAL PRIMARY KEY,
 branch_id       BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 full_name       VARCHAR(160) NOT NULL,
 phone           VARCHAR(30),
+customer_type   VARCHAR(20) NOT NULL DEFAULT 'regular' CHECK (customer_type IN ('regular', 'one-time')),
 sex             ims.sex_enum,
 gender          VARCHAR(20),
 address         TEXT,
@@ -275,6 +276,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_external_per_branch
 COMMENT ON COLUMN ims.customers.external_id IS 'ID from source system when migrating from another ERP';
 COMMENT ON COLUMN ims.customers.source_system IS 'Name of source system (e.g. legacy_erp, excel_import)';
 ALTER TABLE ims.customers ADD COLUMN IF NOT EXISTS gender VARCHAR(20);
+ALTER TABLE ims.customers ADD COLUMN IF NOT EXISTS customer_type VARCHAR(20) NOT NULL DEFAULT 'regular';
+ALTER TABLE ims.customers DROP CONSTRAINT IF EXISTS chk_customers_type;
+ALTER TABLE ims.customers ADD CONSTRAINT chk_customers_type CHECK (customer_type IN ('regular', 'one-time'));
 
 CREATE TABLE IF NOT EXISTS ims.accounts (
 acc_id      BIGSERIAL PRIMARY KEY,
@@ -667,17 +671,30 @@ CREATE TABLE IF NOT EXISTS ims.employees (
 emp_id BIGSERIAL PRIMARY KEY,
 branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 user_id BIGINT UNIQUE REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE SET NULL,
+role_id BIGINT REFERENCES ims.roles(role_id) ON UPDATE CASCADE ON DELETE SET NULL,
 full_name VARCHAR(160) NOT NULL,
 phone VARCHAR(30),
 address TEXT,
 gender VARCHAR(20),
 hire_date DATE NOT NULL DEFAULT CURRENT_DATE,
-salary_type VARCHAR(60) NOT NULL,
+salary_type VARCHAR(60) NOT NULL DEFAULT 'Monthly' CHECK (salary_type IN ('Hourly', 'Monthly', 'hourly', 'monthly')),
+shift_type VARCHAR(20) NOT NULL DEFAULT 'Morning' CHECK (shift_type IN ('Morning', 'Night', 'Evening')),
 salary_amount NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (salary_amount >= 0),
 status ims.employment_status_enum NOT NULL DEFAULT 'active',
 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- Backfill columns for older installations where ims.employees already existed.
+ALTER TABLE ims.employees ADD COLUMN IF NOT EXISTS role_id BIGINT REFERENCES ims.roles(role_id) ON UPDATE CASCADE ON DELETE SET NULL;
+ALTER TABLE ims.employees ADD COLUMN IF NOT EXISTS hire_date DATE NOT NULL DEFAULT CURRENT_DATE;
+ALTER TABLE ims.employees ADD COLUMN IF NOT EXISTS salary_type VARCHAR(60) NOT NULL DEFAULT 'monthly';
+ALTER TABLE ims.employees ADD COLUMN IF NOT EXISTS salary_amount NUMERIC(14,2) NOT NULL DEFAULT 0;
+ALTER TABLE ims.employees ADD COLUMN IF NOT EXISTS status ims.employment_status_enum NOT NULL DEFAULT 'active';
 ALTER TABLE ims.employees ADD COLUMN IF NOT EXISTS gender VARCHAR(20);
+ALTER TABLE ims.employees ADD COLUMN IF NOT EXISTS shift_type VARCHAR(20) NOT NULL DEFAULT 'Morning';
+ALTER TABLE ims.employees DROP CONSTRAINT IF EXISTS chk_employees_salary_type;
+ALTER TABLE ims.employees ADD CONSTRAINT chk_employees_salary_type CHECK (salary_type IN ('Hourly', 'Monthly', 'hourly', 'monthly'));
+ALTER TABLE ims.employees DROP CONSTRAINT IF EXISTS chk_employees_shift_type;
+ALTER TABLE ims.employees ADD CONSTRAINT chk_employees_shift_type CHECK (shift_type IN ('Morning', 'Night', 'Evening'));
 
 CREATE TABLE IF NOT EXISTS ims.salary_types (
 sal_type_id BIGSERIAL PRIMARY KEY,
@@ -799,6 +816,119 @@ CREATE INDEX IF NOT EXISTS idx_notifications_user ON ims.notifications(user_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON ims.notifications(created_at);
 CREATE INDEX IF NOT EXISTS idx_notifications_unread ON ims.notifications(user_id, is_read)
 WHERE is_deleted = FALSE;
+
+-- =========================================================
+-- GLOBAL AUDIT TRIGGERS (ALL TABLES)
+-- =========================================================
+CREATE OR REPLACE FUNCTION ims.fn_audit_all_tables()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_row JSONB;
+    v_user_id BIGINT;
+    v_branch_id BIGINT;
+    v_record_id BIGINT;
+BEGIN
+    IF TG_TABLE_SCHEMA <> 'ims' OR TG_TABLE_NAME IN ('audit_logs', 'schema_migrations', 'customers') THEN
+        RETURN COALESCE(NEW, OLD);
+    END IF;
+
+    v_row := CASE WHEN TG_OP = 'DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END;
+
+    BEGIN
+        v_user_id := NULLIF(COALESCE(
+            v_row->>'user_id',
+            v_row->>'created_by',
+            v_row->>'updated_by',
+            v_row->>'paid_by'
+        ), '')::BIGINT;
+    EXCEPTION WHEN OTHERS THEN
+        v_user_id := NULL;
+    END;
+
+    BEGIN
+        v_branch_id := NULLIF(v_row->>'branch_id', '')::BIGINT;
+    EXCEPTION WHEN OTHERS THEN
+        v_branch_id := NULL;
+    END;
+
+    BEGIN
+        v_record_id := NULLIF(COALESCE(
+            v_row->>'id',
+            v_row->>'company_id',
+            v_row->>'customer_id',
+            v_row->>'supplier_id',
+            v_row->>'item_id',
+            v_row->>'sale_id',
+            v_row->>'purchase_id',
+            v_row->>'transfer_id',
+            v_row->>'wh_transfer_id',
+            v_row->>'acc_transfer_id',
+            v_row->>'txn_id',
+            v_row->>'exp_id',
+            v_row->>'emp_id',
+            v_row->>'payroll_id',
+            v_row->>'loan_id',
+            v_row->>'branch_id',
+            v_row->>'user_id'
+        ), '')::BIGINT;
+    EXCEPTION WHEN OTHERS THEN
+        v_record_id := NULL;
+    END;
+
+    INSERT INTO ims.audit_logs (
+        branch_id,
+        user_id,
+        action_type,
+        table_name,
+        record_id,
+        old_values,
+        new_values,
+        ip_address,
+        user_agent
+    )
+    VALUES (
+        v_branch_id,
+        v_user_id,
+        CASE
+            WHEN TG_OP = 'INSERT' THEN 'create'
+            WHEN TG_OP = 'UPDATE' THEN 'update'
+            WHEN TG_OP = 'DELETE' THEN 'delete'
+            ELSE LOWER(TG_OP)
+        END,
+        TG_TABLE_NAME,
+        v_record_id,
+        CASE WHEN TG_OP IN ('UPDATE', 'DELETE') THEN to_jsonb(OLD) ELSE NULL END,
+        CASE WHEN TG_OP IN ('INSERT', 'UPDATE') THEN to_jsonb(NEW) ELSE NULL END,
+        NULL,
+        NULL
+    );
+
+    RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+DO $$
+DECLARE
+    r RECORD;
+BEGIN
+    FOR r IN
+        SELECT tablename
+        FROM pg_tables
+        WHERE schemaname = 'ims'
+          AND tablename NOT IN ('audit_logs', 'schema_migrations')
+    LOOP
+        EXECUTE format('DROP TRIGGER IF EXISTS trg_audit_all_tables ON ims.%I', r.tablename);
+        EXECUTE format(
+            'CREATE TRIGGER trg_audit_all_tables
+             AFTER INSERT OR UPDATE OR DELETE ON ims.%I
+             FOR EACH ROW EXECUTE FUNCTION ims.fn_audit_all_tables()',
+            r.tablename
+        );
+    END LOOP;
+END;
+$$;
 
 -- =========================================================
 -- 4) INDEXES (core)
@@ -2153,10 +2283,8 @@ BEGIN
     DELETE FROM ims.role_permissions WHERE role_id = v_sales_id;
     INSERT INTO ims.role_permissions (role_id, perm_id)
     SELECT v_sales_id, perm_id FROM ims.permissions 
-    WHERE (module = 'Sales & POS' AND action_type IN ('view', 'create', 'update'))
-       OR (module = 'Sales & POS' AND perm_key IN ('sales.pos.access', 'sales.discount'))
-       OR perm_key IN ('customers.view', 'customers.create', 'customers.update')
-       OR perm_key IN ('items.view', 'dashboard.view');
+    WHERE module = 'Sales & POS'
+       OR perm_key IN ('dashboard.view', 'reports.all');
     GET DIAGNOSTICS v_count = ROW_COUNT;
     role_name := 'Sales Associate'; permissions_assigned := v_count; RETURN NEXT;
     
@@ -2188,10 +2316,7 @@ BEGIN
     INSERT INTO ims.role_permissions (role_id, perm_id)
     SELECT v_accountant_id, perm_id FROM ims.permissions 
     WHERE module = 'Finance'
-       OR perm_key LIKE 'expense%'
-       OR perm_key LIKE 'account%'
-       OR perm_key LIKE 'ledgers.%'
-       OR perm_key IN ('finance.reports', 'dashboard.view', 'sales.view', 'purchases.view');
+       OR perm_key IN ('dashboard.view', 'reports.all');
     GET DIAGNOSTICS v_count = ROW_COUNT;
     role_name := 'Accountant'; permissions_assigned := v_count; RETURN NEXT;
     
@@ -2203,7 +2328,7 @@ BEGIN
        OR perm_key LIKE 'payroll%'
        OR perm_key LIKE 'employee%'
        OR perm_key LIKE 'loans%'
-       OR perm_key IN ('hr.reports', 'dashboard.view');
+       OR perm_key IN ('hr.reports', 'dashboard.view', 'reports.all');
     GET DIAGNOSTICS v_count = ROW_COUNT;
     role_name := 'HR Manager'; permissions_assigned := v_count; RETURN NEXT;
     

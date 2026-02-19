@@ -14,6 +14,7 @@ import {
   createShiftAssignment,
   updateShiftAssignment,
   deleteShiftAssignment,
+  listEmployeeRoles,
 } from './employees.controller';
 
 const router = Router();
@@ -24,6 +25,7 @@ router.use(loadUserBranches); // Automatically sets database context
 
 // Routes
 router.get('/stats', requirePerm('employees.view'), getEmployeeStats);
+router.get('/roles', requirePerm('employees.view'), listEmployeeRoles);
 router.patch('/state', requireAnyPerm(['employees.update', 'customers.update', 'items.update']), updateGenericState);
 
 router.get('/shift-assignments', requirePerm('employees.view'), listShiftAssignments);

@@ -37,6 +37,7 @@ const Customers = () => {
     const { showToast } = useToast();
     const [isAddOpen, setIsAddOpen] = useState(false);
     const [customers, setCustomers] = useState<Customer[]>([]);
+    const [hasDisplayed, setHasDisplayed] = useState(false);
     const [loading, setLoading] = useState(false);
     const [search, setSearch] = useState('');
     const [form, setForm] = useState<CustomerForm>(emptyForm);
@@ -52,6 +53,17 @@ const Customers = () => {
             showToast('error', 'Load failed', res.error || 'Could not load customers');
         }
         setLoading(false);
+    };
+
+    const handleDisplay = async () => {
+        setHasDisplayed(true);
+        await fetchCustomers(search);
+    };
+
+    const handleSearch = async (value: string) => {
+        setSearch(value);
+        if (!hasDisplayed) return;
+        await fetchCustomers(value);
     };
 
     const columns: ColumnDef<Customer>[] = useMemo(() => [
@@ -137,6 +149,8 @@ const Customers = () => {
         setDeleteConfirmOpen(true);
     };
 
+    const visibleCustomers = hasDisplayed ? customers : [];
+
     const confirmDelete = async () => {
         if (!customerToDelete) return;
         setLoading(true);
@@ -159,17 +173,15 @@ const Customers = () => {
             icon: Users,
             content: (
                 <div className="space-y-2">
-                    <TabActionToolbar
+                        <TabActionToolbar
                         title="Customer Directory"
                         primaryAction={{ label: 'New Customer', onClick: () => { setForm(emptyForm); setIsAddOpen(true); } }}
-                        onDisplay={() => fetchCustomers()}
-                        onSearch={(value: string) => {
-                            setSearch(value);
-                        }}
+                        onDisplay={handleDisplay}
+                        onSearch={handleSearch}
                         onExport={() => showToast('info', 'Export', 'Customer export coming soon')}
                     />
                     <DataTable
-                        data={customers}
+                        data={visibleCustomers}
                         columns={columns}
                         searchPlaceholder="Find a customer by name or phone..."
                         isLoading={loading}
@@ -185,16 +197,14 @@ const Customers = () => {
             icon: UserCheck,
             content: (
                 <div className="space-y-2">
-                    <TabActionToolbar
+                        <TabActionToolbar
                         title="Regular Customers"
                         primaryAction={{ label: 'New Customer', onClick: () => { setForm(emptyForm); setIsAddOpen(true); } }}
-                        onDisplay={() => fetchCustomers(search)}
-                        onSearch={(value: string) => {
-                            setSearch(value);
-                        }}
+                        onDisplay={handleDisplay}
+                        onSearch={handleSearch}
                     />
                     <DataTable
-                        data={customers.filter(c => c.customer_type !== 'one-time')}
+                        data={visibleCustomers.filter(c => c.customer_type !== 'one-time')}
                         columns={columns}
                         isLoading={loading}
                         onEdit={onEdit}
@@ -209,16 +219,14 @@ const Customers = () => {
             icon: UserPlus,
             content: (
                 <div className="space-y-2">
-                    <TabActionToolbar
+                        <TabActionToolbar
                         title="Walking Customers"
                         primaryAction={{ label: 'New Customer', onClick: () => { setForm(emptyForm); setIsAddOpen(true); } }}
-                        onDisplay={() => fetchCustomers(search)}
-                        onSearch={(value: string) => {
-                            setSearch(value);
-                        }}
+                        onDisplay={handleDisplay}
+                        onSearch={handleSearch}
                     />
                     <DataTable
-                        data={customers.filter(c => c.customer_type === 'one-time')}
+                        data={visibleCustomers.filter(c => c.customer_type === 'one-time')}
                         columns={columns}
                         isLoading={loading}
                         onEdit={onEdit}
@@ -246,76 +254,78 @@ const Customers = () => {
                 <form onSubmit={(e) => {
                     e.preventDefault();
                     handleSave();
-                }} className="space-y-6">
-                    <div className="space-y-2">
-                        <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Customer Name</label>
-                        <input
-                            type="text"
-                            required
-                            placeholder="Full Name"
-                            value={form.full_name}
-                            onChange={(e) => setForm({ ...form, full_name: e.target.value })}
-                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 dark:bg-slate-800 focus:ring-2 focus:ring-primary-500 outline-none transition-all"
-                        />
-                    </div>
-                    <div className="space-y-2">
-                        <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Phone Number</label>
-                        <input
-                            type="tel"
-                            placeholder="+123..."
-                            value={form.phone}
-                            onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 dark:bg-slate-800 focus:ring-2 focus:ring-primary-500 outline-none transition-all"
-                        />
-                    </div>
-                    <div className="space-y-2">
-                        <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Customer Type</label>
-                        <select
-                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 dark:bg-slate-800 focus:ring-2 focus:ring-primary-500 outline-none transition-all"
-                            value={form.customer_type}
-                            onChange={(e) => setForm({ ...form, customer_type: e.target.value as 'regular' | 'one-time' })}
-                        >
-                            <option value="regular">Regular Customer</option>
-                            <option value="one-time">One-time Visitor</option>
-                        </select>
-                    </div>
-                    <div className="space-y-2">
-                        <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Gender</label>
-                        <select
-                            required
-                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 dark:bg-slate-800 focus:ring-2 focus:ring-primary-500 outline-none transition-all"
-                            value={form.gender}
-                            onChange={(e) => setForm({ ...form, gender: e.target.value as 'male' | 'female' })}
-                        >
-                            <option value="male">Male</option>
-                            <option value="female">Female</option>
-                        </select>
-                    </div>
-                    <div className="space-y-2">
-                        <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Address</label>
-                        <input
-                            type="text"
-                            placeholder="Address (optional)"
-                            value={form.address}
-                            onChange={(e) => setForm({ ...form, address: e.target.value })}
-                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 dark:bg-slate-800 focus:ring-2 focus:ring-primary-500 outline-none transition-all"
-                        />
-                    </div>
-                    <div className="space-y-2">
-                        <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Remaining Balance</label>
-                        <input
-                            type="number"
-                            min={0}
-                            step="0.01"
-                            placeholder="0.00"
-                            value={form.remaining_balance}
-                            onChange={(e) => setForm({ ...form, remaining_balance: Number(e.target.value || 0) })}
-                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 dark:bg-slate-800 focus:ring-2 focus:ring-primary-500 outline-none transition-all"
-                        />
-                        <p className="text-xs text-slate-500">Opening balance or amount customer owes</p>
+                }} className="space-y-6 max-w-3xl mx-auto">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
+                        <div className="space-y-2">
+                            <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Customer Name</label>
+                            <input
+                                type="text"
+                                required
+                                placeholder="Full Name"
+                                value={form.full_name}
+                                onChange={(e) => setForm({ ...form, full_name: e.target.value })}
+                                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 dark:bg-slate-800 focus:ring-2 focus:ring-primary-500 outline-none transition-all"
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Phone Number</label>
+                            <input
+                                type="tel"
+                                placeholder="+123..."
+                                value={form.phone}
+                                onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 dark:bg-slate-800 focus:ring-2 focus:ring-primary-500 outline-none transition-all"
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Customer Type</label>
+                            <select
+                                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 dark:bg-slate-800 focus:ring-2 focus:ring-primary-500 outline-none transition-all"
+                                value={form.customer_type}
+                                onChange={(e) => setForm({ ...form, customer_type: e.target.value as 'regular' | 'one-time' })}
+                            >
+                                <option value="regular">Regular Customer</option>
+                                <option value="one-time">One-time Visitor</option>
+                            </select>
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Gender</label>
+                            <select
+                                required
+                                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 dark:bg-slate-800 focus:ring-2 focus:ring-primary-500 outline-none transition-all"
+                                value={form.gender}
+                                onChange={(e) => setForm({ ...form, gender: e.target.value as 'male' | 'female' })}
+                            >
+                                <option value="male">Male</option>
+                                <option value="female">Female</option>
+                            </select>
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Address</label>
+                            <input
+                                type="text"
+                                placeholder="Address (optional)"
+                                value={form.address}
+                                onChange={(e) => setForm({ ...form, address: e.target.value })}
+                                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 dark:bg-slate-800 focus:ring-2 focus:ring-primary-500 outline-none transition-all"
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Remaining Balance</label>
+                            <input
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                placeholder="0.00"
+                                value={form.remaining_balance}
+                                onChange={(e) => setForm({ ...form, remaining_balance: Number(e.target.value || 0) })}
+                                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 dark:bg-slate-800 focus:ring-2 focus:ring-primary-500 outline-none transition-all"
+                            />
+                            <p className="text-xs text-slate-500">Opening balance or amount customer owes</p>
+                        </div>
                     </div>
 
-                    <div className="flex justify-end gap-3 pt-4">
+                    <div className="flex justify-center gap-3 pt-4">
                         <button type="button" onClick={() => setIsAddOpen(false)} className="px-6 py-2.5 font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-all">Cancel</button>
                         <button type="submit" className="px-8 py-2.5 bg-primary-600 text-white font-bold rounded-xl hover:bg-primary-700 transition-all shadow-lg shadow-primary-500/20 active:scale-95">
                             {form.customer_id ? 'Update Customer' : 'Save Customer'}
@@ -329,9 +339,10 @@ const Customers = () => {
                 onClose={() => { setDeleteConfirmOpen(false); setCustomerToDelete(null); }}
                 onConfirm={confirmDelete}
                 title="Delete Customer?"
+                highlightedName={customerToDelete?.full_name}
                 message={
                     customerToDelete
-                        ? `Deleting "${customerToDelete.full_name}" will remove their balance history links. This cannot be undone.`
+                        ? 'Deleting this customer will remove their balance history links. This cannot be undone.'
                         : 'Are you sure you want to delete this customer?'
                 }
                 confirmText="Delete"

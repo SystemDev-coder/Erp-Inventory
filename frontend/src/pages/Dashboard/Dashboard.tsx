@@ -6,6 +6,10 @@ import {
   ReceiptText,
   Package,
   AlertTriangle,
+  Users,
+  BriefcaseBusiness,
+  Boxes,
+  Wallet,
 } from 'lucide-react';
 import { apiClient, ApiResponse } from '../../services/api';
 import { API } from '../../config/env';
@@ -57,6 +61,10 @@ const ICONS = {
   ReceiptText,
   Package,
   AlertTriangle,
+  Users,
+  BriefcaseBusiness,
+  Boxes,
+  Wallet,
 } as const;
 
 const formatValue = (value: number, format?: 'currency' | 'number') => {
@@ -164,33 +172,7 @@ const Dashboard = () => {
         }
       />
 
-      <section className="relative overflow-hidden rounded-3xl border border-slate-800 bg-[radial-gradient(circle_at_top_left,_#0f172a,_#0b1120_60%)] px-6 py-8 sm:px-10">
-        <div className="absolute inset-0 opacity-40">
-          <div className="absolute -top-24 -right-20 h-64 w-64 rounded-full bg-cyan-500/20 blur-3xl" />
-          <div className="absolute -bottom-24 -left-16 h-64 w-64 rounded-full bg-blue-500/20 blur-3xl" />
-        </div>
-        <div className="relative z-10 flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-slate-300/80">
-              KeydMaal Insights
-            </p>
-            <h1 className="mt-3 text-3xl font-semibold text-white sm:text-4xl">
-              Welcome Back
-            </h1>
-            <p className="mt-2 text-sm text-slate-300">
-              Role: {data?.role?.role_name ?? 'Loading...'} · Live system pulse
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-3 text-xs text-slate-200/80">
-            <span className="rounded-full border border-white/10 bg-white/5 px-4 py-1.5">
-              Real-time overview
-            </span>
-            <span className="rounded-full border border-white/10 bg-white/5 px-4 py-1.5">
-              Powered by live data
-            </span>
-          </div>
-        </div>
-      </section>
+     
 
       {loading && (
         <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-900/60 p-8 text-slate-500">
@@ -206,7 +188,7 @@ const Dashboard = () => {
 
       {!loading && data && (
         <>
-          <section className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
+          <section className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             {data.cards.map((card) => {
               const Icon =
                 card.icon && card.icon in ICONS
@@ -337,3 +319,4 @@ const Dashboard = () => {
 };
 
 export default Dashboard;
+

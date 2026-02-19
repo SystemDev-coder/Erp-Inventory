@@ -16,6 +16,8 @@ export interface Employee {
   phone: string | null;
   address: string | null;
   gender: string | null;
+  salary_type: string | null;
+  shift_type: string | null;
   hire_date: string;
   status: 'active' | 'inactive' | 'terminated';
   created_at?: string;
@@ -36,7 +38,13 @@ export interface ShiftAssignment {
   created_at: string;
 }
 
+export interface EmployeeRole {
+  role_id: number;
+  role_name: string;
+}
+
 let employeesHaveGenderColumn: boolean | null = null;
+let employeeSalaryHasBranchColumn: boolean | null = null;
 
 const detectEmployeesGenderColumn = async (): Promise<boolean> => {
   if (employeesHaveGenderColumn !== null) return employeesHaveGenderColumn;
@@ -50,7 +58,27 @@ const detectEmployeesGenderColumn = async (): Promise<boolean> => {
   return employeesHaveGenderColumn;
 };
 
+const detectEmployeeSalaryBranchColumn = async (): Promise<boolean> => {
+  if (employeeSalaryHasBranchColumn !== null) return employeeSalaryHasBranchColumn;
+  const rows = await queryMany<{ column_name: string }>(
+    `SELECT column_name
+       FROM information_schema.columns
+      WHERE table_schema = 'ims'
+        AND table_name = 'employee_salary'`
+  );
+  employeeSalaryHasBranchColumn = rows.some((row) => row.column_name === 'branch_id');
+  return employeeSalaryHasBranchColumn;
+};
+
 export const employeesService = {
+  async listRoles(): Promise<EmployeeRole[]> {
+    return queryMany<EmployeeRole>(
+      `SELECT role_id, role_name
+         FROM ims.roles
+        ORDER BY role_name`
+    );
+  },
+
   /**
    * List all employees with optional filtering
    */
@@ -61,7 +89,9 @@ export const employeesService = {
         e.emp_id,
         e.branch_id,
         e.user_id,
-        u.role_id,
+        COALESCE(e.role_id, u.role_id) AS role_id,
+        e.salary_type,
+        e.shift_type,
         e.full_name,
         e.phone,
         e.address,
@@ -74,7 +104,7 @@ export const employeesService = {
         COALESCE(es.basic_salary, 0) as basic_salary
       FROM ims.employees e
       LEFT JOIN ims.users u ON e.user_id = u.user_id
-      LEFT JOIN ims.roles r ON u.role_id = r.role_id
+      LEFT JOIN ims.roles r ON COALESCE(e.role_id, u.role_id) = r.role_id
       LEFT JOIN ims.employee_salary es ON e.emp_id = es.emp_id AND es.is_active = TRUE
       WHERE 1=1
     `;
@@ -119,13 +149,13 @@ export const employeesService = {
     return queryOne<Employee>(
       `SELECT 
         e.*,
-        u.role_id,
+        COALESCE(e.role_id, u.role_id) AS role_id,
         u.username,
         r.role_name,
         COALESCE(es.basic_salary, 0) as basic_salary
       FROM ims.employees e
       LEFT JOIN ims.users u ON e.user_id = u.user_id
-      LEFT JOIN ims.roles r ON u.role_id = r.role_id
+      LEFT JOIN ims.roles r ON COALESCE(e.role_id, u.role_id) = r.role_id
       LEFT JOIN ims.employee_salary es ON e.emp_id = es.emp_id AND es.is_active = TRUE
       WHERE e.emp_id = $1`,
       [id]
@@ -135,34 +165,48 @@ export const employeesService = {
   /**
    * Create new employee
    */
-  async create(input: EmployeeInput): Promise<Employee> {
+  async create(input: EmployeeInput, context: { branchId: number }): Promise<Employee> {
     const hasGender = await detectEmployeesGenderColumn();
-    // branch_id will be added automatically by trigger
+    const employeeSalaryHasBranch = await detectEmployeeSalaryBranchColumn();
+    const salaryType = input.salary_type ?? 'Monthly';
+    const shiftType = input.shift_type ?? 'Morning';
+    const salaryBaseType = salaryType.toLowerCase() as 'monthly' | 'hourly';
+    const salaryTypeName = salaryBaseType === 'hourly' ? 'Hourly Salary' : 'Monthly Salary';
     const result = hasGender
       ? await queryOne<Employee>(
-          `INSERT INTO ims.employees (user_id, full_name, phone, address, gender, hire_date, status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7::ims.employment_status_enum) 
+          `INSERT INTO ims.employees (branch_id, user_id, role_id, full_name, phone, address, gender, hire_date, salary_type, shift_type, salary_amount, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::ims.employment_status_enum)
            RETURNING *`,
           [
+            context.branchId,
             input.user_id || null,
+            input.role_id || null,
             input.name,
             input.phone || null,
             input.address || null,
             input.gender || null,
             input.hire_date || new Date().toISOString().split('T')[0],
+            salaryType,
+            shiftType,
+            Number(input.salary) || 0,
             input.status || 'active',
           ]
         )
       : await queryOne<Employee>(
-          `INSERT INTO ims.employees (user_id, full_name, phone, address, hire_date, status)
-           VALUES ($1, $2, $3, $4, $5, $6::ims.employment_status_enum) 
+          `INSERT INTO ims.employees (branch_id, user_id, role_id, full_name, phone, address, hire_date, salary_type, shift_type, salary_amount, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::ims.employment_status_enum)
            RETURNING *`,
           [
+            context.branchId,
             input.user_id || null,
+            input.role_id || null,
             input.name,
             input.phone || null,
             input.address || null,
             input.hire_date || new Date().toISOString().split('T')[0],
+            salaryType,
+            shiftType,
+            Number(input.salary) || 0,
             input.status || 'active',
           ]
         );
@@ -182,19 +226,27 @@ export const employeesService = {
     if (input.salary && input.salary > 0) {
       // Get or create default salary type
       const salType = await queryOne<any>(
-        `INSERT INTO ims.salary_types (type_name, base_type)
-         VALUES ('Monthly Salary', 'monthly')
-         ON CONFLICT (type_name) DO UPDATE SET type_name = EXCLUDED.type_name
+        `INSERT INTO ims.salary_types (branch_id, type_name, base_type)
+         VALUES ($1, $2, $3::ims.salary_type_enum)
+         ON CONFLICT (branch_id, type_name) DO UPDATE SET type_name = EXCLUDED.type_name
          RETURNING sal_type_id`,
-        []
+        [context.branchId, salaryTypeName, salaryBaseType]
       );
 
       if (salType) {
-        await queryOne(
-          `INSERT INTO ims.employee_salary (emp_id, sal_type_id, basic_salary, start_date)
-           VALUES ($1, $2, $3, $4)`,
-          [result.emp_id, salType.sal_type_id, input.salary, result.hire_date]
-        );
+        if (employeeSalaryHasBranch) {
+          await queryOne(
+            `INSERT INTO ims.employee_salary (branch_id, emp_id, sal_type_id, basic_salary, start_date)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [context.branchId, result.emp_id, salType.sal_type_id, input.salary, result.hire_date]
+          );
+        } else {
+          await queryOne(
+            `INSERT INTO ims.employee_salary (emp_id, sal_type_id, basic_salary, start_date)
+             VALUES ($1, $2, $3, $4)`,
+            [result.emp_id, salType.sal_type_id, input.salary, result.hire_date]
+          );
+        }
       }
     }
 
@@ -210,6 +262,7 @@ export const employeesService = {
    */
   async update(id: number, input: EmployeeUpdateInput): Promise<Employee | null> {
     const hasGender = await detectEmployeesGenderColumn();
+    const employeeSalaryHasBranch = await detectEmployeeSalaryBranchColumn();
     const updates: string[] = [];
     const values: any[] = [];
     let paramCount = 1;
@@ -234,9 +287,30 @@ export const employeesService = {
       updates.push(`hire_date = $${paramCount++}`);
       values.push(input.hire_date);
     }
+    if (input.shift_type !== undefined) {
+      updates.push(`shift_type = $${paramCount++}`);
+      values.push(input.shift_type);
+    }
+    if (input.salary_type !== undefined) {
+      updates.push(`salary_type = $${paramCount++}`);
+      values.push(input.salary_type);
+    }
     if (input.status !== undefined) {
       updates.push(`status = $${paramCount++}::ims.employment_status_enum`);
       values.push(input.status);
+    }
+    if (input.role_id !== undefined) {
+      updates.push(`role_id = $${paramCount++}`);
+      values.push(input.role_id || null);
+    }
+
+    // Update salary if provided
+    if (input.salary !== undefined && input.salary >= 0) {
+      if (input.salary_type === undefined) {
+        updates.push(`salary_type = 'Monthly'`);
+      }
+      updates.push(`salary_amount = $${paramCount++}`);
+      values.push(input.salary);
     }
 
     if (updates.length > 0) {
@@ -258,31 +332,81 @@ export const employeesService = {
       );
     }
 
-    // Update salary if provided
+    // Update salary history if provided
     if (input.salary !== undefined && input.salary >= 0) {
+      const employee = await queryOne<{ branch_id: number | null; effective_branch_id: number | null; salary_type: string | null }>(
+        `SELECT
+           e.branch_id,
+           e.salary_type,
+           COALESCE(
+             e.branch_id,
+             (
+               SELECT ub.branch_id
+               FROM ims.user_branches ub
+               WHERE ub.user_id = e.user_id
+               ORDER BY ub.is_default DESC, ub.branch_id
+               LIMIT 1
+             ),
+             (
+               SELECT b.branch_id
+               FROM ims.branches b
+               WHERE b.is_active = TRUE
+               ORDER BY b.branch_id
+               LIMIT 1
+             )
+           ) AS effective_branch_id
+         FROM ims.employees e
+         WHERE e.emp_id = $1`,
+        [id]
+      );
+      if (!employee) {
+        return null;
+      }
+      if (!employee.effective_branch_id) {
+        throw new Error('Could not determine branch for employee salary update');
+      }
+
+      // Normalize old rows that may have NULL branch_id from legacy schema versions.
+      if (!employee.branch_id) {
+        await queryOne(
+          `UPDATE ims.employees
+              SET branch_id = $1
+            WHERE emp_id = $2`,
+          [employee.effective_branch_id, id]
+        );
+      }
+
+      const salaryType = input.salary_type ?? employee.salary_type ?? 'Monthly';
+      const salaryBaseType = salaryType.toLowerCase() as 'monthly' | 'hourly';
+      const salaryTypeName = salaryBaseType === 'hourly' ? 'Hourly Salary' : 'Monthly Salary';
+
       // Get or create salary type
       const salType = await queryOne<any>(
-        `INSERT INTO ims.salary_types (type_name, base_type)
-         VALUES ('Monthly Salary', 'monthly')
-         ON CONFLICT (type_name) DO UPDATE SET type_name = EXCLUDED.type_name
+        `INSERT INTO ims.salary_types (branch_id, type_name, base_type)
+         VALUES ($1, $2, $3::ims.salary_type_enum)
+         ON CONFLICT (branch_id, type_name) DO UPDATE SET type_name = EXCLUDED.type_name
          RETURNING sal_type_id`,
-        []
+        [employee.effective_branch_id, salaryTypeName, salaryBaseType]
       );
-
       if (salType) {
-        // Deactivate old salary records
         await queryOne(
           `UPDATE ims.employee_salary SET is_active = FALSE, end_date = CURRENT_DATE
            WHERE emp_id = $1 AND is_active = TRUE`,
           [id]
         );
-
-        // Create new salary record
-        await queryOne(
-          `INSERT INTO ims.employee_salary (emp_id, sal_type_id, basic_salary, start_date)
-           VALUES ($1, $2, $3, CURRENT_DATE)`,
-          [id, salType.sal_type_id, input.salary]
-        );
+        if (employeeSalaryHasBranch) {
+          await queryOne(
+            `INSERT INTO ims.employee_salary (branch_id, emp_id, sal_type_id, basic_salary, start_date)
+             VALUES ($1, $2, $3, $4, CURRENT_DATE)`,
+            [employee.effective_branch_id, id, salType.sal_type_id, input.salary]
+          );
+        } else {
+          await queryOne(
+            `INSERT INTO ims.employee_salary (emp_id, sal_type_id, basic_salary, start_date)
+             VALUES ($1, $2, $3, CURRENT_DATE)`,
+            [id, salType.sal_type_id, input.salary]
+          );
+        }
       }
     }
 
@@ -293,7 +417,21 @@ export const employeesService = {
    * Delete employee
    */
   async delete(id: number): Promise<void> {
-    await queryOne('DELETE FROM ims.employees WHERE emp_id = $1', [id]);
+    try {
+      await queryOne('DELETE FROM ims.employees WHERE emp_id = $1', [id]);
+    } catch (error: any) {
+      // If employee has dependent records, keep the row and mark inactive.
+      if (error?.code === '23503') {
+        await queryOne(
+          `UPDATE ims.employees
+              SET status = 'inactive'::ims.employment_status_enum
+            WHERE emp_id = $1`,
+          [id]
+        );
+        return;
+      }
+      throw error;
+    }
   },
 
   async updateState(input: StateUpdateInput, branchIds?: number[]): Promise<void> {

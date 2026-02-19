@@ -94,7 +94,7 @@ const AppSidebar: React.FC = () => {
 
   const items = useMemo<SidebarItem[]>(
     () => [
-      { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: '/', exact: true },
+      { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: '/', exact: true, permissionAny: ['dashboard.view'] },
       { id: 'customers', label: 'Customers', icon: Users, to: '/customers', permissionAny: ['customers.view'] },
       {
         id: 'items',
@@ -126,11 +126,12 @@ const AppSidebar: React.FC = () => {
         icon: DollarSign,
         to: '/finance',
         exact: true,
+        permissionAny: ['finance.reports', 'accounts.view', 'expenses.view', 'ledgers.view'],
       },
       { id: 'hr', label: 'HR', icon: BriefcaseBusiness, to: '/employees/registration', permissionAny: ['employees.view'] },
-      { id: 'system', label: 'System', icon: Settings, to: '/system' },
-      { id: 'setting', label: 'Setting', icon: Cog, to: '/settings' },
-      { id: 'reports', label: 'Reports', icon: FileText, to: '/reports' },
+      { id: 'system', label: 'System', icon: Settings, to: '/system', permissionAny: ['users.view', 'roles.view', 'permissions.view', 'system.users.manage', 'system.roles.manage', 'system.permissions.manage'] },
+      { id: 'setting', label: 'Setting', icon: Cog, to: '/settings', permissionAny: ['system.settings'] },
+      { id: 'reports', label: 'Reports', icon: FileText, to: '/reports', permissionAny: ['reports.all'] },
     ],
     []
   );

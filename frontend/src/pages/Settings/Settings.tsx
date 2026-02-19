@@ -1,16 +1,11 @@
 import { useMemo, useState } from 'react';
-import { ColumnDef } from '@tanstack/react-table';
-import { Home, History, Plus, Users } from 'lucide-react';
+import { History, Home, Pencil, Plus, Trash2 } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
 import { Tabs } from '../../components/ui/tabs';
-import { settingsService, CompanyInfo, Branch, AuditLog } from '../../services/settings.service';
+import { settingsService, CompanyInfo, AuditLog } from '../../services/settings.service';
 import { useToast } from '../../components/ui/toast/Toast';
 import { Modal } from '../../components/ui/modal/Modal';
-import { DataTable } from '../../components/ui/table/DataTable';
-import { userService, UserRow, RoleRow } from '../../services/user.service';
-import UsersModal from './UsersModal';
-import GenerateUsersListModal from './GenerateUsersListModal';
-import { useAuth } from '../../context/AuthContext';
+import { env } from '../../config/env';
 
 const formatAuditValue = (val: unknown): string => {
   if (val === null || val === undefined) return '-';
@@ -69,15 +64,93 @@ const getDeviceLabel = (userAgent?: string | null): string => {
   return 'Laptop/Desktop';
 };
 
+const getAuditTableName = (log: AuditLog): string => {
+  const fromMeta =
+    log.meta && typeof log.meta === 'object' && 'source' in (log.meta as Record<string, unknown>)
+      ? String((log.meta as Record<string, unknown>).source || '')
+      : '';
+  return (log.entity || fromMeta || '-').toString();
+};
+
+const getAuditActionName = (log: AuditLog): string => {
+  return (log.action || '-').toString();
+};
+
+const resolveImagePath = (value?: string | null): string | null => {
+  if (!value) return null;
+  if (/^https?:\/\//i.test(value) || value.startsWith('data:')) return value;
+  if (value.startsWith('/')) return `${env.API_URL}${value}`;
+  return `${env.API_URL}/${value}`;
+};
+
+const buildProxyUrl = (url: string): string =>
+  `${env.API_URL}/api/media/proxy?url=${encodeURIComponent(url)}`;
+
+const getImageCandidates = (value?: string | null): string[] => {
+  const resolved = resolveImagePath(value);
+  if (!resolved) return [];
+
+  const candidates = [resolved];
+  if (resolved.includes('/image/fetch/')) {
+    candidates.push(resolved.split('?')[0]);
+  }
+  if (resolved.includes('res.cloudinary.com')) {
+    candidates.push(buildProxyUrl(resolved));
+    const noQuery = resolved.split('?')[0];
+    if (noQuery !== resolved) candidates.push(buildProxyUrl(noQuery));
+  }
+
+  return Array.from(new Set(candidates));
+};
+
+const CompanyImageCell = ({
+  value,
+  alt,
+  className,
+}: {
+  value?: string | null;
+  alt: string;
+  className: string;
+}) => {
+  const candidates = useMemo(() => getImageCandidates(value), [value]);
+  const [index, setIndex] = useState(0);
+
+  if (candidates.length === 0) {
+    return <span className="text-slate-400">-</span>;
+  }
+
+  if (index >= candidates.length) {
+    return (
+      <a
+        href={candidates[0]}
+        target="_blank"
+        rel="noreferrer"
+        className="text-xs text-primary-600 underline"
+      >
+        Open image
+      </a>
+    );
+  }
+
+  return (
+    <img
+      src={candidates[index]}
+      alt={alt}
+      className={className}
+      onError={() => setIndex((prev) => prev + 1)}
+    />
+  );
+};
+
 const Settings = () => {
   const { showToast } = useToast();
-  const { user } = useAuth();
-  const isAdmin = useMemo(() => (user?.role_name || '').toLowerCase() === 'admin', [user?.role_name]);
 
   const [company, setCompany] = useState<CompanyInfo | null>(null);
+  const [companyDisplayed, setCompanyDisplayed] = useState(false);
   const [companyLoading, setCompanyLoading] = useState(false);
   const [companyModalOpen, setCompanyModalOpen] = useState(false);
   const [companySaving, setCompanySaving] = useState(false);
+  const [companyDeleting, setCompanyDeleting] = useState(false);
   const [companyForm, setCompanyForm] = useState({
     company_name: '',
     phone: '',
@@ -86,64 +159,11 @@ const Settings = () => {
     banner_img: '',
   });
 
-  const [branches, setBranches] = useState<Branch[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditPage, setAuditPage] = useState(1);
   const [auditTotal, setAuditTotal] = useState(0);
   const auditLimit = 20;
-
-  const [users, setUsers] = useState<UserRow[]>([]);
-  const [roles, setRoles] = useState<RoleRow[]>([]);
-  const [userModalOpen, setUserModalOpen] = useState(false);
-  const [generateUserModalOpen, setGenerateUserModalOpen] = useState(false);
-  const [editingUser, setEditingUser] = useState<UserRow | null>(null);
-  const [userToDelete, setUserToDelete] = useState<UserRow | null>(null);
-  const [userForm, setUserForm] = useState<{
-    name: string;
-    username: string;
-    password: string;
-    role_id: number | '';
-    branch_id: number | '';
-    is_active: boolean;
-  }>({
-    name: '',
-    username: '',
-    password: '',
-    role_id: '',
-    branch_id: '',
-    is_active: true,
-  });
-
-  const filteredUsers = useMemo(
-    () => users.filter((row) => row.user_id !== user?.user_id && row.emp_id), // Only show users linked to employees
-    [users, user?.user_id]
-  );
-
-  const userColumns = useMemo<ColumnDef<UserRow>[]>(
-    () => [
-      { 
-        accessorKey: 'name', 
-        header: 'Name',
-        cell: ({ row }) => (
-          <div>
-            <div className="font-medium text-slate-900 dark:text-white">{row.original.name}</div>
-            {row.original.emp_name && (
-              <div className="text-xs text-slate-500 dark:text-slate-400">Employee: {row.original.emp_name}</div>
-            )}
-          </div>
-        ),
-      },
-      { accessorKey: 'username', header: 'Username' },
-      { accessorKey: 'role_name', header: 'Role' },
-      {
-        accessorKey: 'is_active',
-        header: 'Status',
-        cell: ({ row }) => (row.original.is_active ? 'Active' : 'Inactive'),
-      },
-    ],
-    []
-  );
 
   const loadCompany = async () => {
     setCompanyLoading(true);
@@ -154,7 +174,13 @@ const Settings = () => {
       return;
     }
     const loaded = res.data.company;
-    setCompany(loaded);
+    const hasValues =
+      !!loaded.company_name?.trim() ||
+      !!loaded.phone?.trim() ||
+      !!loaded.manager_name?.trim() ||
+      !!loaded.logo_img?.trim() ||
+      !!loaded.banner_img?.trim();
+    setCompany(hasValues ? loaded : null);
     setCompanyForm({
       company_name: loaded.company_name || '',
       phone: loaded.phone || '',
@@ -164,13 +190,40 @@ const Settings = () => {
     });
   };
 
-  const loadBranches = async () => {
-    const res = await settingsService.listBranches();
-    if (res.success && res.data?.branches) {
-      setBranches(res.data.branches);
+  const handleDisplayCompany = async () => {
+    setCompanyDisplayed(true);
+    await loadCompany();
+  };
+
+  const handleCompanyEdit = () => {
+    if (company) {
+      setCompanyForm({
+        company_name: company.company_name || '',
+        phone: company.phone || '',
+        manager_name: company.manager_name || '',
+        logo_img: company.logo_img || '',
+        banner_img: company.banner_img || '',
+      });
+    }
+    setCompanyModalOpen(true);
+  };
+
+  const handleCompanyDelete = async () => {
+    if (!company) return;
+    const ok = window.confirm('Delete company profile?');
+    if (!ok) return;
+
+    setCompanyDeleting(true);
+    const res = await settingsService.deleteCompany();
+    setCompanyDeleting(false);
+
+    if (!res.success) {
+      showToast('error', 'Company Info', res.error || 'Delete failed');
       return;
     }
-    showToast('error', 'Branches', res.error || 'Failed to load branches');
+
+    setCompany(null);
+    showToast('success', 'Company Info', 'Deleted');
   };
 
   const loadAudit = async (page = 1) => {
@@ -185,26 +238,6 @@ const Settings = () => {
     setAuditPage(res.data.page || page);
     setAuditTotal(res.data.total || 0);
   };
-
-  const loadUsers = async () => {
-    const res = await userService.list();
-    if (res.success && res.data?.users) {
-      setUsers(res.data.users);
-      return;
-    }
-    showToast('error', 'Users', res.error || 'Failed to load users');
-  };
-
-  const loadRoles = async () => {
-    const res = await userService.listRoles();
-    if (res.success && res.data?.roles) {
-      setRoles(res.data.roles);
-      return;
-    }
-    showToast('error', 'Users', res.error || 'Failed to load roles');
-  };
-
-  const openCompanyModal = () => setCompanyModalOpen(true);
 
   const handleCompanySave = async () => {
     setCompanySaving(true);
@@ -235,85 +268,20 @@ const Settings = () => {
     showToast('success', 'Company Info', 'Saved');
   };
 
-  const openUserModal = (row?: UserRow) => {
-    if (!roles.length) void loadRoles();
-    if (!branches.length) void loadBranches();
-    setEditingUser(row || null);
-    setUserForm({
-      name: row?.name || '',
-      username: row?.username || '',
-      password: '',
-      role_id: row?.role_id || '',
-      branch_id: row?.branch_id || '',
-      is_active: row?.is_active ?? true,
-    });
-    setUserModalOpen(true);
-  };
-
-  const saveUser = async (
-    formOverride?: {
-      name: string;
-      username: string;
-      password: string;
-      role_id: number | '';
-      branch_id: number | '';
-      is_active: boolean;
-    }
-  ) => {
-    const form = formOverride || userForm;
-    if (!form.name || !form.username || !form.role_id || !form.branch_id || (!editingUser && !form.password)) {
-      showToast('error', 'Users', 'Fill required fields');
-      return;
-    }
-
-    const payload = {
-      name: form.name,
-      username: form.username,
-      password: form.password,
-      role_id: Number(form.role_id),
-      branch_id: Number(form.branch_id),
-      is_active: form.is_active,
-    };
-
-    const res = editingUser
-      ? await userService.update(editingUser.user_id, payload)
-      : await userService.create(payload as { password: string } & Partial<UserRow>);
-
-    if (!res.success) {
-      showToast('error', 'Users', res.error || 'Save failed');
-      return;
-    }
-
-    showToast('success', 'Users', editingUser ? 'User updated' : 'User created');
-    setUserModalOpen(false);
-    setEditingUser(null);
-    loadUsers();
-  };
-
-  const deleteUserAction = async (target: UserRow) => {
-    const res = await userService.remove(target.user_id);
-    if (!res.success) {
-      showToast('error', 'Users', res.error || 'Delete failed');
-      return;
-    }
-    showToast('success', 'Users', 'User deleted');
-    loadUsers();
-  };
-
   const companyContent = (
     <div className="bg-white p-6 rounded-2xl border border-slate-200 dark:bg-slate-900 dark:border-slate-800">
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">Company Info</h3>
         <div className="flex items-center gap-2">
           <button
-            onClick={loadCompany}
+            onClick={handleDisplayCompany}
             className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 text-slate-700 text-sm hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
             disabled={companyLoading}
           >
             Display
           </button>
           <button
-            onClick={openCompanyModal}
+            onClick={handleCompanyEdit}
             className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white text-sm hover:bg-primary-700"
           >
             <Plus className="w-4 h-4" /> {company ? 'Edit' : 'Add'} Company
@@ -321,7 +289,9 @@ const Settings = () => {
         </div>
       </div>
 
-      {companyLoading ? (
+      {!companyDisplayed ? (
+        <p className="text-sm text-slate-500">Click Display to load company info.</p>
+      ) : companyLoading ? (
         <p className="text-sm text-slate-500">Loading...</p>
       ) : !company ? (
         <p className="text-sm text-slate-500">No company profile yet.</p>
@@ -331,17 +301,51 @@ const Settings = () => {
             <thead>
               <tr className="text-left text-slate-500">
                 <th className="py-2 pr-4">Name</th>
-                <th className="py-2 pr-4">Phone</th>
                 <th className="py-2 pr-4">Manager</th>
+                <th className="py-2 pr-4">Phone</th>
+                <th className="py-2 pr-4">Logo</th>
+                <th className="py-2 pr-4">Banner</th>
                 <th className="py-2 pr-4">Updated</th>
+                <th className="py-2 pr-4">Actions</th>
               </tr>
             </thead>
             <tbody>
               <tr className="border-t border-slate-200 dark:border-slate-800">
                 <td className="py-2 pr-4 text-slate-800 dark:text-slate-100">{company.company_name || '-'}</td>
-                <td className="py-2 pr-4 text-slate-600 dark:text-slate-300">{company.phone || '-'}</td>
                 <td className="py-2 pr-4 text-slate-600 dark:text-slate-300">{company.manager_name || '-'}</td>
+                <td className="py-2 pr-4 text-slate-600 dark:text-slate-300">{company.phone || '-'}</td>
+                <td className="py-2 pr-4">
+                  <CompanyImageCell
+                    value={company.logo_img}
+                    alt="Company logo"
+                    className="w-12 h-12 rounded-md object-cover border border-slate-200"
+                  />
+                </td>
+                <td className="py-2 pr-4">
+                  <CompanyImageCell
+                    value={company.banner_img}
+                    alt="Company banner"
+                    className="w-24 h-12 rounded-md object-cover border border-slate-200"
+                  />
+                </td>
                 <td className="py-2 pr-4 text-slate-500">{company.updated_at ? new Date(company.updated_at).toLocaleString() : '-'}</td>
+                <td className="py-2 pr-4">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleCompanyEdit}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                    >
+                      <Pencil className="w-3.5 h-3.5" /> Edit
+                    </button>
+                    <button
+                      onClick={handleCompanyDelete}
+                      disabled={companyDeleting}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-60"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" /> {companyDeleting ? 'Deleting...' : 'Delete'}
+                    </button>
+                  </div>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -359,14 +363,6 @@ const Settings = () => {
             />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
-            Phone
-            <input
-              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
-              value={companyForm.phone}
-              onChange={(e) => setCompanyForm({ ...companyForm, phone: e.target.value })}
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
             Manager Name
             <input
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
@@ -375,7 +371,15 @@ const Settings = () => {
             />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
-            Logo Image URL
+            Phone
+            <input
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
+              value={companyForm.phone}
+              onChange={(e) => setCompanyForm({ ...companyForm, phone: e.target.value })}
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
+            Logo Path / URL
             <input
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
               value={companyForm.logo_img}
@@ -383,7 +387,7 @@ const Settings = () => {
             />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300 md:col-span-2">
-            Banner Image URL
+            Banner Path / URL
             <input
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
               value={companyForm.banner_img}
@@ -403,7 +407,7 @@ const Settings = () => {
             onClick={handleCompanySave}
             disabled={companySaving}
           >
-            {companySaving ? 'Saving...' : 'Save'}
+            {companySaving ? (company ? 'Updating...' : 'Saving...') : (company ? 'Update' : 'Save')}
           </button>
         </div>
       </Modal>
@@ -432,9 +436,9 @@ const Settings = () => {
           <table className="min-w-full text-sm">
             <thead>
               <tr className="text-left text-slate-500">
-                <th className="py-2 pr-4">Table</th>
-                <th className="py-2 pr-4">User</th>
+                <th className="py-2 pr-4">Table Name</th>
                 <th className="py-2 pr-4">Action</th>
+                <th className="py-2 pr-4">User</th>
                 <th className="py-2 pr-4">Old Value</th>
                 <th className="py-2 pr-4">New Value</th>
                 <th className="py-2 pr-4">Device</th>
@@ -444,11 +448,17 @@ const Settings = () => {
             <tbody>
               {auditLogs.map((log) => {
                 const { oldText, newText } = getAuditChangedValues(log.old_value, log.new_value);
+                const tableName = getAuditTableName(log);
+                const actionName = getAuditActionName(log);
                 return (
                   <tr key={log.audit_id} className="border-t border-slate-200 dark:border-slate-800">
-                    <td className="py-2 pr-4 text-slate-800 dark:text-slate-100">{log.entity || '-'}</td>
+                    <td className="py-2 pr-4 text-slate-800 dark:text-slate-100">{tableName}</td>
+                    <td className="py-2 pr-4">
+                      <span className="inline-flex rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                        {actionName}
+                      </span>
+                    </td>
                     <td className="py-2 pr-4 text-slate-600 dark:text-slate-300">{log.username || log.user_id || '-'}</td>
-                    <td className="py-2 pr-4 text-slate-800 dark:text-slate-100 capitalize">{log.action}</td>
                     <td className="py-2 pr-4 text-slate-500 max-w-xs truncate" title={log.old_value ? JSON.stringify(log.old_value) : ''}>{oldText}</td>
                     <td className="py-2 pr-4 text-slate-500 max-w-xs truncate" title={log.new_value ? JSON.stringify(log.new_value) : ''}>{newText}</td>
                     <td className="py-2 pr-4 text-slate-500">{getDeviceLabel(log.user_agent)}</td>
@@ -483,118 +493,18 @@ const Settings = () => {
     </div>
   );
 
-  const handleGenerateUserSuccess = () => {
-    loadUsers(); // Reload users after generating new ones
-  };
-
-  const usersContent = (
-    <div className="space-y-3">
-      {/* Info Banner */}
-      <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 text-sm text-blue-800 dark:text-blue-200">
-        <p className="font-medium mb-1">👥 Employee-Based User Management</p>
-        <p className="text-xs">All system users must be linked to employees. Use "Generate User" to create login accounts for employees.</p>
-      </div>
-
-      <div className="flex justify-between items-center">
-        <div className="text-sm text-slate-600 dark:text-slate-300">
-          Showing {filteredUsers.length} employee-linked users
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => {
-              loadUsers();
-              loadRoles();
-              loadBranches();
-            }}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 text-slate-700 text-sm hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-          >
-            Refresh
-          </button>
-          <button
-            onClick={() => setGenerateUserModalOpen(true)}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-gradient-to-r from-green-600 to-green-700 text-white hover:from-green-700 hover:to-green-800 text-sm shadow-sm"
-          >
-            <Plus size={16} /> Generate User from Employee
-          </button>
-        </div>
-      </div>
-      <DataTable
-        data={filteredUsers}
-        columns={userColumns}
-        searchPlaceholder="Search users..."
-        onEdit={openUserModal}
-        onDelete={(target) => {
-          if (target.user_id === user?.user_id) {
-            showToast('error', 'Users', 'You cannot modify your own account here.');
-            return;
-          }
-          setUserToDelete(target);
-        }}
-        showToolbarActions={false}
-      />
-    </div>
-  );
-
   const tabs = useMemo(
     () => [
       { id: 'company', label: 'Company Info', icon: Home, content: companyContent },
       { id: 'audit', label: 'Audit History', icon: History, content: auditContent },
-      ...(isAdmin ? [{ id: 'users', label: 'Users', icon: Users, content: usersContent }] : []),
     ],
-    [companyContent, auditContent, usersContent, isAdmin]
+    [companyContent, auditContent]
   );
 
   return (
     <div>
-      <PageHeader title="Settings" description="Configure how your inventory system works for your business." />
+      <PageHeader title="Settings" description="Configure company profile and review audit history." />
       <Tabs tabs={tabs} defaultTab="company" />
-
-      <UsersModal
-        isOpen={userModalOpen}
-        onClose={() => {
-          setUserModalOpen(false);
-          setEditingUser(null);
-        }}
-        onSave={(form) => {
-          setUserForm(form);
-          saveUser(form);
-        }}
-        form={userForm}
-        setForm={setUserForm}
-        roles={roles}
-        branches={branches}
-        editing={editingUser}
-      />
-
-      <GenerateUsersListModal
-        isOpen={generateUserModalOpen}
-        onClose={() => setGenerateUserModalOpen(false)}
-        onSuccess={handleGenerateUserSuccess}
-      />
-
-      <Modal isOpen={!!userToDelete} onClose={() => setUserToDelete(null)} title="Delete User" size="sm">
-        <p className="text-sm text-slate-600 dark:text-slate-300">
-          Delete user <strong>{userToDelete?.username}</strong>? They will lose access immediately.
-        </p>
-        <div className="flex justify-end gap-3 pt-4">
-          <button
-            className="px-4 py-2 rounded-lg border border-slate-200 text-slate-700 dark:border-slate-700 dark:text-slate-200"
-            onClick={() => setUserToDelete(null)}
-          >
-            Cancel
-          </button>
-          <button
-            className="px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700"
-            onClick={() => {
-              if (!userToDelete) return;
-              deleteUserAction(userToDelete);
-              setUserToDelete(null);
-            }}
-          >
-            Delete
-          </button>
-        </div>
-      </Modal>
     </div>
   );
 };
