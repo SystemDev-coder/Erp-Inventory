@@ -27,7 +27,7 @@ export const env = getEnv();
 // API Endpoints
 export const API = {
   BASE_URL: env.API_URL,
-  
+
   // Auth endpoints
   AUTH: {
     REGISTER: '/api/auth/register',
@@ -38,7 +38,7 @@ export const API = {
     FORGOT_PASSWORD: '/api/auth/forgot-password',
     RESET_PASSWORD: '/api/auth/reset-password',
   },
-  
+
   // User endpoints
   USER: {
     PERMISSIONS: '/api/user/permissions',
@@ -52,7 +52,7 @@ export const API = {
 
   // Dashboard endpoints
   DASHBOARD: '/api/dashboard',
-  
+
   // System endpoints
   SYSTEM: {
     PERMISSIONS: '/api/system/permissions',
@@ -106,6 +106,18 @@ export const API = {
     ITEM: (id: number) => `/api/notifications/${id}`,
     MARK_READ: (id: number) => `/api/notifications/${id}/read`,
     MARK_ALL_READ: '/api/notifications/read-all',
+  },
+
+  FINANCE: {
+    TRANSFERS: '/api/finance/transfers',
+    CUSTOMER_RECEIPTS: '/api/finance/receipts/customers',
+    CUSTOMER_RECEIPTS_UNPAID: '/api/finance/receipts/customers/unpaid',
+    SUPPLIER_RECEIPTS: '/api/finance/receipts/suppliers',
+    SUPPLIER_RECEIPTS_UNPAID: '/api/finance/receipts/suppliers/unpaid',
+    SUPPLIER_OUTSTANDING: '/api/finance/receipts/suppliers/outstanding',
+    EXPENSES: '/api/finance/expenses',
+    EXPENSE_CHARGES: '/api/finance/expenses/charges',
+    EXPENSE_BUDGETS: '/api/finance/expenses/budgets',
   },
 
   STORES: {
