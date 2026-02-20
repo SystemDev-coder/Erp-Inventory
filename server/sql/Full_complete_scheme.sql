@@ -294,14 +294,10 @@ CONSTRAINT uq_account_branch_name UNIQUE (branch_id, name)
 CREATE TABLE IF NOT EXISTS ims.items (
 item_id         BIGSERIAL PRIMARY KEY,
 branch_id       BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-cat_id          BIGINT NOT NULL REFERENCES ims.categories(cat_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-unit_id         BIGINT REFERENCES ims.units(unit_id) ON UPDATE CASCADE ON DELETE SET NULL,
-tax_id          BIGINT REFERENCES ims.taxes(tax_id) ON UPDATE CASCADE ON DELETE SET NULL,
 store_id        BIGINT, -- FK added later after stores table is defined
 name            VARCHAR(160) NOT NULL,
-barcode         VARCHAR(80),
-reorder_level   NUMERIC(14,3) NOT NULL DEFAULT 0 CHECK (reorder_level >= 0),
-reorder_qty     NUMERIC(14,3) NOT NULL DEFAULT 0 CHECK (reorder_qty >= 0),
+barcode         VARCHAR(80) NULL,
+stock_alert NUMERIC(14,3) NOT NULL DEFAULT 5 CHECK (stock_alert >= 0),
 opening_balance NUMERIC(14,3) NOT NULL DEFAULT 0 CHECK (opening_balance >= 0),
 cost_price      NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (cost_price >= 0),
 sell_price      NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (sell_price >= 0),
@@ -394,6 +390,24 @@ quantity  NUMERIC(14,3) NOT NULL DEFAULT 0 CHECK (quantity >= 0),
 PRIMARY KEY (wh_id, item_id)
 );
 
+CREATE TABLE IF NOT EXISTS ims.inventory_transaction (
+    transaction_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    product_id BIGINT NOT NULL,
+    transaction_type ENUM('IN','OUT','ADJUSTMENT') NOT NULL,
+    quantity DECIMAL(10,2) NOT NULL,
+    unit_cost DECIMAL(12,2) NULL,
+    total_cost DECIMAL(14,2) GENERATED ALWAYS AS (quantity * unit_cost) STORED,
+    reference_no VARCHAR(50) NULL,
+    transaction_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by BIGINT NOT NULL,
+    notes TEXT NULL,
+    status ENUM('POSTED','PENDING','CANCELLED') DEFAULT 'POSTED',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+
+
 CREATE TABLE IF NOT EXISTS ims.inventory_movements (
 move_id   BIGSERIAL PRIMARY KEY,
 branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
@@ -426,7 +440,18 @@ total       NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (total >= 0),
 status      ims.sale_status_enum NOT NULL DEFAULT 'paid',
 note        TEXT
 );
-
+CREATE TABLE IF NOT EXISTS ims.stock_adjustment (
+    adjustment_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    item_id BIGINT NOT NULL,
+    adjustment_type ENUM('INCREASE','DECREASE') NOT NULL,
+    quantity DECIMAL(10,2) NOT NULL,
+    reason VARCHAR(255) NOT NULL,
+    adjustment_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by BIGINT NOT NULL,
+    status ENUM('POSTED','CANCELLED') DEFAULT 'POSTED',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS ims.sale_items (
 sale_item_id BIGSERIAL PRIMARY KEY,
 branch_id    BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
