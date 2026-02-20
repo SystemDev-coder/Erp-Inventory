@@ -16,39 +16,6 @@ const ALL_WIDGETS: DashboardWidget[] = [
   { id: 'employees_overview', name: 'Employees Overview', permission: 'employees.view' },
 ];
 
-type WarehouseStockShape = {
-  itemColumn: 'item_id' | 'product_id';
-  hasBranchId: boolean;
-};
-
-let warehouseStockShapeCache: WarehouseStockShape | null = null;
-
-const alternateItemColumn = (
-  itemColumn: WarehouseStockShape['itemColumn']
-): WarehouseStockShape['itemColumn'] => (itemColumn === 'item_id' ? 'product_id' : 'item_id');
-
-const buildWarehouseShapeCandidates = (
-  detected: WarehouseStockShape
-): WarehouseStockShape[] => {
-  const candidates: WarehouseStockShape[] = [
-    detected,
-    { ...detected, hasBranchId: !detected.hasBranchId },
-    { ...detected, itemColumn: alternateItemColumn(detected.itemColumn) },
-    {
-      itemColumn: alternateItemColumn(detected.itemColumn),
-      hasBranchId: !detected.hasBranchId,
-    },
-  ];
-
-  const seen = new Set<string>();
-  return candidates.filter((shape) => {
-    const key = `${shape.itemColumn}-${shape.hasBranchId ? 'b1' : 'b0'}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-};
-
 const hasPermission = (permissions: string[], key: string) => {
   if (permissions.includes(key)) return true;
   if (key.startsWith('items.')) {
@@ -58,25 +25,6 @@ const hasPermission = (permissions: string[], key: string) => {
     return permissions.includes(key.replace('products.', 'items.'));
   }
   return false;
-};
-
-const detectWarehouseStockShape = async (): Promise<WarehouseStockShape> => {
-  if (warehouseStockShapeCache) return warehouseStockShapeCache;
-
-  const columns = await queryMany<{ column_name: string }>(
-    `SELECT column_name
-       FROM information_schema.columns
-      WHERE table_schema = 'ims'
-        AND table_name = 'warehouse_stock'`
-  );
-  const names = new Set(columns.map((row) => row.column_name));
-
-  warehouseStockShapeCache = {
-    itemColumn: names.has('item_id') ? 'item_id' : 'product_id',
-    hasBranchId: names.has('branch_id'),
-  };
-
-  return warehouseStockShapeCache;
 };
 
 export class DashboardService {
@@ -92,87 +40,34 @@ export class DashboardService {
       return [];
     }
 
-    const detectedShape = await detectWarehouseStockShape();
-    const candidates = buildWarehouseShapeCandidates(detectedShape);
-
-    const runLowStockCount = async (
-      stockShape: WarehouseStockShape
-    ): Promise<{ row: { count: string } | null; shape: WarehouseStockShape }> => {
-      const stockJoins = stockShape.hasBranchId
-        ? `LEFT JOIN ims.warehouse_stock ws
-             ON ws.${stockShape.itemColumn} = i.item_id
-            AND ws.branch_id = i.branch_id`
-        : `LEFT JOIN ims.warehouse_stock ws
-             ON ws.${stockShape.itemColumn} = i.item_id
-           LEFT JOIN ims.warehouses w
-             ON w.wh_id = ws.wh_id`;
-      const totalStockExpr = stockShape.hasBranchId
-        ? 'COALESCE(SUM(ws.quantity), 0)'
-        : 'COALESCE(SUM(CASE WHEN w.branch_id = i.branch_id THEN ws.quantity ELSE 0 END), 0)';
-
-      const row = await queryOne<{ count: string }>(
+    const runLowStockCount = async (): Promise<{ count: string } | null> => {
+      return queryOne<{ count: string }>(
         `SELECT COUNT(*)::text AS count
            FROM (
              SELECT i.item_id
-                FROM ims.items i
-                ${stockJoins}
-               WHERE i.branch_id = $1
-                 AND i.is_active = TRUE
-               GROUP BY i.item_id, i.reorder_level
-              HAVING ${totalStockExpr} <= COALESCE(i.reorder_level, 0)
+               FROM ims.items i
+               LEFT JOIN ims.store_items si
+                 ON si.product_id = i.item_id
+               LEFT JOIN ims.stores st
+                 ON st.store_id = si.store_id
+              WHERE i.branch_id = $1
+                AND st.branch_id = i.branch_id
+                AND i.is_active = TRUE
+              GROUP BY i.item_id, i.stock_alert
+             HAVING COALESCE(SUM(si.quantity), 0) <= COALESCE(i.stock_alert, 0)
            ) AS x`,
         [branchId]
       );
-
-      return { row, shape: stockShape };
     };
 
-    const runInventoryStock = async (
-      stockShape: WarehouseStockShape
-    ): Promise<{ row: { total: string } | null; shape: WarehouseStockShape }> => {
-      const row = stockShape.hasBranchId
-        ? await queryOne<{ total: string }>(
-            `SELECT COALESCE(SUM(ws.quantity), 0)::text AS total
-               FROM ims.warehouse_stock ws
-              WHERE ws.branch_id = $1`,
-            [branchId]
-          )
-        : await queryOne<{ total: string }>(
-            `SELECT COALESCE(SUM(ws.quantity), 0)::text AS total
-               FROM ims.warehouse_stock ws
-               JOIN ims.warehouses w ON w.wh_id = ws.wh_id
-              WHERE w.branch_id = $1`,
-            [branchId]
-          );
-
-      return { row, shape: stockShape };
-    };
-
-    const resolveByCandidates = async <T>(
-      fn: (shape: WarehouseStockShape) => Promise<{ row: T | null; shape: WarehouseStockShape }>
-    ): Promise<T | null> => {
-      let row: T | null = null;
-      let appliedShape = detectedShape;
-      let lastShapeError: any = null;
-
-      for (const candidate of candidates) {
-        try {
-          const result = await fn(candidate);
-          row = result.row;
-          appliedShape = result.shape;
-          lastShapeError = null;
-          break;
-        } catch (error: any) {
-          if (error?.code !== '42703') {
-            throw error;
-          }
-          lastShapeError = error;
-        }
-      }
-
-      if (lastShapeError) throw lastShapeError;
-      warehouseStockShapeCache = appliedShape;
-      return row;
+    const runInventoryStock = async (): Promise<{ total: string } | null> => {
+      return queryOne<{ total: string }>(
+        `SELECT COALESCE(SUM(si.quantity), 0)::text AS total
+           FROM ims.store_items si
+           JOIN ims.stores st ON st.store_id = si.store_id
+          WHERE st.branch_id = $1`,
+        [branchId]
+      );
     };
 
     const [
@@ -246,8 +141,8 @@ export class DashboardService {
       ),
     ]);
 
-    const inventoryStockRow = await resolveByCandidates(runInventoryStock);
-    const lowStockRow = await resolveByCandidates(runLowStockCount);
+    const inventoryStockRow = await runInventoryStock();
+    const lowStockRow = await runLowStockCount();
 
     return [
       {

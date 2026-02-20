@@ -395,8 +395,7 @@ BEGIN
   END IF;
 END $$;
 CREATE INDEX IF NOT EXISTS idx_items_store ON ims.items(store_id) WHERE store_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_items_unit ON ims.items(unit_id) WHERE unit_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_items_tax ON ims.items(tax_id) WHERE tax_id IS NOT NULL;
+-- unit_id / tax_id columns no longer exist in this variant; skip legacy indexes
 
 CREATE TABLE IF NOT EXISTS ims.store_items (
     store_item_id BIGSERIAL PRIMARY KEY,
@@ -419,24 +418,22 @@ quantity  NUMERIC(14,3) NOT NULL DEFAULT 0 CHECK (quantity >= 0),
 PRIMARY KEY (wh_id, item_id)
 );
 
+-- Inventory transactions (PostgreSQL syntax)
 CREATE TABLE IF NOT EXISTS ims.inventory_transaction (
-    transaction_id   BIGSERIAL PRIMARY KEY,
-    branch_id        BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-    product_id       BIGINT NOT NULL REFERENCES ims.items(item_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-    transaction_type VARCHAR(20) NOT NULL CHECK (UPPER(transaction_type) IN ('ADJUSTMENT', 'PAID', 'SALES', 'DAMAGE')),
-    quantity         NUMERIC(14,3) NOT NULL CHECK (quantity > 0),
-    unit_cost        NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (unit_cost >= 0),
-    total_cost       NUMERIC(16,2) GENERATED ALWAYS AS ((quantity * unit_cost)::numeric(16,2)) STORED,
-    reference_no     VARCHAR(50),
-    transaction_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    created_by       BIGINT REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE SET NULL,
-    notes            TEXT,
-    status           VARCHAR(20) NOT NULL DEFAULT 'POSTED' CHECK (UPPER(status) IN ('POSTED', 'PENDING', 'CANCELLED')),
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    transaction_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    product_id BIGINT NOT NULL,
+    transaction_type ENUM('IN','OUT','ADJUSTMENT') NOT NULL,
+    quantity DECIMAL(10,2) NOT NULL,
+    unit_cost DECIMAL(12,2) NULL,
+    total_cost DECIMAL(14,2) GENERATED ALWAYS AS (quantity * unit_cost) STORED,
+    reference_no VARCHAR(50) NULL,
+    transaction_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by BIGINT NOT NULL,
+    notes TEXT NULL,
+    status ENUM('POSTED','PENDING','CANCELLED') DEFAULT 'POSTED',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
-CREATE INDEX IF NOT EXISTS idx_inventory_transaction_branch ON ims.inventory_transaction(branch_id);
-CREATE INDEX IF NOT EXISTS idx_inventory_transaction_product ON ims.inventory_transaction(product_id);
 
 
 
@@ -472,19 +469,18 @@ total       NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (total >= 0),
 status      ims.sale_status_enum NOT NULL DEFAULT 'paid',
 note        TEXT
 );
+
 CREATE TABLE IF NOT EXISTS ims.stock_adjustment (
-    adjustment_id    BIGSERIAL PRIMARY KEY,
-    branch_id        BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-    item_id          BIGINT NOT NULL REFERENCES ims.items(item_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-    adjustment_type  ims.adjustment_type_enum NOT NULL,
-    quantity         NUMERIC(14,3) NOT NULL CHECK (quantity > 0),
-    reason           VARCHAR(255) NOT NULL,
-    adjustment_date  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    created_by       BIGINT NOT NULL REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-    status           ims.adjustment_status_enum NOT NULL DEFAULT 'POSTED',
-    note             TEXT,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    adjustment_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    item_id BIGINT NOT NULL,
+    adjustment_type ENUM('INCREASE','DECREASE') NOT NULL,
+    quantity DECIMAL(10,2) NOT NULL,
+    reason VARCHAR(255) NOT NULL,
+    adjustment_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by BIGINT NOT NULL,
+    status ENUM('POSTED','CANCELLED') DEFAULT 'POSTED',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS ims.sale_items (
 sale_item_id BIGSERIAL PRIMARY KEY,
@@ -605,6 +601,129 @@ note            TEXT,
 CONSTRAINT chk_acc_transfer_diff CHECK (from_acc_id <> to_acc_id)
 );
 
+-- Receipts (Finance)
+CREATE TABLE IF NOT EXISTS ims.customer_receipts (
+    receipt_id    BIGSERIAL PRIMARY KEY,
+    branch_id     BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    customer_id   BIGINT REFERENCES ims.customers(customer_id) ON UPDATE CASCADE ON DELETE SET NULL,
+    sale_id       BIGINT REFERENCES ims.sales(sale_id) ON UPDATE CASCADE ON DELETE SET NULL,
+    acc_id        BIGINT NOT NULL REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    receipt_date  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    amount        NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+    payment_method VARCHAR(40),
+    reference_no  VARCHAR(80),
+    note          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_customer_receipts_branch_date ON ims.customer_receipts(branch_id, receipt_date DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_customer_receipt_ref ON ims.customer_receipts(branch_id, reference_no)
+  WHERE reference_no IS NOT NULL;
+
+-- Stored procedure: record a customer receipt and post balances atomically
+DROP FUNCTION IF EXISTS ims.sp_record_customer_receipt(
+    BIGINT,BIGINT,BIGINT,NUMERIC,TEXT,TEXT,TEXT,TIMESTAMPTZ
+);
+
+CREATE FUNCTION ims.sp_record_customer_receipt(
+    p_branch_id      BIGINT,
+    p_customer_id    BIGINT,
+    p_account_id     BIGINT,
+    p_amount         NUMERIC(14,2),
+    p_payment_method TEXT DEFAULT NULL,
+    p_reference      TEXT DEFAULT NULL,
+    p_note           TEXT DEFAULT NULL,
+    p_receipt_date   TIMESTAMPTZ DEFAULT NOW()
+) RETURNS TABLE(out_receipt_id BIGINT, out_message TEXT)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_balance_col TEXT;
+    v_total_paid_exists BOOLEAN;
+    v_receipt_id BIGINT;
+BEGIN
+    IF p_amount <= 0 THEN
+        RAISE EXCEPTION 'Amount must be greater than zero';
+    END IF;
+
+    -- detect balance column on customers
+    SELECT CASE
+             WHEN EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_schema='ims' AND table_name='customers' AND column_name='remaining_balance')
+               THEN 'remaining_balance'
+             ELSE 'open_balance'
+           END
+      INTO v_balance_col;
+
+    SELECT EXISTS (
+             SELECT 1 FROM information_schema.columns
+              WHERE table_schema='ims' AND table_name='customers' AND column_name='total_paid'
+           )
+      INTO v_total_paid_exists;
+
+    -- validations
+    PERFORM 1 FROM ims.customers WHERE customer_id = p_customer_id AND branch_id = p_branch_id;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'Customer % not found in branch %', p_customer_id, p_branch_id;
+    END IF;
+
+    PERFORM 1 FROM ims.accounts WHERE acc_id = p_account_id AND branch_id = p_branch_id;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'Account % not found in branch %', p_account_id, p_branch_id;
+    END IF;
+
+    -- main txn
+    INSERT INTO ims.customer_receipts
+        (branch_id, customer_id, acc_id, receipt_date, amount, payment_method, reference_no, note)
+    VALUES
+        (p_branch_id, p_customer_id, p_account_id, COALESCE(p_receipt_date, NOW()), p_amount, p_payment_method, NULLIF(p_reference,''), p_note)
+    RETURNING ims.customer_receipts.receipt_id INTO v_receipt_id;
+
+    -- update customer balance (clamped) and total_paid if exists
+    EXECUTE format(
+      'UPDATE ims.customers
+          SET %I = GREATEST(%I - $1, 0)%s
+        WHERE customer_id = $2 AND branch_id = $3',
+      v_balance_col,
+      v_balance_col,
+      CASE WHEN v_total_paid_exists THEN ', total_paid = COALESCE(total_paid,0) + $1' ELSE '' END
+    ) USING p_amount, p_customer_id, p_branch_id;
+
+    -- update account balance
+    UPDATE ims.accounts
+       SET balance = balance + p_amount
+     WHERE acc_id = p_account_id AND branch_id = p_branch_id;
+
+    -- ledger
+    INSERT INTO ims.customer_ledger
+        (branch_id, customer_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
+    VALUES
+        (p_branch_id, p_customer_id, 'payment', 'customer_receipts', v_receipt_id, p_account_id, 0, p_amount, p_note);
+
+    -- account transaction
+    INSERT INTO ims.account_transactions
+        (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, note)
+    VALUES
+        (p_branch_id, p_account_id, 'sale_payment', 'customer_receipts', v_receipt_id, p_amount, 0, p_note);
+
+    RETURN QUERY SELECT v_receipt_id::BIGINT AS out_receipt_id, 'Customer receipt recorded'::TEXT AS out_message;
+END;
+$$;
+
+CREATE TABLE IF NOT EXISTS ims.supplier_receipts (
+    receipt_id    BIGSERIAL PRIMARY KEY,
+    branch_id     BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    supplier_id   BIGINT REFERENCES ims.suppliers(supplier_id) ON UPDATE CASCADE ON DELETE SET NULL,
+    purchase_id   BIGINT REFERENCES ims.purchases(purchase_id) ON UPDATE CASCADE ON DELETE SET NULL,
+    acc_id        BIGINT NOT NULL REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    receipt_date  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    amount        NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+    payment_method VARCHAR(40),
+    reference_no  VARCHAR(80),
+    note          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_supplier_receipts_branch_date ON ims.supplier_receipts(branch_id, receipt_date DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_receipt_ref ON ims.supplier_receipts(branch_id, reference_no)
+  WHERE reference_no IS NOT NULL;
+
 -- Expenses
 CREATE TABLE IF NOT EXISTS ims.expense_types (
 exp_type_id BIGSERIAL PRIMARY KEY,
@@ -635,6 +754,34 @@ amount_paid    NUMERIC(14,2) NOT NULL CHECK (amount_paid > 0),
 reference_no   VARCHAR(80),
 note           TEXT
 );
+
+-- Expense charges (allocations)
+CREATE TABLE IF NOT EXISTS ims.expense_charges (
+    charge_id    BIGSERIAL PRIMARY KEY,
+    branch_id    BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    exp_id       BIGINT REFERENCES ims.expenses(exp_id) ON UPDATE CASCADE ON DELETE CASCADE,
+    exp_type_id  BIGINT REFERENCES ims.expense_types(exp_type_id) ON UPDATE CASCADE ON DELETE SET NULL,
+    acc_id       BIGINT NOT NULL REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    charge_date  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    amount       NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+    ref_table    VARCHAR(40),
+    ref_id       BIGINT,
+    note         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_expense_charges_branch_date ON ims.expense_charges(branch_id, charge_date DESC);
+
+-- Expense budgets (monthly caps)
+CREATE TABLE IF NOT EXISTS ims.expense_budgets (
+    budget_id    BIGSERIAL PRIMARY KEY,
+    branch_id    BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    exp_type_id  BIGINT NOT NULL REFERENCES ims.expense_types(exp_type_id) ON UPDATE CASCADE ON DELETE CASCADE,
+    period_year  INT NOT NULL,
+    period_month INT NOT NULL CHECK (period_month BETWEEN 1 AND 12),
+    amount_limit NUMERIC(14,2) NOT NULL CHECK (amount_limit >= 0),
+    note         TEXT,
+    CONSTRAINT uq_expense_budget UNIQUE (branch_id, exp_type_id, period_year, period_month)
+);
+CREATE INDEX IF NOT EXISTS idx_expense_budgets_branch_period ON ims.expense_budgets(branch_id, period_year, period_month);
 
 -- Returns
 CREATE TABLE IF NOT EXISTS ims.sales_returns (
@@ -2009,16 +2156,30 @@ WHERE i.branch_id=p_branch_id AND s.wh_id=p_wh_id
 ORDER BY i.name;
 $$;
 
-CREATE OR REPLACE FUNCTION ims.rpt_low_stock(p_branch_id BIGINT, p_wh_id BIGINT)
-RETURNS TABLE(item_id BIGINT, item_name VARCHAR, quantity NUMERIC, reorder_level NUMERIC, reorder_qty NUMERIC)
+-- Drop first to allow changing OUT columns safely
+DROP FUNCTION IF EXISTS ims.rpt_low_stock(BIGINT, BIGINT);
+
+-- Low-stock report based on items.stock_alert threshold (store-level)
+CREATE OR REPLACE FUNCTION ims.rpt_low_stock(p_branch_id BIGINT, p_store_id BIGINT)
+RETURNS TABLE(
+    item_id BIGINT,
+    item_name VARCHAR,
+    quantity NUMERIC,
+    stock_alert NUMERIC
+)
 LANGUAGE sql
 AS $$
-SELECT s.item_id, i.name, s.quantity, i.reorder_level, i.reorder_qty
-FROM ims.warehouse_stock s
-JOIN ims.items i ON i.item_id=s.item_id
-WHERE i.branch_id=p_branch_id AND s.wh_id=p_wh_id
-AND s.quantity <= i.reorder_level
-ORDER BY (i.reorder_level - s.quantity) DESC, i.name;
+SELECT
+    si.product_id AS item_id,
+    i.name AS item_name,
+    si.quantity,
+    i.stock_alert
+FROM ims.store_items si
+JOIN ims.items i ON i.item_id = si.product_id
+WHERE i.branch_id = p_branch_id
+  AND si.store_id = p_store_id
+  AND si.quantity <= i.stock_alert
+ORDER BY (i.stock_alert - si.quantity) DESC, i.name;
 $$;
 
 CREATE OR REPLACE FUNCTION ims.rpt_today_sales(p_branch_id BIGINT)

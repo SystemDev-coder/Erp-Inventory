@@ -16,6 +16,7 @@ import PurchaseEditor from "./pages/Purchases/PurchaseEditor";
 import Returns from "./pages/Returns/Returns";
 import Transfers from "./pages/Transfers/Transfers";
 import Finance from "./pages/Finance/Finance";
+import Receipts from "./pages/Finance/Receipts";
 import Customers from "./pages/Customers/Customers";
 import Employees from "./pages/Employees/Employees";
 import Reports from "./pages/Reports/Reports";
@@ -72,6 +73,8 @@ function AppRoutes() {
           <Route path="/transfers" element={<ProtectedRoute permission="transfers.view"><Transfers /></ProtectedRoute>} />
           <Route path="/finance" element={<ProtectedRoute><Finance /></ProtectedRoute>} />
           <Route path="/finance/accounts" element={<ProtectedRoute><Finance /></ProtectedRoute>} />
+          <Route path="/finance/transfers" element={<ProtectedRoute><Finance /></ProtectedRoute>} />
+          <Route path="/finance/receipts" element={<ProtectedRoute><Receipts /></ProtectedRoute>} />
           <Route path="/finance/payroll" element={<ProtectedRoute><Finance /></ProtectedRoute>} />
           <Route path="/finance/expense" element={<ProtectedRoute><Finance /></ProtectedRoute>} />
           <Route path="/finance/loans" element={<ProtectedRoute><Finance /></ProtectedRoute>} />

@@ -191,16 +191,16 @@ export function DataTable<TData>({
             )}
 
             {/* Table */}
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-md overflow-hidden">
                 <div className="overflow-x-auto custom-scrollbar">
-                    <table className="w-full text-left border-collapse">
-                        <thead className="bg-slate-50 dark:bg-slate-800/50">
+                    <table className="w-full text-left border-separate border-spacing-0">
+                        <thead className="bg-slate-900 text-white">
                             {table.getHeaderGroups().map((headerGroup) => (
                                 <tr key={headerGroup.id}>
                                     {headerGroup.headers.map((header) => (
                                         <th
                                             key={header.id}
-                                            className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider dark:text-slate-400 border-b border-slate-200 dark:border-slate-800"
+                                            className="px-6 py-4 text-xs font-bold uppercase tracking-wider border-b border-slate-800 first:rounded-tl-2xl last:rounded-tr-2xl"
                                         >
                                             {header.isPlaceholder ? null : (
                                                 <div
