@@ -1,4 +1,6 @@
 import { queryMany, queryOne } from '../../db/query';
+import { withTransaction } from '../../db/withTx';
+import { PoolClient } from 'pg';
 import { ApiError } from '../../utils/ApiError';
 import {
   BranchScope,
@@ -66,26 +68,20 @@ export interface Product {
   product_id: number;
   branch_id: number;
   name: string;
-  sku: string | null;
-  category_id: number | null;
-  category_name?: string | null;
-  unit_id: number | null;
-  unit_name?: string | null;
-  unit_symbol?: string | null;
-  tax_id: number | null;
-  tax_name?: string | null;
-  tax_rate_percent?: number | null;
-  tax_is_inclusive?: boolean | null;
+  barcode: string | null;
+  sku?: string | null;
   store_id: number | null;
   store_name?: string | null;
-  price: number;
-  cost: number;
+  stock_alert: number;
+  cost_price: number;
+  sell_price: number;
+  price?: number;
+  cost?: number;
   stock: number;
+  quantity?: number;
   opening_balance: number;
   is_active: boolean;
   status: string;
-  reorder_level: number;
-  reorder_qty: number;
   description?: string | null;
   created_at: string;
   updated_at: string;
@@ -93,6 +89,60 @@ export interface Product {
 
 const like = (v?: string) => (v?.trim() ? `%${v.trim()}%` : undefined);
 const offsetOf = (page: number, limit: number) => (page - 1) * limit;
+let cachedItemsHasStockAlert: boolean | null = null;
+let cachedItemsCatIdRequired: boolean | null = null;
+
+const hasItemsStockAlertColumn = async (): Promise<boolean> => {
+  if (cachedItemsHasStockAlert !== null) return cachedItemsHasStockAlert;
+  const row = await queryOne<{ has_column: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM information_schema.columns
+        WHERE table_schema = 'ims'
+          AND table_name = 'items'
+          AND column_name = 'stock_alert'
+     ) AS has_column`
+  );
+  cachedItemsHasStockAlert = Boolean(row?.has_column);
+  return cachedItemsHasStockAlert;
+};
+
+const isItemsCatIdRequired = async (): Promise<boolean> => {
+  if (cachedItemsCatIdRequired !== null) return cachedItemsCatIdRequired;
+  const row = await queryOne<{ is_required: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM information_schema.columns
+        WHERE table_schema = 'ims'
+          AND table_name = 'items'
+          AND column_name = 'cat_id'
+          AND is_nullable = 'NO'
+     ) AS is_required`
+  );
+  cachedItemsCatIdRequired = Boolean(row?.is_required);
+  return cachedItemsCatIdRequired;
+};
+
+const ensureDefaultCategory = async (branchId: number): Promise<number> => {
+  const existing = await queryOne<{ cat_id: number }>(
+    `SELECT cat_id
+       FROM ims.categories
+      WHERE branch_id = $1
+      ORDER BY cat_id
+      LIMIT 1`,
+    [branchId]
+  );
+  if (existing?.cat_id) return Number(existing.cat_id);
+
+  const created = await queryOne<{ cat_id: number }>(
+    `INSERT INTO ims.categories (branch_id, cat_name, description, is_active)
+     VALUES ($1, 'General', 'Auto-created default category', TRUE)
+     RETURNING cat_id`,
+    [branchId]
+  );
+  if (!created?.cat_id) throw ApiError.internal('Failed to create default category');
+  return Number(created.cat_id);
+};
 
 const scopeClause = (
   scope: BranchScope,
@@ -173,46 +223,77 @@ const getTaxSql = `
   FROM ims.taxes t
 `;
 
-const getProductSql = `
-  WITH stock_totals AS (
-    SELECT ws.item_id, COALESCE(SUM(ws.quantity), 0)::numeric(14,3) AS qty
-      FROM ims.warehouse_stock ws
-     GROUP BY ws.item_id
-  )
+const getProductSql = (stockAlertExpr: string, storeIdExpr = 'NULL::bigint') => `
   SELECT
     i.item_id AS product_id,
     i.branch_id,
     i.name,
+    i.barcode,
     i.barcode AS sku,
-    i.cat_id AS category_id,
-    c.cat_name AS category_name,
-    i.unit_id,
-    u.unit_name,
-    u.symbol AS unit_symbol,
-    i.tax_id,
-    t.tax_name,
-    t.rate_percent AS tax_rate_percent,
-    t.is_inclusive AS tax_is_inclusive,
     i.store_id,
     s.store_name,
+    ${stockAlertExpr} AS stock_alert,
+    i.cost_price,
+    i.sell_price,
     i.sell_price AS price,
     i.cost_price AS cost,
-    COALESCE(st.qty, i.opening_balance, 0)::numeric(14,3) AS stock,
+    COALESCE(sq.qty, 0)::numeric(14,3) AS quantity,
+    COALESCE(sq.qty, 0)::numeric(14,3) AS stock,
     i.opening_balance,
     i.is_active,
     CASE WHEN i.is_active THEN 'active' ELSE 'inactive' END AS status,
-    i.reorder_level,
-    i.reorder_qty,
     NULL::text AS description,
     i.created_at::text AS created_at,
     i.created_at::text AS updated_at
   FROM ims.items i
-  LEFT JOIN ims.categories c ON c.cat_id = i.cat_id
-  LEFT JOIN ims.units u ON u.unit_id = i.unit_id
-  LEFT JOIN ims.taxes t ON t.tax_id = i.tax_id
   LEFT JOIN ims.stores s ON s.store_id = i.store_id
-  LEFT JOIN stock_totals st ON st.item_id = i.item_id
+  LEFT JOIN LATERAL (
+    SELECT si.quantity::numeric(14,3) AS qty
+      FROM ims.store_items si
+     WHERE si.product_id = i.item_id
+       AND si.store_id = COALESCE(
+         ${storeIdExpr}::bigint,
+         i.store_id,
+         (
+           SELECT s2.store_id
+             FROM ims.stores s2
+            WHERE s2.branch_id = i.branch_id
+            ORDER BY s2.store_id
+            LIMIT 1
+         )
+       )
+     LIMIT 1
+  ) sq ON TRUE
 `;
+
+const upsertStoreItemQuantity = async (
+  client: PoolClient,
+  branchId: number,
+  storeId: number,
+  itemId: number,
+  quantity: number
+) => {
+  const store = await client.query(
+    `SELECT store_id
+       FROM ims.stores
+      WHERE store_id = $1
+        AND branch_id = $2`,
+    [storeId, branchId]
+  );
+  if (!store.rows[0]) {
+    throw ApiError.badRequest('Store not found in selected branch');
+  }
+
+  await client.query(
+    `INSERT INTO ims.store_items (store_id, product_id, quantity)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (store_id, product_id)
+     DO UPDATE
+           SET quantity = EXCLUDED.quantity,
+               updated_at = NOW()`,
+    [storeId, itemId, quantity]
+  );
+};
 
 export const productsService = {
   async listCategories(scope: BranchScope, filters: MasterFilters): Promise<Paged<Category>> {
@@ -414,6 +495,7 @@ export const productsService = {
   },
 
   async listProducts(scope: BranchScope, filters: ProductFilters): Promise<Paged<Product>> {
+    const stockAlertExpr = (await hasItemsStockAlertColumn()) ? 'i.stock_alert' : 'COALESCE(i.reorder_level, 5)';
     const params: unknown[] = [];
     const where: string[] = [scopeClause(scope, params, 'i', filters.branchId)];
     const q = like(filters.search);
@@ -421,105 +503,147 @@ export const productsService = {
       params.push(q);
       where.push(`(i.name ILIKE $${params.length} OR COALESCE(i.barcode, '') ILIKE $${params.length})`);
     }
-    if (filters.categoryId) { params.push(filters.categoryId); where.push(`i.cat_id = $${params.length}`); }
-    if (filters.unitId) { params.push(filters.unitId); where.push(`i.unit_id = $${params.length}`); }
-    if (filters.taxId) { params.push(filters.taxId); where.push(`i.tax_id = $${params.length}`); }
-    if (filters.storeId) { params.push(filters.storeId); where.push(`i.store_id = $${params.length}`); }
     if (!filters.includeInactive) where.push('i.is_active = TRUE');
 
     const count = await queryOne<{ total: string }>(
       `SELECT COUNT(*)::text AS total FROM ims.items i WHERE ${where.join(' AND ')}`,
       params
     );
+
+    const dataParams = [...params];
+    const storeQtyParam = filters.storeId ? `$${dataParams.push(filters.storeId)}` : 'NULL::bigint';
     const rows = await queryMany<Product>(
-      `${getProductSql}
+      `${getProductSql(stockAlertExpr, storeQtyParam)}
        WHERE ${where.join(' AND ')}
        ORDER BY i.name
-       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
-      [...params, filters.limit, offsetOf(filters.page, filters.limit)]
+       LIMIT $${dataParams.length + 1} OFFSET $${dataParams.length + 2}`,
+      [...dataParams, filters.limit, offsetOf(filters.page, filters.limit)]
     );
     return { rows, total: Number(count?.total || 0), page: filters.page, limit: filters.limit };
   },
 
-  async getProduct(id: number, scope: BranchScope): Promise<Product | null> {
-    if (scope.isAdmin) return queryOne<Product>(`${getProductSql} WHERE i.item_id = $1`, [id]);
-    return queryOne<Product>(`${getProductSql} WHERE i.item_id = $1 AND i.branch_id = ANY($2)`, [id, scope.branchIds]);
+  async getProduct(id: number, scope: BranchScope, storeId?: number): Promise<Product | null> {
+    const stockAlertExpr = (await hasItemsStockAlertColumn()) ? 'i.stock_alert' : 'COALESCE(i.reorder_level, 5)';
+    if (scope.isAdmin) {
+      const params: unknown[] = [id];
+      const storeExpr = storeId ? `$${params.push(storeId)}` : 'NULL::bigint';
+      return queryOne<Product>(`${getProductSql(stockAlertExpr, storeExpr)} WHERE i.item_id = $1`, params);
+    }
+    const params: unknown[] = [id, scope.branchIds];
+    const storeExpr = storeId ? `$${params.push(storeId)}` : 'NULL::bigint';
+    return queryOne<Product>(
+      `${getProductSql(stockAlertExpr, storeExpr)} WHERE i.item_id = $1 AND i.branch_id = ANY($2)`,
+      params
+    );
   },
 
   async createProduct(input: ProductCreateInput, scope: BranchScope): Promise<Product> {
+    const catIdRequired = await isItemsCatIdRequired();
+    const stockAlertColumn = (await hasItemsStockAlertColumn()) ? 'stock_alert' : 'reorder_level';
     const branchId = pickBranchForWrite(scope, input.branchId);
-    await ensureInBranch('categories', 'cat_id', input.categoryId, branchId, 'Category');
-    if (input.unitId) await ensureInBranch('units', 'unit_id', input.unitId, branchId, 'Unit');
-    if (input.taxId) await ensureInBranch('taxes', 'tax_id', input.taxId, branchId, 'Tax');
     if (input.storeId) await ensureInBranch('stores', 'store_id', input.storeId, branchId, 'Store');
+    const categoryId = catIdRequired ? await ensureDefaultCategory(branchId) : null;
 
-    const openingBalance = input.openingBalance ?? input.stock ?? 0;
+    const openingBalance = input.openingBalance ?? 0;
     const active = isActiveValue(input, true);
-    const created = await queryOne<{ item_id: number }>(
-      `INSERT INTO ims.items (
-         branch_id, cat_id, unit_id, tax_id, store_id, name, barcode,
-         reorder_level, reorder_qty, opening_balance, cost_price, sell_price, is_active
-       ) VALUES (
-         $1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8, $9, $10, $11, $12, $13
-       )
-       RETURNING item_id`,
-      [
-        branchId,
-        input.categoryId,
-        input.unitId ?? null,
-        input.taxId ?? null,
-        input.storeId ?? null,
-        input.name,
-        input.sku || '',
-        input.reorderLevel ?? 0,
-        input.reorderQty ?? 0,
-        openingBalance,
-        input.cost ?? 0,
-        input.price ?? 0,
-        active,
-      ]
-    );
-    return (await this.getProduct(Number(created?.item_id), scope)) as Product;
+    const createdId = await withTransaction(async (client) => {
+      const created = await client.query<{ item_id: number }>(
+        `INSERT INTO ims.items (
+           branch_id, ${catIdRequired ? 'cat_id, ' : ''}store_id, name, barcode, ${stockAlertColumn}, opening_balance, cost_price, sell_price, is_active
+         ) VALUES (
+           $1, ${catIdRequired ? '$2, ' : ''}$${catIdRequired ? 3 : 2}, $${catIdRequired ? 4 : 3}, NULLIF($${catIdRequired ? 5 : 4}, ''), $${catIdRequired ? 6 : 5}, $${catIdRequired ? 7 : 6}, $${catIdRequired ? 8 : 7}, $${catIdRequired ? 9 : 8}, $${catIdRequired ? 10 : 9}
+         )
+         RETURNING item_id`,
+        catIdRequired
+          ? [
+              branchId,
+              categoryId,
+              input.storeId ?? null,
+              input.name,
+              input.barcode || '',
+              input.stockAlert ?? 5,
+              openingBalance,
+              input.costPrice ?? 0,
+              input.sellPrice ?? 0,
+              active,
+            ]
+          : [
+              branchId,
+              input.storeId ?? null,
+              input.name,
+              input.barcode || '',
+              input.stockAlert ?? 5,
+              openingBalance,
+              input.costPrice ?? 0,
+              input.sellPrice ?? 0,
+              active,
+            ]
+      );
+      const itemId = Number(created.rows[0]?.item_id || 0);
+      if (!itemId) {
+        throw ApiError.internal('Failed to create item');
+      }
+
+      if (input.storeId) {
+        const quantity = Number(input.quantity ?? input.openingBalance ?? 0);
+        await upsertStoreItemQuantity(client, branchId, input.storeId, itemId, quantity);
+      }
+      return itemId;
+    });
+
+    return (await this.getProduct(createdId, scope, input.storeId ?? undefined)) as Product;
   },
 
   async updateProduct(id: number, input: ProductUpdateInput, scope: BranchScope): Promise<Product | null> {
+    const stockAlertColumn = (await hasItemsStockAlertColumn()) ? 'stock_alert' : 'reorder_level';
     const current = scope.isAdmin
-      ? await queryOne<{ item_id: number; branch_id: number }>(`SELECT item_id, branch_id FROM ims.items WHERE item_id = $1`, [id])
-      : await queryOne<{ item_id: number; branch_id: number }>(
-          `SELECT item_id, branch_id FROM ims.items WHERE item_id = $1 AND branch_id = ANY($2)`,
+      ? await queryOne<{ item_id: number; branch_id: number; store_id: number | null }>(
+          `SELECT item_id, branch_id, store_id FROM ims.items WHERE item_id = $1`,
+          [id]
+        )
+      : await queryOne<{ item_id: number; branch_id: number; store_id: number | null }>(
+          `SELECT item_id, branch_id, store_id FROM ims.items WHERE item_id = $1 AND branch_id = ANY($2)`,
           [id, scope.branchIds]
         );
     if (!current) return null;
 
-    if (input.categoryId !== undefined) await ensureInBranch('categories', 'cat_id', input.categoryId, current.branch_id, 'Category');
-    if (input.unitId !== undefined && input.unitId !== null) await ensureInBranch('units', 'unit_id', input.unitId, current.branch_id, 'Unit');
-    if (input.taxId !== undefined && input.taxId !== null) await ensureInBranch('taxes', 'tax_id', input.taxId, current.branch_id, 'Tax');
     if (input.storeId !== undefined && input.storeId !== null) await ensureInBranch('stores', 'store_id', input.storeId, current.branch_id, 'Store');
 
     const updates: string[] = [];
     const values: unknown[] = [id];
     let p = 2;
     if (input.name !== undefined) { updates.push(`name = $${p++}`); values.push(input.name); }
-    if (input.sku !== undefined) { updates.push(`barcode = NULLIF($${p++}, '')`); values.push(input.sku || ''); }
-    if (input.categoryId !== undefined) { updates.push(`cat_id = $${p++}`); values.push(input.categoryId); }
-    if (input.unitId !== undefined) { updates.push(`unit_id = $${p++}`); values.push(input.unitId ?? null); }
-    if (input.taxId !== undefined) { updates.push(`tax_id = $${p++}`); values.push(input.taxId ?? null); }
+    if (input.barcode !== undefined) { updates.push(`barcode = NULLIF($${p++}, '')`); values.push(input.barcode || ''); }
     if (input.storeId !== undefined) { updates.push(`store_id = $${p++}`); values.push(input.storeId ?? null); }
-    if (input.price !== undefined) { updates.push(`sell_price = $${p++}`); values.push(input.price); }
-    if (input.cost !== undefined) { updates.push(`cost_price = $${p++}`); values.push(input.cost); }
-    if (input.reorderLevel !== undefined) { updates.push(`reorder_level = $${p++}`); values.push(input.reorderLevel); }
-    if (input.reorderQty !== undefined) { updates.push(`reorder_qty = $${p++}`); values.push(input.reorderQty); }
-    if (input.openingBalance !== undefined || input.stock !== undefined) { updates.push(`opening_balance = $${p++}`); values.push(input.openingBalance ?? input.stock ?? 0); }
+    if (input.stockAlert !== undefined) { updates.push(`${stockAlertColumn} = $${p++}`); values.push(input.stockAlert); }
+    if (input.sellPrice !== undefined) { updates.push(`sell_price = $${p++}`); values.push(input.sellPrice); }
+    if (input.costPrice !== undefined) { updates.push(`cost_price = $${p++}`); values.push(input.costPrice); }
+    if (input.openingBalance !== undefined) { updates.push(`opening_balance = $${p++}`); values.push(input.openingBalance); }
     if (input.isActive !== undefined || input.status !== undefined) { updates.push(`is_active = $${p++}`); values.push(isActiveValue(input, true)); }
-    if (!updates.length) return this.getProduct(id, scope);
+    const hasQuantityUpdate = input.quantity !== undefined;
+    if (!updates.length && !hasQuantityUpdate) return this.getProduct(id, scope, current.store_id ?? undefined);
 
-    if (scope.isAdmin) {
-      await queryOne(`UPDATE ims.items SET ${updates.join(', ')} WHERE item_id = $1`, values);
-    } else {
-      values.push(scope.branchIds);
-      await queryOne(`UPDATE ims.items SET ${updates.join(', ')} WHERE item_id = $1 AND branch_id = ANY($${p})`, values);
-    }
-    return this.getProduct(id, scope);
+    await withTransaction(async (client) => {
+      if (updates.length) {
+        if (scope.isAdmin) {
+          await client.query(`UPDATE ims.items SET ${updates.join(', ')} WHERE item_id = $1`, values);
+        } else {
+          values.push(scope.branchIds);
+          await client.query(`UPDATE ims.items SET ${updates.join(', ')} WHERE item_id = $1 AND branch_id = ANY($${p})`, values);
+        }
+      }
+
+      const targetStoreId = input.storeId !== undefined ? input.storeId : current.store_id;
+      if (!targetStoreId && input.quantity !== undefined) {
+        throw ApiError.badRequest('Store is required when updating quantity');
+      }
+      if (targetStoreId && input.quantity !== undefined) {
+        await upsertStoreItemQuantity(client, current.branch_id, targetStoreId, id, Number(input.quantity));
+      }
+    });
+
+    const outputStoreId = input.storeId !== undefined ? (input.storeId ?? undefined) : (current.store_id ?? undefined);
+    return this.getProduct(id, scope, outputStoreId);
   },
 
   async deleteProduct(id: number, scope: BranchScope): Promise<void> {

@@ -83,20 +83,15 @@ export const taxUpdateSchema = taxCreateSchema.partial();
 
 export const productCreateSchema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(160),
-  sku: z.string().trim().max(80).optional().or(z.literal('')),
-  categoryId: z.coerce.number().int().positive(),
-  unitId: nullablePositiveInt.optional(),
-  taxId: nullablePositiveInt.optional(),
+  barcode: z.string().trim().max(80).optional().or(z.literal('')),
   storeId: nullablePositiveInt.optional(),
-  price: z.coerce.number().nonnegative().default(0),
-  cost: z.coerce.number().nonnegative().default(0),
-  stock: z.coerce.number().nonnegative().optional(),
+  quantity: z.coerce.number().nonnegative().optional(),
+  stockAlert: z.coerce.number().nonnegative().default(5),
   openingBalance: z.coerce.number().nonnegative().optional(),
-  reorderLevel: z.coerce.number().nonnegative().default(0),
-  reorderQty: z.coerce.number().nonnegative().default(0),
+  costPrice: z.coerce.number().nonnegative().default(0),
+  sellPrice: z.coerce.number().nonnegative().default(0),
   isActive: z.boolean().optional(),
   status: z.enum(['active', 'inactive']).optional(),
-  description: textField,
   branchId: optionalPositiveInt,
 });
 

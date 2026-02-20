@@ -53,7 +53,7 @@ export const locationQuerySchema = z.object({
 });
 
 export const adjustmentSchema = z.object({
-  branchId: requiredPositiveInt,
+  branchId: optionalPositiveInt,
   whId: optionalPositiveInt,
   productId: optionalPositiveInt,
   itemId: optionalPositiveInt,
@@ -162,6 +162,28 @@ export const recountSchema = z.object({
   ...value,
   productId: value.productId ?? value.itemId!,
 }));
+
+export const inventoryTransactionListSchema = z.object({
+  storeId: optionalPositiveInt,
+  itemId: optionalPositiveInt,
+  transactionType: z.enum(['ADJUSTMENT', 'PAID', 'SALES', 'DAMAGE']).optional(),
+  status: z.enum(['POSTED', 'PENDING', 'CANCELLED']).optional(),
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(200).default(100),
+});
+
+export const inventoryTransactionSchema = z.object({
+  storeId: z.coerce.number().int().positive(),
+  itemId: z.coerce.number().int().positive(),
+  transactionType: z.enum(['ADJUSTMENT', 'PAID', 'SALES', 'DAMAGE']),
+  direction: z.enum(['IN', 'OUT']).optional(),
+  quantity: z.coerce.number().positive(),
+  unitCost: z.coerce.number().nonnegative().optional(),
+  referenceNo: z.string().trim().max(120).optional().or(z.literal('')),
+  transactionDate: z.string().datetime().optional(),
+  notes: z.string().trim().max(1000).optional().or(z.literal('')),
+  status: z.enum(['POSTED', 'PENDING', 'CANCELLED']).optional().default('POSTED'),
+});
 
 export const branchCreateSchema = z.object({
   branchName: z.string().trim().min(1, 'Branch name is required'),

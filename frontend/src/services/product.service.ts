@@ -41,26 +41,20 @@ export interface Product {
   product_id: number;
   branch_id?: number;
   name: string;
+  barcode?: string | null;
   sku?: string | null;
-  category_id?: number | null;
-  category_name?: string | null;
-  unit_id?: number | null;
-  unit_name?: string | null;
-  unit_symbol?: string | null;
-  tax_id?: number | null;
-  tax_name?: string | null;
-  tax_rate_percent?: number | null;
-  tax_is_inclusive?: boolean | null;
   store_id?: number | null;
   store_name?: string | null;
-  price: number;
-  cost: number;
+  stock_alert?: number;
+  cost_price: number;
+  sell_price: number;
+  price?: number;
+  cost?: number;
   stock: number;
+  quantity?: number;
   opening_balance?: number;
   is_active: boolean;
   status: string;
-  reorder_level: number;
-  reorder_qty?: number;
   description?: string | null;
 }
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import {
   BriefcaseBusiness,
@@ -44,20 +44,8 @@ const AppSidebar: React.FC = () => {
   const { permissions } = useAuth();
   const location = useLocation();
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
-    items: false,
-    sales: false,
-    finance: false,
+    stockManagement: false,
   });
-
-  const closeAllGroups = useCallback(() => {
-    setOpenGroups((prev) => {
-      const next: Record<string, boolean> = {};
-      Object.keys(prev).forEach((key) => {
-        next[key] = false;
-      });
-      return next;
-    });
-  }, []);
 
   const toggleGroup = useCallback((groupId: string) => {
     setOpenGroups((prev) => {
@@ -97,20 +85,17 @@ const AppSidebar: React.FC = () => {
       { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: '/', exact: true, permissionAny: ['dashboard.view'] },
       { id: 'customers', label: 'Customers', icon: Users, to: '/customers', permissionAny: ['customers.view'] },
       {
-        id: 'items',
-        label: 'Store Management',
+        id: 'stockManagement',
+        label: 'Stock Management',
         icon: Store,
-        to: '/store-management',
-        exact: true,
         permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'],
         expandable: true,
         subItems: [
-          { id: 'items-list', label: 'Items', to: '/store-management/items', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
-          { id: 'Stock Adjustments', label: 'Stock Adjustments', to: '/store-management/stock-adjustments', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
-          { id: 'Transfer Items', label: 'Transfer Items', to: '/store-management/transfer-items', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
-          { id: 'Returns', label: 'Returns', to: '/store-management/returns', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
-        ], 
+          { id: 'stock-items', label: 'Items', to: '/stock-management/items', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
+          { id: 'adjust-items', label: 'Adjust Items', to: '/stock-management/adjust-items', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
+        ],
       },
+      { id: 'return', label: 'Return', icon: FileText, to: '/return', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
       { id: 'purchases', label: 'Purchases', icon: ShoppingBag, to: '/purchases', permissionAny: ['purchases.view', 'suppliers.view'] },
       {
         id: 'sales',
@@ -146,28 +131,6 @@ const AppSidebar: React.FC = () => {
         .filter((item) => hasAnyPerm(item.permissionAny)),
     [hasAnyPerm, items]
   );
-
-  const activeExpandableGroupId = useMemo(() => {
-    const activeGroup = visibleItems.find((item) => {
-      if (!item.expandable || !item.subItems || item.subItems.length === 0) return false;
-      return item.subItems.some((sub) => isActive(sub.to, sub.exact));
-    });
-    return activeGroup?.id ?? null;
-  }, [visibleItems, isActive]);
-
-  useEffect(() => {
-    if (!activeExpandableGroupId) {
-      closeAllGroups();
-      return;
-    }
-    setOpenGroups((prev) => {
-      const next: Record<string, boolean> = {};
-      Object.keys(prev).forEach((key) => {
-        next[key] = key === activeExpandableGroupId;
-      });
-      return next;
-    });
-  }, [activeExpandableGroupId, closeAllGroups]);
 
   const showExpanded = isExpanded || isHovered || isMobileOpen;
 

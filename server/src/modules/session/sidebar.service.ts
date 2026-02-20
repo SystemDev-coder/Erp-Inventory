@@ -59,11 +59,11 @@ export class SidebarService {
       has('inventory_movements.view')
     ) {
       modules.push({
-        id: 'store',
-        name: 'Store',
-        nameSo: 'Dukaan',
+        id: 'stock-management',
+        name: 'Stock Management',
+        nameSo: 'Maamulka Kaydka',
         icon: 'Box',
-        route: '/store-management',
+        route: '/stock-management/items',
         permission: 'warehouse_stock.view',
       });
     }

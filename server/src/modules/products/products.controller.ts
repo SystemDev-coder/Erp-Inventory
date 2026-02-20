@@ -69,20 +69,15 @@ const normalizeTaxBody = (body: any) => ({
 
 const normalizeProductBody = (body: any) => ({
   name: body?.name,
-  sku: body?.sku ?? body?.barcode,
-  categoryId: body?.categoryId ?? body?.category_id ?? body?.cat_id,
-  unitId: body?.unitId ?? body?.unit_id,
-  taxId: body?.taxId ?? body?.tax_id,
+  barcode: body?.barcode ?? body?.sku,
   storeId: body?.storeId ?? body?.store_id,
-  price: body?.price,
-  cost: body?.cost,
-  stock: body?.stock,
+  quantity: body?.quantity,
+  stockAlert: body?.stockAlert ?? body?.stock_alert,
   openingBalance: body?.openingBalance ?? body?.opening_balance,
-  reorderLevel: body?.reorderLevel ?? body?.reorder_level,
-  reorderQty: body?.reorderQty ?? body?.reorder_qty,
+  costPrice: body?.costPrice ?? body?.cost_price ?? body?.cost,
+  sellPrice: body?.sellPrice ?? body?.sell_price ?? body?.price,
   status: body?.status,
   isActive: body?.isActive ?? body?.is_active,
-  description: body?.description,
   branchId: body?.branchId ?? body?.branch_id,
 });
 

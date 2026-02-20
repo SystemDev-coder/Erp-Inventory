@@ -2,16 +2,11 @@ import { useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
 import { Filter, Plus, RefreshCw } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
+import { Tabs } from '../../components/ui/tabs';
 import { DataTable } from '../../components/ui/table/DataTable';
 import { Modal } from '../../components/ui/modal/Modal';
 import { useToast } from '../../components/ui/toast/Toast';
-import {
-  inventoryService,
-  InventoryBranch,
-  InventoryWarehouse,
-  StockAdjustmentRow,
-  InventoryItem,
-} from '../../services/inventory.service';
+import { inventoryService, InventoryItem, StockAdjustmentRow } from '../../services/inventory.service';
 
 const inputClass =
   'h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
@@ -20,87 +15,22 @@ const labelClass = 'mb-1 block text-xs font-semibold uppercase tracking-wide tex
 const StockAdjustmentsPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const { showToast } = useToast();
   const [rows, setRows] = useState<StockAdjustmentRow[]>([]);
+  const [items, setItems] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [mastersLoading, setMastersLoading] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [hasLoaded, setHasLoaded] = useState(false);
-
-  const [branches, setBranches] = useState<InventoryBranch[]>([]);
-  const [warehouses, setWarehouses] = useState<InventoryWarehouse[]>([]);
-  const [items, setItems] = useState<InventoryItem[]>([]);
-
-  const [filters, setFilters] = useState({
-    branchId: '',
-    whId: '',
-    itemId: '',
-    search: '',
-  });
-
-  const [form, setForm] = useState({
-    branchId: '',
-    whId: '',
-    itemId: '',
-    qty: 0,
-    unitCost: 0,
-    salePrice: 0,
-    note: '',
-  });
-
-  const filteredWarehouses = useMemo(() => {
-    if (!filters.branchId) return warehouses;
-    return warehouses.filter((row) => row.branch_id === Number(filters.branchId));
-  }, [filters.branchId, warehouses]);
-
-  const formWarehouses = useMemo(() => {
-    if (!form.branchId) return warehouses;
-    return warehouses.filter((row) => row.branch_id === Number(form.branchId));
-  }, [form.branchId, warehouses]);
-
-  const filterItems = useMemo(() => {
-    if (!filters.branchId) return items;
-    return items.filter((row) => row.branch_id === Number(filters.branchId));
-  }, [filters.branchId, items]);
-
-  const formItems = useMemo(() => {
-    if (!form.branchId) return items;
-    return items.filter((row) => row.branch_id === Number(form.branchId));
-  }, [form.branchId, items]);
-
-  const adjustmentValue = useMemo(
-    () => Number((Number(form.qty || 0) * Number(form.unitCost || 0)).toFixed(2)),
-    [form.qty, form.unitCost]
-  );
+  const [filters, setFilters] = useState({ itemId: '', search: '' });
+  const [form, setForm] = useState({ itemId: '', qty: 0, unitCost: 0, note: '' });
 
   const columns = useMemo<ColumnDef<StockAdjustmentRow>[]>(
     () => [
-      {
-        accessorKey: 'adj_date',
-        header: 'Date',
-        cell: ({ row }) => new Date(row.original.adj_date).toLocaleString(),
-      },
-      { accessorKey: 'branch_name', header: 'Branch' },
-      {
-        accessorKey: 'wh_name',
-        header: 'Warehouse',
-        cell: ({ row }) => row.original.wh_name || '-',
-      },
-      { accessorKey: 'item_names', header: 'Items' },
-      {
-        accessorKey: 'qty_delta',
-        header: 'Qty Delta',
-        cell: ({ row }) => Number(row.original.qty_delta).toFixed(3),
-      },
-      {
-        accessorKey: 'value_delta',
-        header: 'Value Delta',
-        cell: ({ row }) => `$${Number(row.original.value_delta).toFixed(2)}`,
-      },
+      { accessorKey: 'adj_date', header: 'Date', cell: ({ row }) => new Date(row.original.adj_date).toLocaleString() },
+      { accessorKey: 'item_names', header: 'Item' },
+      { accessorKey: 'qty_delta', header: 'Qty Delta', cell: ({ row }) => Number(row.original.qty_delta).toFixed(3) },
+      { accessorKey: 'value_delta', header: 'Value Delta', cell: ({ row }) => `$${Number(row.original.value_delta).toFixed(2)}` },
       { accessorKey: 'reason', header: 'Reason' },
-      {
-        accessorKey: 'note',
-        header: 'Note',
-        cell: ({ row }) => row.original.note || '-',
-      },
+      { accessorKey: 'note', header: 'Note', cell: ({ row }) => row.original.note || '-' },
       { accessorKey: 'created_by', header: 'By' },
     ],
     []
@@ -108,28 +38,11 @@ const StockAdjustmentsPage: React.FC<{ embedded?: boolean }> = ({ embedded = fal
 
   const loadMasters = async () => {
     setMastersLoading(true);
-    const [branchRes, whRes, itemRes] = await Promise.all([
-      inventoryService.listBranches({ includeInactive: false }),
-      inventoryService.listWarehouses({ includeInactive: false }),
-      inventoryService.listItems({}),
-    ]);
-
-    if (branchRes.success && branchRes.data?.branches) {
-      setBranches(branchRes.data.branches);
-    } else {
-      showToast('error', 'Stock', branchRes.error || 'Failed to load branches');
-    }
-
-    if (whRes.success && whRes.data?.warehouses) {
-      setWarehouses(whRes.data.warehouses);
-    } else {
-      showToast('error', 'Stock', whRes.error || 'Failed to load warehouses');
-    }
-
+    const itemRes = await inventoryService.listItems({});
     if (itemRes.success && itemRes.data?.items) {
       setItems(itemRes.data.items);
     } else {
-      showToast('error', 'Stock', itemRes.error || 'Failed to load purchased items');
+      showToast('error', 'Stock Adjustments', itemRes.error || 'Failed to load items');
     }
     setMastersLoading(false);
   };
@@ -137,8 +50,6 @@ const StockAdjustmentsPage: React.FC<{ embedded?: boolean }> = ({ embedded = fal
   const loadAdjustments = async () => {
     setLoading(true);
     const res = await inventoryService.listAdjustments({
-      branchId: filters.branchId || undefined,
-      whId: filters.whId || undefined,
       itemId: filters.itemId || undefined,
       search: filters.search || undefined,
     });
@@ -152,24 +63,21 @@ const StockAdjustmentsPage: React.FC<{ embedded?: boolean }> = ({ embedded = fal
   };
 
   const handleSelectFormItem = (itemId: string) => {
-    const selected = formItems.find((row) => row.item_id === Number(itemId));
+    const selected = items.find((row) => row.item_id === Number(itemId));
     setForm((prev) => ({
       ...prev,
       itemId,
       unitCost: selected ? Number(selected.last_unit_cost || selected.cost_price || 0) : 0,
-      salePrice: selected ? Number(selected.sale_price || 0) : 0,
     }));
   };
 
   const handleSave = async () => {
-    if (!form.branchId || !form.itemId || Number(form.qty) === 0) {
-      showToast('error', 'Stock Adjustments', 'Branch, item, and quantity are required');
+    if (!form.itemId || Number(form.qty) === 0) {
+      showToast('error', 'Stock Adjustments', 'Item and quantity are required');
       return;
     }
 
     const res = await inventoryService.adjust({
-      branchId: Number(form.branchId),
-      whId: form.whId ? Number(form.whId) : undefined,
       itemId: Number(form.itemId),
       qty: Number(form.qty),
       unitCost: Number(form.unitCost || 0),
@@ -183,130 +91,50 @@ const StockAdjustmentsPage: React.FC<{ embedded?: boolean }> = ({ embedded = fal
 
     showToast('success', 'Stock Adjustments', 'Adjustment saved');
     setIsModalOpen(false);
-    setForm({
-      branchId: '',
-      whId: '',
-      itemId: '',
-      qty: 0,
-      unitCost: 0,
-      salePrice: 0,
-      note: '',
-    });
+    setForm({ itemId: '', qty: 0, unitCost: 0, note: '' });
     if (hasLoaded) {
-      loadAdjustments();
+      void loadAdjustments();
     }
   };
 
-  return (
-    <div>
-      {!embedded && (
-        <PageHeader
-          title="Stock Adjustments"
-          description="Create manual item adjustments and review adjustment history."
-          actions={
-            <div className="flex items-center gap-2">
-              <button
-                onClick={async () => {
-                  await loadMasters();
-                  await loadAdjustments();
-                }}
-                className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                disabled={loading}
-              >
-                <RefreshCw className="h-4 w-4" />
-                Display
-              </button>
-              <button
-                onClick={async () => {
-                  await loadMasters();
-                  setIsModalOpen(true);
-                }}
-                className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-white"
-                disabled={mastersLoading}
-              >
-                <Plus className="h-4 w-4" />
-                New Adjustment
-              </button>
-            </div>
-          }
-        />
-      )}
+  const content = (
+    <div className="space-y-4">
+      <div className="flex items-center justify-end gap-2">
+        <button
+          onClick={async () => {
+            await loadMasters();
+            await loadAdjustments();
+          }}
+          className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+          disabled={loading}
+        >
+          <RefreshCw className="h-4 w-4" />
+          Display
+        </button>
+        <button
+          onClick={async () => {
+            await loadMasters();
+            setIsModalOpen(true);
+          }}
+          className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-white"
+          disabled={mastersLoading}
+        >
+          <Plus className="h-4 w-4" />
+          New Adjustment
+        </button>
+      </div>
 
-      {embedded && (
-        <div className="mb-4 flex items-center justify-end gap-2">
-          <button
-            onClick={async () => {
-              await loadMasters();
-              await loadAdjustments();
-            }}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            disabled={loading}
-          >
-            <RefreshCw className="h-4 w-4" />
-            Display
-          </button>
-          <button
-            onClick={async () => {
-              await loadMasters();
-              setIsModalOpen(true);
-            }}
-            className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-white"
-            disabled={mastersLoading}
-          >
-            <Plus className="h-4 w-4" />
-            New Adjustment
-          </button>
-        </div>
-      )}
-
-      <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div>
-            <label className={labelClass}>Branch</label>
-            <select
-              className={inputClass}
-              value={filters.branchId}
-              onChange={(e) =>
-                setFilters((prev) => ({
-                  ...prev,
-                  branchId: e.target.value,
-                  whId: '',
-                  itemId: '',
-                }))
-              }
-            >
-              <option value="">All branches</option>
-              {branches.map((branch) => (
-                <option key={branch.branch_id} value={branch.branch_id}>
-                  {branch.branch_name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className={labelClass}>Warehouse</label>
-            <select
-              className={inputClass}
-              value={filters.whId}
-              onChange={(e) => setFilters((prev) => ({ ...prev, whId: e.target.value }))}
-            >
-              <option value="">All warehouses</option>
-              {filteredWarehouses.map((warehouse) => (
-                <option key={warehouse.wh_id} value={warehouse.wh_id}>
-                  {warehouse.wh_name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className={labelClass}>Purchased Item</label>
+            <label className={labelClass}>Item</label>
             <select
               className={inputClass}
               value={filters.itemId}
               onChange={(e) => setFilters((prev) => ({ ...prev, itemId: e.target.value }))}
             >
-              <option value="">All purchased items</option>
-              {filterItems.map((item) => (
+              <option value="">All items</option>
+              {items.map((item) => (
                 <option key={item.item_id} value={item.item_id}>
                   {item.item_name}
                 </option>
@@ -345,57 +173,13 @@ const StockAdjustmentsPage: React.FC<{ embedded?: boolean }> = ({ embedded = fal
         />
       </div>
 
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="New Stock Adjustment" size="lg">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="New Stock Adjustment" size="md">
+        <div className="grid grid-cols-1 gap-3">
           <div>
-            <label className={labelClass}>Branch *</label>
-            <select
-              className={inputClass}
-              value={form.branchId}
-              onChange={(e) =>
-                setForm((prev) => ({
-                  ...prev,
-                  branchId: e.target.value,
-                  whId: '',
-                  itemId: '',
-                  unitCost: 0,
-                  salePrice: 0,
-                }))
-              }
-            >
-              <option value="">Select branch</option>
-              {branches.map((branch) => (
-                <option key={branch.branch_id} value={branch.branch_id}>
-                  {branch.branch_name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className={labelClass}>Warehouse</label>
-            <select
-              className={inputClass}
-              value={form.whId}
-              onChange={(e) => setForm((prev) => ({ ...prev, whId: e.target.value }))}
-            >
-              <option value="">Branch level only</option>
-              {formWarehouses.map((warehouse) => (
-                <option key={warehouse.wh_id} value={warehouse.wh_id}>
-                  {warehouse.wh_name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className={labelClass}>Purchased Item *</label>
-            <select
-              className={inputClass}
-              value={form.itemId}
-              onChange={(e) => handleSelectFormItem(e.target.value)}
-              disabled={!form.branchId}
-            >
-              <option value="">Select purchased item</option>
-              {formItems.map((item) => (
+            <label className={labelClass}>Item *</label>
+            <select className={inputClass} value={form.itemId} onChange={(e) => handleSelectFormItem(e.target.value)}>
+              <option value="">Select item</option>
+              {items.map((item) => (
                 <option key={item.item_id} value={item.item_id}>
                   {item.item_name}
                 </option>
@@ -409,25 +193,17 @@ const StockAdjustmentsPage: React.FC<{ embedded?: boolean }> = ({ embedded = fal
               className={inputClass}
               value={form.qty}
               onChange={(e) => setForm((prev) => ({ ...prev, qty: Number(e.target.value) }))}
-              placeholder="Use + to add, - to remove"
+              placeholder="Use + to increase, - to decrease"
             />
           </div>
           <div>
-            <label className={labelClass}>Cost Price</label>
+            <label className={labelClass}>Unit Cost</label>
             <input
               type="number"
               className={inputClass}
               value={form.unitCost}
               onChange={(e) => setForm((prev) => ({ ...prev, unitCost: Number(e.target.value) }))}
             />
-          </div>
-          <div>
-            <label className={labelClass}>Sale Price</label>
-            <input type="number" className={inputClass} value={form.salePrice} readOnly />
-          </div>
-          <div>
-            <label className={labelClass}>Auto Value (Qty x Cost)</label>
-            <input type="number" className={inputClass} value={adjustmentValue} readOnly />
           </div>
           <div>
             <label className={labelClass}>Note</label>
@@ -448,6 +224,18 @@ const StockAdjustmentsPage: React.FC<{ embedded?: boolean }> = ({ embedded = fal
           </button>
         </div>
       </Modal>
+    </div>
+  );
+
+  return (
+    <div>
+      {!embedded && (
+        <PageHeader
+          title="Stock Adjustments"
+          description="Create manual item adjustments and review adjustment history."
+        />
+      )}
+      <Tabs tabs={[{ id: 'stock-adjustments', label: 'Stock Adjustments', content }]} defaultTab="stock-adjustments" />
     </div>
   );
 };

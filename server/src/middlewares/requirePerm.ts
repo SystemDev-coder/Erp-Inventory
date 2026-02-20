@@ -1,7 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from './requireAuth';
 import { ApiError } from '../utils/ApiError';
-import { queryMany } from '../db/query';
+import { queryMany, queryOne } from '../db/query';
 
 const expandPermissionKeys = (permKey: string): string[] => {
   if (permKey.startsWith('items.')) {
@@ -13,15 +13,32 @@ const expandPermissionKeys = (permKey: string): string[] => {
   return [permKey];
 };
 
+/** Returns true if the user's role is an admin/system role — bypasses all RBAC checks */
+const isAdminRole = async (roleId: number): Promise<boolean> => {
+  const row = await queryOne<{ role_name: string; is_system: boolean | null }>(
+    `SELECT role_name, is_system FROM ims.roles WHERE role_id = $1 LIMIT 1`,
+    [roleId]
+  );
+  if (!row) return false;
+  const name = (row.role_name || '').toLowerCase();
+  return name.includes('admin') || Boolean(row.is_system);
+};
+
 /**
- * Middleware to check if authenticated user has specific permission
+ * Middleware to check if authenticated user has specific permission.
+ * Admin roles bypass all checks.
  * Formula: effective = (role_permissions ∪ user_permissions ∪ overrides_allow) - overrides_deny
  */
 export const requirePerm = (permKey: string) => {
-  return async (req: AuthRequest, res: Response, next: NextFunction) => {
+  return async (req: AuthRequest, _res: Response, next: NextFunction) => {
     try {
       if (!req.user) {
         throw ApiError.unauthorized('Authentication required');
+      }
+
+      // Admin bypass: skip all permission checks for admin/system roles
+      if (await isAdminRole(req.user.roleId)) {
+        return next();
       }
 
       const userId = req.user.userId;
@@ -41,7 +58,7 @@ export const requirePerm = (permKey: string) => {
         throw ApiError.forbidden('Permission explicitly denied');
       }
 
-      // Check if user has permission from role, legacy overrides, or allow overrides
+      // Check if user has permission from role, user_permissions, or allow overrides
       const rolePerms = await queryMany<{ perm_key: string }>(
         `SELECT DISTINCT p.perm_key
          FROM ims.role_permissions rp
@@ -66,7 +83,6 @@ export const requirePerm = (permKey: string) => {
         [userId, effectivePermKeys]
       );
 
-      // Check if user has permission from any source
       if (rolePerms.length === 0 && userPerms.length === 0 && allowOverrides.length === 0) {
         throw ApiError.forbidden('Insufficient permissions');
       }
@@ -79,14 +95,20 @@ export const requirePerm = (permKey: string) => {
 };
 
 /**
- * Middleware to check if user has ANY of the listed permissions
+ * Middleware to check if user has ANY of the listed permissions.
+ * Admin roles bypass all checks.
  * Formula: effective = (role_permissions ∪ user_permissions ∪ overrides_allow) - overrides_deny
  */
 export const requireAnyPerm = (permKeys: string[]) => {
-  return async (req: AuthRequest, res: Response, next: NextFunction) => {
+  return async (req: AuthRequest, _res: Response, next: NextFunction) => {
     try {
       if (!req.user) {
         throw ApiError.unauthorized('Authentication required');
+      }
+
+      // Admin bypass: skip all permission checks for admin/system roles
+      if (await isAdminRole(req.user.roleId)) {
+        return next();
       }
 
       const userId = req.user.userId;
@@ -140,7 +162,6 @@ export const requireAnyPerm = (permKeys: string[]) => {
         ...allowOverrides.map((p) => p.perm_key),
       ].filter((perm) => !deniedSet.has(perm));
 
-      // Check if user has ANY permission
       if (allowed.length === 0) {
         throw ApiError.forbidden('Insufficient permissions');
       }

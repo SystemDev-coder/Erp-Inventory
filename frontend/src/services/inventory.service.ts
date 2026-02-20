@@ -74,6 +74,24 @@ export interface StockAdjustmentRow {
   line_count: number;
 }
 
+export interface InventoryTransactionRow {
+  transaction_id: number;
+  branch_id: number;
+  branch_name?: string;
+  store_id: number | null;
+  store_name?: string | null;
+  item_id: number;
+  item_name: string;
+  transaction_type: 'ADJUSTMENT' | 'PAID' | 'SALES' | 'DAMAGE';
+  direction: 'IN' | 'OUT';
+  quantity: number;
+  unit_cost: number;
+  reference_no?: string | null;
+  transaction_date: string;
+  status: 'POSTED' | 'PENDING' | 'CANCELLED';
+  notes?: string | null;
+}
+
 const buildQueryString = (params: Record<string, any> = {}) => {
   const clean: Record<string, string> = {};
   Object.entries(params).forEach(([key, value]) => {
@@ -152,5 +170,22 @@ export const inventoryService = {
   },
   deleteWarehouse(id: number) {
     return apiClient.delete(`/api/inventory/warehouses/${id}`);
+  },
+  listTransactions(params: Record<string, any>) {
+    const qs = buildQueryString(params);
+    return apiClient.get<{ rows: InventoryTransactionRow[] }>(`/api/inventory/transactions?${qs}`);
+  },
+  createTransaction(payload: {
+    storeId: number;
+    itemId: number;
+    transactionType: 'ADJUSTMENT' | 'PAID' | 'SALES' | 'DAMAGE';
+    direction?: 'IN' | 'OUT';
+    quantity: number;
+    unitCost?: number;
+    referenceNo?: string;
+    notes?: string;
+    status?: 'POSTED' | 'PENDING' | 'CANCELLED';
+  }) {
+    return apiClient.post<{ transaction: InventoryTransactionRow }>(`/api/inventory/transactions`, payload);
   },
 };

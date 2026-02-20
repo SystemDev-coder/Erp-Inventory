@@ -1,6 +1,5 @@
 ﻿import { useState } from 'react';
 import { Store, Package, Plus, Trash2, ChevronDown, ChevronRight, Pencil, Eye } from 'lucide-react';
-import { useEffect } from 'react';
 import { PageHeader } from '../../components/ui/layout';
 import { useToast } from '../../components/ui/toast/Toast';
 import { storeService, Store as StoreType, StoreItem } from '../../services/store.service';
@@ -14,6 +13,7 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const [loading, setLoading] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [storeItems, setStoreItems] = useState<Record<number, StoreItem[]>>({});
+  const [editQty, setEditQty] = useState<Record<number, number>>({});
 
   const [itemModalStore, setItemModalStore] = useState<StoreType | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
@@ -36,15 +36,17 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
     setLoading(false);
   };
 
-  useEffect(() => {
-    void loadStores();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const loadStoreItems = async (storeId: number) => {
     const res = await storeService.listItems(storeId);
     if (res.success && res.data?.items) {
       setStoreItems((prev) => ({ ...prev, [storeId]: res.data!.items }));
+      setEditQty((prev) => {
+        const next = { ...prev };
+        res.data!.items.forEach((item) => {
+          next[item.store_item_id] = Number(item.quantity || 0);
+        });
+        return next;
+      });
     } else {
       showToast('error', 'Store Items', res.error || 'Could not load store items');
     }
@@ -159,6 +161,23 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
     }
   };
 
+  const handleUpdateItemQty = async (storeId: number, itemId: number) => {
+    const qty = Number(editQty[itemId] ?? 0);
+    if (!Number.isFinite(qty) || qty < 0) {
+      showToast('error', 'Quantity', 'Enter a valid quantity');
+      return;
+    }
+    setLoading(true);
+    const res = await storeService.updateItem(storeId, itemId, qty);
+    setLoading(false);
+    if (res.success) {
+      showToast('success', 'Store Items', 'Quantity updated');
+      await loadStoreItems(storeId);
+    } else {
+      showToast('error', 'Store Items', res.error || 'Could not update quantity');
+    }
+  };
+
   const toggleExpanded = async (storeId: number) => {
     const next = expandedId === storeId ? null : storeId;
     setExpandedId(next);
@@ -189,6 +208,12 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
               >
                 <Plus className="w-4 h-4" /> New Store
               </button>
+              <button
+                onClick={() => { setExpandedId(null); void loadStores(); }}
+                className="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 rounded-xl text-slate-700 hover:bg-slate-100"
+              >
+                <Pencil className="w-4 h-4" /> Store Management
+              </button>
             </div>
           }
         />
@@ -207,6 +232,12 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
             className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-xl hover:bg-primary-700"
           >
             <Plus className="w-4 h-4" /> New Store
+          </button>
+          <button
+            onClick={() => { setExpandedId(null); void loadStores(); }}
+            className="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 rounded-xl text-slate-700 hover:bg-slate-100"
+          >
+            <Pencil className="w-4 h-4" /> Store Management
           </button>
         </div>
       )}
@@ -263,23 +294,41 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
                           <tr>
                             <th className="px-3 py-2 text-left">Item</th>
                             <th className="px-3 py-2 text-right">Quantity</th>
-                            <th className="px-3 py-2 w-16" />
+                            <th className="px-3 py-2 w-48">Action</th>
                           </tr>
                         </thead>
                         <tbody>
                           {(storeItems[store.store_id] || []).map((item) => (
                             <tr key={item.store_item_id} className="border-t border-slate-200 dark:border-slate-700">
                               <td className="px-3 py-2">{item.product_name || `Item #${item.product_id}`}</td>
-                              <td className="px-3 py-2 text-right">{Number(item.quantity)}</td>
+                              <td className="px-3 py-2 text-right">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step={0.001}
+                                  className="w-28 rounded border border-slate-300 bg-white px-2 py-1 text-right text-sm dark:border-slate-700 dark:bg-slate-900"
+                                  value={editQty[item.store_item_id] ?? Number(item.quantity || 0)}
+                                  onChange={(e) => setEditQty((prev) => ({ ...prev, [item.store_item_id]: Number(e.target.value || 0) }))}
+                                />
+                              </td>
                               <td className="px-3 py-2">
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemoveItem(store.store_id, item.store_item_id)}
-                                  className="text-red-500 hover:text-red-600 p-1"
-                                  title="Remove"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleUpdateItemQty(store.store_id, item.store_item_id)}
+                                    className="rounded bg-primary-600 px-2 py-1 text-xs text-white hover:bg-primary-700"
+                                  >
+                                    Set
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveItem(store.store_id, item.store_item_id)}
+                                    className="text-red-500 hover:text-red-600 p-1"
+                                    title="Remove"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           ))}

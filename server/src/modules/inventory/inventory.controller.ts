@@ -14,6 +14,8 @@ import {
   branchUpdateSchema,
   warehouseCreateSchema,
   warehouseUpdateSchema,
+  inventoryTransactionListSchema,
+  inventoryTransactionSchema,
 } from './inventory.schemas';
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { ApiError } from '../../utils/ApiError';
@@ -104,12 +106,20 @@ export const listRecounts = asyncHandler(async (req: AuthRequest, res) => {
 export const createAdjustment = asyncHandler(async (req: AuthRequest, res) => {
   const scope = await resolveBranchScope(req);
   const input = adjustmentSchema.parse(req.body);
-  assertBranchAccess(scope, input.branchId);
-  const adjustment = await inventoryService.adjust(input, req.user);
+  const branchId = input.branchId ?? scope.primaryBranchId;
+  assertBranchAccess(scope, branchId);
+  const adjustment = await inventoryService.adjust(
+    {
+      ...input,
+      branchId,
+      whId: null,
+    },
+    req.user
+  );
   await logAudit({
     userId: req.user?.userId ?? null,
     action: 'create',
-    entity: 'stock_adjustments',
+    entity: 'stock_adjustment',
     entityId: adjustment?.adj_id ?? null,
     newValue: adjustment,
     ip: req.ip,
@@ -280,4 +290,25 @@ export const deleteWarehouse = asyncHandler(async (req: AuthRequest, res) => {
     userAgent: req.get('user-agent') || null,
   });
   return ApiResponse.success(res, null, 'Warehouse deleted');
+});
+
+export const listInventoryTransactions = asyncHandler(async (req: AuthRequest, res) => {
+  const scope = await resolveBranchScope(req);
+  const filters = inventoryTransactionListSchema.parse(sanitizeQuery(req.query));
+  const rows = await inventoryService.listInventoryTransactions({
+    ...filters,
+    branchIds: scope.isAdmin ? undefined : scope.branchIds,
+  });
+  return ApiResponse.success(res, { rows });
+});
+
+export const createInventoryTransaction = asyncHandler(async (req: AuthRequest, res) => {
+  const scope = await resolveBranchScope(req);
+  const input = inventoryTransactionSchema.parse(req.body);
+  const transaction = await inventoryService.createInventoryTransaction(
+    input,
+    { userId: req.user?.userId ?? null },
+    scope
+  );
+  return ApiResponse.created(res, { transaction }, 'Inventory transaction created');
 });

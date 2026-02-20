@@ -16,6 +16,8 @@ import {
   createWarehouse,
   updateWarehouse,
   deleteWarehouse,
+  listInventoryTransactions,
+  createInventoryTransaction,
 } from './inventory.controller';
 import { requireAuth } from '../../middlewares/requireAuth';
 import { requireAnyPerm } from '../../middlewares/requirePerm';
@@ -40,5 +42,7 @@ router.get('/warehouses', requireAnyPerm(['stock.view', 'inventory.view', 'syste
 router.post('/warehouses', requireAnyPerm(['system.branches', 'stock.adjust', 'inventory.adjust']), createWarehouse);
 router.put('/warehouses/:id', requireAnyPerm(['system.branches', 'stock.adjust', 'inventory.adjust']), updateWarehouse);
 router.delete('/warehouses/:id', requireAnyPerm(['system.branches', 'stock.adjust', 'inventory.adjust']), deleteWarehouse);
+router.get('/transactions', requireAnyPerm(['stock.view', 'inventory.view']), listInventoryTransactions);
+router.post('/transactions', requireAnyPerm(['stock.adjust', 'inventory.adjust']), createInventoryTransaction);
 
 export default router;

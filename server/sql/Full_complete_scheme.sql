@@ -84,6 +84,14 @@ END IF;
 IF NOT EXISTS (SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace WHERE t.typname='shift_status_enum' AND n.nspname='ims') THEN
 CREATE TYPE ims.shift_status_enum AS ENUM ('open','closed','void');
 END IF;
+
+IF NOT EXISTS (SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace WHERE t.typname='adjustment_type_enum' AND n.nspname='ims') THEN
+CREATE TYPE ims.adjustment_type_enum AS ENUM ('INCREASE', 'DECREASE');
+END IF;
+
+IF NOT EXISTS (SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace WHERE t.typname='adjustment_status_enum' AND n.nspname='ims') THEN
+CREATE TYPE ims.adjustment_status_enum AS ENUM ('POSTED', 'CANCELLED');
+END IF;
 END $$;
 
 -- =========================================================
@@ -306,6 +314,27 @@ created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 CONSTRAINT uq_items_branch_name UNIQUE (branch_id, name),
 CONSTRAINT uq_items_branch_barcode UNIQUE (branch_id, barcode)
 );
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+      FROM information_schema.tables
+     WHERE table_schema = 'ims'
+       AND table_name = 'items'
+  ) THEN
+    ALTER TABLE ims.items
+      ADD COLUMN IF NOT EXISTS stock_alert NUMERIC(14,3) NOT NULL DEFAULT 5;
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint c
+      JOIN pg_class t ON t.oid = c.conrelid
+      JOIN pg_namespace n ON n.oid = t.relnamespace
+      WHERE n.nspname='ims' AND t.relname='items' AND c.conname='chk_items_stock_alert_non_negative'
+    ) THEN
+      ALTER TABLE ims.items
+        ADD CONSTRAINT chk_items_stock_alert_non_negative CHECK (stock_alert >= 0);
+    END IF;
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS ims.item_suppliers (
 branch_id    BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
@@ -391,20 +420,23 @@ PRIMARY KEY (wh_id, item_id)
 );
 
 CREATE TABLE IF NOT EXISTS ims.inventory_transaction (
-    transaction_id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    product_id BIGINT NOT NULL,
-    transaction_type ENUM('IN','OUT','ADJUSTMENT') NOT NULL,
-    quantity DECIMAL(10,2) NOT NULL,
-    unit_cost DECIMAL(12,2) NULL,
-    total_cost DECIMAL(14,2) GENERATED ALWAYS AS (quantity * unit_cost) STORED,
-    reference_no VARCHAR(50) NULL,
-    transaction_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    created_by BIGINT NOT NULL,
-    notes TEXT NULL,
-    status ENUM('POSTED','PENDING','CANCELLED') DEFAULT 'POSTED',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    transaction_id   BIGSERIAL PRIMARY KEY,
+    branch_id        BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    product_id       BIGINT NOT NULL REFERENCES ims.items(item_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    transaction_type VARCHAR(20) NOT NULL CHECK (UPPER(transaction_type) IN ('ADJUSTMENT', 'PAID', 'SALES', 'DAMAGE')),
+    quantity         NUMERIC(14,3) NOT NULL CHECK (quantity > 0),
+    unit_cost        NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (unit_cost >= 0),
+    total_cost       NUMERIC(16,2) GENERATED ALWAYS AS ((quantity * unit_cost)::numeric(16,2)) STORED,
+    reference_no     VARCHAR(50),
+    transaction_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by       BIGINT REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE SET NULL,
+    notes            TEXT,
+    status           VARCHAR(20) NOT NULL DEFAULT 'POSTED' CHECK (UPPER(status) IN ('POSTED', 'PENDING', 'CANCELLED')),
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE INDEX IF NOT EXISTS idx_inventory_transaction_branch ON ims.inventory_transaction(branch_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_transaction_product ON ims.inventory_transaction(product_id);
 
 
 
@@ -441,16 +473,18 @@ status      ims.sale_status_enum NOT NULL DEFAULT 'paid',
 note        TEXT
 );
 CREATE TABLE IF NOT EXISTS ims.stock_adjustment (
-    adjustment_id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    item_id BIGINT NOT NULL,
-    adjustment_type ENUM('INCREASE','DECREASE') NOT NULL,
-    quantity DECIMAL(10,2) NOT NULL,
-    reason VARCHAR(255) NOT NULL,
-    adjustment_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    created_by BIGINT NOT NULL,
-    status ENUM('POSTED','CANCELLED') DEFAULT 'POSTED',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    adjustment_id    BIGSERIAL PRIMARY KEY,
+    branch_id        BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    item_id          BIGINT NOT NULL REFERENCES ims.items(item_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    adjustment_type  ims.adjustment_type_enum NOT NULL,
+    quantity         NUMERIC(14,3) NOT NULL CHECK (quantity > 0),
+    reason           VARCHAR(255) NOT NULL,
+    adjustment_date  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by       BIGINT NOT NULL REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    status           ims.adjustment_status_enum NOT NULL DEFAULT 'POSTED',
+    note             TEXT,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE TABLE IF NOT EXISTS ims.sale_items (
 sale_item_id BIGSERIAL PRIMARY KEY,
@@ -607,7 +641,6 @@ CREATE TABLE IF NOT EXISTS ims.sales_returns (
 sr_id BIGSERIAL PRIMARY KEY,
 branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 sale_id BIGINT REFERENCES ims.sales(sale_id) ON UPDATE CASCADE ON DELETE SET NULL,
-wh_id BIGINT REFERENCES ims.warehouses(wh_id) ON UPDATE CASCADE ON DELETE SET NULL,
 user_id BIGINT NOT NULL REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 customer_id BIGINT REFERENCES ims.customers(customer_id) ON UPDATE CASCADE ON DELETE SET NULL,
 return_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -630,7 +663,6 @@ CREATE TABLE IF NOT EXISTS ims.purchase_returns (
 pr_id       BIGSERIAL PRIMARY KEY,
 branch_id   BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 purchase_id BIGINT REFERENCES ims.purchases(purchase_id) ON UPDATE CASCADE ON DELETE SET NULL,
-wh_id       BIGINT REFERENCES ims.warehouses(wh_id) ON UPDATE CASCADE ON DELETE SET NULL,
 user_id     BIGINT NOT NULL REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 supplier_id BIGINT NOT NULL REFERENCES ims.suppliers(supplier_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 return_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -2947,3 +2979,4 @@ SELECT '2. Get user menu: SELECT ims.fn_get_user_menu(1);' as example;
 SELECT '3. Get user permissions: SELECT * FROM ims.fn_get_user_permissions(1);' as example;
 SELECT '4. Get role permissions: SELECT * FROM ims.sp_role_permissions(''SALES'');' as example;
 SELECT '========================================' as status;
+$patch

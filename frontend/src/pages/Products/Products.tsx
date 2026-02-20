@@ -1,214 +1,151 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useLocation } from 'react-router';
+import { useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
-import {
-  BadgeAlert,
-  BadgePercent,
-  Boxes,
-  Ruler,
-  SlidersHorizontal,
-  Store,
-  Tags,
-} from 'lucide-react';
+import { BadgeAlert, Boxes, Store } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
 import { DataTable } from '../../components/ui/table/DataTable';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { Modal } from '../../components/ui/modal/Modal';
-import { PageHeader, TabActionToolbar } from '../../components/ui/layout';
+import { PageHeader } from '../../components/ui/layout';
 import Badge from '../../components/ui/badge/Badge';
 import { useToast } from '../../components/ui/toast/Toast';
-import {
-  Category,
-  Product,
-  Tax,
-  Unit,
-  productService,
-} from '../../services/product.service';
+import { Product, productService } from '../../services/product.service';
+import { InventoryTransactionRow, inventoryService } from '../../services/inventory.service';
+import { storeService, Store as StoreType } from '../../services/store.service';
 import StoresPage from '../Stock/StoresPage';
-import StockAdjustmentsPage from '../Stock/StockAdjustmentsPage';
 
 type ProductForm = Partial<Product>;
-type CategoryForm = Partial<Category>;
-type UnitForm = Partial<Unit>;
-type TaxForm = Partial<Tax>;
+type TxCategory = 'adjustment' | 'paid' | 'sales' | 'damage';
 
 const defaultProductForm: ProductForm = {
   name: '',
-  sku: '',
-  category_id: null,
-  unit_id: null,
-  tax_id: null,
-  price: 0,
-  cost: 0,
-  stock: 0,
+  barcode: '',
+  stock_alert: 5,
   opening_balance: 0,
-  reorder_level: 0,
-  reorder_qty: 0,
-  status: 'active',
-  is_active: true,
-};
-
-const defaultCategoryForm: CategoryForm = {
-  name: '',
-  description: '',
-  is_active: true,
-};
-
-const defaultUnitForm: UnitForm = {
-  unit_name: '',
-  symbol: '',
-  is_active: true,
-};
-
-const defaultTaxForm: TaxForm = {
-  tax_name: '',
-  rate_percent: 0,
-  is_inclusive: false,
+  quantity: 0,
+  cost_price: 0,
+  sell_price: 0,
   is_active: true,
 };
 
 const fieldCls =
   'mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900';
 
+const txLabel: Record<TxCategory, string> = {
+  adjustment: 'Adjustment',
+  paid: 'Paid',
+  sales: 'Sales',
+  damage: 'Damage',
+};
+
 const Products = () => {
-  const location = useLocation();
   const { showToast } = useToast();
-  const isAdjustmentOnly = location.pathname.endsWith('/adjustment-items');
 
   const [loading, setLoading] = useState(false);
-  const [search, setSearch] = useState('');
-  const [selectedCategoryId, setSelectedCategoryId] = useState<number | ''>('');
-
   const [products, setProducts] = useState<Product[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [units, setUnits] = useState<Unit[]>([]);
-  const [taxes, setTaxes] = useState<Tax[]>([]);
+  const [transactions, setTransactions] = useState<InventoryTransactionRow[]>([]);
+  const [txCategory, setTxCategory] = useState<TxCategory>('adjustment');
+  const [txForm, setTxForm] = useState({
+    storeId: '',
+    itemId: '',
+    quantity: 1,
+    direction: 'IN' as 'IN' | 'OUT',
+  });
 
   const [itemModalOpen, setItemModalOpen] = useState(false);
-  const [categoryModalOpen, setCategoryModalOpen] = useState(false);
-  const [unitModalOpen, setUnitModalOpen] = useState(false);
-  const [taxModalOpen, setTaxModalOpen] = useState(false);
   const [stateModalOpen, setStateModalOpen] = useState(false);
 
   const [itemForm, setItemForm] = useState<ProductForm>(defaultProductForm);
-  const [categoryForm, setCategoryForm] = useState<CategoryForm>(defaultCategoryForm);
-  const [unitForm, setUnitForm] = useState<UnitForm>(defaultUnitForm);
-  const [taxForm, setTaxForm] = useState<TaxForm>(defaultTaxForm);
+  const [selectedStoreId, setSelectedStoreId] = useState<number | ''>('');
+  const [itemStoreId, setItemStoreId] = useState<number | ''>('');
+  const [stores, setStores] = useState<StoreType[]>([]);
   const [stateForm, setStateForm] = useState<{ product_id?: number; status: 'active' | 'inactive' }>({
     product_id: undefined,
     status: 'active',
   });
 
   const [itemToDelete, setItemToDelete] = useState<Product | null>(null);
-  const [categoryToDelete, setCategoryToDelete] = useState<Category | null>(null);
-  const [unitToDelete, setUnitToDelete] = useState<Unit | null>(null);
-  const [taxToDelete, setTaxToDelete] = useState<Tax | null>(null);
 
-  const loadProducts = async (term?: string, categoryId?: number) => {
+  const resolveStores = async () => {
+    if (stores.length) return stores;
+    const storeRes = await storeService.list();
+    if (storeRes.success && storeRes.data?.stores) {
+      const loaded = storeRes.data.stores;
+      setStores(loaded);
+      if (!selectedStoreId && loaded.length) {
+        const firstId = loaded[0].store_id;
+        setSelectedStoreId(firstId);
+        setTxForm((p) => ({ ...p, storeId: String(firstId) }));
+      }
+      return loaded;
+    }
+    return [];
+  };
+
+  const loadProducts = async () => {
     setLoading(true);
-    const res = await productService.list({ search: term, categoryId, limit: 200 });
+    const loadedStores = await resolveStores();
+    const effectiveStoreId = selectedStoreId || loadedStores[0]?.store_id || undefined;
+    const res = await productService.list({ limit: 200, storeId: effectiveStoreId });
     if (res.success && res.data?.products) setProducts(res.data.products);
     else showToast('error', 'Items', res.error || 'Failed to load items');
     setLoading(false);
   };
 
-  const loadCategories = async () => {
-    const res = await productService.listCategories({ limit: 200 });
-    if (res.success && res.data?.categories) setCategories(res.data.categories);
-    else showToast('error', 'Categories', res.error || 'Failed to load categories');
-  };
-
-  const loadUnits = async () => {
-    const res = await productService.listUnits({ limit: 200 });
-    if (res.success && res.data?.units) setUnits(res.data.units);
-    else showToast('error', 'Units', res.error || 'Failed to load units');
-  };
-
-  const loadTaxes = async () => {
-    const res = await productService.listTaxes({ limit: 200 });
-    if (res.success && res.data?.taxes) setTaxes(res.data.taxes);
-    else showToast('error', 'Taxes', res.error || 'Failed to load taxes');
-  };
-
-  const loadMasters = async () => {
-    await Promise.all([loadCategories(), loadUnits(), loadTaxes()]);
-  };
-
-  const showItems = async () => {
-    await loadMasters();
-    await loadProducts(search, selectedCategoryId === '' ? undefined : selectedCategoryId);
-  };
-
-  useEffect(() => {
-    if (!isAdjustmentOnly) {
-      showItems();
+  const loadTransactions = async () => {
+    setLoading(true);
+    await resolveStores();
+    if (!products.length) {
+      const productsRes = await productService.list({ limit: 200, storeId: selectedStoreId || undefined });
+      if (productsRes.success && productsRes.data?.products) setProducts(productsRes.data.products);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAdjustmentOnly]);
+    const res = await inventoryService.listTransactions({
+      limit: 200,
+      page: 1,
+      transactionType: txCategory.toUpperCase(),
+      storeId: txForm.storeId || undefined,
+      itemId: txForm.itemId || undefined,
+    });
+    if (res.success && res.data?.rows) setTransactions(res.data.rows as InventoryTransactionRow[]);
+    else showToast('error', 'Inventory Transaction', res.error || 'Failed to load transactions');
+    setLoading(false);
+  };
+
+  const filteredTransactions = useMemo(() => {
+    return transactions;
+  }, [transactions, txCategory]);
+
+  const createTransaction = async () => {
+    await resolveStores();
+    if (!txForm.storeId || !txForm.itemId || Number(txForm.quantity) <= 0) {
+      showToast('error', 'Inventory Transaction', 'Store, item and quantity are required');
+      return;
+    }
+    setLoading(true);
+    const res = await inventoryService.createTransaction({
+      storeId: Number(txForm.storeId),
+      itemId: Number(txForm.itemId),
+      transactionType: txCategory.toUpperCase() as 'ADJUSTMENT' | 'PAID' | 'SALES' | 'DAMAGE',
+      direction: txCategory === 'adjustment' ? txForm.direction : undefined,
+      quantity: Number(txForm.quantity),
+      status: 'POSTED',
+    });
+    setLoading(false);
+    if (res.success) {
+      showToast('success', 'Inventory Transaction', 'Transaction posted');
+      await loadTransactions();
+    } else {
+      showToast('error', 'Inventory Transaction', res.error || 'Failed to post transaction');
+    }
+  };
 
   const itemColumns: ColumnDef<Product>[] = useMemo(
     () => [
       { accessorKey: 'name', header: 'Item' },
-      { accessorKey: 'sku', header: 'SKU', cell: ({ row }) => row.original.sku || '-' },
-      { accessorKey: 'category_name', header: 'Category', cell: ({ row }) => row.original.category_name || '-' },
-      { accessorKey: 'unit_name', header: 'Unit', cell: ({ row }) => row.original.unit_name || '-' },
-      { accessorKey: 'tax_name', header: 'Tax', cell: ({ row }) => row.original.tax_name || '-' },
-      { accessorKey: 'cost', header: 'Cost', cell: ({ row }) => `$${Number(row.original.cost || 0).toFixed(2)}` },
-      { accessorKey: 'price', header: 'Price', cell: ({ row }) => `$${Number(row.original.price || 0).toFixed(2)}` },
-      { accessorKey: 'stock', header: 'Stock' },
-      { accessorKey: 'reorder_level', header: 'Reorder' },
-      {
-        accessorKey: 'is_active',
-        header: 'Active',
-        cell: ({ row }) => (
-          <Badge color={row.original.is_active ? 'success' : 'warning'} variant="light">
-            {row.original.is_active ? 'Yes' : 'No'}
-          </Badge>
-        ),
-      },
-    ],
-    []
-  );
-
-  const categoryColumns: ColumnDef<Category>[] = useMemo(
-    () => [
-      { accessorKey: 'name', header: 'Category' },
-      { accessorKey: 'description', header: 'Description', cell: ({ row }) => row.original.description || '-' },
-      {
-        accessorKey: 'is_active',
-        header: 'Active',
-        cell: ({ row }) => (
-          <Badge color={row.original.is_active ? 'success' : 'warning'} variant="light">
-            {row.original.is_active ? 'Yes' : 'No'}
-          </Badge>
-        ),
-      },
-    ],
-    []
-  );
-
-  const unitColumns: ColumnDef<Unit>[] = useMemo(
-    () => [
-      { accessorKey: 'unit_name', header: 'Unit Name' },
-      { accessorKey: 'symbol', header: 'Symbol', cell: ({ row }) => row.original.symbol || '-' },
-      {
-        accessorKey: 'is_active',
-        header: 'Active',
-        cell: ({ row }) => (
-          <Badge color={row.original.is_active ? 'success' : 'warning'} variant="light">
-            {row.original.is_active ? 'Yes' : 'No'}
-          </Badge>
-        ),
-      },
-    ],
-    []
-  );
-
-  const taxColumns: ColumnDef<Tax>[] = useMemo(
-    () => [
-      { accessorKey: 'tax_name', header: 'Tax Name' },
-      { accessorKey: 'rate_percent', header: 'Rate %' },
-      { accessorKey: 'is_inclusive', header: 'Inclusive', cell: ({ row }) => (row.original.is_inclusive ? 'Yes' : 'No') },
+      { accessorKey: 'barcode', header: 'Barcode', cell: ({ row }) => row.original.barcode || '-' },
+      { accessorKey: 'stock_alert', header: 'Stock Alert', cell: ({ row }) => Number(row.original.stock_alert || 0).toFixed(3) },
+      { accessorKey: 'cost_price', header: 'Cost Price', cell: ({ row }) => `$${Number(row.original.cost_price || 0).toFixed(2)}` },
+      { accessorKey: 'sell_price', header: 'Sell Price', cell: ({ row }) => `$${Number(row.original.sell_price || 0).toFixed(2)}` },
+      { accessorKey: 'quantity', header: 'Quantity', cell: ({ row }) => Number(row.original.quantity ?? row.original.stock ?? 0).toFixed(3) },
       {
         accessorKey: 'is_active',
         header: 'Active',
@@ -231,67 +168,44 @@ const Products = () => {
     []
   );
 
+  const txColumns: ColumnDef<InventoryTransactionRow>[] = useMemo(
+    () => [
+      { accessorKey: 'transaction_date', header: 'Date', cell: ({ row }) => new Date(row.original.transaction_date).toLocaleString() },
+      { accessorKey: 'transaction_type', header: 'Type' },
+      { accessorKey: 'item_name', header: 'Item' },
+      { accessorKey: 'direction', header: 'Dir' },
+      { accessorKey: 'quantity', header: 'Qty', cell: ({ row }) => Number(row.original.quantity || 0).toFixed(3) },
+      { accessorKey: 'store_name', header: 'Store', cell: ({ row }) => row.original.store_name || '-' },
+      { accessorKey: 'notes', header: 'Note', cell: ({ row }) => row.original.notes || '-' },
+    ],
+    []
+  );
+
   const saveItem = async () => {
-    if (!itemForm.name?.trim() || !itemForm.category_id) {
-      showToast('error', 'Items', 'Name and category are required');
+    if (!itemForm.name?.trim()) {
+      showToast('error', 'Items', 'Name is required');
       return;
     }
     setLoading(true);
+    const payload = {
+      ...itemForm,
+      is_active: true,
+      storeId: itemStoreId || undefined,
+      quantity: Number(itemForm.quantity ?? 0),
+    };
     const res = itemForm.product_id
-      ? await productService.update(itemForm.product_id, itemForm)
-      : await productService.create(itemForm);
+      ? await productService.update(itemForm.product_id, payload)
+      : await productService.create(payload);
     setLoading(false);
     if (res.success) {
       showToast('success', 'Items', itemForm.product_id ? 'Item updated' : 'Item created');
       setItemModalOpen(false);
       setItemForm(defaultProductForm);
-      await loadProducts(search, selectedCategoryId === '' ? undefined : selectedCategoryId);
-    } else showToast('error', 'Items', res.error || 'Failed to save item');
-  };
-
-  const saveCategory = async () => {
-    if (!categoryForm.name?.trim()) return showToast('error', 'Categories', 'Category name is required');
-    setLoading(true);
-    const res = categoryForm.category_id
-      ? await productService.updateCategory(categoryForm.category_id, categoryForm)
-      : await productService.createCategory(categoryForm);
-    setLoading(false);
-    if (res.success) {
-      showToast('success', 'Categories', categoryForm.category_id ? 'Category updated' : 'Category created');
-      setCategoryModalOpen(false);
-      setCategoryForm(defaultCategoryForm);
-      await loadCategories();
-    } else showToast('error', 'Categories', res.error || 'Failed to save category');
-  };
-
-  const saveUnit = async () => {
-    if (!unitForm.unit_name?.trim()) return showToast('error', 'Units', 'Unit name is required');
-    setLoading(true);
-    const res = unitForm.unit_id
-      ? await productService.updateUnit(unitForm.unit_id, unitForm)
-      : await productService.createUnit(unitForm);
-    setLoading(false);
-    if (res.success) {
-      showToast('success', 'Units', unitForm.unit_id ? 'Unit updated' : 'Unit created');
-      setUnitModalOpen(false);
-      setUnitForm(defaultUnitForm);
-      await loadUnits();
-    } else showToast('error', 'Units', res.error || 'Failed to save unit');
-  };
-
-  const saveTax = async () => {
-    if (!taxForm.tax_name?.trim()) return showToast('error', 'Taxes', 'Tax name is required');
-    setLoading(true);
-    const res = taxForm.tax_id
-      ? await productService.updateTax(taxForm.tax_id, taxForm)
-      : await productService.createTax(taxForm);
-    setLoading(false);
-    if (res.success) {
-      showToast('success', 'Taxes', taxForm.tax_id ? 'Tax updated' : 'Tax created');
-      setTaxModalOpen(false);
-      setTaxForm(defaultTaxForm);
-      await loadTaxes();
-    } else showToast('error', 'Taxes', res.error || 'Failed to save tax');
+      setItemStoreId('');
+      await loadProducts();
+    } else {
+      showToast('error', 'Items', res.error || 'Failed to save item');
+    }
   };
 
   const saveState = async () => {
@@ -305,8 +219,10 @@ const Products = () => {
     if (res.success) {
       showToast('success', 'Item State', 'Item state updated');
       setStateModalOpen(false);
-      await loadProducts(search, selectedCategoryId === '' ? undefined : selectedCategoryId);
-    } else showToast('error', 'Item State', res.error || 'Failed to update item state');
+      await loadProducts();
+    } else {
+      showToast('error', 'Item State', res.error || 'Failed to update item state');
+    }
   };
 
   const removeItem = async () => {
@@ -315,167 +231,184 @@ const Products = () => {
     if (res.success) {
       showToast('success', 'Items', 'Item deleted');
       setItemToDelete(null);
-      await loadProducts(search, selectedCategoryId === '' ? undefined : selectedCategoryId);
-    } else showToast('error', 'Items', res.error || 'Failed to delete item');
-  };
-
-  const removeCategory = async () => {
-    if (!categoryToDelete) return;
-    const res = await productService.removeCategory(categoryToDelete.category_id);
-    if (res.success) {
-      showToast('success', 'Categories', 'Category deleted');
-      setCategoryToDelete(null);
-      await loadCategories();
-    } else showToast('error', 'Categories', res.error || 'Failed to delete category');
-  };
-
-  const removeUnit = async () => {
-    if (!unitToDelete) return;
-    const res = await productService.removeUnit(unitToDelete.unit_id);
-    if (res.success) {
-      showToast('success', 'Units', 'Unit deleted');
-      setUnitToDelete(null);
-      await loadUnits();
-    } else showToast('error', 'Units', res.error || 'Failed to delete unit');
-  };
-
-  const removeTax = async () => {
-    if (!taxToDelete) return;
-    const res = await productService.removeTax(taxToDelete.tax_id);
-    if (res.success) {
-      showToast('success', 'Taxes', 'Tax deleted');
-      setTaxToDelete(null);
-      await loadTaxes();
-    } else showToast('error', 'Taxes', res.error || 'Failed to delete tax');
+      await loadProducts();
+    } else {
+      showToast('error', 'Items', res.error || 'Failed to delete item');
+    }
   };
 
   const storeTabs = [
     {
       id: 'items',
-      label: 'Store Items',
+      label: 'Items',
       icon: Boxes,
       content: (
         <div className="space-y-2">
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex items-center gap-2">
-              <label className="text-sm font-medium">Category</label>
-              <select className="rounded-lg border px-3 py-2 text-sm" value={selectedCategoryId} onChange={(e) => setSelectedCategoryId(e.target.value ? Number(e.target.value) : '')}>
-                <option value="">All Categories</option>
-                {categories.map((c) => <option key={c.category_id} value={c.category_id}>{c.name}</option>)}
+          <div className="flex flex-wrap items-center justify-end gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+            <label className="text-sm font-medium">Store
+              <select
+                className={`${fieldCls} min-w-[180px]`}
+                value={selectedStoreId}
+                onChange={(e) => {
+                  const next = e.target.value ? Number(e.target.value) : '';
+                  setSelectedStoreId(next);
+                  setTxForm((p) => ({ ...p, storeId: next ? String(next) : '' }));
+                }}
+              >
+                <option value="">Select store</option>
+                {stores.map((s) => <option key={s.store_id} value={s.store_id}>{s.store_name}</option>)}
               </select>
-            </div>
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={showItems} className="rounded-lg border px-3 py-2 text-sm">Show Items</button>
-              <button type="button" onClick={async () => { await loadMasters(); setItemForm(defaultProductForm); setItemModalOpen(true); }} className="rounded-lg bg-primary-600 px-3 py-2 text-sm text-white">New Item</button>
-            </div>
+            </label>
+            <button type="button" onClick={loadProducts} className="rounded-lg border px-3 py-2 text-sm">Display</button>
+            <button
+              type="button"
+              onClick={async () => {
+                setItemForm(defaultProductForm);
+                const storeRes = await storeService.list();
+                if (storeRes.success && storeRes.data?.stores) {
+                  setStores(storeRes.data.stores);
+                  setItemStoreId(selectedStoreId || '');
+                } else {
+                  setItemStoreId('');
+                }
+                setItemModalOpen(true);
+              }}
+              className="rounded-lg bg-primary-600 px-3 py-2 text-sm text-white"
+            >
+              New Item
+            </button>
           </div>
-          <DataTable data={products} columns={itemColumns} isLoading={loading} onEdit={(row) => { setItemForm(row); setItemModalOpen(true); }} onDelete={(row) => setItemToDelete(row)} searchPlaceholder="Search items..." />
+          <DataTable
+            data={products}
+            columns={itemColumns}
+            isLoading={loading}
+            onEdit={async (row) => {
+              setItemForm(row);
+              setItemForm((prev) => ({ ...prev, quantity: Number(row.quantity ?? row.stock ?? 0) }));
+              const storeRes = await storeService.list();
+              if (storeRes.success && storeRes.data?.stores) setStores(storeRes.data.stores);
+              setItemStoreId(selectedStoreId || row.store_id || '');
+              setItemModalOpen(true);
+            }}
+            onDelete={(row) => setItemToDelete(row)}
+            searchPlaceholder="Search items..."
+          />
         </div>
       ),
     },
     { id: 'store', label: 'Store', icon: Store, content: <StoresPage embedded /> },
     {
-      id: 'categories',
-      label: 'Categories',
-      icon: Tags,
-      content: <div className="space-y-2"><TabActionToolbar title="Categories" primaryAction={{ label: 'New Category', onClick: () => { setCategoryForm(defaultCategoryForm); setCategoryModalOpen(true); } }} onDisplay={() => loadCategories()} /><DataTable data={categories} columns={categoryColumns} isLoading={loading} onEdit={(row) => { setCategoryForm(row); setCategoryModalOpen(true); }} onDelete={(row) => setCategoryToDelete(row)} searchPlaceholder="Search categories..." /></div>,
-    },
-    {
-      id: 'units',
-      label: 'Units',
-      icon: Ruler,
-      content: <div className="space-y-2"><TabActionToolbar title="Units" primaryAction={{ label: 'New Unit', onClick: () => { setUnitForm(defaultUnitForm); setUnitModalOpen(true); } }} onDisplay={() => loadUnits()} /><DataTable data={units} columns={unitColumns} isLoading={loading} onEdit={(row) => { setUnitForm(row); setUnitModalOpen(true); }} onDelete={(row) => setUnitToDelete(row)} searchPlaceholder="Search units..." /></div>,
-    },
-    {
-      id: 'taxes',
-      label: 'Taxes',
-      icon: BadgePercent,
-      content: <div className="space-y-2"><TabActionToolbar title="Taxes" primaryAction={{ label: 'New Tax', onClick: () => { setTaxForm(defaultTaxForm); setTaxModalOpen(true); } }} onDisplay={() => loadTaxes()} /><DataTable data={taxes} columns={taxColumns} isLoading={loading} onEdit={(row) => { setTaxForm(row); setTaxModalOpen(true); }} onDelete={(row) => setTaxToDelete(row)} searchPlaceholder="Search taxes..." /></div>,
+      id: 'inventory-transaction',
+      label: 'Inventory Transaction',
+      content: (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 rounded-xl border border-slate-200 bg-white p-3 md:grid-cols-3 dark:border-slate-800 dark:bg-slate-900">
+            <label className="text-sm font-medium">Store
+              <select className={fieldCls} value={txForm.storeId} onChange={(e) => setTxForm((p) => ({ ...p, storeId: e.target.value }))}>
+                <option value="">Select store</option>
+                {stores.map((s) => <option key={s.store_id} value={s.store_id}>{s.store_name}</option>)}
+              </select>
+            </label>
+            <label className="text-sm font-medium">Item
+              <select className={fieldCls} value={txForm.itemId} onChange={(e) => setTxForm((p) => ({ ...p, itemId: e.target.value }))}>
+                <option value="">Select item</option>
+                {products.map((p) => <option key={p.product_id} value={p.product_id}>{p.name}</option>)}
+              </select>
+            </label>
+            <label className="text-sm font-medium">Quantity
+              <input type="number" min={0.001} step="0.001" className={fieldCls} value={txForm.quantity} onChange={(e) => setTxForm((p) => ({ ...p, quantity: Number(e.target.value || 0) }))} />
+            </label>
+            {txCategory === 'adjustment' && (
+              <label className="text-sm font-medium">Direction
+                <select className={fieldCls} value={txForm.direction} onChange={(e) => setTxForm((p) => ({ ...p, direction: e.target.value as 'IN' | 'OUT' }))}>
+                  <option value="IN">IN</option>
+                  <option value="OUT">OUT</option>
+                </select>
+              </label>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-center gap-2">
+              {(['adjustment', 'paid', 'sales', 'damage'] as TxCategory[]).map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setTxCategory(key)}
+                  className={`rounded-lg px-3 py-2 text-sm ${txCategory === key ? 'bg-primary-600 text-white' : 'border border-slate-300'}`}
+                >
+                  {txLabel[key]}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => void createTransaction()} className="rounded-lg bg-primary-600 px-3 py-2 text-sm text-white">Post</button>
+              <button type="button" onClick={loadTransactions} className="rounded-lg border px-3 py-2 text-sm">Display</button>
+            </div>
+          </div>
+          <DataTable data={filteredTransactions} columns={txColumns} isLoading={loading} searchPlaceholder="Search transactions..." />
+        </div>
+      ),
     },
     {
       id: 'state',
-      label: 'Item State',
+      label: 'Items State',
       icon: BadgeAlert,
-      content: <div className="space-y-2"><TabActionToolbar title="Item State" primaryAction={{ label: 'Set State', onClick: () => { setStateForm({ product_id: undefined, status: 'active' }); setStateModalOpen(true); } }} onDisplay={() => loadProducts(search, selectedCategoryId === '' ? undefined : selectedCategoryId)} onSearch={(value: string) => setSearch(value)} /><DataTable data={products} columns={stateColumns} isLoading={loading} onEdit={(row) => { setStateForm({ product_id: row.product_id, status: row.status === 'inactive' ? 'inactive' : 'active' }); setStateModalOpen(true); }} searchPlaceholder="Search item state..." /></div>,
+      content: (
+        <div className="space-y-2">
+          <div className="flex items-center justify-end gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+            <button type="button" onClick={loadProducts} className="rounded-lg border px-3 py-2 text-sm">Display</button>
+            <button
+              type="button"
+              onClick={() => {
+                setStateForm({ product_id: undefined, status: 'active' });
+                setStateModalOpen(true);
+              }}
+              className="rounded-lg bg-primary-600 px-3 py-2 text-sm text-white"
+            >
+              + Set State
+            </button>
+          </div>
+          <DataTable data={products} columns={stateColumns} isLoading={loading} searchPlaceholder="Search item state..." />
+        </div>
+      ),
     },
   ];
 
-  const adjustmentTabs = [{ id: 'adjustment-items', label: 'Adjustment Items', icon: SlidersHorizontal, content: <StockAdjustmentsPage embedded /> }];
-
-  const defaultTab = location.pathname.endsWith('/store') || location.pathname.endsWith('/stores')
-    ? 'store'
-    : location.pathname.endsWith('/categories')
-    ? 'categories'
-    : location.pathname.endsWith('/units')
-    ? 'units'
-    : location.pathname.endsWith('/taxes')
-    ? 'taxes'
-    : location.pathname.endsWith('/item-state')
-    ? 'state'
-    : 'items';
-
   return (
     <div>
-      <PageHeader title="Store Management" description="Manage items, stores, categories, units, taxes, item state, and adjustments." />
-      {!isAdjustmentOnly ? <Tabs tabs={storeTabs} defaultTab={defaultTab} /> : <Tabs tabs={adjustmentTabs} defaultTab="adjustment-items" />}
+      <PageHeader title="Stock Management" description="Manage items, stores, inventory transactions, and item states." />
+      <Tabs tabs={storeTabs} defaultTab="items" />
 
       <Modal isOpen={itemModalOpen} onClose={() => setItemModalOpen(false)} title={itemForm.product_id ? 'Edit Item' : 'New Item'} size="lg">
-        <form onSubmit={(e) => { e.preventDefault(); saveItem(); }} className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <form onSubmit={(e) => { e.preventDefault(); void saveItem(); }} className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <label className="text-sm font-medium">Name<input className={fieldCls} value={itemForm.name || ''} onChange={(e) => setItemForm({ ...itemForm, name: e.target.value })} required /></label>
-          <label className="text-sm font-medium">SKU<input className={fieldCls} value={itemForm.sku || ''} onChange={(e) => setItemForm({ ...itemForm, sku: e.target.value })} /></label>
-          <label className="text-sm font-medium">Category<select className={fieldCls} value={itemForm.category_id ?? ''} onChange={(e) => setItemForm({ ...itemForm, category_id: e.target.value ? Number(e.target.value) : null })}><option value="">Select category</option>{categories.map((c) => <option key={c.category_id} value={c.category_id}>{c.name}</option>)}</select></label>
-          <label className="text-sm font-medium">Unit<select className={fieldCls} value={itemForm.unit_id ?? ''} onChange={(e) => setItemForm({ ...itemForm, unit_id: e.target.value ? Number(e.target.value) : null })}><option value="">Select unit</option>{units.map((u) => <option key={u.unit_id} value={u.unit_id}>{u.unit_name}</option>)}</select></label>
-          <label className="text-sm font-medium">Tax<select className={fieldCls} value={itemForm.tax_id ?? ''} onChange={(e) => setItemForm({ ...itemForm, tax_id: e.target.value ? Number(e.target.value) : null })}><option value="">Select tax</option>{taxes.map((t) => <option key={t.tax_id} value={t.tax_id}>{`${t.tax_name} (${t.rate_percent}%)`}</option>)}</select></label>
-          <label className="text-sm font-medium">Cost<input type="number" step="0.01" className={fieldCls} value={itemForm.cost ?? 0} onChange={(e) => setItemForm({ ...itemForm, cost: Number(e.target.value || 0) })} /></label>
-          <label className="text-sm font-medium">Price<input type="number" step="0.01" className={fieldCls} value={itemForm.price ?? 0} onChange={(e) => setItemForm({ ...itemForm, price: Number(e.target.value || 0) })} /></label>
+          <label className="text-sm font-medium">Barcode<input className={fieldCls} value={itemForm.barcode || ''} onChange={(e) => setItemForm({ ...itemForm, barcode: e.target.value })} /></label>
+          <label className="text-sm font-medium">Stock Alert<input type="number" step="0.001" className={fieldCls} value={itemForm.stock_alert ?? 5} onChange={(e) => setItemForm({ ...itemForm, stock_alert: Number(e.target.value || 0) })} /></label>
+          <label className="text-sm font-medium">Cost Price<input type="number" step="0.01" className={fieldCls} value={itemForm.cost_price ?? 0} onChange={(e) => setItemForm({ ...itemForm, cost_price: Number(e.target.value || 0) })} /></label>
+          <label className="text-sm font-medium">Sell Price<input type="number" step="0.01" className={fieldCls} value={itemForm.sell_price ?? 0} onChange={(e) => setItemForm({ ...itemForm, sell_price: Number(e.target.value || 0) })} /></label>
           <label className="text-sm font-medium">Opening Balance<input type="number" step="0.001" className={fieldCls} value={itemForm.opening_balance ?? 0} onChange={(e) => setItemForm({ ...itemForm, opening_balance: Number(e.target.value || 0) })} /></label>
-          <label className="text-sm font-medium">Reorder Level<input type="number" step="0.001" className={fieldCls} value={itemForm.reorder_level ?? 0} onChange={(e) => setItemForm({ ...itemForm, reorder_level: Number(e.target.value || 0) })} /></label>
-          <label className="text-sm font-medium">Reorder Qty<input type="number" step="0.001" className={fieldCls} value={itemForm.reorder_qty ?? 0} onChange={(e) => setItemForm({ ...itemForm, reorder_qty: Number(e.target.value || 0) })} /></label>
-          <label className="text-sm font-medium">State<select className={fieldCls} value={itemForm.status || 'active'} onChange={(e) => setItemForm({ ...itemForm, status: e.target.value })}><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
-          <div className="md:col-span-2 flex justify-end gap-2 pt-2"><button type="button" onClick={() => setItemModalOpen(false)} className="rounded-lg border px-4 py-2">Cancel</button><button type="submit" className="rounded-lg bg-primary-600 px-4 py-2 text-white">Save</button></div>
+          <label className="text-sm font-medium">Store (optional)
+            <select className={fieldCls} value={itemStoreId} onChange={(e) => setItemStoreId(e.target.value ? Number(e.target.value) : '')}>
+              <option value="">None</option>
+              {stores.map((s) => <option key={s.store_id} value={s.store_id}>{s.store_name}</option>)}
+            </select>
+          </label>
+          <label className="text-sm font-medium">Quantity
+            <input type="number" step="0.001" min={0} className={fieldCls} value={itemForm.quantity ?? 0} onChange={(e) => setItemForm({ ...itemForm, quantity: Number(e.target.value || 0) })} />
+          </label>
+          <div className="md:col-span-2 flex justify-end gap-2 pt-2"><button type="button" onClick={() => setItemModalOpen(false)} className="rounded-lg border px-4 py-2">Cancel</button><button type="submit" className="rounded-lg bg-primary-600 px-4 py-2 text-white">{itemForm.product_id ? 'Update' : 'Save'}</button></div>
         </form>
       </Modal>
 
-      <Modal isOpen={categoryModalOpen} onClose={() => setCategoryModalOpen(false)} title={categoryForm.category_id ? 'Edit Category' : 'New Category'} size="md">
-        <form onSubmit={(e) => { e.preventDefault(); saveCategory(); }} className="space-y-3">
-          <label className="text-sm font-medium">Name<input className={fieldCls} value={categoryForm.name || ''} onChange={(e) => setCategoryForm({ ...categoryForm, name: e.target.value })} required /></label>
-          <label className="text-sm font-medium">Description<textarea className={fieldCls} value={categoryForm.description || ''} onChange={(e) => setCategoryForm({ ...categoryForm, description: e.target.value })} /></label>
-          <label className="inline-flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={categoryForm.is_active ?? true} onChange={(e) => setCategoryForm({ ...categoryForm, is_active: e.target.checked })} />Active</label>
-          <div className="flex justify-end gap-2"><button type="button" onClick={() => setCategoryModalOpen(false)} className="rounded-lg border px-4 py-2">Cancel</button><button type="submit" className="rounded-lg bg-primary-600 px-4 py-2 text-white">Save</button></div>
-        </form>
-      </Modal>
-
-      <Modal isOpen={unitModalOpen} onClose={() => setUnitModalOpen(false)} title={unitForm.unit_id ? 'Edit Unit' : 'New Unit'} size="sm">
-        <form onSubmit={(e) => { e.preventDefault(); saveUnit(); }} className="space-y-3">
-          <label className="text-sm font-medium">Unit Name<input className={fieldCls} value={unitForm.unit_name || ''} onChange={(e) => setUnitForm({ ...unitForm, unit_name: e.target.value })} required /></label>
-          <label className="text-sm font-medium">Symbol<input className={fieldCls} value={unitForm.symbol || ''} onChange={(e) => setUnitForm({ ...unitForm, symbol: e.target.value })} /></label>
-          <label className="inline-flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={unitForm.is_active ?? true} onChange={(e) => setUnitForm({ ...unitForm, is_active: e.target.checked })} />Active</label>
-          <div className="flex justify-end gap-2"><button type="button" onClick={() => setUnitModalOpen(false)} className="rounded-lg border px-4 py-2">Cancel</button><button type="submit" className="rounded-lg bg-primary-600 px-4 py-2 text-white">Save</button></div>
-        </form>
-      </Modal>
-
-      <Modal isOpen={taxModalOpen} onClose={() => setTaxModalOpen(false)} title={taxForm.tax_id ? 'Edit Tax' : 'New Tax'} size="sm">
-        <form onSubmit={(e) => { e.preventDefault(); saveTax(); }} className="space-y-3">
-          <label className="text-sm font-medium">Tax Name<input className={fieldCls} value={taxForm.tax_name || ''} onChange={(e) => setTaxForm({ ...taxForm, tax_name: e.target.value })} required /></label>
-          <label className="text-sm font-medium">Rate %<input type="number" min={0} step="0.001" className={fieldCls} value={taxForm.rate_percent ?? 0} onChange={(e) => setTaxForm({ ...taxForm, rate_percent: Number(e.target.value || 0) })} /></label>
-          <label className="inline-flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={taxForm.is_inclusive ?? false} onChange={(e) => setTaxForm({ ...taxForm, is_inclusive: e.target.checked })} />Inclusive</label>
-          <label className="inline-flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={taxForm.is_active ?? true} onChange={(e) => setTaxForm({ ...taxForm, is_active: e.target.checked })} />Active</label>
-          <div className="flex justify-end gap-2"><button type="button" onClick={() => setTaxModalOpen(false)} className="rounded-lg border px-4 py-2">Cancel</button><button type="submit" className="rounded-lg bg-primary-600 px-4 py-2 text-white">Save</button></div>
-        </form>
-      </Modal>
-
-      <Modal isOpen={stateModalOpen} onClose={() => setStateModalOpen(false)} title="Update Item State" size="sm">
+      <Modal isOpen={stateModalOpen} onClose={() => setStateModalOpen(false)} title="Set Item State" size="sm">
         <div className="space-y-3">
-          <label className="text-sm font-medium">Item<select className={fieldCls} value={stateForm.product_id ?? ''} onChange={(e) => setStateForm({ ...stateForm, product_id: e.target.value ? Number(e.target.value) : undefined })}><option value="">Select item</option>{products.map((item) => <option key={item.product_id} value={item.product_id}>{item.name}</option>)}</select></label>
-          <label className="text-sm font-medium">Status<select className={fieldCls} value={stateForm.status} onChange={(e) => setStateForm({ ...stateForm, status: e.target.value as 'active' | 'inactive' })}><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
-          <div className="flex justify-end gap-2"><button type="button" onClick={() => setStateModalOpen(false)} className="rounded-lg border px-4 py-2">Cancel</button><button type="button" onClick={saveState} className="rounded-lg bg-primary-600 px-4 py-2 text-white">Save</button></div>
+          <label className="text-sm font-medium">Select Item<select className={fieldCls} value={stateForm.product_id ?? ''} onChange={(e) => setStateForm({ ...stateForm, product_id: e.target.value ? Number(e.target.value) : undefined })}><option value="">Select item</option>{products.map((item) => <option key={item.product_id} value={item.product_id}>{item.name}</option>)}</select></label>
+          <label className="text-sm font-medium">Select State<select className={fieldCls} value={stateForm.status} onChange={(e) => setStateForm({ ...stateForm, status: e.target.value as 'active' | 'inactive' })}><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
+          <div className="flex justify-end gap-2"><button type="button" onClick={() => setStateModalOpen(false)} className="rounded-lg border px-4 py-2">Cancel</button><button type="button" onClick={() => void saveState()} className="rounded-lg bg-primary-600 px-4 py-2 text-white">Save</button></div>
         </div>
       </Modal>
 
       <ConfirmDialog isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={removeItem} title="Delete Item" message={`Delete "${itemToDelete?.name || ''}"?`} confirmText="Delete" variant="danger" isLoading={loading} />
-      <ConfirmDialog isOpen={!!categoryToDelete} onClose={() => setCategoryToDelete(null)} onConfirm={removeCategory} title="Delete Category" message={`Delete "${categoryToDelete?.name || ''}"?`} confirmText="Delete" variant="danger" isLoading={loading} />
-      <ConfirmDialog isOpen={!!unitToDelete} onClose={() => setUnitToDelete(null)} onConfirm={removeUnit} title="Delete Unit" message={`Delete "${unitToDelete?.unit_name || ''}"?`} confirmText="Delete" variant="danger" isLoading={loading} />
-      <ConfirmDialog isOpen={!!taxToDelete} onClose={() => setTaxToDelete(null)} onConfirm={removeTax} title="Delete Tax" message={`Delete "${taxToDelete?.tax_name || ''}"?`} confirmText="Delete" variant="danger" isLoading={loading} />
     </div>
   );
 };

@@ -9,7 +9,6 @@ import { useInactivityLogout } from "./hooks/useInactivityLogout";
 import Home from "./pages/Home/Home";
 import Products from "./pages/Products/Products";
 import StockAdjustmentsPage from "./pages/Stock/StockAdjustmentsPage";
-import StoresPage from "./pages/Stock/StoresPage";
 import Sales from "./pages/Sales/Sales";
 import SaleCreate from "./pages/Sales/SaleCreate";
 import Purchases from "./pages/Purchases/Purchases";
@@ -52,21 +51,12 @@ function AppRoutes() {
           }
         >
           <Route index path="/" element={<ProtectedRoute permission="dashboard.view"><Home /></ProtectedRoute>} />
-          <Route path="/store-management" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
-          <Route path="/store-management/store" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
-          <Route path="/store-management/items" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
-          <Route path="/store-management/stock-adjustments" element={<ProtectedRoute><StockAdjustmentsPage /></ProtectedRoute>} />
-          <Route path="/store-management/transfer-items" element={<ProtectedRoute><Transfers /></ProtectedRoute>} />
-          <Route path="/store-management/returns" element={<ProtectedRoute><Returns /></ProtectedRoute>} />
-          <Route path="/store-management/categories" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
-          <Route path="/store-management/units" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
-          <Route path="/store-management/taxes" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
-          <Route path="/store-management/item-state" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
-          <Route path="/store-management/stores" element={<ProtectedRoute><Products /></ProtectedRoute>} />
-          <Route path="/store-management/adjustment-items" element={<ProtectedRoute><Products /></ProtectedRoute>} />
+          <Route path="/stock-management" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
+          <Route path="/stock-management/items" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
+          <Route path="/stock-management/adjust-items" element={<ProtectedRoute><StockAdjustmentsPage /></ProtectedRoute>} />
+          <Route path="/return" element={<ProtectedRoute><Returns /></ProtectedRoute>} />
           <Route path="/items" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
           <Route path="/stock/adjustments" element={<ProtectedRoute><StockAdjustmentsPage /></ProtectedRoute>} />
-          <Route path="/stock/stores" element={<ProtectedRoute><StoresPage /></ProtectedRoute>} />
           <Route path="/sales" element={<ProtectedRoute permission="sales.view"><Sales /></ProtectedRoute>} />
           <Route path="/sales/transactions" element={<ProtectedRoute permission="sales.view"><Sales /></ProtectedRoute>} />
           <Route path="/sales/pos" element={<ProtectedRoute permission="sales.view"><ComingSoonPage title="POS" /></ProtectedRoute>} />
