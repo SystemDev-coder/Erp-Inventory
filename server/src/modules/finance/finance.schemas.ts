@@ -39,24 +39,35 @@ export const supplierReceiptSchema = z.object({
   note: z.string().optional().or(z.literal('')),
 });
 
-export const expenseChargeSchema = z.object({
+export const expenseSchema = z.object({
   branchId: z.coerce.number().int().positive().optional(),
-  expId: z.coerce.number().int().positive().optional(),
-  expTypeId: z.coerce.number().int().positive().optional(),
-  accId: z.coerce.number().int().positive(),
-  amount: z.coerce.number().positive(),
-  chargeDate: z.string().optional(),
-  refTable: z.string().optional(),
-  refId: z.coerce.number().int().positive().optional(),
-  note: z.string().optional().or(z.literal('')),
+  name: z.string().trim().min(1).max(120),
 });
 
 export const expenseBudgetSchema = z.object({
   branchId: z.coerce.number().int().positive().optional(),
-  expTypeId: z.coerce.number().int().positive(),
-  periodYear: z.coerce.number().int().min(2000).max(2100),
-  periodMonth: z.coerce.number().int().min(1).max(12),
-  amountLimit: z.coerce.number().nonnegative(),
+  expId: z.coerce.number().int().positive(),
+  periodYear: z.coerce.number().int().min(2000).max(2100).optional(),
+  periodMonth: z.coerce.number().int().min(1).max(12).optional(),
+  fixedAmount: z.coerce.number().positive(),
+  note: z.string().optional().or(z.literal('')),
+});
+
+export const expenseChargeSchema = z.object({
+  branchId: z.coerce.number().int().positive().optional(),
+  expId: z.coerce.number().int().positive(),
+  accId: z.coerce.number().int().positive(),
+  amount: z.coerce.number().positive(),
+  expDate: z.string().optional(),
+  note: z.string().optional().or(z.literal('')),
+  expBudgetId: z.coerce.number().int().positive().optional(),
+});
+
+export const expenseBudgetChargeSchema = z.object({
+  budgetId: z.coerce.number().int().positive(),
+  accId: z.coerce.number().int().positive(),
+  amount: z.coerce.number().positive().optional(),
+  payDate: z.string().optional(),
   note: z.string().optional().or(z.literal('')),
 });
 
@@ -66,3 +77,5 @@ export type CustomerReceiptInput = z.infer<typeof customerReceiptSchema>;
 export type SupplierReceiptInput = z.infer<typeof supplierReceiptSchema>;
 export type ExpenseChargeInput = z.infer<typeof expenseChargeSchema>;
 export type ExpenseBudgetInput = z.infer<typeof expenseBudgetSchema>;
+export type ExpenseInput = z.infer<typeof expenseSchema>;
+export type ExpenseBudgetChargeInput = z.infer<typeof expenseBudgetChargeSchema>;

@@ -812,63 +812,93 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_receipt_ref ON ims.supplier_receip
   WHERE reference_no IS NOT NULL;
 
 -- Expenses
-CREATE TABLE IF NOT EXISTS ims.expense_types (
-exp_type_id BIGSERIAL PRIMARY KEY,
-branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-name VARCHAR(120) NOT NULL,
-created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-CONSTRAINT uq_exp_type_branch_name UNIQUE (branch_id, name)
+CREATE TABLE IF NOT EXISTS ims.expense (
+    exp_id      BIGSERIAL PRIMARY KEY,
+    branch_id   BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    name        VARCHAR(120) NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    user_id     BIGINT NOT NULL REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE RESTRICT
 );
 
-CREATE TABLE IF NOT EXISTS ims.expenses (
-exp_id      BIGSERIAL PRIMARY KEY,
-branch_id   BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-user_id     BIGINT NOT NULL REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-exp_type_id BIGINT REFERENCES ims.expense_types(exp_type_id) ON UPDATE CASCADE ON DELETE SET NULL,
-exp_date    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-amount      NUMERIC(14,2) NOT NULL CHECK (amount > 0),
-note        TEXT
-);
-
-CREATE TABLE IF NOT EXISTS ims.expense_payments (
-exp_payment_id BIGSERIAL PRIMARY KEY,
-branch_id      BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-exp_id         BIGINT NOT NULL REFERENCES ims.expenses(exp_id) ON UPDATE CASCADE ON DELETE CASCADE,
-user_id        BIGINT NOT NULL REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-acc_id         BIGINT NOT NULL REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-pay_date       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-amount_paid    NUMERIC(14,2) NOT NULL CHECK (amount_paid > 0),
-reference_no   VARCHAR(80),
-note           TEXT
-);
-
--- Expense charges (allocations)
-CREATE TABLE IF NOT EXISTS ims.expense_charges (
-    charge_id    BIGSERIAL PRIMARY KEY,
-    branch_id    BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-    exp_id       BIGINT REFERENCES ims.expenses(exp_id) ON UPDATE CASCADE ON DELETE CASCADE,
-    exp_type_id  BIGINT REFERENCES ims.expense_types(exp_type_id) ON UPDATE CASCADE ON DELETE SET NULL,
-    acc_id       BIGINT NOT NULL REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-    charge_date  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    amount       NUMERIC(14,2) NOT NULL CHECK (amount > 0),
-    ref_table    VARCHAR(40),
-    ref_id       BIGINT,
-    note         TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_expense_charges_branch_date ON ims.expense_charges(branch_id, charge_date DESC);
-
--- Expense budgets (monthly caps)
 CREATE TABLE IF NOT EXISTS ims.expense_budgets (
     budget_id    BIGSERIAL PRIMARY KEY,
     branch_id    BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-    exp_type_id  BIGINT NOT NULL REFERENCES ims.expense_types(exp_type_id) ON UPDATE CASCADE ON DELETE CASCADE,
-    period_year  INT NOT NULL,
-    period_month INT NOT NULL CHECK (period_month BETWEEN 1 AND 12),
-    amount_limit NUMERIC(14,2) NOT NULL CHECK (amount_limit >= 0),
+    exp_id       BIGINT NOT NULL REFERENCES ims.expense(exp_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    period_year  INT NOT NULL DEFAULT EXTRACT(YEAR FROM NOW())::INT,
+    period_month INT NOT NULL DEFAULT EXTRACT(MONTH FROM NOW())::INT CHECK (period_month BETWEEN 1 AND 12),
+    fixed_amount NUMERIC(14,2) NOT NULL CHECK (fixed_amount > 0),
     note         TEXT,
-    CONSTRAINT uq_expense_budget UNIQUE (branch_id, exp_type_id, period_year, period_month)
+    user_id      BIGINT NOT NULL REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT uq_expense_budget UNIQUE (branch_id, exp_id, period_year, period_month)
 );
 CREATE INDEX IF NOT EXISTS idx_expense_budgets_branch_period ON ims.expense_budgets(branch_id, period_year, period_month);
+
+CREATE TABLE IF NOT EXISTS ims.expense_charge (
+    exp_ch_id   BIGSERIAL PRIMARY KEY,
+    branch_id   BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    exp_id      BIGINT NOT NULL REFERENCES ims.expense(exp_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    amount      NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+    exp_date    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    note        TEXT,
+    exp_budget  BIGINT NOT NULL DEFAULT 0,
+    user_id     BIGINT NOT NULL REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_expense_charge_branch_date ON ims.expense_charge(branch_id, exp_date DESC);
+
+CREATE TABLE IF NOT EXISTS ims.expense_payments (
+    exp_payment_id BIGSERIAL PRIMARY KEY,
+    branch_id      BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    exp_ch_id      BIGINT NOT NULL REFERENCES ims.expense_charge(exp_ch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    acc_id         BIGINT NOT NULL REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    pay_date       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    amount_paid    NUMERIC(14,2) NOT NULL CHECK (amount_paid > 0),
+    reference_no   VARCHAR(80),
+    note           TEXT,
+    user_id        BIGINT NOT NULL REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE RESTRICT
+);
+
+-- Stored procedure: charge a budget and post payment in one call
+DROP FUNCTION IF EXISTS ims.sp_charge_expense_budget(BIGINT,BIGINT,NUMERIC,TIMESTAMPTZ,TEXT,BIGINT);
+CREATE FUNCTION ims.sp_charge_expense_budget(
+    p_budget_id   BIGINT,
+    p_acc_id      BIGINT,
+    p_amount      NUMERIC(14,2) DEFAULT NULL,
+    p_pay_date    TIMESTAMPTZ DEFAULT NOW(),
+    p_note        TEXT DEFAULT NULL,
+    p_user_id     BIGINT
+) RETURNS TABLE(exp_ch_id BIGINT, exp_payment_id BIGINT) LANGUAGE plpgsql AS $$
+DECLARE
+    v_budget   ims.expense_budgets%ROWTYPE;
+    v_amount   NUMERIC(14,2);
+BEGIN
+    SELECT * INTO v_budget FROM ims.expense_budgets WHERE budget_id = p_budget_id;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'Budget % not found', p_budget_id;
+    END IF;
+
+    v_amount := COALESCE(p_amount, v_budget.fixed_amount);
+    IF v_amount <= 0 THEN
+      RAISE EXCEPTION 'Amount must be > 0';
+    END IF;
+
+    INSERT INTO ims.expense_charge
+        (branch_id, exp_id, amount, exp_date, note, exp_budget, user_id)
+    VALUES
+        (v_budget.branch_id, v_budget.exp_id, v_amount, COALESCE(p_pay_date, NOW()), p_note, p_budget_id, p_user_id)
+    RETURNING exp_ch_id INTO exp_ch_id;
+
+    INSERT INTO ims.expense_payments
+        (branch_id, exp_ch_id, acc_id, pay_date, amount_paid, reference_no, note, user_id)
+    VALUES
+        (v_budget.branch_id, exp_ch_id, p_acc_id, COALESCE(p_pay_date, NOW()), v_amount, NULL, p_note, p_user_id)
+    RETURNING exp_payment_id INTO exp_payment_id;
+
+    -- reduce account balance
+    UPDATE ims.accounts SET balance = balance - v_amount WHERE acc_id = p_acc_id AND branch_id = v_budget.branch_id;
+
+    RETURN;
+END;
+$$;
 
 -- Returns
 CREATE TABLE IF NOT EXISTS ims.sales_returns (

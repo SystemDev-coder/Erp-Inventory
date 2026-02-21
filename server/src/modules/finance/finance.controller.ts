@@ -10,6 +10,8 @@ import {
   supplierReceiptSchema,
   expenseChargeSchema,
   expenseBudgetSchema,
+  expenseSchema,
+  expenseBudgetChargeSchema,
 } from './finance.schemas';
 import { financeService } from './finance.service';
 import { asyncHandler as ah } from '../../utils/asyncHandler';
@@ -19,6 +21,15 @@ export const listExpenses = ah(async (req: AuthRequest, res: Response) => {
   const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
   const expenses = await financeService.listExpenses(scope, branchId);
   return ApiResponse.success(res, { expenses });
+});
+
+export const createExpense = ah(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const input = expenseSchema.parse(req.body);
+  const userId = req.user?.userId;
+  if (!userId) throw ApiError.unauthorized('User required');
+  const expense = await financeService.createExpense(input, scope, userId);
+  return ApiResponse.created(res, { expense }, 'Expense created');
 });
 
 export const listAccountTransfers = asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -152,7 +163,9 @@ export const listExpenseCharges = asyncHandler(async (req: AuthRequest, res: Res
 export const createExpenseCharge = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const input = expenseChargeSchema.parse(req.body);
-  const charge = await financeService.createExpenseCharge(input, scope);
+  const userId = req.user?.userId;
+  if (!userId) throw ApiError.unauthorized('User required');
+  const charge = await financeService.createExpenseCharge(input, scope, userId);
   return ApiResponse.created(res, { charge }, 'Expense charge recorded');
 });
 
@@ -168,6 +181,17 @@ export const listExpenseBudgets = asyncHandler(async (req: AuthRequest, res: Res
 export const createExpenseBudget = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const input = expenseBudgetSchema.parse(req.body);
-  const budget = await financeService.createExpenseBudget(input, scope);
+  const userId = req.user?.userId;
+  if (!userId) throw ApiError.unauthorized('User required');
+  const budget = await financeService.createExpenseBudget(input, scope, userId);
   return ApiResponse.created(res, { budget }, 'Expense budget created');
+});
+
+export const chargeExpenseBudget = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const input = expenseBudgetChargeSchema.parse(req.body);
+  const userId = req.user?.userId;
+  if (!userId) throw ApiError.unauthorized('User required');
+  const result = await financeService.chargeExpenseBudget(input, scope, userId);
+  return ApiResponse.created(res, { result }, 'Expense budget charged');
 });

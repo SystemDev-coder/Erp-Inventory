@@ -16,6 +16,8 @@ import {
   createExpenseCharge,
   listExpenseBudgets,
   createExpenseBudget,
+  createExpense,
+  chargeExpenseBudget,
   listExpenses,
   listCustomerUnpaid,
   listSupplierUnpaid,
@@ -48,11 +50,13 @@ router.delete('/receipts/suppliers/:id', deleteSupplierReceipt);
 
 // Expenses
 router.get('/expenses', listExpenses);
+router.post('/expenses', createExpense);
 router.get('/expenses/charges', listExpenseCharges);
 router.post('/expenses/charges', createExpenseCharge);
 
 // Expense budgets
 router.get('/expenses/budgets', listExpenseBudgets);
 router.post('/expenses/budgets', createExpenseBudget);
+router.post('/expenses/budgets/charge', chargeExpenseBudget);
 
 export default router;

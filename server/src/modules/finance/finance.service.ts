@@ -8,8 +8,8 @@ import {
   SupplierReceiptInput,
   ExpenseChargeInput,
   ExpenseBudgetInput,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  ExpenseInput,
+  ExpenseBudgetChargeInput,
   AccountTransferUpdateInput,
 } from './finance.schemas';
 
@@ -533,7 +533,7 @@ export const financeService = {
     );
   },
 
-  /* Expense charges */
+  /* Expenses */
   async listExpenses(scope: BranchScope, branchId?: number) {
     const params: any[] = [];
     let where = 'WHERE 1=1';
@@ -547,16 +547,23 @@ export const financeService = {
     }
 
     return queryMany(
-      `SELECT e.*, et.name AS expense_type, a.name AS account_name, u.name AS created_by
-         FROM ims.expenses e
-         LEFT JOIN ims.expense_types et ON et.exp_type_id = e.exp_type_id
+      `SELECT e.*, u.name AS created_by
+         FROM ims.expense e
          JOIN ims.users u ON u.user_id = e.user_id
-         LEFT JOIN ims.expense_payments ep ON ep.exp_id = e.exp_id
-         LEFT JOIN ims.accounts a ON a.acc_id = ep.acc_id
         ${where}
-        ORDER BY e.exp_date DESC NULLS LAST, e.exp_id DESC
+        ORDER BY e.created_at DESC, e.exp_id DESC
         LIMIT 200`,
       params
+    );
+  },
+
+  async createExpense(input: ExpenseInput, scope: BranchScope, userId: number) {
+    const branchId = pickBranchForWrite(scope, input.branchId);
+    return queryOne(
+      `INSERT INTO ims.expense (branch_id, name, user_id)
+       VALUES ($1,$2,$3)
+       RETURNING *`,
+      [branchId, input.name, userId]
     );
   },
 
@@ -573,36 +580,26 @@ export const financeService = {
     }
 
     return queryMany(
-      `SELECT c.*, et.name AS expense_type, a.name AS account_name
-         FROM ims.expense_charges c
-         LEFT JOIN ims.expense_types et ON et.exp_type_id = c.exp_type_id
-         JOIN ims.accounts a ON a.acc_id = c.acc_id
+      `SELECT c.*, e.name AS expense_name
+         FROM ims.expense_charge c
+         JOIN ims.expense e ON e.exp_id = c.exp_id
         ${where}
-        ORDER BY c.charge_date DESC
+        ORDER BY c.exp_date DESC
         LIMIT 200`,
       params
     );
   },
 
-  async createExpenseCharge(input: ExpenseChargeInput, scope: BranchScope) {
+  async createExpenseCharge(input: ExpenseChargeInput, scope: BranchScope, userId: number) {
     const branchId = pickBranchForWrite(scope, input.branchId);
-    return queryOne(
-      `INSERT INTO ims.expense_charges
-         (branch_id, exp_id, exp_type_id, acc_id, charge_date, amount, ref_table, ref_id, note)
-       VALUES ($1, $2, $3, $4, COALESCE($5, NOW()), $6, $7, $8, $9)
+    const charge = await queryOne(
+      `INSERT INTO ims.expense_charge
+         (branch_id, exp_id, amount, exp_date, note, exp_budget, user_id)
+       VALUES ($1,$2,$3,COALESCE($4,NOW()),$5,COALESCE($6,0),$7)
        RETURNING *`,
-      [
-        branchId,
-        input.expId || null,
-        input.expTypeId || null,
-        input.accId,
-        input.chargeDate || null,
-        input.amount,
-        input.refTable || null,
-        input.refId || null,
-        input.note || null,
-      ]
+      [branchId, input.expId, input.amount, input.expDate || null, input.note || null, input.expBudgetId || null, userId]
     );
+    return charge;
   },
 
   /* Expense budgets */
@@ -619,31 +616,47 @@ export const financeService = {
     }
 
     return queryMany(
-      `SELECT b.*, et.name AS expense_type
+      `SELECT b.*, e.name AS expense_name
          FROM ims.expense_budgets b
-         JOIN ims.expense_types et ON et.exp_type_id = b.exp_type_id
+         JOIN ims.expense e ON e.exp_id = b.exp_id
         ${where}
-        ORDER BY b.period_year DESC, b.period_month DESC, et.name
+        ORDER BY b.period_year DESC, b.period_month DESC, e.name
         LIMIT 200`,
       params
     );
   },
 
-  async createExpenseBudget(input: ExpenseBudgetInput, scope: BranchScope) {
+  async createExpenseBudget(input: ExpenseBudgetInput, scope: BranchScope, userId: number) {
     const branchId = pickBranchForWrite(scope, input.branchId);
     return queryOne(
       `INSERT INTO ims.expense_budgets
-         (branch_id, exp_type_id, period_year, period_month, amount_limit, note)
-       VALUES ($1, $2, $3, $4, $5, $6)
+         (branch_id, exp_id, period_year, period_month, fixed_amount, note, user_id)
+       VALUES ($1, $2, COALESCE($3, EXTRACT(YEAR FROM NOW())::INT), COALESCE($4, EXTRACT(MONTH FROM NOW())::INT), $5, $6, $7)
        RETURNING *`,
       [
         branchId,
-        input.expTypeId,
-        input.periodYear,
-        input.periodMonth,
-        input.amountLimit,
+        input.expId,
+        input.periodYear || null,
+        input.periodMonth || null,
+        input.fixedAmount,
         input.note || null,
+        userId,
       ]
     );
+  },
+
+  async chargeExpenseBudget(input: ExpenseBudgetChargeInput, scope: BranchScope, userId: number) {
+    const row = await queryOne<{ exp_ch_id: number; exp_payment_id: number }>(
+      `SELECT * FROM ims.sp_charge_expense_budget($1,$2,$3,$4,$5,$6)`,
+      [
+        input.budgetId,
+        input.accId,
+        input.amount || null,
+        input.payDate || null,
+        input.note || null,
+        userId,
+      ]
+    );
+    return row;
   },
 };
