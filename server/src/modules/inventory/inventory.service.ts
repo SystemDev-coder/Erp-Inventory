@@ -56,6 +56,11 @@ let cachedInventoryTransactionColumns:
   | null = null;
 let cachedItemsHasStockAlert: boolean | null = null;
 let cachedStockAdjustmentTable: boolean | null = null;
+let cachedStockAdjustmentColumns: { hasBranchId: boolean; hasNote: boolean } | null = null;
+let cachedSalesHasPaidAmount: boolean | null = null;
+let cachedSalesHasDocType: boolean | null = null;
+let cachedSalesHasStatus: boolean | null = null;
+let cachedSalePaymentsTable: boolean | null = null;
 
 const hasInventoryMovementSoftDelete = async (): Promise<boolean> => {
   if (cachedInventoryMovementSoftDelete !== null) {
@@ -103,6 +108,91 @@ const hasStockAdjustmentTable = async (): Promise<boolean> => {
   );
   cachedStockAdjustmentTable = Boolean(row?.has_table);
   return cachedStockAdjustmentTable;
+};
+
+const getStockAdjustmentColumns = async (): Promise<{ hasBranchId: boolean; hasNote: boolean }> => {
+  if (cachedStockAdjustmentColumns) return cachedStockAdjustmentColumns;
+  const row = await queryOne<{ has_branch_id: boolean; has_note: boolean }>(
+    `SELECT
+       EXISTS (
+         SELECT 1
+           FROM information_schema.columns
+          WHERE table_schema = 'ims'
+            AND table_name = 'stock_adjustment'
+            AND column_name = 'branch_id'
+       ) AS has_branch_id,
+       EXISTS (
+         SELECT 1
+           FROM information_schema.columns
+          WHERE table_schema = 'ims'
+            AND table_name = 'stock_adjustment'
+            AND column_name = 'note'
+       ) AS has_note`
+  );
+  cachedStockAdjustmentColumns = {
+    hasBranchId: Boolean(row?.has_branch_id),
+    hasNote: Boolean(row?.has_note),
+  };
+  return cachedStockAdjustmentColumns;
+};
+
+const hasSalesPaidAmountColumn = async (): Promise<boolean> => {
+  if (cachedSalesHasPaidAmount !== null) return cachedSalesHasPaidAmount;
+  const row = await queryOne<{ has_column: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM information_schema.columns
+        WHERE table_schema = 'ims'
+          AND table_name = 'sales'
+          AND column_name = 'paid_amount'
+     ) AS has_column`
+  );
+  cachedSalesHasPaidAmount = Boolean(row?.has_column);
+  return cachedSalesHasPaidAmount;
+};
+
+const hasSalesDocTypeColumn = async (): Promise<boolean> => {
+  if (cachedSalesHasDocType !== null) return cachedSalesHasDocType;
+  const row = await queryOne<{ has_column: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM information_schema.columns
+        WHERE table_schema = 'ims'
+          AND table_name = 'sales'
+          AND column_name = 'doc_type'
+     ) AS has_column`
+  );
+  cachedSalesHasDocType = Boolean(row?.has_column);
+  return cachedSalesHasDocType;
+};
+
+const hasSalesStatusColumn = async (): Promise<boolean> => {
+  if (cachedSalesHasStatus !== null) return cachedSalesHasStatus;
+  const row = await queryOne<{ has_column: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM information_schema.columns
+        WHERE table_schema = 'ims'
+          AND table_name = 'sales'
+          AND column_name = 'status'
+     ) AS has_column`
+  );
+  cachedSalesHasStatus = Boolean(row?.has_column);
+  return cachedSalesHasStatus;
+};
+
+const hasSalePaymentsTable = async (): Promise<boolean> => {
+  if (cachedSalePaymentsTable !== null) return cachedSalePaymentsTable;
+  const row = await queryOne<{ has_table: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM information_schema.tables
+        WHERE table_schema = 'ims'
+          AND table_name = 'sale_payments'
+     ) AS has_table`
+  );
+  cachedSalePaymentsTable = Boolean(row?.has_table);
+  return cachedSalePaymentsTable;
 };
 
 const getInventoryTransactionColumns = async (): Promise<{
@@ -154,6 +244,43 @@ const resolveTransactionDirection = (
   return direction || 'IN';
 };
 
+const getScopedAdjustmentRow = async (
+  client: PoolClient,
+  adjustmentId: number,
+  scope?: BranchScope
+) => {
+  if (!scope || scope.isAdmin) {
+    const result = await client.query<{
+      adjustment_id: number;
+      item_id: number;
+      branch_id: number;
+    }>(
+      `SELECT a.adjustment_id, a.item_id, i.branch_id
+         FROM ims.stock_adjustment a
+         JOIN ims.items i ON i.item_id = a.item_id
+        WHERE a.adjustment_id = $1
+        LIMIT 1`,
+      [adjustmentId]
+    );
+    return result.rows[0] || null;
+  }
+
+  const result = await client.query<{
+    adjustment_id: number;
+    item_id: number;
+    branch_id: number;
+  }>(
+    `SELECT a.adjustment_id, a.item_id, i.branch_id
+       FROM ims.stock_adjustment a
+       JOIN ims.items i ON i.item_id = a.item_id
+      WHERE a.adjustment_id = $1
+        AND i.branch_id = ANY($2)
+      LIMIT 1`,
+    [adjustmentId, scope.branchIds]
+  );
+  return result.rows[0] || null;
+};
+
 const createAdjustmentEntry = async (
   client: PoolClient,
   payload: {
@@ -164,6 +291,7 @@ const createAdjustmentEntry = async (
     unitCost?: number;
     note?: string;
     reason: string;
+    status?: 'POSTED' | 'CANCELLED';
     userId?: number | null;
   }
 ) => {
@@ -233,38 +361,51 @@ const createAdjustmentEntry = async (
     };
   }
 
+  const stockAdjustmentCols = await getStockAdjustmentColumns();
+  const columns: string[] = [];
+  const values: unknown[] = [];
+
+  if (stockAdjustmentCols.hasBranchId) {
+    columns.push('branch_id');
+    values.push(payload.branchId);
+  }
+  columns.push('item_id', 'adjustment_type', 'quantity', 'reason', 'created_by', 'status');
+  values.push(
+    payload.productId,
+    payload.qty >= 0 ? 'increase' : 'decrease',
+    Math.abs(payload.qty),
+    payload.reason,
+    payload.userId,
+    payload.status || 'POSTED'
+  );
+  if (stockAdjustmentCols.hasNote) {
+    columns.push('note');
+    values.push(payload.note || null);
+  }
+
   const adjustment = await client.query<{
     adjustment_id: number;
-    branch_id: number;
+    branch_id?: number;
     item_id: number;
     adjustment_date: string;
     reason: string;
-    note: string | null;
     created_by: number | null;
   }>(
     `INSERT INTO ims.stock_adjustment
-       (branch_id, item_id, adjustment_type, quantity, reason, created_by, note)
+       (${columns.join(', ')})
      VALUES
-       ($1, $2, $3, $4, $5, $6, NULLIF($7, ''))
-     RETURNING adjustment_id, branch_id, item_id, adjustment_date, reason, note, created_by`,
-    [
-      payload.branchId,
-      payload.productId,
-      payload.qty >= 0 ? 'increase' : 'decrease',
-      Math.abs(payload.qty),
-      payload.reason,
-      payload.userId,
-      payload.note || '',
-    ]
+       (${values.map((_, i) => `$${i + 1}`).join(', ')})
+     RETURNING adjustment_id, ${stockAdjustmentCols.hasBranchId ? 'branch_id,' : ''} item_id, adjustment_date, reason, created_by`,
+    values
   );
 
   return {
     adj_id: adjustment.rows[0].adjustment_id,
-    branch_id: adjustment.rows[0].branch_id,
+    branch_id: Number(adjustment.rows[0].branch_id ?? payload.branchId),
     wh_id: payload.whId ?? null,
     user_id: adjustment.rows[0].created_by,
     reason: adjustment.rows[0].reason,
-    note: adjustment.rows[0].note,
+    note: payload.note || null,
     adj_date: adjustment.rows[0].adjustment_date,
     item_id: adjustment.rows[0].item_id,
     qty_delta: payload.qty,
@@ -476,6 +617,10 @@ export const inventoryService = {
             b.branch_name,
             m.wh_id,
             w.wh_name,
+            m.item_id,
+            CASE WHEN COALESCE(m.qty_out, 0) > 0 THEN 'DECREASE' ELSE 'INCREASE' END::text AS adjustment_type,
+            GREATEST(COALESCE(m.qty_in, 0), COALESCE(m.qty_out, 0))::numeric(14,3) AS quantity,
+            'POSTED'::text AS status,
             'Manual Adjustment'::text AS reason,
             m.note,
             COALESCE(u.name, u.username, 'System') AS created_by,
@@ -501,10 +646,10 @@ export const inventoryService = {
 
     if (branchId) {
       params.push(branchId);
-      where.push(`a.branch_id = $${params.length}`);
+      where.push(`p.branch_id = $${params.length}`);
     } else if (Array.isArray(branchIds) && branchIds.length) {
       params.push(branchIds);
-      where.push(`a.branch_id = ANY($${params.length})`);
+      where.push(`p.branch_id = ANY($${params.length})`);
     }
     if (productId) {
       params.push(productId);
@@ -515,7 +660,6 @@ export const inventoryService = {
       where.push(`(
         p.name ILIKE $${params.length}
         OR a.reason ILIKE $${params.length}
-        OR COALESCE(a.note,'') ILIKE $${params.length}
         OR b.branch_name ILIKE $${params.length}
       )`);
     }
@@ -527,20 +671,24 @@ export const inventoryService = {
       `SELECT
           a.adjustment_id AS adj_id,
           a.adjustment_date AS adj_date,
-          a.branch_id,
+          p.branch_id,
           b.branch_name,
           NULL::bigint AS wh_id,
           NULL::text AS wh_name,
+          a.item_id,
+          UPPER(COALESCE(a.adjustment_type::text, 'INCREASE')) AS adjustment_type,
+          COALESCE(a.quantity, 0)::numeric(14,3) AS quantity,
+          UPPER(COALESCE(a.status::text, 'POSTED')) AS status,
           a.reason,
-          a.note,
+          NULL::text AS note,
           COALESCE(u.name, u.username, 'System') AS created_by,
           COALESCE(p.name, '-') AS item_names,
-          CASE WHEN LOWER(a.adjustment_type) = 'increase' THEN a.quantity ELSE -a.quantity END::numeric(14,3) AS qty_delta,
+          CASE WHEN LOWER(a.adjustment_type::text) = 'increase' THEN a.quantity ELSE -a.quantity END::numeric(14,3) AS qty_delta,
           (a.quantity * COALESCE(p.cost_price, 0))::numeric(14,2) AS value_delta,
           1::bigint AS line_count
        FROM ims.stock_adjustment a
        LEFT JOIN ims.items p ON p.item_id = a.item_id
-       LEFT JOIN ims.branches b ON b.branch_id = a.branch_id
+       LEFT JOIN ims.branches b ON b.branch_id = p.branch_id
        LEFT JOIN ims.users u ON u.user_id = a.created_by
       WHERE ${where.join(' AND ')}
       ORDER BY a.adjustment_date DESC
@@ -588,6 +736,10 @@ export const inventoryService = {
             b.branch_name,
             m.wh_id,
             w.wh_name,
+            m.item_id,
+            CASE WHEN COALESCE(m.qty_out, 0) > 0 THEN 'DECREASE' ELSE 'INCREASE' END::text AS adjustment_type,
+            GREATEST(COALESCE(m.qty_in, 0), COALESCE(m.qty_out, 0))::numeric(14,3) AS quantity,
+            'POSTED'::text AS status,
             'Stock Recount'::text AS reason,
             m.note,
             COALESCE(u.name, u.username, 'System') AS created_by,
@@ -613,10 +765,10 @@ export const inventoryService = {
 
     if (branchId) {
       params.push(branchId);
-      where.push(`a.branch_id = $${params.length}`);
+      where.push(`p.branch_id = $${params.length}`);
     } else if (Array.isArray(branchIds) && branchIds.length) {
       params.push(branchIds);
-      where.push(`a.branch_id = ANY($${params.length})`);
+      where.push(`p.branch_id = ANY($${params.length})`);
     }
     if (productId) {
       params.push(productId);
@@ -626,7 +778,6 @@ export const inventoryService = {
       params.push(`%${search}%`);
       where.push(`(
         p.name ILIKE $${params.length}
-        OR COALESCE(a.note,'') ILIKE $${params.length}
         OR b.branch_name ILIKE $${params.length}
       )`);
     }
@@ -638,20 +789,24 @@ export const inventoryService = {
       `SELECT
           a.adjustment_id AS adj_id,
           a.adjustment_date AS adj_date,
-          a.branch_id,
+          p.branch_id,
           b.branch_name,
           NULL::bigint AS wh_id,
           NULL::text AS wh_name,
+          a.item_id,
+          UPPER(COALESCE(a.adjustment_type::text, 'INCREASE')) AS adjustment_type,
+          COALESCE(a.quantity, 0)::numeric(14,3) AS quantity,
+          UPPER(COALESCE(a.status::text, 'POSTED')) AS status,
           a.reason,
-          a.note,
+          NULL::text AS note,
           COALESCE(u.name, u.username, 'System') AS created_by,
           COALESCE(p.name, '-') AS item_names,
-          CASE WHEN LOWER(a.adjustment_type) = 'increase' THEN a.quantity ELSE -a.quantity END::numeric(14,3) AS qty_delta,
+          CASE WHEN LOWER(a.adjustment_type::text) = 'increase' THEN a.quantity ELSE -a.quantity END::numeric(14,3) AS qty_delta,
           (a.quantity * COALESCE(p.cost_price, 0))::numeric(14,2) AS value_delta,
           1::bigint AS line_count
        FROM ims.stock_adjustment a
        LEFT JOIN ims.items p ON p.item_id = a.item_id
-       LEFT JOIN ims.branches b ON b.branch_id = a.branch_id
+       LEFT JOIN ims.branches b ON b.branch_id = p.branch_id
        LEFT JOIN ims.users u ON u.user_id = a.created_by
       WHERE ${where.join(' AND ')}
       ORDER BY a.adjustment_date DESC
@@ -929,65 +1084,282 @@ export const inventoryService = {
 
   async listInventoryTransactions(filters: any) {
     const { storeId, itemId, transactionType, status, page, limit, branchIds } = filters;
-    const txCols = await getInventoryTransactionColumns();
+    const movementHasSoftDelete = await hasInventoryMovementSoftDelete();
+    const stockAdjustmentTableExists = await hasStockAdjustmentTable();
+    const salesHasPaidAmount = await hasSalesPaidAmountColumn();
+    const salesHasDocType = await hasSalesDocTypeColumn();
+    const salesHasStatus = await hasSalesStatusColumn();
+    const salePaymentsTableExists = await hasSalePaymentsTable();
     const params: any[] = [];
     const where: string[] = ['1=1'];
 
     if (Array.isArray(branchIds) && branchIds.length) {
       params.push(branchIds);
-      where.push(`it.branch_id = ANY($${params.length})`);
+      where.push(`t.branch_id = ANY($${params.length})`);
     }
-    if (storeId && txCols.hasStoreId) {
+    if (storeId) {
       params.push(storeId);
-      where.push(`it.store_id = $${params.length}`);
+      where.push(`t.store_id = $${params.length}`);
     }
     if (itemId) {
       params.push(itemId);
-      if (txCols.hasItemId) where.push(`COALESCE(it.item_id, it.product_id) = $${params.length}`);
-      else where.push(`it.product_id = $${params.length}`);
+      where.push(`t.item_id = $${params.length}`);
     }
     if (transactionType) {
       params.push(String(transactionType).toUpperCase());
-      where.push(`UPPER(it.transaction_type) = $${params.length}`);
+      where.push(`UPPER(t.transaction_type) = $${params.length}`);
     }
     if (status) {
       params.push(String(status).toUpperCase());
-      where.push(`UPPER(it.status) = $${params.length}`);
+      where.push(`UPPER(t.status) = $${params.length}`);
     }
 
     const offset = (page - 1) * limit;
     params.push(limit, offset);
 
+    const movementSoftDeleteWhere = movementHasSoftDelete
+      ? 'AND (m.is_deleted IS NULL OR m.is_deleted = FALSE)'
+      : '';
+
+    const adjustmentQuery = stockAdjustmentTableExists
+      ? `
+        SELECT
+          (-1000000000::bigint - a.adjustment_id)::bigint AS transaction_id,
+          i.branch_id,
+          b.branch_name,
+          i.store_id,
+          st.store_name,
+          a.item_id::bigint AS item_id,
+          i.name AS item_name,
+          'ADJUSTMENT'::text AS transaction_type,
+          CASE WHEN LOWER(a.adjustment_type::text) = 'increase' THEN 'IN' ELSE 'OUT' END AS direction,
+          COALESCE(a.quantity, 0)::numeric(14,3) AS quantity,
+          COALESCE(i.cost_price, 0)::numeric(14,2) AS unit_cost,
+          NULL::text AS reference_no,
+          a.adjustment_date AS transaction_date,
+          CASE
+            WHEN UPPER(COALESCE(a.status::text, 'POSTED')) = 'CANCELLED' THEN 'CANCELLED'
+            ELSE 'POSTED'
+          END AS status,
+          COALESCE(NULLIF(a.reason, ''), 'Stock adjustment') AS notes
+        FROM ims.stock_adjustment a
+        LEFT JOIN ims.items i ON i.item_id = a.item_id
+        LEFT JOIN ims.stores st ON st.store_id = i.store_id
+        LEFT JOIN ims.branches b ON b.branch_id = i.branch_id
+        WHERE LOWER(COALESCE(a.reason, '')) NOT LIKE '%damage%'
+      `
+      : `
+        SELECT
+          (-1000000000::bigint - m.move_id)::bigint AS transaction_id,
+          m.branch_id,
+          b.branch_name,
+          i.store_id,
+          st.store_name,
+          m.item_id::bigint AS item_id,
+          i.name AS item_name,
+          'ADJUSTMENT'::text AS transaction_type,
+          CASE WHEN COALESCE(m.qty_out, 0) > 0 THEN 'OUT' ELSE 'IN' END AS direction,
+          GREATEST(COALESCE(m.qty_in, 0), COALESCE(m.qty_out, 0))::numeric(14,3) AS quantity,
+          COALESCE(m.unit_cost, i.cost_price, 0)::numeric(14,2) AS unit_cost,
+          NULL::text AS reference_no,
+          m.move_date AS transaction_date,
+          'POSTED'::text AS status,
+          COALESCE(NULLIF(m.note, ''), 'Stock adjustment') AS notes
+        FROM ims.inventory_movements m
+        LEFT JOIN ims.items i ON i.item_id = m.item_id
+        LEFT JOIN ims.stores st ON st.store_id = i.store_id
+        LEFT JOIN ims.branches b ON b.branch_id = m.branch_id
+        WHERE LOWER(COALESCE(m.move_type::text, '')) = 'adjustment'
+          AND LOWER(COALESCE(m.note, '')) NOT LIKE '%damage%'
+          ${movementSoftDeleteWhere}
+      `;
+
+    const damageQuery = stockAdjustmentTableExists
+      ? `
+        SELECT
+          (-2000000000::bigint - a.adjustment_id)::bigint AS transaction_id,
+          i.branch_id,
+          b.branch_name,
+          i.store_id,
+          st.store_name,
+          a.item_id::bigint AS item_id,
+          i.name AS item_name,
+          'DAMAGE'::text AS transaction_type,
+          CASE WHEN LOWER(a.adjustment_type::text) = 'increase' THEN 'IN' ELSE 'OUT' END AS direction,
+          COALESCE(a.quantity, 0)::numeric(14,3) AS quantity,
+          COALESCE(i.cost_price, 0)::numeric(14,2) AS unit_cost,
+          NULL::text AS reference_no,
+          a.adjustment_date AS transaction_date,
+          CASE
+            WHEN UPPER(COALESCE(a.status::text, 'POSTED')) = 'CANCELLED' THEN 'CANCELLED'
+            ELSE 'POSTED'
+          END AS status,
+          COALESCE(NULLIF(a.reason, ''), 'Stock damage') AS notes
+        FROM ims.stock_adjustment a
+        LEFT JOIN ims.items i ON i.item_id = a.item_id
+        LEFT JOIN ims.stores st ON st.store_id = i.store_id
+        LEFT JOIN ims.branches b ON b.branch_id = i.branch_id
+        WHERE LOWER(COALESCE(a.reason, '')) LIKE '%damage%'
+      `
+      : `
+        SELECT
+          (-2000000000::bigint - m.move_id)::bigint AS transaction_id,
+          m.branch_id,
+          b.branch_name,
+          i.store_id,
+          st.store_name,
+          m.item_id::bigint AS item_id,
+          i.name AS item_name,
+          'DAMAGE'::text AS transaction_type,
+          CASE WHEN COALESCE(m.qty_out, 0) > 0 THEN 'OUT' ELSE 'IN' END AS direction,
+          GREATEST(COALESCE(m.qty_in, 0), COALESCE(m.qty_out, 0))::numeric(14,3) AS quantity,
+          COALESCE(m.unit_cost, i.cost_price, 0)::numeric(14,2) AS unit_cost,
+          NULL::text AS reference_no,
+          m.move_date AS transaction_date,
+          'POSTED'::text AS status,
+          COALESCE(NULLIF(m.note, ''), 'Stock damage') AS notes
+        FROM ims.inventory_movements m
+        LEFT JOIN ims.items i ON i.item_id = m.item_id
+        LEFT JOIN ims.stores st ON st.store_id = i.store_id
+        LEFT JOIN ims.branches b ON b.branch_id = m.branch_id
+        WHERE LOWER(COALESCE(m.move_type::text, '')) = 'adjustment'
+          AND LOWER(COALESCE(m.note, '')) LIKE '%damage%'
+          ${movementSoftDeleteWhere}
+      `;
+
+    const nonQuotationWhere = salesHasDocType
+      ? `AND LOWER(COALESCE(s.doc_type::text, 'sale')) <> 'quotation'`
+      : '';
+    const paidStatusExpr = salesHasStatus
+      ? `CASE WHEN LOWER(COALESCE(s.status::text, 'paid')) = 'void' THEN 'CANCELLED' ELSE 'POSTED' END`
+      : `'POSTED'::text`;
+    const paidQuery = salesHasPaidAmount
+      ? `
+        SELECT
+          (-4000000000::bigint - s.sale_id)::bigint AS transaction_id,
+          s.branch_id,
+          b.branch_name,
+          NULL::bigint AS store_id,
+          NULL::text AS store_name,
+          NULL::bigint AS item_id,
+          NULL::text AS item_name,
+          'PAID'::text AS transaction_type,
+          'IN'::text AS direction,
+          COALESCE(s.paid_amount, 0)::numeric(14,3) AS quantity,
+          0::numeric(14,2) AS unit_cost,
+          'SALE-' || s.sale_id::text AS reference_no,
+          s.sale_date AS transaction_date,
+          ${paidStatusExpr} AS status,
+          COALESCE(NULLIF(s.note, ''), 'Sale payment') AS notes
+        FROM ims.sales s
+        LEFT JOIN ims.branches b ON b.branch_id = s.branch_id
+        WHERE COALESCE(s.paid_amount, 0) > 0
+          ${nonQuotationWhere}
+      `
+      : salePaymentsTableExists
+        ? `
+        SELECT
+          (-4000000000::bigint - s.sale_id)::bigint AS transaction_id,
+          s.branch_id,
+          b.branch_name,
+          NULL::bigint AS store_id,
+          NULL::text AS store_name,
+          NULL::bigint AS item_id,
+          NULL::text AS item_name,
+          'PAID'::text AS transaction_type,
+          'IN'::text AS direction,
+          COALESCE(sp.total_paid, 0)::numeric(14,3) AS quantity,
+          0::numeric(14,2) AS unit_cost,
+          'SALE-' || s.sale_id::text AS reference_no,
+          COALESCE(sp.last_pay_date, s.sale_date) AS transaction_date,
+          ${paidStatusExpr} AS status,
+          COALESCE(NULLIF(s.note, ''), 'Sale payment') AS notes
+        FROM ims.sales s
+        JOIN (
+          SELECT
+            sale_id,
+            SUM(COALESCE(amount_paid, 0))::numeric(14,3) AS total_paid,
+            MAX(pay_date) AS last_pay_date
+          FROM ims.sale_payments
+          GROUP BY sale_id
+        ) sp ON sp.sale_id = s.sale_id
+        LEFT JOIN ims.branches b ON b.branch_id = s.branch_id
+        WHERE COALESCE(sp.total_paid, 0) > 0
+          ${nonQuotationWhere}
+      `
+        : `
+        SELECT
+          NULL::bigint AS transaction_id,
+          NULL::bigint AS branch_id,
+          NULL::text AS branch_name,
+          NULL::bigint AS store_id,
+          NULL::text AS store_name,
+          NULL::bigint AS item_id,
+          NULL::text AS item_name,
+          'PAID'::text AS transaction_type,
+          'IN'::text AS direction,
+          0::numeric(14,3) AS quantity,
+          0::numeric(14,2) AS unit_cost,
+          NULL::text AS reference_no,
+          NOW() AS transaction_date,
+          'POSTED'::text AS status,
+          NULL::text AS notes
+        WHERE FALSE
+      `;
+
     return queryMany(
-      `SELECT
-         it.transaction_id,
-         it.branch_id,
-         b.branch_name,
-         ${txCols.hasStoreId ? 'it.store_id' : 'NULL::bigint AS store_id'},
-         s.store_name,
-         ${txCols.hasItemId ? 'COALESCE(it.item_id, it.product_id)' : 'it.product_id'} AS item_id,
-         p.name AS item_name,
-         UPPER(it.transaction_type) AS transaction_type,
-         ${txCols.hasDirection
-        ? 'UPPER(it.direction)'
-        : `CASE
-                  WHEN UPPER(it.transaction_type) IN ('SALES','DAMAGE') THEN 'OUT'
-                  ELSE 'IN'
-                END`
-      } AS direction,
-         it.quantity::numeric(14,3) AS quantity,
-         COALESCE(it.unit_cost, 0)::numeric(14,2) AS unit_cost,
-         it.reference_no,
-         it.transaction_date,
-         UPPER(it.status) AS status,
-         it.notes,
-         it.created_at
-       FROM ims.inventory_transaction it
-       LEFT JOIN ims.branches b ON b.branch_id = it.branch_id
-       LEFT JOIN ims.stores s ON ${txCols.hasStoreId ? 's.store_id = it.store_id' : 'FALSE'}
-       LEFT JOIN ims.items p ON p.item_id = ${txCols.hasItemId ? 'COALESCE(it.item_id, it.product_id)' : 'it.product_id'}
+      `WITH auto_tx AS (
+         ${adjustmentQuery}
+         UNION ALL
+         ${damageQuery}
+         UNION ALL
+         SELECT
+           (-3000000000::bigint - m.move_id)::bigint AS transaction_id,
+           m.branch_id,
+           b.branch_name,
+           i.store_id,
+           st.store_name,
+           m.item_id::bigint AS item_id,
+           i.name AS item_name,
+           'SALES'::text AS transaction_type,
+           'OUT'::text AS direction,
+           GREATEST(COALESCE(m.qty_out, 0), COALESCE(m.qty_in, 0))::numeric(14,3) AS quantity,
+           COALESCE(m.unit_cost, i.cost_price, 0)::numeric(14,2) AS unit_cost,
+           CASE WHEN m.ref_id IS NULL THEN NULL ELSE 'SALE-' || m.ref_id::text END AS reference_no,
+           m.move_date AS transaction_date,
+           'POSTED'::text AS status,
+           COALESCE(NULLIF(m.note, ''), 'Sale issue') AS notes
+         FROM ims.inventory_movements m
+         LEFT JOIN ims.items i ON i.item_id = m.item_id
+         LEFT JOIN ims.stores st ON st.store_id = i.store_id
+         LEFT JOIN ims.branches b ON b.branch_id = m.branch_id
+         WHERE LOWER(COALESCE(m.move_type::text, '')) = 'sale'
+           ${movementSoftDeleteWhere}
+
+         UNION ALL
+
+         ${paidQuery}
+       )
+       SELECT
+         t.transaction_id,
+         t.branch_id,
+         t.branch_name,
+         t.store_id,
+         t.store_name,
+         t.item_id,
+         t.item_name,
+         UPPER(t.transaction_type) AS transaction_type,
+         UPPER(t.direction) AS direction,
+         t.quantity::numeric(14,3) AS quantity,
+         t.unit_cost::numeric(14,2) AS unit_cost,
+         t.reference_no,
+         t.transaction_date,
+         UPPER(t.status) AS status,
+         t.notes,
+         t.transaction_date AS created_at
+       FROM auto_tx t
       WHERE ${where.join(' AND ')}
-      ORDER BY it.transaction_date DESC, it.transaction_id DESC
+      ORDER BY t.transaction_date DESC, t.transaction_id DESC
       LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
@@ -1135,9 +1507,133 @@ export const inventoryService = {
         qty: input.qty,
         unitCost: input.unitCost || 0,
         note: input.note,
-        reason: 'Manual Adjustment',
+        reason: input.reason || 'Manual Adjustment',
+        status: input.status || 'POSTED',
         userId: user?.userId ?? null,
       });
+    });
+  },
+
+  async updateAdjustment(id: number, input: any, scope: BranchScope) {
+    if (!(await hasStockAdjustmentTable())) {
+      throw ApiError.badRequest('Stock adjustment table is not available');
+    }
+    return withTransaction(async (client) => {
+      const current = await getScopedAdjustmentRow(client, id, scope);
+      if (!current) return null;
+
+      const updates: string[] = [];
+      const params: any[] = [];
+      let p = 1;
+
+      if (input.itemId) {
+        const item = scope.isAdmin
+          ? await client.query<{ item_id: number; branch_id: number }>(
+            `SELECT item_id, branch_id
+               FROM ims.items
+              WHERE item_id = $1`,
+            [input.itemId]
+          )
+          : await client.query<{ item_id: number; branch_id: number }>(
+            `SELECT item_id, branch_id
+               FROM ims.items
+              WHERE item_id = $1
+                AND branch_id = ANY($2)`,
+            [input.itemId, scope.branchIds]
+          );
+        if (!item.rows[0]) {
+          throw ApiError.badRequest('Item not found in your branch scope');
+        }
+        updates.push(`item_id = $${p++}`);
+        params.push(input.itemId);
+      }
+
+      if (input.qty !== undefined) {
+        const qty = Number(input.qty);
+        if (!Number.isFinite(qty) || qty === 0) {
+          throw ApiError.badRequest('Quantity difference cannot be zero');
+        }
+        updates.push(`adjustment_type = $${p++}`);
+        params.push(qty >= 0 ? 'INCREASE' : 'DECREASE');
+        updates.push(`quantity = $${p++}`);
+        params.push(Math.abs(qty));
+      }
+
+      if (input.reason !== undefined) {
+        updates.push(`reason = $${p++}`);
+        params.push(input.reason);
+      }
+      if (input.status !== undefined) {
+        updates.push(`status = $${p++}`);
+        params.push(String(input.status).toUpperCase());
+      }
+
+      if (!updates.length) {
+        return {
+          adj_id: current.adjustment_id,
+          branch_id: current.branch_id,
+        };
+      }
+
+      params.push(id);
+      const updated = await client.query<{
+        adjustment_id: number;
+        item_id: number;
+        adjustment_type: string;
+        quantity: string;
+        reason: string;
+        status: string;
+        adjustment_date: string;
+        created_by: number | null;
+      }>(
+        `UPDATE ims.stock_adjustment
+            SET ${updates.join(', ')}
+          WHERE adjustment_id = $${p}
+          RETURNING adjustment_id, item_id, adjustment_type, quantity, reason, status, adjustment_date, created_by`,
+        params
+      );
+      const row = updated.rows[0];
+      if (!row) return null;
+
+      const itemMeta = await client.query<{ branch_id: number; cost_price: string }>(
+        `SELECT branch_id, COALESCE(cost_price, 0)::text AS cost_price
+           FROM ims.items
+          WHERE item_id = $1`,
+        [row.item_id]
+      );
+      const branchId = Number(itemMeta.rows[0]?.branch_id || current.branch_id);
+      const unitCost = Number(itemMeta.rows[0]?.cost_price || '0');
+      const sign = String(row.adjustment_type || '').toUpperCase() === 'DECREASE' ? -1 : 1;
+      const qtyDelta = sign * Number(row.quantity || '0');
+
+      return {
+        adj_id: row.adjustment_id,
+        branch_id: branchId,
+        wh_id: null,
+        user_id: row.created_by,
+        reason: row.reason,
+        note: null,
+        adj_date: row.adjustment_date,
+        item_id: row.item_id,
+        qty_delta: qtyDelta,
+        unit_cost: unitCost,
+        status: String(row.status || 'POSTED').toUpperCase(),
+      };
+    });
+  },
+
+  async deleteAdjustment(id: number, scope: BranchScope) {
+    if (!(await hasStockAdjustmentTable())) {
+      throw ApiError.badRequest('Stock adjustment table is not available');
+    }
+    return withTransaction(async (client) => {
+      const current = await getScopedAdjustmentRow(client, id, scope);
+      if (!current) return false;
+      const deleted = await client.query(
+        `DELETE FROM ims.stock_adjustment WHERE adjustment_id = $1 RETURNING adjustment_id`,
+        [id]
+      );
+      return Boolean(deleted.rows[0]);
     });
   },
 

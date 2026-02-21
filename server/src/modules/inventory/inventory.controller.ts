@@ -16,6 +16,7 @@ import {
   warehouseUpdateSchema,
   inventoryTransactionListSchema,
   inventoryTransactionSchema,
+  adjustmentUpdateSchema,
 } from './inventory.schemas';
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { ApiError } from '../../utils/ApiError';
@@ -126,6 +127,50 @@ export const createAdjustment = asyncHandler(async (req: AuthRequest, res) => {
     userAgent: req.get('user-agent') || null,
   });
   return ApiResponse.created(res, { adjustment }, 'Stock adjusted');
+});
+
+export const updateAdjustment = asyncHandler(async (req: AuthRequest, res) => {
+  const scope = await resolveBranchScope(req);
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id) || id <= 0) {
+    throw ApiError.badRequest('Invalid adjustment id');
+  }
+  const input = adjustmentUpdateSchema.parse(req.body);
+  const adjustment = await inventoryService.updateAdjustment(id, input, scope);
+  if (!adjustment) {
+    throw ApiError.notFound('Adjustment not found');
+  }
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'update',
+    entity: 'stock_adjustment',
+    entityId: id,
+    newValue: input,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
+  return ApiResponse.success(res, { adjustment }, 'Stock adjustment updated');
+});
+
+export const deleteAdjustment = asyncHandler(async (req: AuthRequest, res) => {
+  const scope = await resolveBranchScope(req);
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id) || id <= 0) {
+    throw ApiError.badRequest('Invalid adjustment id');
+  }
+  const deleted = await inventoryService.deleteAdjustment(id, scope);
+  if (!deleted) {
+    throw ApiError.notFound('Adjustment not found');
+  }
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'delete',
+    entity: 'stock_adjustment',
+    entityId: id,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
+  return ApiResponse.success(res, null, 'Stock adjustment deleted');
 });
 
 export const createTransfer = asyncHandler(async (req: AuthRequest, res) => {

@@ -46,6 +46,8 @@ export const stockQuerySchema = z.object({
 export const movementQuerySchema = stockQuerySchema;
 export const adjustmentListQuerySchema = stockQuerySchema;
 export const recountListQuerySchema = stockQuerySchema;
+const adjustmentTypeSchema = z.enum(['INCREASE', 'DECREASE']);
+const adjustmentStatusSchema = z.enum(['POSTED', 'CANCELLED']);
 
 export const locationQuerySchema = z.object({
   branchId: optionalPositiveInt,
@@ -57,16 +59,120 @@ export const adjustmentSchema = z.object({
   whId: optionalPositiveInt,
   productId: optionalPositiveInt,
   itemId: optionalPositiveInt,
-  qty: z.coerce.number(),
+  adjustmentType: adjustmentTypeSchema.optional(),
+  quantity: z.coerce.number().positive().optional(),
+  qty: z.coerce.number().optional(),
   unitCost: z.coerce.number().nonnegative().default(0),
+  reason: z.string().trim().min(1).max(255).optional(),
+  status: adjustmentStatusSchema.optional().default('POSTED'),
   note: z.string().optional(),
-}).refine((value) => !!(value.productId || value.itemId), {
-  message: 'Item is required',
-  path: ['itemId'],
-}).transform((value) => ({
-  ...value,
-  productId: value.productId ?? value.itemId!,
-}));
+}).superRefine((value, ctx) => {
+  if (!(value.productId || value.itemId)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Item is required',
+      path: ['itemId'],
+    });
+  }
+
+  if (value.qty !== undefined && Number(value.qty) === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Quantity difference cannot be zero',
+      path: ['qty'],
+    });
+  }
+
+  if (value.qty === undefined) {
+    if (!value.adjustmentType) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Adjustment type is required',
+        path: ['adjustmentType'],
+      });
+    }
+    if (value.quantity === undefined || Number(value.quantity) <= 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Quantity must be greater than zero',
+        path: ['quantity'],
+      });
+    }
+  }
+}).transform((value) => {
+  const signedQty = value.qty !== undefined
+    ? Number(value.qty)
+    : (value.adjustmentType === 'DECREASE' ? -Number(value.quantity || 0) : Number(value.quantity || 0));
+
+  return {
+    ...value,
+    productId: value.productId ?? value.itemId!,
+    qty: signedQty,
+    reason: value.reason?.trim() || 'Manual Adjustment',
+    status: value.status || 'POSTED',
+  };
+});
+
+export const adjustmentUpdateSchema = z.object({
+  productId: optionalPositiveInt,
+  itemId: optionalPositiveInt,
+  adjustmentType: adjustmentTypeSchema.optional(),
+  quantity: z.coerce.number().positive().optional(),
+  qty: z.coerce.number().optional(),
+  reason: z.string().trim().min(1).max(255).optional(),
+  status: adjustmentStatusSchema.optional(),
+}).superRefine((value, ctx) => {
+  const hasItem = !!(value.productId || value.itemId);
+  const hasQty = value.qty !== undefined;
+  const hasPair = value.adjustmentType !== undefined || value.quantity !== undefined;
+  const hasReason = value.reason !== undefined;
+  const hasStatus = value.status !== undefined;
+  if (!hasItem && !hasQty && !hasPair && !hasReason && !hasStatus) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'At least one field is required',
+      path: ['qty'],
+    });
+  }
+
+  if (value.qty !== undefined && Number(value.qty) === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Quantity difference cannot be zero',
+      path: ['qty'],
+    });
+  }
+
+  if (value.qty === undefined && hasPair) {
+    if (!value.adjustmentType) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Adjustment type is required with quantity',
+        path: ['adjustmentType'],
+      });
+    }
+    if (value.quantity === undefined || Number(value.quantity) <= 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Quantity must be greater than zero',
+        path: ['quantity'],
+      });
+    }
+  }
+}).transform((value) => {
+  const itemId = value.itemId ?? value.productId;
+  const qty = value.qty !== undefined
+    ? Number(value.qty)
+    : value.adjustmentType
+      ? (value.adjustmentType === 'DECREASE' ? -Number(value.quantity || 0) : Number(value.quantity || 0))
+      : undefined;
+
+  return {
+    ...value,
+    itemId,
+    qty,
+  };
+});
 
 export const transferSchema = z
   .object({

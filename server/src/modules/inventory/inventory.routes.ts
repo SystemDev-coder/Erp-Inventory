@@ -6,6 +6,8 @@ import {
   listAdjustments,
   listRecounts,
   createAdjustment,
+  updateAdjustment,
+  deleteAdjustment,
   createTransfer,
   createRecount,
   listBranches,
@@ -31,6 +33,8 @@ router.get('/stock', requireAnyPerm(['stock.view', 'inventory.view']), listStock
 router.get('/movements', requireAnyPerm(['stock.view', 'inventory.view']), listMovements);
 router.get('/adjustments', requireAnyPerm(['stock.view', 'stock.adjust', 'inventory.view']), listAdjustments);
 router.post('/adjustments', requireAnyPerm(['stock.adjust', 'inventory.adjust']), createAdjustment);
+router.put('/adjustments/:id', requireAnyPerm(['stock.adjust', 'inventory.adjust']), updateAdjustment);
+router.delete('/adjustments/:id', requireAnyPerm(['stock.adjust', 'inventory.adjust']), deleteAdjustment);
 router.get('/recounts', requireAnyPerm(['stock.view', 'stock.recount', 'inventory.view']), listRecounts);
 router.post('/recounts', requireAnyPerm(['stock.recount', 'stock.adjust', 'inventory.adjust']), createRecount);
 router.post('/transfers', requireAnyPerm(['stock.adjust', 'stock.recount', 'inventory.transfer']), createTransfer);

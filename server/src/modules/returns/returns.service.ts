@@ -2,6 +2,7 @@ import { pool } from '../../db/pool';
 import { queryMany } from '../../db/query';
 import { ApiError } from '../../utils/ApiError';
 import { BranchScope } from '../../utils/branchScope';
+import { PoolClient } from 'pg';
 
 export interface SalesReturn {
     sr_id: number;
@@ -90,7 +91,24 @@ export interface UpdatePurchaseReturnInput extends CreatePurchaseReturnInput {}
 const canAccessBranch = (scope: BranchScope, branchId: number) =>
     scope.isAdmin || scope.branchIds.includes(branchId);
 
-const getDefaultStoreId = async (client: any, branchId: number): Promise<number> => {
+let cachedSupplierNameColumn: 'name' | 'supplier_name' | null = null;
+
+const getSupplierNameColumn = async (): Promise<'name' | 'supplier_name'> => {
+    if (cachedSupplierNameColumn) return cachedSupplierNameColumn;
+    const cols = await queryMany<{ column_name: string }>(
+        `SELECT column_name
+           FROM information_schema.columns
+          WHERE table_schema = 'ims'
+            AND table_name = 'suppliers'`
+    );
+    const names = new Set(cols.map((c) => c.column_name));
+    cachedSupplierNameColumn = names.has('name')
+        ? 'name'
+        : (names.has('supplier_name') ? 'supplier_name' : 'name');
+    return cachedSupplierNameColumn;
+};
+
+const getDefaultStoreId = async (client: PoolClient, branchId: number): Promise<number> => {
     const row = await client.query<{ store_id: number }>(
         `SELECT store_id
            FROM ims.stores
@@ -105,7 +123,7 @@ const getDefaultStoreId = async (client: any, branchId: number): Promise<number>
 };
 
 const applyStoreItemDelta = async (
-    client: any,
+    client: PoolClient,
     storeId: number,
     itemId: number,
     deltaQty: number
@@ -440,6 +458,7 @@ export const returnsService = {
     },
 
     async listPurchaseReturns(scope: BranchScope): Promise<PurchaseReturn[]> {
+        const supplierNameColumn = await getSupplierNameColumn();
         const params: any[] = [];
         let where = '';
         if (!scope.isAdmin) {
@@ -452,7 +471,7 @@ export const returnsService = {
           pr.*,
           b.branch_name,
           u.name AS created_by_name,
-          s.supplier_name AS supplier_name
+          s.${supplierNameColumn} AS supplier_name
        FROM ims.purchase_returns pr
        LEFT JOIN ims.branches b ON b.branch_id = pr.branch_id
        LEFT JOIN ims.users u ON u.user_id = pr.user_id

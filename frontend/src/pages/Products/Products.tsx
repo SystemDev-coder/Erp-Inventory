@@ -29,7 +29,6 @@ const defaultProductForm: ProductForm = {
 
 const fieldCls =
   'mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900';
-
 const txLabel: Record<TxCategory, string> = {
   adjustment: 'Adjustment',
   paid: 'Paid',
@@ -44,12 +43,6 @@ const Products = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [transactions, setTransactions] = useState<InventoryTransactionRow[]>([]);
   const [txCategory, setTxCategory] = useState<TxCategory>('adjustment');
-  const [txForm, setTxForm] = useState({
-    storeId: '',
-    itemId: '',
-    quantity: 1,
-    direction: 'IN' as 'IN' | 'OUT',
-  });
 
   const [itemModalOpen, setItemModalOpen] = useState(false);
   const [stateModalOpen, setStateModalOpen] = useState(false);
@@ -74,7 +67,6 @@ const Products = () => {
       if (!selectedStoreId && loaded.length) {
         const firstId = loaded[0].store_id;
         setSelectedStoreId(firstId);
-        setTxForm((p) => ({ ...p, storeId: String(firstId) }));
       }
       return loaded;
     }
@@ -91,19 +83,12 @@ const Products = () => {
     setLoading(false);
   };
 
-  const loadTransactions = async () => {
+  const loadTransactions = async (category: TxCategory = txCategory) => {
     setLoading(true);
-    await resolveStores();
-    if (!products.length) {
-      const productsRes = await productService.list({ limit: 200, storeId: selectedStoreId || undefined });
-      if (productsRes.success && productsRes.data?.products) setProducts(productsRes.data.products);
-    }
     const res = await inventoryService.listTransactions({
       limit: 200,
       page: 1,
-      transactionType: txCategory.toUpperCase(),
-      storeId: txForm.storeId || undefined,
-      itemId: txForm.itemId || undefined,
+      transactionType: category.toUpperCase(),
     });
     if (res.success && res.data?.rows) setTransactions(res.data.rows as InventoryTransactionRow[]);
     else showToast('error', 'Inventory Transaction', res.error || 'Failed to load transactions');
@@ -112,31 +97,7 @@ const Products = () => {
 
   const filteredTransactions = useMemo(() => {
     return transactions;
-  }, [transactions, txCategory]);
-
-  const createTransaction = async () => {
-    await resolveStores();
-    if (!txForm.storeId || !txForm.itemId || Number(txForm.quantity) <= 0) {
-      showToast('error', 'Inventory Transaction', 'Store, item and quantity are required');
-      return;
-    }
-    setLoading(true);
-    const res = await inventoryService.createTransaction({
-      storeId: Number(txForm.storeId),
-      itemId: Number(txForm.itemId),
-      transactionType: txCategory.toUpperCase() as 'ADJUSTMENT' | 'PAID' | 'SALES' | 'DAMAGE',
-      direction: txCategory === 'adjustment' ? txForm.direction : undefined,
-      quantity: Number(txForm.quantity),
-      status: 'POSTED',
-    });
-    setLoading(false);
-    if (res.success) {
-      showToast('success', 'Inventory Transaction', 'Transaction posted');
-      await loadTransactions();
-    } else {
-      showToast('error', 'Inventory Transaction', res.error || 'Failed to post transaction');
-    }
-  };
+  }, [transactions]);
 
   const itemColumns: ColumnDef<Product>[] = useMemo(
     () => [
@@ -172,7 +133,7 @@ const Products = () => {
     () => [
       { accessorKey: 'transaction_date', header: 'Date', cell: ({ row }) => new Date(row.original.transaction_date).toLocaleString() },
       { accessorKey: 'transaction_type', header: 'Type' },
-      { accessorKey: 'item_name', header: 'Item' },
+      { accessorKey: 'item_name', header: 'Item', cell: ({ row }) => row.original.item_name || '-' },
       { accessorKey: 'direction', header: 'Dir' },
       { accessorKey: 'quantity', header: 'Qty', cell: ({ row }) => Number(row.original.quantity || 0).toFixed(3) },
       { accessorKey: 'store_name', header: 'Store', cell: ({ row }) => row.original.store_name || '-' },
@@ -252,7 +213,6 @@ const Products = () => {
                 onChange={(e) => {
                   const next = e.target.value ? Number(e.target.value) : '';
                   setSelectedStoreId(next);
-                  setTxForm((p) => ({ ...p, storeId: next ? String(next) : '' }));
                 }}
               >
                 <option value="">Select store</option>
@@ -302,47 +262,24 @@ const Products = () => {
       label: 'Inventory Transaction',
       content: (
         <div className="space-y-4">
-          <div className="grid grid-cols-1 gap-3 rounded-xl border border-slate-200 bg-white p-3 md:grid-cols-3 dark:border-slate-800 dark:bg-slate-900">
-            <label className="text-sm font-medium">Store
-              <select className={fieldCls} value={txForm.storeId} onChange={(e) => setTxForm((p) => ({ ...p, storeId: e.target.value }))}>
-                <option value="">Select store</option>
-                {stores.map((s) => <option key={s.store_id} value={s.store_id}>{s.store_name}</option>)}
-              </select>
-            </label>
-            <label className="text-sm font-medium">Item
-              <select className={fieldCls} value={txForm.itemId} onChange={(e) => setTxForm((p) => ({ ...p, itemId: e.target.value }))}>
-                <option value="">Select item</option>
-                {products.map((p) => <option key={p.product_id} value={p.product_id}>{p.name}</option>)}
-              </select>
-            </label>
-            <label className="text-sm font-medium">Quantity
-              <input type="number" min={0.001} step="0.001" className={fieldCls} value={txForm.quantity} onChange={(e) => setTxForm((p) => ({ ...p, quantity: Number(e.target.value || 0) }))} />
-            </label>
-            {txCategory === 'adjustment' && (
-              <label className="text-sm font-medium">Direction
-                <select className={fieldCls} value={txForm.direction} onChange={(e) => setTxForm((p) => ({ ...p, direction: e.target.value as 'IN' | 'OUT' }))}>
-                  <option value="IN">IN</option>
-                  <option value="OUT">OUT</option>
-                </select>
-              </label>
-            )}
-          </div>
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
             <div className="flex items-center gap-2">
               {(['adjustment', 'paid', 'sales', 'damage'] as TxCategory[]).map((key) => (
                 <button
                   key={key}
                   type="button"
-                  onClick={() => setTxCategory(key)}
-                  className={`rounded-lg px-3 py-2 text-sm ${txCategory === key ? 'bg-primary-600 text-white' : 'border border-slate-300'}`}
+                  onClick={() => {
+                    setTxCategory(key);
+                    void loadTransactions(key);
+                  }}
+                  className={`rounded-lg px-3 py-2 text-sm ${txCategory === key ? 'bg-primary-600 text-white' : 'border border-slate-300 dark:border-slate-700'}`}
                 >
                   {txLabel[key]}
                 </button>
               ))}
             </div>
             <div className="flex items-center gap-2">
-              <button type="button" onClick={() => void createTransaction()} className="rounded-lg bg-primary-600 px-3 py-2 text-sm text-white">Post</button>
-              <button type="button" onClick={loadTransactions} className="rounded-lg border px-3 py-2 text-sm">Display</button>
+              <button type="button" onClick={() => void loadTransactions()} className="rounded-lg border px-3 py-2 text-sm">Display</button>
             </div>
           </div>
           <DataTable data={filteredTransactions} columns={txColumns} isLoading={loading} searchPlaceholder="Search transactions..." />

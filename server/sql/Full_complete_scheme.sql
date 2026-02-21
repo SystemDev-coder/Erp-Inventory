@@ -420,19 +420,29 @@ PRIMARY KEY (wh_id, item_id)
 
 -- Inventory transactions (PostgreSQL syntax)
 CREATE TABLE IF NOT EXISTS ims.inventory_transaction (
-    transaction_id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    product_id BIGINT NOT NULL,
-    transaction_type ENUM('IN','OUT','ADJUSTMENT') NOT NULL,
-    quantity DECIMAL(10,2) NOT NULL,
-    unit_cost DECIMAL(12,2) NULL,
-    total_cost DECIMAL(14,2) GENERATED ALWAYS AS (quantity * unit_cost) STORED,
-    reference_no VARCHAR(50) NULL,
-    transaction_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    created_by BIGINT NOT NULL,
-    notes TEXT NULL,
-    status ENUM('POSTED','PENDING','CANCELLED') DEFAULT 'POSTED',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    transaction_id BIGSERIAL PRIMARY KEY,
+    branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    store_id BIGINT REFERENCES ims.stores(store_id) ON UPDATE CASCADE ON DELETE SET NULL,
+    product_id BIGINT NOT NULL REFERENCES ims.items(item_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    item_id BIGINT REFERENCES ims.items(item_id) ON UPDATE CASCADE ON DELETE SET NULL,
+    transaction_type VARCHAR(20) NOT NULL,
+    direction VARCHAR(3),
+    quantity NUMERIC(10,2) NOT NULL CHECK (quantity > 0),
+    unit_cost NUMERIC(12,2),
+    total_cost NUMERIC(14,2) GENERATED ALWAYS AS (quantity * COALESCE(unit_cost, 0)) STORED,
+    reference_no VARCHAR(50),
+    transaction_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by BIGINT REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE SET NULL,
+    notes TEXT,
+    status VARCHAR(20) NOT NULL DEFAULT 'POSTED',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_inventory_transaction_type
+      CHECK (UPPER(transaction_type) IN ('IN', 'OUT', 'ADJUSTMENT', 'PAID', 'SALES', 'DAMAGE')),
+    CONSTRAINT chk_inventory_transaction_direction
+      CHECK (direction IS NULL OR UPPER(direction) IN ('IN', 'OUT')),
+    CONSTRAINT chk_inventory_transaction_status
+      CHECK (UPPER(status) IN ('POSTED', 'PENDING', 'CANCELLED'))
 );
 
 
@@ -471,17 +481,92 @@ note        TEXT
 );
 
 CREATE TABLE IF NOT EXISTS ims.stock_adjustment (
-    adjustment_id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    item_id BIGINT NOT NULL,
-    adjustment_type ENUM('INCREASE','DECREASE') NOT NULL,
-    quantity DECIMAL(10,2) NOT NULL,
+    adjustment_id BIGSERIAL PRIMARY KEY,
+    item_id BIGINT NOT NULL REFERENCES ims.items(item_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    adjustment_type VARCHAR(20) NOT NULL,
+    quantity NUMERIC(10,2) NOT NULL CHECK (quantity > 0),
     reason VARCHAR(255) NOT NULL,
-    adjustment_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    created_by BIGINT NOT NULL,
-    status ENUM('POSTED','CANCELLED') DEFAULT 'POSTED',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    adjustment_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by BIGINT NOT NULL REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    status VARCHAR(20) NOT NULL DEFAULT 'POSTED',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_stock_adjustment_type CHECK (UPPER(adjustment_type) IN ('INCREASE', 'DECREASE')),
+    CONSTRAINT chk_stock_adjustment_status CHECK (UPPER(status) IN ('POSTED', 'CANCELLED'))
 );
+
+DO $$
+BEGIN
+  -- keep existing databases compatible with the stock_adjustment shape
+  ALTER TABLE ims.stock_adjustment
+    ADD COLUMN IF NOT EXISTS item_id BIGINT,
+    ADD COLUMN IF NOT EXISTS adjustment_type VARCHAR(20),
+    ADD COLUMN IF NOT EXISTS quantity NUMERIC(10,2),
+    ADD COLUMN IF NOT EXISTS reason VARCHAR(255),
+    ADD COLUMN IF NOT EXISTS adjustment_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ADD COLUMN IF NOT EXISTS created_by BIGINT,
+    ADD COLUMN IF NOT EXISTS status VARCHAR(20),
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+  ALTER TABLE ims.stock_adjustment
+    ALTER COLUMN item_id TYPE BIGINT,
+    ALTER COLUMN adjustment_type TYPE VARCHAR(20),
+    ALTER COLUMN quantity TYPE NUMERIC(10,2),
+    ALTER COLUMN reason TYPE VARCHAR(255),
+    ALTER COLUMN adjustment_date SET DEFAULT NOW(),
+    ALTER COLUMN created_by TYPE BIGINT,
+    ALTER COLUMN status TYPE VARCHAR(20),
+    ALTER COLUMN created_at SET DEFAULT NOW(),
+    ALTER COLUMN updated_at SET DEFAULT NOW();
+
+  UPDATE ims.stock_adjustment
+     SET status = 'POSTED'
+   WHERE COALESCE(NULLIF(status, ''), 'POSTED') NOT IN ('POSTED', 'CANCELLED');
+
+  ALTER TABLE ims.stock_adjustment
+    DROP CONSTRAINT IF EXISTS chk_stock_adjustment_type;
+  ALTER TABLE ims.stock_adjustment
+    ADD CONSTRAINT chk_stock_adjustment_type
+    CHECK (UPPER(adjustment_type) IN ('INCREASE', 'DECREASE'));
+  ALTER TABLE ims.stock_adjustment
+    DROP CONSTRAINT IF EXISTS chk_stock_adjustment_status;
+  ALTER TABLE ims.stock_adjustment
+    ADD CONSTRAINT chk_stock_adjustment_status
+    CHECK (UPPER(status) IN ('POSTED', 'CANCELLED'));
+
+  IF NOT EXISTS (SELECT 1 FROM ims.stock_adjustment WHERE item_id IS NULL) THEN
+    ALTER TABLE ims.stock_adjustment ALTER COLUMN item_id SET NOT NULL;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM ims.stock_adjustment WHERE adjustment_type IS NULL) THEN
+    ALTER TABLE ims.stock_adjustment ALTER COLUMN adjustment_type SET NOT NULL;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM ims.stock_adjustment WHERE quantity IS NULL) THEN
+    ALTER TABLE ims.stock_adjustment ALTER COLUMN quantity SET NOT NULL;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM ims.stock_adjustment WHERE reason IS NULL) THEN
+    ALTER TABLE ims.stock_adjustment ALTER COLUMN reason SET NOT NULL;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM ims.stock_adjustment WHERE created_by IS NULL) THEN
+    ALTER TABLE ims.stock_adjustment ALTER COLUMN created_by SET NOT NULL;
+  END IF;
+END $$;
+
+CREATE OR REPLACE FUNCTION ims.fn_stock_adjustment_touch_updated_at()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_stock_adjustment_touch_updated_at ON ims.stock_adjustment;
+CREATE TRIGGER trg_stock_adjustment_touch_updated_at
+BEFORE UPDATE ON ims.stock_adjustment
+FOR EACH ROW
+EXECUTE FUNCTION ims.fn_stock_adjustment_touch_updated_at();
 CREATE TABLE IF NOT EXISTS ims.sale_items (
 sale_item_id BIGSERIAL PRIMARY KEY,
 branch_id    BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
@@ -3140,4 +3225,3 @@ SELECT '2. Get user menu: SELECT ims.fn_get_user_menu(1);' as example;
 SELECT '3. Get user permissions: SELECT * FROM ims.fn_get_user_permissions(1);' as example;
 SELECT '4. Get role permissions: SELECT * FROM ims.sp_role_permissions(''SALES'');' as example;
 SELECT '========================================' as status;
-$patch

@@ -65,6 +65,10 @@ export interface StockAdjustmentRow {
   branch_name: string;
   wh_id: number | null;
   wh_name: string | null;
+  item_id?: number;
+  adjustment_type?: 'INCREASE' | 'DECREASE';
+  quantity?: number;
+  status?: 'POSTED' | 'CANCELLED';
   reason: string;
   note: string | null;
   created_by: string;
@@ -75,13 +79,13 @@ export interface StockAdjustmentRow {
 }
 
 export interface InventoryTransactionRow {
-  transaction_id: number;
+  transaction_id: number | string;
   branch_id: number;
   branch_name?: string;
   store_id: number | null;
   store_name?: string | null;
-  item_id: number;
-  item_name: string;
+  item_id: number | null;
+  item_name: string | null;
   transaction_type: 'ADJUSTMENT' | 'PAID' | 'SALES' | 'DAMAGE';
   direction: 'IN' | 'OUT';
   quantity: number;
@@ -127,6 +131,23 @@ export const inventoryService = {
       ...payload,
       itemId: payload.itemId ?? payload.productId,
     });
+  },
+  updateAdjustment(id: number, payload: {
+    itemId?: number;
+    adjustmentType?: 'INCREASE' | 'DECREASE';
+    quantity?: number;
+    reason?: string;
+    status?: 'POSTED' | 'CANCELLED';
+    qty?: number;
+  }) {
+    return apiClient.put(`/api/inventory/adjustments/${id}`, {
+      ...payload,
+      itemId: payload.itemId,
+      productId: payload.itemId,
+    });
+  },
+  deleteAdjustment(id: number) {
+    return apiClient.delete(`/api/inventory/adjustments/${id}`);
   },
   recount(payload: any) {
     return apiClient.post(`/api/inventory/recounts`, {
