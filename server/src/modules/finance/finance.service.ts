@@ -616,7 +616,7 @@ export const financeService = {
     }
 
     return queryMany(
-      `SELECT b.*, e.name AS expense_name
+      `SELECT b.*, e.name AS expense_name, b.fixed_amount AS amount_limit
          FROM ims.expense_budgets b
          JOIN ims.expense e ON e.exp_id = b.exp_id
         ${where}
@@ -628,6 +628,10 @@ export const financeService = {
 
   async createExpenseBudget(input: ExpenseBudgetInput, scope: BranchScope, userId: number) {
     const branchId = pickBranchForWrite(scope, input.branchId);
+    const amount = input.fixedAmount ?? input.amountLimit;
+    if (amount === undefined || amount <= 0) throw ApiError.badRequest('Amount must be greater than zero');
+    const expId = input.expId ?? input.expTypeId;
+    if (!expId) throw ApiError.badRequest('Expense is required');
     return queryOne(
       `INSERT INTO ims.expense_budgets
          (branch_id, exp_id, period_year, period_month, fixed_amount, note, user_id)
@@ -635,10 +639,10 @@ export const financeService = {
        RETURNING *`,
       [
         branchId,
-        input.expId,
+        expId,
         input.periodYear || null,
         input.periodMonth || null,
-        input.fixedAmount,
+        amount,
         input.note || null,
         userId,
       ]

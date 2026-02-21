@@ -46,10 +46,12 @@ export const expenseSchema = z.object({
 
 export const expenseBudgetSchema = z.object({
   branchId: z.coerce.number().int().positive().optional(),
-  expId: z.coerce.number().int().positive(),
+  expId: z.coerce.number().int().positive().optional(),
+  expTypeId: z.coerce.number().int().positive().optional(), // backward compat
   periodYear: z.coerce.number().int().min(2000).max(2100).optional(),
   periodMonth: z.coerce.number().int().min(1).max(12).optional(),
-  fixedAmount: z.coerce.number().positive(),
+  fixedAmount: z.coerce.number().positive().optional(),
+  amountLimit: z.coerce.number().positive().optional(), // backward compat
   note: z.string().optional().or(z.literal('')),
 });
 
