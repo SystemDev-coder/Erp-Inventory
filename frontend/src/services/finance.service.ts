@@ -62,39 +62,31 @@ export interface SupplierOutstandingPurchase {
 }
 
 export interface ExpenseCharge {
-  charge_id: number;
+  exp_ch_id: number;
   branch_id: number;
-  exp_id?: number | null;
-  exp_type_id?: number | null;
-  acc_id: number;
-  charge_date: string;
+  exp_id: number;
   amount: number;
+  exp_date: string;
   note?: string | null;
-  expense_type?: string | null;
-  account_name?: string | null;
+  exp_budget?: number | null;
+  expense_name?: string | null;
 }
 
 export interface ExpenseBudget {
   budget_id: number;
-  branch_id: number;
-  exp_type_id: number;
-  period_year: number;
-  period_month: number;
-  amount_limit: number;
+  exp_id: number;
+  fixed_amount: number;
   note?: string | null;
-  expense_type?: string | null;
+  expense_name?: string | null;
+  amount_limit?: number; // alias for UI
 }
 
 export interface Expense {
   exp_id: number;
   branch_id: number;
-  exp_type_id?: number | null;
-  amount: number;
-  exp_date: string;
-  note?: string | null;
-  expense_type?: string | null;
-  account_name?: string | null;
-  created_by?: string | null;
+  name: string;
+  created_at: string;
+  user_id: number;
 }
 
 export const financeService = {
@@ -213,7 +205,7 @@ export const financeService = {
     return apiClient.post<{ charge: ExpenseCharge }>(API.FINANCE.EXPENSE_CHARGES, {
       branchId: payload.branch_id,
       expId: payload.exp_id,
-      expTypeId: payload.exp_type_id,
+      expBudgetId: undefined,
       accId: payload.acc_id,
       amount: payload.amount,
       note: payload.note,
@@ -222,23 +214,29 @@ export const financeService = {
 
   // Expense budgets
   async listExpenseBudgets(branchId?: number) {
-    const qs = branchId ? `?branchId=${branchId}` : '';
-    return apiClient.get<{ budgets: ExpenseBudget[] }>(`${API.FINANCE.EXPENSE_BUDGETS}${qs}`);
+    return apiClient.get<{ budgets: ExpenseBudget[] }>(`${API.FINANCE.EXPENSE_BUDGETS}`);
   },
-  async createExpenseBudget(payload: { branch_id?: number; exp_type_id: number; period_year: number; period_month: number; amount_limit: number; note?: string }) {
+  async createExpenseBudget(payload: { branch_id?: number; exp_id: number; fixed_amount?: number; amount_limit?: number; note?: string }) {
     return apiClient.post<{ budget: ExpenseBudget }>(API.FINANCE.EXPENSE_BUDGETS, {
       branchId: payload.branch_id,
-      expTypeId: payload.exp_type_id,
-      periodYear: payload.period_year,
-      periodMonth: payload.period_month,
-      amountLimit: payload.amount_limit,
+      expId: payload.exp_id,
+      fixedAmount: payload.fixed_amount ?? payload.amount_limit,
+      note: payload.note,
+    });
+  },
+
+  async chargeExpenseBudget(payload: { budget_id: number; acc_id: number; amount?: number; pay_date?: string; note?: string }) {
+    return apiClient.post<{ result: { exp_ch_id: number; exp_payment_id: number } }>(`${API.FINANCE.EXPENSE_BUDGETS}/charge`, {
+      budgetId: payload.budget_id,
+      accId: payload.acc_id,
+      amount: payload.amount,
+      payDate: payload.pay_date,
       note: payload.note,
     });
   },
 
   // Expenses
   async listExpenses(branchId?: number) {
-    const qs = branchId ? `?branchId=${branchId}` : '';
-    return apiClient.get<{ expenses: Expense[] }>(`${API.FINANCE.EXPENSES}${qs}`);
+    return apiClient.get<{ expenses: Expense[] }>(`${API.FINANCE.EXPENSES}`);
   },
 };
