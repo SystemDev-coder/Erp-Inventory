@@ -372,7 +372,7 @@ const createAdjustmentEntry = async (
   columns.push('item_id', 'adjustment_type', 'quantity', 'reason', 'created_by', 'status');
   values.push(
     payload.productId,
-    payload.qty >= 0 ? 'increase' : 'decrease',
+    payload.qty >= 0 ? 'INCREASE' : 'DECREASE',
     Math.abs(payload.qty),
     payload.reason,
     payload.userId,

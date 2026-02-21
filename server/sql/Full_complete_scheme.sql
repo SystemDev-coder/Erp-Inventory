@@ -527,6 +527,8 @@ BEGIN
   ALTER TABLE ims.stock_adjustment
     DROP CONSTRAINT IF EXISTS chk_stock_adjustment_type;
   ALTER TABLE ims.stock_adjustment
+    DROP CONSTRAINT IF EXISTS stock_adjustment_adjustment_type_check;
+  ALTER TABLE ims.stock_adjustment
     ADD CONSTRAINT chk_stock_adjustment_type
     CHECK (UPPER(adjustment_type) IN ('INCREASE', 'DECREASE'));
   ALTER TABLE ims.stock_adjustment
