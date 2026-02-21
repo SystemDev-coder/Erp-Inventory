@@ -83,7 +83,13 @@ export const taxUpdateSchema = taxCreateSchema.partial();
 
 export const productCreateSchema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(160),
-  barcode: z.string().trim().max(80).optional().or(z.literal('')),
+  barcode: z
+    .string()
+    .trim()
+    .max(80)
+    .or(z.literal(''))
+    .nullable()
+    .optional(),
   storeId: nullablePositiveInt.optional(),
   quantity: z.coerce.number().nonnegative().optional(),
   stockAlert: z.coerce.number().nonnegative().default(5),
