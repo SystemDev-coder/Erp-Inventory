@@ -820,18 +820,15 @@ CREATE TABLE IF NOT EXISTS ims.expense (
     user_id     BIGINT NOT NULL REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE RESTRICT
 );
 
-CREATE TABLE IF NOT EXISTS ims.expense_budgets (
+DROP TABLE IF EXISTS ims.expense_budgets CASCADE;
+CREATE TABLE ims.expense_budgets (
     budget_id    BIGSERIAL PRIMARY KEY,
-    branch_id    BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
     exp_id       BIGINT NOT NULL REFERENCES ims.expense(exp_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-    period_year  INT NOT NULL DEFAULT EXTRACT(YEAR FROM NOW())::INT,
-    period_month INT NOT NULL DEFAULT EXTRACT(MONTH FROM NOW())::INT CHECK (period_month BETWEEN 1 AND 12),
     fixed_amount NUMERIC(14,2) NOT NULL CHECK (fixed_amount > 0),
     note         TEXT,
-    user_id      BIGINT NOT NULL REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-    CONSTRAINT uq_expense_budget UNIQUE (branch_id, exp_id, period_year, period_month)
+    user_id      BIGINT NOT NULL REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE RESTRICT
 );
-CREATE INDEX IF NOT EXISTS idx_expense_budgets_branch_period ON ims.expense_budgets(branch_id, period_year, period_month);
+CREATE INDEX IF NOT EXISTS idx_expense_budgets_exp ON ims.expense_budgets(exp_id);
 
 CREATE TABLE IF NOT EXISTS ims.expense_charge (
     exp_ch_id   BIGSERIAL PRIMARY KEY,
@@ -881,6 +878,9 @@ BEGIN
       RAISE EXCEPTION 'Amount must be > 0';
     END IF;
 
+    -- derive branch from account
+    SELECT branch_id INTO STRICT v_budget.branch_id FROM ims.accounts WHERE acc_id = p_acc_id;
+
     INSERT INTO ims.expense_charge
         (branch_id, exp_id, amount, exp_date, note, exp_budget, user_id)
     VALUES
@@ -894,7 +894,7 @@ BEGIN
     RETURNING exp_payment_id INTO exp_payment_id;
 
     -- reduce account balance
-    UPDATE ims.accounts SET balance = balance - v_amount WHERE acc_id = p_acc_id AND branch_id = v_budget.branch_id;
+    UPDATE ims.accounts SET balance = balance - v_amount WHERE acc_id = p_acc_id;
 
     RETURN;
 END;

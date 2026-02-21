@@ -604,44 +604,29 @@ export const financeService = {
 
   /* Expense budgets */
   async listExpenseBudgets(scope: BranchScope, branchId?: number) {
-    const params: any[] = [];
-    let where = 'WHERE 1=1';
-    if (branchId) {
-      assertBranchAccess(scope, branchId);
-      params.push(branchId);
-      where += ` AND b.branch_id = $${params.length}`;
-    } else if (!scope.isAdmin) {
-      params.push(scope.branchIds);
-      where += ` AND b.branch_id = ANY($${params.length})`;
-    }
-
     return queryMany(
       `SELECT b.*, e.name AS expense_name, b.fixed_amount AS amount_limit
          FROM ims.expense_budgets b
          JOIN ims.expense e ON e.exp_id = b.exp_id
-        ${where}
-        ORDER BY b.period_year DESC, b.period_month DESC, e.name
+        ORDER BY b.budget_id DESC
         LIMIT 200`,
-      params
+      []
     );
   },
 
   async createExpenseBudget(input: ExpenseBudgetInput, scope: BranchScope, userId: number) {
-    const branchId = pickBranchForWrite(scope, input.branchId);
+    pickBranchForWrite(scope, input.branchId); // permission check only
     const amount = input.fixedAmount ?? input.amountLimit;
     if (amount === undefined || amount <= 0) throw ApiError.badRequest('Amount must be greater than zero');
     const expId = input.expId ?? input.expTypeId;
     if (!expId) throw ApiError.badRequest('Expense is required');
     return queryOne(
       `INSERT INTO ims.expense_budgets
-         (branch_id, exp_id, period_year, period_month, fixed_amount, note, user_id)
-       VALUES ($1, $2, COALESCE($3, EXTRACT(YEAR FROM NOW())::INT), COALESCE($4, EXTRACT(MONTH FROM NOW())::INT), $5, $6, $7)
+         (exp_id, fixed_amount, note, user_id)
+       VALUES ($1, $2, $3, $4)
        RETURNING *`,
       [
-        branchId,
         expId,
-        input.periodYear || null,
-        input.periodMonth || null,
         amount,
         input.note || null,
         userId,
