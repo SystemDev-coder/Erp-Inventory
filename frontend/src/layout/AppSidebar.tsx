@@ -167,7 +167,7 @@ const AppSidebar: React.FC = () => {
 
   return (
     <aside
-      className={`fixed mt-16 flex flex-col lg:mt-0 top-0 left-0 bg-brand-800 text-slate-50 border-r border-brand-900/60 h-screen transition-all duration-300 ease-in-out z-50 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.55)]
+      className={`fixed mt-16 flex flex-col lg:mt-0 top-0 left-0 bg-brand-900 text-slate-50 border-r border-brand-900/60 h-screen transition-all duration-300 ease-in-out z-50 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.55)]
         ${showExpanded ? 'w-[280px]' : 'w-[80px]'}
         ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'}
         lg:translate-x-0`}
@@ -180,7 +180,7 @@ const AppSidebar: React.FC = () => {
         }`}
       >
         <Link to="/" className="flex items-center gap-3 min-w-0">
-          <div className="w-9 h-9 shrink-0 bg-brand-500 rounded-lg flex items-center justify-center shadow-lg shadow-brand-900/40">
+          <div className="w-9 h-9 shrink-0 bg-brand-500 rounded-lg flex items-center justify-center shadow-lg shadow-brand-950/30">
             <ShoppingCart className="w-5 h-5 text-white" />
           </div>
           {showExpanded && (
@@ -223,8 +223,8 @@ const AppSidebar: React.FC = () => {
                       onClick={() => toggleGroup(item.id)}
                       className={`flex items-center w-full rounded-lg px-3 py-2.5 transition-colors ${
                         hasActiveSub
-                          ? 'bg-brand-700/70 text-white'
-                          : 'text-slate-100 hover:bg-brand-900/50'
+                          ? 'bg-brand-800/70 text-white'
+                          : 'text-slate-100 hover:bg-brand-950/50'
                       } ${!showExpanded ? 'lg:justify-center px-0' : ''}`}
                     >
                       <span className={`flex items-center min-w-0 flex-1 ${!showExpanded ? 'lg:justify-center' : 'gap-3'}`}>
@@ -244,7 +244,7 @@ const AppSidebar: React.FC = () => {
                       )}
                     </button>
                     {showExpanded && groupOpen && (
-                      <ul className="ml-5 mt-2 space-y-1 border-l border-brand-900/40 pl-3">
+                      <ul className="ml-5 mt-2 space-y-1 border-l border-brand-950/40 pl-3">
                         {(item.subItems || []).map((sub) => {
                           const subActive = isActive(sub.to, sub.exact);
                           return (
@@ -253,8 +253,8 @@ const AppSidebar: React.FC = () => {
                                 to={sub.to}
                                 className={`block rounded-lg px-3 py-2 text-sm transition-colors ${
                                   subActive
-                                    ? 'bg-brand-700/70 text-white'
-                                    : 'text-slate-200 hover:bg-brand-900/50'
+                                    ? 'bg-brand-800/70 text-white'
+                                    : 'text-slate-200 hover:bg-brand-950/50'
                                 }`}
                               >
                                 {sub.label}
@@ -274,8 +274,8 @@ const AppSidebar: React.FC = () => {
                     to={item.to || '/'}
                     className={`flex items-center w-full rounded-lg transition-colors ${
                       active
-                        ? 'bg-brand-700/70 text-white'
-                        : 'text-slate-100 hover:bg-brand-900/50'
+                        ? 'bg-brand-800/70 text-white'
+                        : 'text-slate-100 hover:bg-brand-950/50'
                     } ${!showExpanded ? 'lg:justify-center px-0' : 'px-3'}`}
                   >
                     <span className={`flex items-center min-w-0 flex-1 py-2.5 ${!showExpanded ? 'lg:justify-center' : 'gap-3'}`}>

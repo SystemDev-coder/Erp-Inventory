@@ -42,18 +42,19 @@ layer(base);
   --color-black: #0f172a;
 
   /* Primary - Navy / Royal */
-  --color-primary-25: #eef4ff;
-  --color-primary-50: #e2ecff;
-  --color-primary-100: #c7d9ff;
-  --color-primary-200: #a3c1ff;
-  --color-primary-300: #7aa6ff;
-  --color-primary-400: #4e8cff;
-  --color-primary-500: #2f76f2;
-  --color-primary-600: #1f60d6;
-  --color-primary-700: #184cac;
-  --color-primary-800: #123b85;
-  --color-primary-900: #0d2f66;
-  --color-primary-950: #081e45;
+  /* Professional minimal palette: deep slate + steel blue */
+  --color-primary-25: #f2f6ff;
+  --color-primary-50: #e6eeff;
+  --color-primary-100: #cddcff;
+  --color-primary-200: #9cb8f7;
+  --color-primary-300: #6d95e8;
+  --color-primary-400: #4f78d4;
+  --color-primary-500: #335fae;
+  --color-primary-600: #274d90;
+  --color-primary-700: #1f3e75;
+  --color-primary-800: #192f5a;
+  --color-primary-900: #12233f;
+  --color-primary-950: #0c182d;
 
   /* Brand - mirrors primary */
   --color-brand-25: var(--color-primary-25);
@@ -155,12 +156,12 @@ layer(base);
 }
 
 body {
-  background: linear-gradient(145deg, #0f1e3d 0%, #0c274f 40%, #0b1e45 100%);
+  background: linear-gradient(160deg, #0f1624 0%, #0f1f33 45%, #0f1624 100%);
   color: #e2e8f0;
 }
 
 .dark body {
-  background: linear-gradient(155deg, #0a152f 0%, #0b1d44 50%, #0a1635 100%);
+  background: linear-gradient(160deg, #0b111d 0%, #0b1930 50%, #0b111d 100%);
   color: #e2e8f0;
 }
 
