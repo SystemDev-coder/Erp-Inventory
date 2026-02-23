@@ -69,10 +69,10 @@ export default function SignInForm() {
               />
               <div>
                 <h1 className="font-semibold text-slate-800 text-title-sm dark:text-slate-100 sm:text-title-md">
-                  Welcome to {BRAND.NAME}
+                  Sign in
                 </h1>
                 <p className="text-sm text-slate-600 dark:text-slate-400">
-                  Sign in to continue to your workspace.
+                  Access your workspace.
                 </p>
               </div>
             </div>
