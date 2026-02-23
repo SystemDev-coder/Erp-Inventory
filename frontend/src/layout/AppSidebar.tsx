@@ -83,63 +83,84 @@ const AppSidebar: React.FC = () => {
     [permissions]
   );
 
-  const items = useMemo<SidebarItem[]>(
-    () => [
-      { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: '/', exact: true, permissionAny: ['dashboard.view'] },
-      { id: 'customers', label: 'Customers', icon: Users, to: '/customers', permissionAny: ['customers.view'] },
+  const groups = useMemo(() => {
+    const base: { title: string; items: SidebarItem[] }[] = [
       {
-        id: 'stockManagement',
-        label: 'Stock Management',
-        icon: Store,
-        permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'],
-        expandable: true,
-        subItems: [
-          { id: 'stock-items', label: 'Items', to: '/stock-management/items', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
-          { id: 'adjust-items', label: 'Adjust Items', to: '/stock-management/adjust-items', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
+        title: 'Main',
+        items: [
+          { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: '/', exact: true, permissionAny: ['dashboard.view'] },
+          { id: 'customers', label: 'Customers', icon: Users, to: '/customers', permissionAny: ['customers.view'] },
         ],
       },
-      { id: 'return', label: 'Return', icon: FileText, to: '/return', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
-      { id: 'purchases', label: 'Purchases', icon: ShoppingBag, to: '/purchases', permissionAny: ['purchases.view', 'suppliers.view'] },
       {
-        id: 'sales',
-        label: 'Sales',
-        icon: ReceiptText,
-        to: '/sales',
-        exact: true,
-        permissionAny: ['sales.view'],
-      },
-      {
-        id: 'finance',
-        label: 'Finance',
-        icon: DollarSign,
-        to: '/finance',
-        exact: true,
-        expandable: true,
-        permissionAny: ['finance.reports', 'accounts.view', 'expenses.view', 'ledgers.view'],
-        subItems: [
-          { id: 'finance-accounts', label: 'Accounts', to: '/finance/accounts', exact: true, permissionAny: ['accounts.view'] },
-          { id: 'finance-receipts', label: 'Receipts', to: '/finance/receipts', exact: true, permissionAny: ['accounts.view', 'sales.view', 'purchases.view'] },
-          { id: 'finance-expenses', label: 'Expenses', to: '/finance/expense', exact: true, permissionAny: ['expenses.view'] },
-          { id: 'finance-payroll', label: 'Payroll', to: '/finance/payroll', exact: true, permissionAny: ['payroll_lines.view', 'payroll_runs.view'] },
+        title: 'Operations',
+        items: [
+          {
+            id: 'stockManagement',
+            label: 'Stock Management',
+            icon: Store,
+            permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'],
+            expandable: true,
+            subItems: [
+              { id: 'stock-items', label: 'Items', to: '/stock-management/items', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
+              { id: 'adjust-items', label: 'Adjust Items', to: '/stock-management/adjust-items', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
+            ],
+          },
+          { id: 'return', label: 'Return', icon: FileText, to: '/return', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
+          { id: 'purchases', label: 'Purchases', icon: ShoppingBag, to: '/purchases', permissionAny: ['purchases.view', 'suppliers.view'] },
+          { id: 'sales', label: 'Sales', icon: ReceiptText, to: '/sales', exact: true, permissionAny: ['sales.view'] },
         ],
       },
-      { id: 'hr', label: 'HR', icon: BriefcaseBusiness, to: '/employees/registration', permissionAny: ['employees.view'] },
-      { id: 'system', label: 'System', icon: Settings, to: '/system', permissionAny: ['users.view', 'roles.view', 'permissions.view', 'system.users.manage', 'system.roles.manage', 'system.permissions.manage'] },
-      { id: 'setting', label: 'Setting', icon: Cog, to: '/settings', permissionAny: ['system.settings'] },
-      { id: 'reports', label: 'Reports', icon: FileText, to: '/reports', permissionAny: ['reports.all'] },
-    ],
-    []
-  );
+      {
+        title: 'Finance',
+        items: [
+          {
+            id: 'finance',
+            label: 'Finance',
+            icon: DollarSign,
+            to: '/finance',
+            exact: true,
+            expandable: true,
+            permissionAny: ['finance.reports', 'accounts.view', 'expenses.view', 'ledgers.view'],
+            subItems: [
+              { id: 'finance-accounts', label: 'Accounts', to: '/finance/accounts', exact: true, permissionAny: ['accounts.view'] },
+              { id: 'finance-receipts', label: 'Receipts', to: '/finance/receipts', exact: true, permissionAny: ['accounts.view', 'sales.view', 'purchases.view'] },
+              { id: 'finance-expenses', label: 'Expenses', to: '/finance/expense', exact: true, permissionAny: ['expenses.view'] },
+              { id: 'finance-payroll', label: 'Payroll', to: '/finance/payroll', exact: true, permissionAny: ['payroll_lines.view', 'payroll_runs.view'] },
+            ],
+          },
+        ],
+      },
+      {
+        title: 'People',
+        items: [{ id: 'hr', label: 'HR', icon: BriefcaseBusiness, to: '/employees/registration', permissionAny: ['employees.view'] }],
+      },
+      {
+        title: 'System',
+        items: [
+          { id: 'system', label: 'System', icon: Settings, to: '/system', permissionAny: ['users.view', 'roles.view', 'permissions.view', 'system.users.manage', 'system.roles.manage', 'system.permissions.manage'] },
+          { id: 'setting', label: 'Setting', icon: Cog, to: '/settings', permissionAny: ['system.settings'] },
+          { id: 'reports', label: 'Reports', icon: FileText, to: '/reports', permissionAny: ['reports.all'] },
+        ],
+      },
+    ];
+    return base;
+  }, []);
 
-  const visibleItems = useMemo(
+  const visibleGroups = useMemo(
     () =>
-      items
-        .map((item) => ({
-          ...item,
-          subItems: (item.subItems || []).filter((sub) => hasAnyPerm(sub.permissionAny)),
+      groups
+        .map((group) => ({
+          ...group,
+          items: group.items
+            .map((item) => ({
+              ...item,
+              subItems: (item.subItems || []).filter((sub) => hasAnyPerm(sub.permissionAny)),
+            }))
+            .filter((item) => hasAnyPerm(item.permissionAny)),
         }))
-        .filter((item) => hasAnyPerm(item.permissionAny)),
-    [hasAnyPerm, items]
+        .filter((group) => group.items.length > 0),
+    [groups, hasAnyPerm]
   );
 
   const showExpanded = isExpanded || isHovered || isMobileOpen;
@@ -179,12 +200,20 @@ const AppSidebar: React.FC = () => {
       <div className="flex-1 overflow-y-auto sidebar-scrollbar">
         <nav className={`px-2 pb-4 ${showExpanded ? 'pt-3' : 'pt-4'}`}>
           <ul className="space-y-1">
-            {visibleItems.map((item) => {
-              const Icon = item.icon;
-              const hasSubs = Boolean(item.expandable && item.subItems && item.subItems.length > 0);
-              const active = item.to ? isActive(item.to, item.exact) : false;
+            {visibleGroups.map((group) => (
+              <li key={group.title} className="mt-2">
+                {showExpanded && (
+                  <div className="px-3 py-2 text-[11px] uppercase tracking-[0.08em] text-brand-100/70">
+                    {group.title}
+                  </div>
+                )}
+                <ul className="space-y-1">
+                  {group.items.map((item) => {
+                const Icon = item.icon;
+                const hasSubs = Boolean(item.expandable && item.subItems && item.subItems.length > 0);
+                const active = item.to ? isActive(item.to, item.exact) : false;
 
-              if (hasSubs) {
+                if (hasSubs) {
                 const groupOpen = Boolean(openGroups[item.id]);
                 const hasActiveSub = (item.subItems || []).some((sub) => isActive(sub.to, sub.exact));
                 return (
@@ -237,11 +266,11 @@ const AppSidebar: React.FC = () => {
                     )}
                   </li>
                 );
-              }
+                }
 
-              return (
-                <li key={item.id}>
-                  <Link
+                return (
+                  <li key={item.id}>
+                    <Link
                     to={item.to || '/'}
                     className={`flex items-center w-full rounded-lg transition-colors ${
                       active
@@ -255,10 +284,13 @@ const AppSidebar: React.FC = () => {
                       </span>
                       {showExpanded && <span className="text-sm font-medium truncate">{item.label}</span>}
                     </span>
-                  </Link>
-                </li>
-              );
-            })}
+                    </Link>
+                  </li>
+                );
+              })}
+                </ul>
+              </li>
+            ))}
           </ul>
         </nav>
       </div>
