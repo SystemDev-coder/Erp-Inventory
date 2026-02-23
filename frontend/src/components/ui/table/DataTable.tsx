@@ -153,7 +153,7 @@ export function DataTable<TData>({
                         placeholder={searchPlaceholder}
                         value={globalFilter ?? ''}
                         onChange={(e) => setGlobalFilter(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-slate-800 dark:border-slate-700 dark:text-slate-100 transition-all shadow-sm hover:border-slate-300"
+                        className="w-full pl-10 pr-4 py-2.5 text-sm border border-brand-800/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-brand-900/60 text-slate-100 transition-all shadow-sm hover:border-brand-600/50"
                     />
                 </div>
 
@@ -162,7 +162,7 @@ export function DataTable<TData>({
                     <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
                         <ActionDropdown
                             trigger={
-                                <button className="p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 rounded-xl transition-colors border border-slate-200 dark:border-slate-700">
+                                <button className="p-2 text-slate-100 hover:bg-brand-800/60 rounded-xl transition-colors border border-brand-800/60 bg-brand-900/70">
                                     <Settings2 className="w-4 h-4" />
                                 </button>
                             }
@@ -200,19 +200,19 @@ export function DataTable<TData>({
             {/* Table */}
             <div
                 className={clsx(
-                    'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-md overflow-hidden',
+                    'bg-brand-950 border border-brand-900/60 rounded-2xl shadow-[0_10px_30px_-18px_rgba(0,0,0,0.7)] overflow-hidden',
                     className
                 )}
             >
                 <div className="overflow-x-auto custom-scrollbar">
                     <table className="w-full text-left border-separate border-spacing-0">
-                        <thead className={clsx('bg-slate-900 text-white', headerClassName)}>
+                        <thead className={clsx('bg-brand-900 text-white', headerClassName)}>
                             {table.getHeaderGroups().map((headerGroup) => (
                                 <tr key={headerGroup.id}>
                                     {headerGroup.headers.map((header) => (
                                         <th
                                             key={header.id}
-                                            className="px-6 py-4 text-xs font-bold uppercase tracking-wider border-b border-slate-800 first:rounded-tl-2xl last:rounded-tr-2xl"
+                                            className="px-6 py-4 text-xs font-bold uppercase tracking-wider border-b border-brand-800 first:rounded-tl-2xl last:rounded-tr-2xl"
                                         >
                                             {header.isPlaceholder ? null : (
                                                 <div
@@ -242,13 +242,13 @@ export function DataTable<TData>({
                                 </tr>
                             ))}
                         </thead>
-                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                        <tbody className="divide-y divide-brand-900/60">
                             {isLoading ? (
                                 Array.from({ length: 5 }).map((_, i) => (
                                     <tr key={i} className="animate-pulse">
                                         {columnsWithActions.map((_, j) => (
                                             <td key={j} className="px-6 py-4">
-                                                <div className="h-4 bg-slate-100 dark:bg-slate-800 rounded-md w-3/4"></div>
+                                                <div className="h-4 bg-brand-900/50 rounded-md w-3/4"></div>
                                             </td>
                                         ))}
                                     </tr>
@@ -281,15 +281,15 @@ export function DataTable<TData>({
                                 table.getRowModel().rows.map((row) => (
                                     <tr
                                         key={row.id}
-                                        className={clsx(
-                                            'hover:bg-slate-50/80 dark:hover:bg-slate-800/30 transition-colors',
+                                            className={clsx(
+                                            'hover:bg-brand-900/40 transition-colors',
                                             rowHoverClassName
                                         )}
                                     >
                                         {row.getVisibleCells().map((cell) => (
                                             <td
                                                 key={cell.id}
-                                                className="px-6 py-4 text-sm text-slate-700 dark:text-slate-300"
+                                                className="px-6 py-4 text-sm text-slate-200"
                                             >
                                                 {flexRender(cell.column.columnDef.cell, cell.getContext())}
                                             </td>
@@ -305,13 +305,13 @@ export function DataTable<TData>({
             {/* Pagination */}
             <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">
                 <div className="flex items-center gap-3">
-                    <span className="text-sm font-medium text-slate-500">
+                    <span className="text-sm font-medium text-slate-200">
                         Show
                     </span>
                     <select
                         value={table.getState().pagination.pageSize}
                         onChange={(e) => table.setPageSize(Number(e.target.value))}
-                        className="px-2 py-1.5 text-sm font-bold border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-100"
+                        className="px-2 py-1.5 text-sm font-bold border border-brand-800/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 bg-brand-950 text-slate-100"
                     >
                         {[10, 25, 50, 100].map((pageSize) => (
                             <option key={pageSize} value={pageSize}>
@@ -319,28 +319,28 @@ export function DataTable<TData>({
                             </option>
                         ))}
                     </select>
-                    <span className="text-sm font-medium text-slate-500">
+                    <span className="text-sm font-medium text-slate-200">
                         records
                     </span>
                 </div>
 
                 <div className="flex items-center gap-6">
-                    <span className="text-sm font-bold text-slate-500">
-                        Page <span className="text-slate-900 dark:text-slate-100">{table.getState().pagination.pageIndex + 1}</span> of{' '}
-                        <span className="text-slate-900 dark:text-slate-100">{table.getPageCount()}</span>
+                    <span className="text-sm font-bold text-slate-200">
+                        Page <span className="text-white">{table.getState().pagination.pageIndex + 1}</span> of{' '}
+                        <span className="text-white">{table.getPageCount()}</span>
                     </span>
                     <div className="flex gap-2">
                         <button
                             onClick={() => table.previousPage()}
                             disabled={!table.getCanPreviousPage()}
-                            className="inline-flex items-center justify-center w-10 h-10 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                            className="inline-flex items-center justify-center w-10 h-10 rounded-xl border border-brand-800/60 hover:bg-brand-900/50 disabled:opacity-30 disabled:cursor-not-allowed transition-all bg-brand-950 text-slate-100"
                         >
                             <ChevronLeft className="w-5 h-5" />
                         </button>
                         <button
                             onClick={() => table.nextPage()}
                             disabled={!table.getCanNextPage()}
-                            className="inline-flex items-center justify-center w-10 h-10 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                            className="inline-flex items-center justify-center w-10 h-10 rounded-xl border border-brand-800/60 hover:bg-brand-900/50 disabled:opacity-30 disabled:cursor-not-allowed transition-all bg-brand-950 text-slate-100"
                         >
                             <ChevronRight className="w-5 h-5" />
                         </button>
