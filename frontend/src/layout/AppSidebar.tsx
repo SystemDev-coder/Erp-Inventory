@@ -146,7 +146,7 @@ const AppSidebar: React.FC = () => {
 
   return (
     <aside
-      className={`fixed mt-16 flex flex-col lg:mt-0 top-0 left-0 bg-slate-50 dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-100 h-screen transition-all duration-300 ease-in-out z-50 shadow-sm
+      className={`fixed mt-16 flex flex-col lg:mt-0 top-0 left-0 bg-brand-950 text-slate-50 border-r border-brand-900/60 h-screen transition-all duration-300 ease-in-out z-50 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.55)]
         ${showExpanded ? 'w-[280px]' : 'w-[80px]'}
         ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'}
         lg:translate-x-0`}
@@ -154,23 +154,23 @@ const AppSidebar: React.FC = () => {
       onMouseLeave={() => setIsHovered(false)}
     >
       <div
-        className={`py-5 flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 ${
+        className={`py-5 flex items-center gap-2 border-b border-brand-900/60 ${
           !showExpanded ? 'lg:justify-center px-2' : 'justify-between px-4'
         }`}
       >
         <Link to="/" className="flex items-center gap-3 min-w-0">
-          <div className="w-8 h-8 shrink-0 bg-primary-600 dark:bg-primary-500 rounded-lg flex items-center justify-center">
+          <div className="w-9 h-9 shrink-0 bg-brand-600 rounded-lg flex items-center justify-center shadow-lg shadow-brand-900/40">
             <ShoppingCart className="w-5 h-5 text-white" />
           </div>
           {showExpanded && (
-            <span className="text-lg font-semibold text-slate-800 dark:text-slate-100 truncate">KeydMaal MS</span>
+            <span className="text-lg font-semibold text-white truncate">KeydMaal MS</span>
           )}
         </Link>
 
         <button
           onClick={toggleSidebar}
           aria-label={showExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
-          className="hidden lg:flex shrink-0 p-1.5 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg transition-colors text-slate-500 dark:text-slate-400"
+          className="hidden lg:flex shrink-0 p-1.5 hover:bg-brand-900/70 rounded-lg transition-colors text-slate-200"
         >
           {showExpanded ? <ChevronLeft className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
         </button>
@@ -194,14 +194,14 @@ const AppSidebar: React.FC = () => {
                       onClick={() => toggleGroup(item.id)}
                       className={`flex items-center w-full rounded-lg px-3 py-2.5 transition-colors ${
                         hasActiveSub
-                          ? 'bg-primary-50 text-primary-700 dark:bg-primary-500/10 dark:text-primary-300'
-                          : 'text-slate-700 dark:text-slate-300 hover:bg-slate-200/80 dark:hover:bg-slate-800'
+                          ? 'bg-brand-800/60 text-white'
+                          : 'text-slate-100 hover:bg-brand-900/70'
                       } ${!showExpanded ? 'lg:justify-center px-0' : ''}`}
                     >
                       <span className={`flex items-center min-w-0 flex-1 ${!showExpanded ? 'lg:justify-center' : 'gap-3'}`}>
                         <span
                           className={`flex-shrink-0 ${
-                            hasActiveSub ? 'text-primary-600 dark:text-primary-300' : 'text-slate-600 dark:text-slate-400'
+                            hasActiveSub ? 'text-brand-100' : 'text-slate-300'
                           }`}
                         >
                           <Icon className="w-4 h-4" />
@@ -215,7 +215,7 @@ const AppSidebar: React.FC = () => {
                       )}
                     </button>
                     {showExpanded && groupOpen && (
-                      <ul className="ml-5 mt-2 space-y-1 border-l border-slate-300/50 pl-3 dark:border-slate-700/60">
+                      <ul className="ml-5 mt-2 space-y-1 border-l border-brand-900/60 pl-3">
                         {(item.subItems || []).map((sub) => {
                           const subActive = isActive(sub.to, sub.exact);
                           return (
@@ -224,8 +224,8 @@ const AppSidebar: React.FC = () => {
                                 to={sub.to}
                                 className={`block rounded-lg px-3 py-2 text-sm transition-colors ${
                                   subActive
-                                    ? 'bg-primary-50 text-primary-700 dark:bg-primary-500/10 dark:text-primary-300'
-                                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200/80 dark:hover:bg-slate-800'
+                                    ? 'bg-brand-800/60 text-white'
+                                    : 'text-slate-200 hover:bg-brand-900/70'
                                 }`}
                               >
                                 {sub.label}
@@ -245,12 +245,12 @@ const AppSidebar: React.FC = () => {
                     to={item.to || '/'}
                     className={`flex items-center w-full rounded-lg transition-colors ${
                       active
-                        ? 'bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300'
-                        : 'text-slate-700 dark:text-slate-300 hover:bg-slate-200/80 dark:hover:bg-slate-800'
+                        ? 'bg-brand-800/60 text-white'
+                        : 'text-slate-100 hover:bg-brand-900/70'
                     } ${!showExpanded ? 'lg:justify-center px-0' : 'px-3'}`}
                   >
                     <span className={`flex items-center min-w-0 flex-1 py-2.5 ${!showExpanded ? 'lg:justify-center' : 'gap-3'}`}>
-                      <span className="flex-shrink-0 text-slate-600 dark:text-slate-400">
+                      <span className="flex-shrink-0 text-slate-300">
                         <Icon className="w-4 h-4" />
                       </span>
                       {showExpanded && <span className="text-sm font-medium truncate">{item.label}</span>}
@@ -264,17 +264,17 @@ const AppSidebar: React.FC = () => {
       </div>
 
       {showExpanded && (
-        <div className="p-4 border-t border-slate-200 dark:border-slate-800 space-y-3">
+        <div className="p-4 border-t border-brand-900/60 space-y-3">
           <button
             onClick={() => {
               lock();
               navigate('/lock');
             }}
-            className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-brand-800 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-900/70"
           >
             <LockIcon className="h-4 w-4" /> Lock
           </button>
-          <p className="text-xs text-slate-500 dark:text-slate-400 text-center">
+          <p className="text-xs text-slate-300 text-center">
             (c) 2026 KeydMaal MS | All rights reserved
           </p>
         </div>

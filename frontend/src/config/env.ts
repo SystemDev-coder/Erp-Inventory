@@ -8,21 +8,34 @@ interface Env {
   ENV: string;
   isDev: boolean;
   isProd: boolean;
+  COMPANY_NAME: string;
+  COMPANY_AVATAR: string;
 }
 
 const getEnv = (): Env => {
   const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
   const env = import.meta.env.VITE_ENV || 'development';
+  const companyName = import.meta.env.VITE_COMPANY_NAME || 'KeydMaal MS';
+  const companyAvatar = import.meta.env.VITE_COMPANY_AVATAR || '';
 
   return {
     API_URL: apiUrl,
     ENV: env,
     isDev: env === 'development',
     isProd: env === 'production',
+    COMPANY_NAME: companyName,
+    COMPANY_AVATAR: companyAvatar,
   };
 };
 
 export const env = getEnv();
+
+export const BRAND = {
+  NAME: env.COMPANY_NAME,
+  AVATAR:
+    env.COMPANY_AVATAR ||
+    `https://ui-avatars.com/api/?name=${encodeURIComponent(env.COMPANY_NAME)}&background=0b1a4d&color=ffffff`,
+};
 
 // API Endpoints
 export const API = {

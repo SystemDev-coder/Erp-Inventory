@@ -6,6 +6,7 @@ import Input from "../form/input/InputField";
 import Checkbox from "../form/input/Checkbox";
 import Button from "../ui/button/Button";
 import { useAuth } from "../../context/AuthContext";
+import { BRAND } from "../../config/env";
 
 export default function SignInForm() {
   const [showPassword, setShowPassword] = useState(false);
@@ -55,12 +56,26 @@ export default function SignInForm() {
       <div className="flex flex-col justify-center flex-1 w-full max-w-md mx-auto">
         <div>
           <div className="mb-5 sm:mb-8">
-            <h1 className="mb-2 font-semibold text-slate-800 text-title-sm dark:text-slate-100 sm:text-title-md">
-              Sign In
-            </h1>
-            <p className="text-sm text-slate-600 dark:text-slate-400">
-              Enter your username or phone and password to sign in.
-            </p>
+            <div className="flex items-center gap-3 mb-3">
+              <img
+                src={BRAND.AVATAR}
+                alt={BRAND.NAME}
+                className="w-10 h-10 rounded-full border border-slate-200 dark:border-slate-700 object-cover"
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(
+                    BRAND.NAME
+                  )}&background=0b1a4d&color=ffffff`;
+                }}
+              />
+              <div>
+                <h1 className="font-semibold text-slate-800 text-title-sm dark:text-slate-100 sm:text-title-md">
+                  Welcome to {BRAND.NAME}
+                </h1>
+                <p className="text-sm text-slate-600 dark:text-slate-400">
+                  Sign in to continue to your workspace.
+                </p>
+              </div>
+            </div>
           </div>
           <div>
             <form onSubmit={handleSubmit}>

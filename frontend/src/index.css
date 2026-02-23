@@ -41,33 +41,33 @@ layer(base);
   --color-white: #ffffff;
   --color-black: #0f172a;
 
-  /* Primary - Indigo/Violet */
-  --color-primary-25: #faf5ff;
-  --color-primary-50: #f5f3ff;
-  --color-primary-100: #ede9fe;
-  --color-primary-200: #ddd6fe;
-  --color-primary-300: #c4b5fd;
-  --color-primary-400: #a78bfa;
-  --color-primary-500: #8b5cf6;
-  --color-primary-600: #7c3aed;
-  --color-primary-700: #6d28d9;
-  --color-primary-800: #5b21b6;
-  --color-primary-900: #4c1d95;
-  --color-primary-950: #2e1065;
+  /* Primary - Navy / Royal */
+  --color-primary-25: #f6f8ff;
+  --color-primary-50: #eef2ff;
+  --color-primary-100: #e0e7ff;
+  --color-primary-200: #c7d2fe;
+  --color-primary-300: #a5b4fc;
+  --color-primary-400: #7c90f8;
+  --color-primary-500: #4f6bed;
+  --color-primary-600: #3049d4;
+  --color-primary-700: #2438a8;
+  --color-primary-800: #1c2d86;
+  --color-primary-900: #142363;
+  --color-primary-950: #0b1a4d;
 
-  /* Brand - same as Primary (for buttons, links) */
-  --color-brand-25: #faf5ff;
-  --color-brand-50: #f5f3ff;
-  --color-brand-100: #ede9fe;
-  --color-brand-200: #ddd6fe;
-  --color-brand-300: #c4b5fd;
-  --color-brand-400: #a78bfa;
-  --color-brand-500: #8b5cf6;
-  --color-brand-600: #7c3aed;
-  --color-brand-700: #6d28d9;
-  --color-brand-800: #5b21b6;
-  --color-brand-900: #4c1d95;
-  --color-brand-950: #2e1065;
+  /* Brand - mirrors primary */
+  --color-brand-25: var(--color-primary-25);
+  --color-brand-50: var(--color-primary-50);
+  --color-brand-100: var(--color-primary-100);
+  --color-brand-200: var(--color-primary-200);
+  --color-brand-300: var(--color-primary-300);
+  --color-brand-400: var(--color-primary-400);
+  --color-brand-500: var(--color-primary-500);
+  --color-brand-600: var(--color-primary-600);
+  --color-brand-700: var(--color-primary-700);
+  --color-brand-800: var(--color-primary-800);
+  --color-brand-900: var(--color-primary-900);
+  --color-brand-950: var(--color-primary-950);
 
   /* Secondary - Slate */
   --color-slate-25: #fcfcfd;

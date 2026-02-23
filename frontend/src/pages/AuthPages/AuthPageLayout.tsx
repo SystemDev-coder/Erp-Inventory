@@ -2,12 +2,17 @@ import React from "react";
 import GridShape from "../../components/common/GridShape";
 import { Link } from "react-router";
 import ThemeTogglerTwo from "../../components/common/ThemeTogglerTwo";
+import { BRAND } from "../../config/env";
 
 export default function AuthLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const avatar =
+    BRAND.AVATAR ||
+    `https://ui-avatars.com/api/?name=${encodeURIComponent(BRAND.NAME)}&background=0b1a4d&color=ffffff`;
+
   return (
     <div className="relative p-6 bg-white z-1 dark:bg-gray-900 sm:p-0">
       <div className="relative flex flex-col justify-center w-full h-screen lg:flex-row dark:bg-gray-900 sm:p-0">
@@ -18,13 +23,24 @@ export default function AuthLayout({
             <GridShape />
             <div className="flex flex-col items-center max-w-xs">
               <Link to="/" className="block mb-4">
-                <h1 className="text-3xl font-semibold tracking-tight text-white">
-                  KeydMaal
-                </h1>
+                <div className="flex flex-col items-center gap-3">
+                  <img
+                    src={avatar}
+                    alt={BRAND.NAME}
+                    className="w-16 h-16 rounded-full border-2 border-brand-400 shadow-lg object-cover bg-white/10"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(
+                        BRAND.NAME
+                      )}&background=0b1a4d&color=ffffff`;
+                    }}
+                  />
+                  <h1 className="text-3xl font-semibold tracking-tight text-white text-center">
+                    {BRAND.NAME}
+                  </h1>
+                </div>
               </Link>
               <p className="text-center text-gray-300 dark:text-white/60">
-                KeydMaal streamlines inventory, sales, purchases, finance, and
-                staff operations in one system.
+                Manage inventory, sales, finance, and teams with a unified workflow.
               </p>
             </div>
           </div>
