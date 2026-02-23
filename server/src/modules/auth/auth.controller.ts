@@ -5,11 +5,14 @@ import { asyncHandler } from '../../utils/asyncHandler';
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { getCookieOptions, getClearCookieOptions } from '../../config/cookie';
 import { config } from '../../config/env';
+import { ApiError } from '../../utils/ApiError';
 import {
   registerSchema,
   loginSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
+  lockSetSchema,
+  lockVerifySchema,
 } from './auth.schemas';
 
 export class AuthController {
@@ -101,6 +104,29 @@ export class AuthController {
     await authService.resetPassword(input);
 
     return ApiResponse.success(res, null, 'Password reset successfully');
+  });
+
+  setLockPassword = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const userId = req.user?.userId;
+    if (!userId) throw ApiError.unauthorized('User required');
+    const input = lockSetSchema.parse(req.body);
+    await authService.setLockPassword(userId, input);
+    return ApiResponse.success(res, null, 'Lock password saved');
+  });
+
+  verifyLockPassword = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const userId = req.user?.userId;
+    if (!userId) throw ApiError.unauthorized('User required');
+    const input = lockVerifySchema.parse(req.body);
+    await authService.verifyLockPassword(userId, input);
+    return ApiResponse.success(res, null, 'Lock verified');
+  });
+
+  clearLockPassword = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const userId = req.user?.userId;
+    if (!userId) throw ApiError.unauthorized('User required');
+    await authService.clearLockPassword(userId);
+    return ApiResponse.success(res, null, 'Lock cleared');
   });
 }
 

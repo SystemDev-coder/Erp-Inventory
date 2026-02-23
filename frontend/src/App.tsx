@@ -17,6 +17,7 @@ import Returns from "./pages/Returns/Returns";
 import Transfers from "./pages/Transfers/Transfers";
 import Finance from "./pages/Finance/Finance";
 import Receipts from "./pages/Finance/Receipts";
+import Lock from "./pages/Lock/Lock";
 import Customers from "./pages/Customers/Customers";
 import Employees from "./pages/Employees/Employees";
 import Reports from "./pages/Reports/Reports";
@@ -94,6 +95,7 @@ function AppRoutes() {
         {/* Auth Layout */}
         <Route path="/signin" element={<SignIn />} />
         <Route path="/signup" element={<SignUp />} />
+        <Route path="/lock" element={<Lock />} />
 
         {/* Fallback Route */}
         <Route path="*" element={<NotFound />} />

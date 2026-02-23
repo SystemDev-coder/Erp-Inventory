@@ -54,7 +54,15 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     <ToastContext.Provider value={{ showToast }}>
       {children}
       <ThemeProvider theme={theme}>
-        <div style={{ position: 'fixed', top: '80px', right: '16px', zIndex: 999999 }}>
+        <div
+          style={{
+            position: 'fixed',
+            top: '80px',
+            right: '16px',
+            zIndex: 2147483647, // sit above any modal/backdrop
+            pointerEvents: 'none',
+          }}
+        >
           {toasts.map((toast, index) => (
             <Snackbar
               key={toast.id}
@@ -65,6 +73,8 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 marginBottom: index > 0 ? '8px' : '0',
                 transform: 'none',
                 top: `${index * 60}px`,
+                zIndex: 2147483647,
+                pointerEvents: 'none',
               }}
             >
               <Alert
@@ -72,6 +82,8 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 severity={toast.type}
                 variant="filled"
                 sx={{
+                  pointerEvents: 'auto',
+                  zIndex: 2147483647,
                   width: '100%',
                   minWidth: '280px',
                   maxWidth: '320px',

@@ -37,6 +37,9 @@ export const API = {
     ME: '/api/auth/me',
     FORGOT_PASSWORD: '/api/auth/forgot-password',
     RESET_PASSWORD: '/api/auth/reset-password',
+    LOCK_SET: '/api/auth/lock/set',
+    LOCK_VERIFY: '/api/auth/lock/verify',
+    LOCK_CLEAR: '/api/auth/lock/clear',
   },
 
   // User endpoints
@@ -118,6 +121,8 @@ export const API = {
     EXPENSES: '/api/finance/expenses',
     EXPENSE_CHARGES: '/api/finance/expenses/charges',
     EXPENSE_BUDGETS: '/api/finance/expenses/budgets',
+    EXPENSE_PAYMENTS: '/api/finance/expenses/payments',
+    PAYROLL: '/api/finance/payroll',
   },
 
   STORES: {

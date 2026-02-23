@@ -15,5 +15,8 @@ router.post('/reset-password', authController.resetPassword);
 // Protected routes
 router.get('/me', requireAuth, authController.me);
 router.post('/logout', requireAuth, authController.logout);
+router.post('/lock/set', requireAuth, authController.setLockPassword);
+router.post('/lock/verify', requireAuth, authController.verifyLockPassword);
+router.post('/lock/clear', requireAuth, authController.clearLockPassword);
 
 export default router;

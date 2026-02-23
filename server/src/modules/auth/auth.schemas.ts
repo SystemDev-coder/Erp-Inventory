@@ -34,7 +34,17 @@ export const resetPasswordSchema = z.object({
   newPassword: z.string().min(6, 'Password must be at least 6 characters').max(100),
 });
 
+export const lockSetSchema = z.object({
+  password: z.string().min(4, 'Lock password must be at least 4 characters').max(100),
+});
+
+export const lockVerifySchema = z.object({
+  password: z.string().min(1, 'Password is required'),
+});
+
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+export type LockSetInput = z.infer<typeof lockSetSchema>;
+export type LockVerifyInput = z.infer<typeof lockVerifySchema>;

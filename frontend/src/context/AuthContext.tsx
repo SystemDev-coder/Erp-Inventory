@@ -19,6 +19,10 @@ interface AuthContextType {
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   setUserState: (user: User | null) => void;
+  lock: () => void;
+  unlock: (password: string) => Promise<ApiResponse>;
+  lockedInfo: { identifier: string; name?: string; hasLock?: boolean } | null;
+  isLocked: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -31,6 +35,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null);
   const [permissions, setPermissions] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [lockedInfo, setLockedInfo] = useState<{ identifier: string; name?: string; hasLock?: boolean } | null>(() => {
+    const raw = localStorage.getItem('app_lock');
+    return raw ? JSON.parse(raw) : null;
+  });
 
   // Check if user is authenticated on mount
   useEffect(() => {
@@ -42,6 +50,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
       const token = getAccessToken();
       if (!token) {
         setUser(null);
+        return;
+      }
+      if (lockedInfo) {
+        // Keep user data minimal while locked
+        const response = await authService.getCurrentUser();
+        if (response.success && response.data) setUser(response.data.user);
+        setIsLoading(false);
         return;
       }
       const response = await authService.getCurrentUser();
@@ -96,11 +111,34 @@ export function AuthProvider({ children }: AuthProviderProps) {
       clearAccessToken();
       setUser(null);
       setPermissions([]);
+      setLockedInfo(null);
+      localStorage.removeItem('app_lock');
     }
   };
 
   const refreshUser = async () => {
     await checkAuth();
+  };
+
+  const lock = () => {
+    if (!user) return;
+    const raw = localStorage.getItem('app_lock');
+    const existing = raw ? JSON.parse(raw) : {};
+    const payload = { identifier: user.username, name: user.name, hasLock: existing.hasLock ?? true };
+    localStorage.setItem('app_lock', JSON.stringify(payload));
+    setLockedInfo(payload);
+  };
+
+  const unlock = async (password: string): Promise<ApiResponse> => {
+    if (!lockedInfo) return { success: false, error: 'Not locked' } as any;
+
+    const response = await authService.verifyLockPassword(password);
+    if (response.success) {
+      localStorage.removeItem('app_lock');
+      setLockedInfo(null);
+      await refreshUser();
+    }
+    return response;
   };
 
   const value: AuthContextType = {
@@ -113,6 +151,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
     logout,
     refreshUser,
     setUserState: setUser,
+    lock,
+    unlock,
+    lockedInfo,
+    isLocked: !!lockedInfo,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -59,3 +59,11 @@ export interface ResetPasswordInput {
   code: string;
   newPassword: string;
 }
+
+export interface LockSetInput {
+  password: string;
+}
+
+export interface LockVerifyInput {
+  password: string;
+}

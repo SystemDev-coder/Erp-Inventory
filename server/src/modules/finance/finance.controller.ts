@@ -9,9 +9,17 @@ import {
   customerReceiptSchema,
   supplierReceiptSchema,
   expenseChargeSchema,
+  expenseChargeUpdateSchema,
   expenseBudgetSchema,
+  expenseBudgetUpdateSchema,
   expenseSchema,
   expenseBudgetChargeSchema,
+  expenseBudgetAutoChargeSchema,
+  expensePaymentSchema,
+  expensePaymentQuerySchema,
+  payrollChargeSchema,
+  payrollPaySchema,
+  payrollDeleteSchema,
 } from './finance.schemas';
 import { financeService } from './finance.service';
 import { asyncHandler as ah } from '../../utils/asyncHandler';
@@ -30,6 +38,23 @@ export const createExpense = ah(async (req: AuthRequest, res: Response) => {
   if (!userId) throw ApiError.unauthorized('User required');
   const expense = await financeService.createExpense(input, scope, userId);
   return ApiResponse.created(res, { expense }, 'Expense created');
+});
+
+export const updateExpense = ah(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) throw ApiError.badRequest('Invalid expense id');
+  const input = expenseSchema.partial().parse(req.body);
+  const expense = await financeService.updateExpense(id, input, scope);
+  return ApiResponse.success(res, { expense }, 'Expense updated');
+});
+
+export const deleteExpense = ah(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) throw ApiError.badRequest('Invalid expense id');
+  await financeService.deleteExpense(id, scope);
+  return ApiResponse.success(res, null, 'Expense deleted');
 });
 
 export const listAccountTransfers = asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -169,6 +194,25 @@ export const createExpenseCharge = asyncHandler(async (req: AuthRequest, res: Re
   return ApiResponse.created(res, { charge }, 'Expense charge recorded');
 });
 
+export const updateExpenseCharge = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) throw ApiError.badRequest('Invalid charge id');
+  const input = expenseChargeUpdateSchema.parse(req.body);
+  const userId = req.user?.userId;
+  if (!userId) throw ApiError.unauthorized('User required');
+  const charge = await financeService.updateExpenseCharge(id, input, scope, userId);
+  return ApiResponse.success(res, { charge }, 'Expense charge updated');
+});
+
+export const deleteExpenseCharge = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) throw ApiError.badRequest('Invalid charge id');
+  await financeService.deleteExpenseCharge(id, scope);
+  return ApiResponse.success(res, null, 'Expense charge deleted');
+});
+
 // ─── Expense Budgets ──────────────────────────────────────────────────────────
 
 export const listExpenseBudgets = asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -187,6 +231,25 @@ export const createExpenseBudget = asyncHandler(async (req: AuthRequest, res: Re
   return ApiResponse.created(res, { budget }, 'Expense budget created');
 });
 
+export const updateExpenseBudget = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) throw ApiError.badRequest('Invalid budget id');
+  const input = expenseBudgetUpdateSchema.parse(req.body);
+  const userId = req.user?.userId;
+  if (!userId) throw ApiError.unauthorized('User required');
+  const budget = await financeService.updateExpenseBudget(id, input, scope, userId);
+  return ApiResponse.success(res, { budget }, 'Expense budget updated');
+});
+
+export const deleteExpenseBudget = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) throw ApiError.badRequest('Invalid budget id');
+  await financeService.deleteExpenseBudget(id, scope);
+  return ApiResponse.success(res, null, 'Expense budget deleted');
+});
+
 export const chargeExpenseBudget = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const input = expenseBudgetChargeSchema.parse(req.body);
@@ -194,4 +257,72 @@ export const chargeExpenseBudget = asyncHandler(async (req: AuthRequest, res: Re
   if (!userId) throw ApiError.unauthorized('User required');
   const result = await financeService.chargeExpenseBudget(input, scope, userId);
   return ApiResponse.created(res, { result }, 'Expense budget charged');
+});
+
+export const manageExpenseBudgetCharges = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const input = expenseBudgetAutoChargeSchema.parse(req.body);
+  const userId = req.user?.userId;
+  if (!userId) throw ApiError.unauthorized('User required');
+  const result = await financeService.manageExpenseBudgetCharges(input, scope, userId);
+  return ApiResponse.success(res, { result }, 'Expense budgets processed');
+});
+
+export const createExpensePayment = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const input = expensePaymentSchema.parse(req.body);
+  const userId = req.user?.userId;
+  if (!userId) throw ApiError.unauthorized('User required');
+  const payment = await financeService.createExpensePayment(input, scope, userId);
+  return ApiResponse.created(res, { payment }, 'Expense payment recorded');
+});
+
+export const listExpensePayments = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const query = expensePaymentQuerySchema.parse(req.query);
+  const payments = await financeService.listExpensePayments(scope, query.chargeId, query.expenseId);
+  return ApiResponse.success(res, { payments });
+});
+
+export const deleteExpensePayment = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id) || id <= 0) throw ApiError.badRequest('Invalid payment id');
+  await financeService.deleteExpensePayment(id, scope);
+  return ApiResponse.success(res, null, 'Expense payment deleted');
+});
+
+// Payroll
+export const chargeSalaries = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const input = payrollChargeSchema.parse(req.body);
+  const userId = req.user?.userId;
+  if (!userId) throw ApiError.unauthorized('User required');
+  const result = await financeService.chargeSalaries(input, scope, userId);
+  return ApiResponse.success(res, { result }, 'Salaries charged');
+});
+
+export const listPayroll = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const period = req.query.period ? String(req.query.period) : undefined;
+  const data = await financeService.listPayroll(scope, period);
+  return ApiResponse.success(res, { payroll: data });
+});
+
+export const paySalary = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const input = payrollPaySchema.parse(req.body);
+  const userId = req.user?.userId;
+  if (!userId) throw ApiError.unauthorized('User required');
+  const payment = await financeService.paySalary(input, scope, userId);
+  return ApiResponse.created(res, { payment }, 'Salary paid');
+});
+
+export const deletePayroll = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const input = payrollDeleteSchema.parse(req.body);
+  const userId = req.user?.userId;
+  if (!userId) throw ApiError.unauthorized('User required');
+  const result = await financeService.deletePayroll(input, scope, userId);
+  return ApiResponse.success(res, { result }, 'Salary charge(s) deleted');
 });

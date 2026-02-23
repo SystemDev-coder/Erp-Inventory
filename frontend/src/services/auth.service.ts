@@ -56,6 +56,14 @@ export interface ResetPasswordData {
 }
 
 class AuthService {
+  async hashString(value: string): Promise<string> {
+    const enc = new TextEncoder().encode(value);
+    const hashBuf = await crypto.subtle.digest('SHA-256', enc);
+    return Array.from(new Uint8Array(hashBuf))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+  }
+
   /**
    * Register a new user
    */
@@ -103,6 +111,18 @@ class AuthService {
    */
   async resetPassword(data: ResetPasswordData): Promise<ApiResponse<{ message: string }>> {
     return apiClient.post<{ message: string }>(API.AUTH.RESET_PASSWORD, data);
+  }
+
+  async setLockPassword(password: string): Promise<ApiResponse<void>> {
+    return apiClient.post<void>(API.AUTH.LOCK_SET, { password });
+  }
+
+  async verifyLockPassword(password: string): Promise<ApiResponse<void>> {
+    return apiClient.post<void>(API.AUTH.LOCK_VERIFY, { password });
+  }
+
+  async clearLockPassword(): Promise<ApiResponse<void>> {
+    return apiClient.post<void>(API.AUTH.LOCK_CLEAR);
   }
 }
 

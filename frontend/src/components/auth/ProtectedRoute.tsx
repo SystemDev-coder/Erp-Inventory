@@ -11,7 +11,7 @@ export default function ProtectedRoute({
   children: React.ReactNode;
   permission?: string;
 }) {
-  const { isAuthenticated, isLoading, permissions } = useAuth();
+  const { isAuthenticated, isLoading, permissions, isLocked } = useAuth();
   const location = useLocation();
   const expandPermissionKeys = (permKey: string): string[] => {
     if (permKey.startsWith('items.')) {
@@ -39,6 +39,10 @@ export default function ProtectedRoute({
 
   if (!isAuthenticated) {
     return <Navigate to="/signin" state={{ from: location }} replace />;
+  }
+
+  if (isLocked && location.pathname !== '/lock') {
+    return <Navigate to="/lock" state={{ from: location }} replace />;
   }
 
   if (permission && !expandPermissionKeys(permission).some((key) => permissions.includes(key))) {

@@ -19,6 +19,8 @@ import {
   LoginInput,
   RegisterInput,
   ResetPasswordInput,
+  LockSetInput,
+  LockVerifyInput,
   User,
   UserProfile,
   UserWithPermissions,
@@ -439,6 +441,37 @@ export class AuthService {
     );
 
     resetStore.delete(identifier);
+  }
+
+  async setLockPassword(userId: number, input: LockSetInput): Promise<void> {
+    const hashed = await hashPassword(input.password);
+    await queryOne(
+      `INSERT INTO ims.user_locks (user_id, lock_hash)
+       VALUES ($1, $2)
+       ON CONFLICT (user_id)
+       DO UPDATE SET lock_hash = EXCLUDED.lock_hash, updated_at = NOW()`,
+      [userId, hashed]
+    );
+  }
+
+  async verifyLockPassword(userId: number, input: LockVerifyInput): Promise<void> {
+    const row = await queryOne<{ lock_hash: string }>(
+      `SELECT lock_hash FROM ims.user_locks WHERE user_id = $1`,
+      [userId]
+    );
+
+    if (!row) {
+      throw ApiError.notFound('Lock password not set');
+    }
+
+    const ok = await comparePassword(input.password, row.lock_hash);
+    if (!ok) {
+      throw ApiError.unauthorized('Invalid lock password');
+    }
+  }
+
+  async clearLockPassword(userId: number): Promise<void> {
+    await queryOne(`DELETE FROM ims.user_locks WHERE user_id = $1`, [userId]);
   }
 }
 

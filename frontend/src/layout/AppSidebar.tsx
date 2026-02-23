@@ -16,9 +16,11 @@ import {
   ShoppingCart,
   Store,
   Users,
+  Lock as LockIcon,
 } from 'lucide-react';
 import { useSidebar } from '../context/SidebarContext';
 import { useAuth } from '../context/AuthContext';
+import { useNavigate } from 'react-router';
 
 type SidebarSubItem = {
   id: string;
@@ -41,8 +43,9 @@ type SidebarItem = {
 
 const AppSidebar: React.FC = () => {
   const { isExpanded, isMobileOpen, isHovered, setIsHovered, toggleSidebar } = useSidebar();
-  const { permissions } = useAuth();
+  const { permissions, lock } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
     stockManagement: false,
   });
@@ -261,7 +264,16 @@ const AppSidebar: React.FC = () => {
       </div>
 
       {showExpanded && (
-        <div className="p-4 border-t border-slate-200 dark:border-slate-800">
+        <div className="p-4 border-t border-slate-200 dark:border-slate-800 space-y-3">
+          <button
+            onClick={() => {
+              lock();
+              navigate('/lock');
+            }}
+            className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+          >
+            <LockIcon className="h-4 w-4" /> Lock
+          </button>
           <p className="text-xs text-slate-500 dark:text-slate-400 text-center">
             (c) 2026 KeydMaal MS | All rights reserved
           </p>

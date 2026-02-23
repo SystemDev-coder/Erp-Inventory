@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import clsx from 'clsx';
 import {
     useReactTable,
     getCoreRowModel,
@@ -38,6 +39,9 @@ interface DataTableProps<TData> {
     isLoading?: boolean;
     error?: string | null;
     showToolbarActions?: boolean;
+    className?: string;
+    headerClassName?: string;
+    rowHoverClassName?: string;
 }
 
 export function DataTable<TData>({
@@ -52,6 +56,9 @@ export function DataTable<TData>({
     isLoading = false,
     error = null,
     showToolbarActions = true,
+    className,
+    headerClassName,
+    rowHoverClassName,
 }: DataTableProps<TData>) {
     const [sorting, setSorting] = useState<SortingState>([]);
     const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
@@ -191,10 +198,15 @@ export function DataTable<TData>({
             )}
 
             {/* Table */}
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-md overflow-hidden">
+            <div
+                className={clsx(
+                    'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-md overflow-hidden',
+                    className
+                )}
+            >
                 <div className="overflow-x-auto custom-scrollbar">
                     <table className="w-full text-left border-separate border-spacing-0">
-                        <thead className="bg-slate-900 text-white">
+                        <thead className={clsx('bg-slate-900 text-white', headerClassName)}>
                             {table.getHeaderGroups().map((headerGroup) => (
                                 <tr key={headerGroup.id}>
                                     {headerGroup.headers.map((header) => (
@@ -269,7 +281,10 @@ export function DataTable<TData>({
                                 table.getRowModel().rows.map((row) => (
                                     <tr
                                         key={row.id}
-                                        className="hover:bg-slate-50/80 dark:hover:bg-slate-800/30 transition-colors"
+                                        className={clsx(
+                                            'hover:bg-slate-50/80 dark:hover:bg-slate-800/30 transition-colors',
+                                            rowHoverClassName
+                                        )}
                                     >
                                         {row.getVisibleCells().map((cell) => (
                                             <td

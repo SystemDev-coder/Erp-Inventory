@@ -14,11 +14,25 @@ import {
   deleteSupplierReceipt,
   listExpenseCharges,
   createExpenseCharge,
+  updateExpenseCharge,
+  deleteExpenseCharge,
   listExpenseBudgets,
   createExpenseBudget,
+  updateExpenseBudget,
+  deleteExpenseBudget,
   createExpense,
   chargeExpenseBudget,
+  manageExpenseBudgetCharges,
+  createExpensePayment,
+  listExpensePayments,
+  deleteExpensePayment,
+  chargeSalaries,
+  listPayroll,
+  paySalary,
+  deletePayroll,
   listExpenses,
+  updateExpense,
+  deleteExpense,
   listCustomerUnpaid,
   listSupplierUnpaid,
   listSupplierOutstandingPurchases,
@@ -51,12 +65,28 @@ router.delete('/receipts/suppliers/:id', deleteSupplierReceipt);
 // Expenses
 router.get('/expenses', listExpenses);
 router.post('/expenses', createExpense);
+router.put('/expenses/:id', updateExpense);
+router.delete('/expenses/:id', deleteExpense);
 router.get('/expenses/charges', listExpenseCharges);
 router.post('/expenses/charges', createExpenseCharge);
+router.put('/expenses/charges/:id', updateExpenseCharge);
+router.delete('/expenses/charges/:id', deleteExpenseCharge);
+router.get('/expenses/payments', listExpensePayments);
+router.post('/expenses/payments', createExpensePayment);
+router.delete('/expenses/payments/:id', deleteExpensePayment);
 
 // Expense budgets
 router.get('/expenses/budgets', listExpenseBudgets);
 router.post('/expenses/budgets', createExpenseBudget);
+router.put('/expenses/budgets/:id', updateExpenseBudget);
+router.delete('/expenses/budgets/:id', deleteExpenseBudget);
 router.post('/expenses/budgets/charge', chargeExpenseBudget);
+router.post('/expenses/budgets/manage', manageExpenseBudgetCharges);
+
+// Payroll
+router.get('/payroll', listPayroll);
+router.post('/payroll/charge', chargeSalaries);
+router.post('/payroll/pay', paySalary);
+router.post('/payroll/delete', deletePayroll);
 
 export default router;
