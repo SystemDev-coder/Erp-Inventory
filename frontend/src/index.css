@@ -155,14 +155,33 @@ layer(base);
   --z-index-50: 50;
 }
 
+/* Force a single dark presentation across the app */
+:root {
+  color-scheme: dark;
+}
+
 body {
-  background: linear-gradient(160deg, #0f1624 0%, #0f1f33 45%, #0f1624 100%);
+  background: radial-gradient(120% 120% at 20% 20%, #182a4d 0%, #0e182d 45%, #0a1224 100%);
   color: #e2e8f0;
 }
 
 .dark body {
-  background: linear-gradient(160deg, #0b111d 0%, #0b1930 50%, #0b111d 100%);
+  background: radial-gradient(120% 120% at 20% 20%, #182a4d 0%, #0e182d 45%, #0a1224 100%);
   color: #e2e8f0;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #1f3e75;
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-track {
+  background: #0c182d;
 }
 
 @layer base {
