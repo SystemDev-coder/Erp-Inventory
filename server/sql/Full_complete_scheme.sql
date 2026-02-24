@@ -613,10 +613,36 @@ purchase_id      BIGINT NOT NULL REFERENCES ims.purchases(purchase_id) ON UPDATE
 item_id          BIGINT NOT NULL REFERENCES ims.items(item_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 quantity         NUMERIC(14,3) NOT NULL CHECK (quantity > 0),
 unit_cost        NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (unit_cost >= 0),
+sale_price       NUMERIC(14,2),
+discount         NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (discount >= 0),
 line_total       NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (line_total >= 0),
 batch_no         VARCHAR(80),
-expiry_date      DATE
+expiry_date      DATE,
+description      TEXT
 );
+
+-- Safe migration: add columns if missing
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='ims' AND table_name='purchase_items' AND column_name='sale_price'
+  ) THEN
+    ALTER TABLE ims.purchase_items ADD COLUMN sale_price NUMERIC(14,2);
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='ims' AND table_name='purchase_items' AND column_name='discount'
+  ) THEN
+    ALTER TABLE ims.purchase_items ADD COLUMN discount NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (discount >= 0);
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='ims' AND table_name='purchase_items' AND column_name='description'
+  ) THEN
+    ALTER TABLE ims.purchase_items ADD COLUMN description TEXT;
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS ims.supplier_payments (
 sup_payment_id BIGSERIAL PRIMARY KEY,
