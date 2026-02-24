@@ -71,15 +71,17 @@ export const API = {
 
   // System endpoints
   SYSTEM: {
+    BASE: '/api/system',
     PERMISSIONS: '/api/system/permissions',
+    PERMISSION: (id: number) => `/api/system/permissions/${id}`,
     ROLES: '/api/system/roles',
     ROLE: (id: number) => `/api/system/roles/${id}`,
     ROLE_PERMISSIONS: (id: number) => `/api/system/roles/${id}/permissions`,
+    BRANCHES: '/api/system/branches',
     USERS: '/api/system/users',
     USER: (id: number) => `/api/system/users/${id}`,
-    USER_PERMISSIONS: (id: number) => `/api/system/users/${id}/permissions`,
-    USER_OVERRIDES: (id: number) => `/api/system/users/${id}/overrides`,
-    USER_AUDIT: (id: number) => `/api/system/users/${id}/audit`,
+    LOGS: '/api/system/logs',
+    LOG: (id: number) => `/api/system/logs/${id}`,
   },
 
   // Products endpoints

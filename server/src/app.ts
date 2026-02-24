@@ -25,6 +25,7 @@ import employeeRoutes from './modules/employees/employees.routes';
 import storeRoutes from './modules/stores/stores.routes';
 import shiftRoutes from './modules/shifts/shifts.routes';
 import returnsRoutes from './modules/returns/returns.routes';
+import systemRoutes from './modules/system/system.routes';
 // import scheduleRoutes from './modules/schedules/schedules.routes'; // TEMP: Disabled - has import errors
 import { config } from './config/env';
 
@@ -74,6 +75,7 @@ app.use('/api/employees', employeeRoutes);
 app.use('/api/stores', storeRoutes);
 app.use('/api/shifts', shiftRoutes);
 app.use('/api/returns', returnsRoutes);
+app.use('/api/system', systemRoutes);
 // app.use('/api/schedules', scheduleRoutes); // TEMP: Disabled - has import errors
 
 // 404 handler
