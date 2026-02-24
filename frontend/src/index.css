@@ -41,21 +41,21 @@ layer(base);
   --color-white: #ffffff;
   --color-black: #0b0f1f;
 
-  /* ERP Premium palette */
-  --color-primary-25: #f5fbff;
-  --color-primary-50: #e8f4fb;
-  --color-primary-100: #d7eaf5;
-  --color-primary-200: #bbe0ef; /* light accent */
-  --color-primary-300: #8bb6d1;
-  --color-primary-400: #5f90b1;
-  --color-primary-500: #355872; /* core brand */
-  --color-primary-600: #2d4c63;
-  --color-primary-700: #223b4e;
-  --color-primary-800: #1b2f3f;
-  --color-primary-900: #15173d; /* deep background */
-  --color-primary-950: #0f122d;
+  /* ERP palette v2 */
+  --color-primary-25: #f2f7ff;
+  --color-primary-50: #e6f0ff;
+  --color-primary-100: #cddffa;
+  --color-primary-200: #a7c7f2;
+  --color-primary-300: #7ca7e6;
+  --color-primary-400: #4f83d6;
+  --color-primary-500: #1c4d8d; /* accent */
+  --color-primary-600: #173f75;
+  --color-primary-700: #12335f;
+  --color-primary-800: #0e2749;
+  --color-primary-900: #0b1e3a;
+  --color-primary-950: #08152a;
 
-  /* Brand - mirrors primary */
+  /* Brand - mirrors primary to keep compatibility */
   --color-brand-25: var(--color-primary-25);
   --color-brand-50: var(--color-primary-50);
   --color-brand-100: var(--color-primary-100);
@@ -69,19 +69,19 @@ layer(base);
   --color-brand-900: var(--color-primary-900);
   --color-brand-950: var(--color-primary-950);
 
-  /* Secondary - Slate */
-  --color-slate-25: #fcfcfd;
-  --color-slate-50: #f8fafc;
-  --color-slate-100: #f1f5f9;
-  --color-slate-200: #e2e8f0;
-  --color-slate-300: #cbd5e1;
-  --color-slate-400: #94a3b8;
-  --color-slate-500: #64748b;
-  --color-slate-600: #475569;
-  --color-slate-700: #334155;
-  --color-slate-800: #1a2133;
-  --color-slate-900: #15173d;
-  --color-slate-950: #0c1029;
+  /* Neutral / Surfaces centered on #2B2A2A */
+  --color-slate-25: #f8f7f7;
+  --color-slate-50: #f5f2f2; /* requested light */
+  --color-slate-100: #ebe8e8;
+  --color-slate-200: #d9d4d4;
+  --color-slate-300: #b7b1b1;
+  --color-slate-400: #938d8d;
+  --color-slate-500: #6f6a6a;
+  --color-slate-600: #555151;
+  --color-slate-700: #3f3c3c;
+  --color-slate-800: #2f2d2d;
+  --color-slate-900: #2b2a2a; /* requested dark */
+  --color-slate-950: #1f1e1e;
 
   /* Success - Emerald */
   --color-success-25: #f0fdf4;
@@ -154,30 +154,30 @@ layer(base);
   --z-index-50: 50;
 }
 
-/* Light & Dark base surfaces */
-body {
-  background: #f7f9fc;
-  color: #0f172a;
-}
+  /* Light & Dark base surfaces */
+  body {
+    background: #f5f2f2; /* requested light */
+    color: #2b2a2a;
+  }
 
-.dark body {
-  background: #0b1220;
-  color: #e2e8f0;
-}
+  .dark body {
+    background: #2b2a2a; /* requested dark */
+    color: #f5f2f2;
+  }
 
 *::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 
-*::-webkit-scrollbar-thumb {
-  background: #193fba;
-  border-radius: 999px;
-}
+  *::-webkit-scrollbar-thumb {
+    background: #1c4d8d;
+    border-radius: 999px;
+  }
 
-*::-webkit-scrollbar-track {
-  background: #0b1220;
-}
+  *::-webkit-scrollbar-track {
+    background: #2b2a2a;
+  }
 
 @layer base {
   *,

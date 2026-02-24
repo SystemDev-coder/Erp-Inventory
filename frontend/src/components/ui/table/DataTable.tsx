@@ -140,9 +140,18 @@ export function DataTable<TData>({
     });
 
     const selectedRowsCount = Object.keys(rowSelection).length;
+    const isEmpty = table.getRowModel().rows.length === 0;
 
     return (
-        <div className="space-y-4">
+        <div className="space-y-4 relative" aria-busy={isLoading}>
+            {isLoading && (
+                <div className="absolute inset-0 z-20 flex items-center justify-center rounded-2xl bg-slate-900/40 backdrop-blur-sm">
+                    <div className="flex flex-col items-center gap-2 text-slate-50">
+                        <div className="w-10 h-10 rounded-full border-4 border-primary-400 border-t-transparent animate-spin" />
+                        <span className="text-sm tracking-wide">Loading…</span>
+                    </div>
+                </div>
+            )}
             {/* Toolbar */}
             <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
                 {/* Search */}
@@ -265,7 +274,7 @@ export function DataTable<TData>({
                                         </div>
                                     </td>
                                 </tr>
-                            ) : table.getRowModel().rows.length === 0 ? (
+                            ) : isEmpty ? (
                                 <tr>
                                     <td
                                         colSpan={columnsWithActions.length}
