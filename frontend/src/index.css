@@ -42,19 +42,19 @@ layer(base);
   --color-black: #0f172a;
 
   /* Primary - Navy / Royal */
-  /* Professional minimal palette: deep slate + steel blue */
+  /* Minimal two-color system: neutral base + single accent blue */
   --color-primary-25: #f2f6ff;
-  --color-primary-50: #e6eeff;
-  --color-primary-100: #cddcff;
-  --color-primary-200: #9cb8f7;
-  --color-primary-300: #6d95e8;
-  --color-primary-400: #4f78d4;
-  --color-primary-500: #335fae;
-  --color-primary-600: #274d90;
-  --color-primary-700: #1f3e75;
-  --color-primary-800: #192f5a;
-  --color-primary-900: #12233f;
-  --color-primary-950: #0c182d;
+  --color-primary-50: #e5edff;
+  --color-primary-100: #c9d9ff;
+  --color-primary-200: #9fbaff;
+  --color-primary-300: #6f9aff;
+  --color-primary-400: #3f7dff;
+  --color-primary-500: #2563eb; /* accent */
+  --color-primary-600: #1d4fd8;
+  --color-primary-700: #193fba;
+  --color-primary-800: #15338f;
+  --color-primary-900: #102868;
+  --color-primary-950: #0b1b46;
 
   /* Brand - mirrors primary */
   --color-brand-25: var(--color-primary-25);
@@ -155,18 +155,14 @@ layer(base);
   --z-index-50: 50;
 }
 
-/* Force a single dark presentation across the app */
-:root {
-  color-scheme: dark;
-}
-
+/* Light & Dark base surfaces */
 body {
-  background: radial-gradient(120% 120% at 20% 20%, #182a4d 0%, #0e182d 45%, #0a1224 100%);
-  color: #e2e8f0;
+  background: #f7f9fc;
+  color: #0f172a;
 }
 
 .dark body {
-  background: radial-gradient(120% 120% at 20% 20%, #182a4d 0%, #0e182d 45%, #0a1224 100%);
+  background: #0b1220;
   color: #e2e8f0;
 }
 
@@ -176,12 +172,12 @@ body {
 }
 
 *::-webkit-scrollbar-thumb {
-  background: #1f3e75;
+  background: #193fba;
   border-radius: 999px;
 }
 
 *::-webkit-scrollbar-track {
-  background: #0c182d;
+  background: #0b1220;
 }
 
 @layer base {
