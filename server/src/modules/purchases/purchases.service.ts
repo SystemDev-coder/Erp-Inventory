@@ -242,19 +242,35 @@ export const purchasesService = {
       clauses.push(`(COALESCE(pi.description,'') ILIKE $${params.length} OR COALESCE(pr.name,'') ILIKE $${params.length} OR COALESCE(s.name,'') ILIKE $${params.length})`);
     }
     if (filters.supplierId) addClause(`p.supplier_id = $1`, filters.supplierId);
-    if (filters.productId) addClause(`pi.product_id = $1`, filters.productId);
+    if (filters.productId) addClause(`pi.item_id = $1`, filters.productId);
     if (filters.from) addClause(`p.purchase_date::date >= $1`, filters.from);
     if (filters.to) addClause(`p.purchase_date::date <= $1`, filters.to);
 
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 
     return queryMany<PurchaseItemView>(
-      `SELECT pi.*, p.purchase_date, p.purchase_type, p.supplier_id, s.name AS supplier_name, pr.name AS product_name,
-              COALESCE(pr.cost_price, 0) AS cost_price,
-              COALESCE(pi.sale_price, NULLIF(pr.sell_price, 0), COALESCE(pr.cost_price, 0)) AS sale_price
+      `SELECT
+          pi.purchase_item_id,
+          pi.purchase_id,
+          pi.item_id        AS product_id,
+          pi.quantity,
+          pi.unit_cost,
+          pi.sale_price,
+          pi.line_total,
+          pi.batch_no,
+          pi.expiry_date,
+          pi.description,
+          pi.discount,
+          p.purchase_date,
+          p.purchase_type,
+          p.supplier_id,
+          s.name AS supplier_name,
+          pr.name AS product_name,
+          COALESCE(pr.cost_price, 0) AS cost_price,
+          COALESCE(pi.sale_price, NULLIF(pr.sell_price, 0), COALESCE(pr.cost_price, 0)) AS sale_price
          FROM ims.purchase_items pi
          JOIN ims.purchases p ON p.purchase_id = pi.purchase_id
-         LEFT JOIN ims.items pr ON pr.item_id = pi.product_id
+         LEFT JOIN ims.items pr ON pr.item_id = pi.item_id
          LEFT JOIN ims.suppliers s ON s.supplier_id = p.supplier_id
          ${where}
         ORDER BY p.purchase_date DESC, pi.purchase_item_id DESC`,
@@ -349,7 +365,7 @@ export const purchasesService = {
           const lineTotal = Number(item.quantity) * Number(item.unitCost) - Number(item.discount || 0);
           await client.query(
             `INSERT INTO ims.purchase_items
-               (purchase_id, product_id, quantity, unit_cost, sale_price, line_total, batch_no, expiry_date, description, discount)
+               (purchase_id, item_id, quantity, unit_cost, sale_price, line_total, batch_no, expiry_date, description, discount)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
             [
               purchase.purchase_id,
@@ -528,7 +544,7 @@ export const purchasesService = {
           const lineTotal = Number(item.quantity) * Number(item.unitCost) - Number(item.discount || 0);
           await client.query(
             `INSERT INTO ims.purchase_items
-               (purchase_id, product_id, quantity, unit_cost, sale_price, line_total, batch_no, expiry_date, description, discount)
+               (purchase_id, item_id, quantity, unit_cost, sale_price, line_total, batch_no, expiry_date, description, discount)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
             [
               id,
