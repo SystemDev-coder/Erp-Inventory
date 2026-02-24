@@ -17,13 +17,10 @@ import {
   Store,
   Users,
   Lock as LockIcon,
-  Sun,
-  Moon,
 } from 'lucide-react';
 import { useSidebar } from '../context/SidebarContext';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router';
-import { useTheme } from '../hooks/useTheme';
 
 type SidebarSubItem = {
   id: string;
@@ -47,7 +44,6 @@ type SidebarItem = {
 const AppSidebar: React.FC = () => {
   const { isExpanded, isMobileOpen, isHovered, setIsHovered, toggleSidebar } = useSidebar();
   const { permissions, lock, user } = useAuth();
-  const { theme, toggleTheme } = useTheme();
   const location = useLocation();
   const navigate = useNavigate();
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
@@ -194,22 +190,13 @@ const AppSidebar: React.FC = () => {
           )}
         </Link>
 
-        <div className="hidden lg:flex items-center gap-2 shrink-0">
-          <button
-            onClick={toggleTheme}
-            aria-label="Toggle theme"
-            className="p-1.5 hover:bg-primary-700/70 rounded-lg transition-colors text-slate-200"
-          >
-            {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-          </button>
-          <button
+        <button
           onClick={toggleSidebar}
           aria-label={showExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
           className="hidden lg:flex shrink-0 p-1.5 hover:bg-primary-700/70 rounded-lg transition-colors text-slate-200"
         >
           {showExpanded ? <ChevronLeft className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
-          </button>
-        </div>
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto sidebar-scrollbar">
