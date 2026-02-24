@@ -594,7 +594,7 @@ note            TEXT
 CREATE TABLE IF NOT EXISTS ims.purchases (
 purchase_id   BIGSERIAL PRIMARY KEY,
 branch_id     BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-wh_id         BIGINT REFERENCES ims.warehouses(wh_id) ON UPDATE CASCADE ON DELETE SET NULL,
+store_id      BIGINT REFERENCES ims.stores(store_id) ON UPDATE CASCADE ON DELETE SET NULL,
 user_id       BIGINT NOT NULL REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 supplier_id   BIGINT REFERENCES ims.suppliers(supplier_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 currency_code VARCHAR(10) NOT NULL DEFAULT 'USD',
@@ -607,6 +607,24 @@ total         NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (total >= 0),
 status        ims.purchase_status_enum NOT NULL DEFAULT 'received',
 note          TEXT
 );
+
+-- Migration: switch purchases from wh_id to store_id
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='ims' AND table_name='purchases' AND column_name='store_id'
+  ) THEN
+    ALTER TABLE ims.purchases ADD COLUMN store_id BIGINT REFERENCES ims.stores(store_id) ON UPDATE CASCADE ON DELETE SET NULL;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='ims' AND table_name='purchases' AND column_name='wh_id'
+  ) THEN
+    ALTER TABLE ims.purchases DROP COLUMN wh_id;
+  END IF;
+END $$;
 
 DO $$
 BEGIN
