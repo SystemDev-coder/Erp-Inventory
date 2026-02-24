@@ -10,6 +10,8 @@ export const saleSchema = z.object({
   branchId: z.coerce.number().int().positive().optional(),
   customerId: z.coerce.number().int().positive().optional(),
   whId: z.coerce.number().int().positive().nullable().optional(),
+  taxId: z.coerce.number().int().positive().nullable().optional(),
+  taxRate: z.coerce.number().nonnegative().optional(),
   saleDate: z.string().optional(),
   subtotal: z.coerce.number().nonnegative().default(0),
   discount: z.coerce.number().nonnegative().default(0),
@@ -30,6 +32,8 @@ export const saleSchema = z.object({
 export const saleUpdateSchema = z.object({
   customerId: z.coerce.number().int().positive().optional(),
   whId: z.coerce.number().int().positive().nullable().optional(),
+  taxId: z.coerce.number().int().positive().nullable().optional(),
+  taxRate: z.coerce.number().nonnegative().optional(),
   saleDate: z.string().optional(),
   saleType: z.enum(['cash', 'credit']).optional(),
   docType: z.enum(['sale', 'invoice', 'quotation']).optional(),

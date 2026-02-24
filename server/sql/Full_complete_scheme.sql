@@ -254,6 +254,7 @@ name          VARCHAR(140) NOT NULL,
 country       VARCHAR(80),
 phone         VARCHAR(30),
 open_balance  NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (open_balance >= 0),
+remaining_balance NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (remaining_balance >= 0),
 is_active     BOOLEAN NOT NULL DEFAULT TRUE,
 created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 CONSTRAINT uq_supplier_branch_name UNIQUE (branch_id, name)
@@ -595,10 +596,8 @@ CREATE TABLE IF NOT EXISTS ims.purchases (
 purchase_id   BIGSERIAL PRIMARY KEY,
 branch_id     BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 store_id      BIGINT REFERENCES ims.stores(store_id) ON UPDATE CASCADE ON DELETE SET NULL,
-wh_id         BIGINT REFERENCES ims.warehouses(wh_id) ON UPDATE CASCADE ON DELETE SET NULL,
 user_id       BIGINT NOT NULL REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 supplier_id   BIGINT REFERENCES ims.suppliers(supplier_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-currency_code VARCHAR(10) NOT NULL DEFAULT 'USD',
 fx_rate       NUMERIC(14,6) NOT NULL DEFAULT 1 CHECK (fx_rate > 0),
 purchase_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 purchase_type ims.purchase_type_enum NOT NULL DEFAULT 'cash',
@@ -623,7 +622,7 @@ BEGIN
     SELECT 1 FROM information_schema.columns
     WHERE table_schema='ims' AND table_name='purchases' AND column_name='wh_id'
   ) THEN
-    ALTER TABLE ims.purchases ADD COLUMN wh_id BIGINT REFERENCES ims.warehouses(wh_id) ON UPDATE CASCADE ON DELETE SET NULL;
+    ALTER TABLE ims.purchases DROP COLUMN wh_id;
   END IF;
 END $$;
 
@@ -631,15 +630,15 @@ DO $$
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
-    WHERE table_schema='ims' AND table_name='purchases' AND column_name='currency_code'
-  ) THEN
-    ALTER TABLE ims.purchases ADD COLUMN currency_code VARCHAR(10) NOT NULL DEFAULT 'USD';
-  END IF;
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
     WHERE table_schema='ims' AND table_name='purchases' AND column_name='fx_rate'
   ) THEN
     ALTER TABLE ims.purchases ADD COLUMN fx_rate NUMERIC(14,6) NOT NULL DEFAULT 1 CHECK (fx_rate > 0);
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='ims' AND table_name='purchases' AND column_name='currency_code'
+  ) THEN
+    ALTER TABLE ims.purchases DROP COLUMN currency_code;
   END IF;
 END $$;
 

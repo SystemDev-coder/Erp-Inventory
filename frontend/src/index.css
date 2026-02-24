@@ -39,22 +39,21 @@ layer(base);
   --color-current: currentColor;
   --color-transparent: transparent;
   --color-white: #ffffff;
-  --color-black: #0f172a;
+  --color-black: #0b0f1f;
 
-  /* Primary - Navy / Royal */
-  /* Minimal two-color system: neutral base + single accent blue */
-  --color-primary-25: #f2f6ff;
-  --color-primary-50: #e5edff;
-  --color-primary-100: #c9d9ff;
-  --color-primary-200: #9fbaff;
-  --color-primary-300: #6f9aff;
-  --color-primary-400: #3f7dff;
-  --color-primary-500: #2563eb; /* accent */
-  --color-primary-600: #1d4fd8;
-  --color-primary-700: #193fba;
-  --color-primary-800: #15338f;
-  --color-primary-900: #102868;
-  --color-primary-950: #0b1b46;
+  /* ERP Premium palette */
+  --color-primary-25: #f5fbff;
+  --color-primary-50: #e8f4fb;
+  --color-primary-100: #d7eaf5;
+  --color-primary-200: #bbe0ef; /* light accent */
+  --color-primary-300: #8bb6d1;
+  --color-primary-400: #5f90b1;
+  --color-primary-500: #355872; /* core brand */
+  --color-primary-600: #2d4c63;
+  --color-primary-700: #223b4e;
+  --color-primary-800: #1b2f3f;
+  --color-primary-900: #15173d; /* deep background */
+  --color-primary-950: #0f122d;
 
   /* Brand - mirrors primary */
   --color-brand-25: var(--color-primary-25);
@@ -80,9 +79,9 @@ layer(base);
   --color-slate-500: #64748b;
   --color-slate-600: #475569;
   --color-slate-700: #334155;
-  --color-slate-800: #1e293b;
-  --color-slate-900: #0f172a;
-  --color-slate-950: #020617;
+  --color-slate-800: #1a2133;
+  --color-slate-900: #15173d;
+  --color-slate-950: #0c1029;
 
   /* Success - Emerald */
   --color-success-25: #f0fdf4;
@@ -203,7 +202,7 @@ body {
   }
 
   body {
-    @apply relative font-normal font-inter z-1 bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100;
+    @apply relative font-normal font-inter z-1 bg-slate-100 text-slate-900 dark:bg-slate-900 dark:text-slate-100;
   }
 }
 

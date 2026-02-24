@@ -20,6 +20,9 @@ export interface Sale {
   user_id: number;
   customer_id: number | null;
   customer_name?: string | null;
+  tax_id?: number | null;
+  total_before_tax?: number;
+  tax_amount?: number;
   sale_date: string;
   sale_type: 'cash' | 'credit';
   doc_type: SaleDocType;
@@ -42,6 +45,8 @@ export interface SaleCreateInput {
   branchId?: number;
   customerId?: number;
   whId?: number | null;
+  taxId?: number | null;
+  taxRate?: number;
   saleDate?: string;
   quoteValidUntil?: string | null;
   subtotal?: number;

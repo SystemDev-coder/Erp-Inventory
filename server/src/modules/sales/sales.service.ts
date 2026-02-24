@@ -151,6 +151,23 @@ const normalizeTotals = (items: SaleItemInput[], discountInput?: number, totalIn
   return { subtotal, discount, total };
 };
 
+const resolveTaxRate = async (
+  client: PoolClient,
+  branchId: number,
+  taxId?: number | null,
+  taxRate?: number
+) => {
+  if (taxRate !== undefined && taxRate !== null) return { tax_id: null, rate_percent: taxRate };
+  if (taxId) {
+    const row = await queryOne<{ tax_id: number; rate_percent: number }>(
+      `SELECT tax_id, rate_percent FROM ims.taxes WHERE tax_id = $1 AND branch_id = $2 AND is_active = TRUE LIMIT 1`,
+      [taxId, branchId]
+    );
+    if (row) return row;
+  }
+  return { tax_id: null, rate_percent: 0 };
+};
+
 const normalizePayment = (input: {
   total: number;
   docType: SaleDocType;
@@ -183,33 +200,46 @@ const normalizePayment = (input: {
   };
 };
 
-const insertSaleItems = async (
+type PreparedSaleItem = SaleItemInput & { unitPrice: number; productId: number; quantity: number };
+
+const prepareSaleItems = async (
   client: PoolClient,
-  saleId: number,
   branchId: number,
   items: SaleItemInput[]
-) => {
+): Promise<PreparedSaleItem[]> => {
+  const prepared: PreparedSaleItem[] = [];
   for (const item of items) {
     const productId = Number(item.productId);
     const quantity = Number(item.quantity);
-    const unitPrice = Number(item.unitPrice || 0);
-
-    if (!productId || Number.isNaN(productId)) {
-      throw ApiError.badRequest('Item is required for each line');
-    }
+    if (!productId || Number.isNaN(productId)) throw ApiError.badRequest('Item is required for each line');
     if (!quantity || Number.isNaN(quantity) || quantity <= 0) {
       throw ApiError.badRequest('Quantity must be greater than zero');
     }
-    if (unitPrice < 0 || Number.isNaN(unitPrice)) {
-      throw ApiError.badRequest('Unit price cannot be negative');
-    }
 
-    await ensureProductInBranch(client, branchId, productId);
+    const prod = await queryOne<{ sell_price: number }>(
+      `SELECT sell_price FROM ims.items WHERE item_id = $1 AND branch_id = $2 AND is_active = TRUE`,
+      [productId, branchId]
+    );
+    if (!prod) throw ApiError.badRequest(`Item ${productId} not found in selected branch`);
 
+    const unitPrice = item.unitPrice !== undefined && item.unitPrice > 0 ? Number(item.unitPrice) : Number(prod.sell_price || 0);
+    if (unitPrice <= 0) throw ApiError.badRequest('Unit price must be greater than zero (uses item sell price by default)');
+
+    prepared.push({ ...item, productId, quantity, unitPrice });
+  }
+  return prepared;
+};
+
+const insertSaleItems = async (
+  client: PoolClient,
+  saleId: number,
+  items: PreparedSaleItem[]
+) => {
+  for (const item of items) {
     await client.query(
       `INSERT INTO ims.sale_items (sale_id, product_id, quantity, unit_price, line_total)
        VALUES ($1, $2, $3, $4, $5)`,
-      [saleId, productId, quantity, unitPrice, quantity * unitPrice]
+      [saleId, item.productId, item.quantity, item.unitPrice, item.quantity * item.unitPrice]
     );
   }
 };
@@ -406,7 +436,13 @@ export const salesService = {
         throw ApiError.badRequest('At least one item is required');
       }
 
-      const totals = normalizeTotals(items, input.discount, input.total);
+      const preparedItems = await prepareSaleItems(client, context.branchId, items);
+      const totals = normalizeTotals(preparedItems, input.discount, input.total);
+      const tax = await resolveTaxRate(client, context.branchId, input.taxId ?? null, input.taxRate);
+      const taxableBase = totals.subtotal - totals.discount;
+      const taxAmount = (taxableBase * Number(tax?.rate_percent || 0)) / 100;
+      const totalWithTax = totals.total !== undefined ? totals.total : taxableBase + taxAmount;
+
       const docType: SaleDocType = input.docType || 'sale';
       const status: SaleStatus = input.status || (docType === 'quotation' ? 'unpaid' : 'paid');
       const shouldApplyStock = canApplyStock(docType, status);
@@ -434,7 +470,7 @@ export const salesService = {
            pay_acc_id, paid_amount, is_stock_applied
          ) VALUES (
            $1, $2, $3, $4, $5, $6,
-           NULL, $7, 0,
+           $7, $8, $9,
            COALESCE($8, NOW()), $9, $10, $11,
            $12, $13, $14, $15, $16,
            $17, $18, $19
@@ -447,14 +483,16 @@ export const salesService = {
           input.customerId ?? null,
           input.currencyCode || 'USD',
           input.fxRate || 1,
+          tax?.tax_id ?? null,
           totals.subtotal,
+          taxAmount,
           input.saleDate || null,
           saleType,
           docType,
           input.quoteValidUntil || null,
           totals.subtotal,
           totals.discount,
-          totals.total,
+          totalWithTax,
           status,
           input.note || null,
           payment.payAccId,
@@ -467,7 +505,7 @@ export const salesService = {
       const affectedProductIds = Array.from(new Set(items.map((line) => Number(line.productId))));
       const triggerEnabled = await hasSaleTrigger(client);
 
-      await insertSaleItems(client, sale.sale_id, context.branchId, items);
+      await insertSaleItems(client, sale.sale_id, preparedItems);
       if (!triggerEnabled && shouldApplyStock) {
         await applyStockByFunction(client, {
           branchId: context.branchId,
@@ -524,11 +562,10 @@ export const salesService = {
       }
 
       const currentItems = await listSaleItemsTx(client, id);
-      const nextItems = input.items
-        ? input.items
-        : currentItems.map(mapCurrentItemToInput);
+      const rawItems = input.items ? input.items : currentItems.map(mapCurrentItemToInput);
+      const preparedItems = await prepareSaleItems(client, current.branch_id, rawItems);
 
-      if (!nextItems.length) {
+      if (!preparedItems.length) {
         throw ApiError.badRequest('At least one item is required');
       }
 
@@ -541,7 +578,17 @@ export const salesService = {
       const nextQuoteValidUntil =
         input.quoteValidUntil === undefined ? current.quote_valid_until : input.quoteValidUntil;
       const nextWhId = input.whId === undefined ? current.wh_id : input.whId;
-      const totals = normalizeTotals(nextItems, input.discount ?? current.discount, input.total);
+      const totals = normalizeTotals(preparedItems, input.discount ?? current.discount, input.total);
+      const tax = await resolveTaxRate(
+        client,
+        current.branch_id,
+        input.taxId ?? current.tax_id ?? null,
+        input.taxRate
+      );
+      const taxableBase = totals.subtotal - (input.discount ?? current.discount ?? 0);
+      const taxAmount = (taxableBase * Number(tax?.rate_percent || 0)) / 100;
+      const totalWithTax =
+        input.total !== undefined ? Number(input.total) : taxableBase + taxAmount;
       const nextApplyStock = canApplyStock(nextDocType, nextStatus);
       const previousApplyStock =
         current.is_stock_applied ?? canApplyStock(current.doc_type || 'sale', current.status);
@@ -594,14 +641,14 @@ export const salesService = {
         }
 
         await client.query(`DELETE FROM ims.sale_items WHERE sale_id = $1`, [id]);
-        await insertSaleItems(client, id, current.branch_id, nextItems);
+        await insertSaleItems(client, id, preparedItems);
 
         if (!triggerEnabled && nextApplyStock) {
           await applyStockByFunction(client, {
             branchId: current.branch_id,
             whId: nextWhId,
             saleId: current.sale_id,
-            items: nextItems.map((line) => ({
+            items: preparedItems.map((line) => ({
               product_id: Number(line.productId),
               quantity: Number(line.quantity),
             })),
@@ -611,7 +658,7 @@ export const salesService = {
         }
       }
 
-      nextItems.forEach((line) => affectedProductIds.add(Number(line.productId)));
+      preparedItems.forEach((line) => affectedProductIds.add(Number(line.productId)));
 
       if (payment.payAccId && payment.paidAmount > 0) {
         await adjustAccountBalance(client, {
@@ -638,9 +685,12 @@ export const salesService = {
                 pay_acc_id = $12,
                 paid_amount = $13,
                 is_stock_applied = $14,
+                tax_id = $15,
+                total_before_tax = $16,
+                tax_amount = $17,
                 voided_at = CASE WHEN $10 = 'void' THEN COALESCE(voided_at, NOW()) ELSE NULL END,
                 void_reason = CASE WHEN $10 = 'void' THEN COALESCE(void_reason, note) ELSE NULL END
-          WHERE sale_id = $15
+          WHERE sale_id = $18
           RETURNING *`,
         [
           input.customerId ?? current.customer_id,
@@ -651,12 +701,15 @@ export const salesService = {
           nextQuoteValidUntil || null,
           totals.subtotal,
           totals.discount,
-          totals.total,
+          totalWithTax,
           nextStatus,
           input.note === undefined ? current.note : input.note,
           payment.payAccId,
           payment.paidAmount,
           nextApplyStock,
+          tax?.tax_id ?? current.tax_id ?? null,
+          totals.subtotal,
+          taxAmount,
           id,
         ]
       );

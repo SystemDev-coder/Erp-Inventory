@@ -6,12 +6,14 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { accountService, Account } from '../../services/account.service';
 import { customerService, Customer } from '../../services/customer.service';
 import { inventoryService, InventoryItem } from '../../services/inventory.service';
+import { productService, Tax } from '../../services/product.service';
 import { SaleDocType, SaleStatus, salesService } from '../../services/sales.service';
 
 type FormLine = {
   product_id: number | '';
   quantity: number;
   unit_price: number;
+  available_qty?: number;
 };
 
 const todayString = () => new Date().toISOString().slice(0, 10);
@@ -25,6 +27,7 @@ type SaleItemOption = {
   product_id: number;
   item_name: string;
   unit_price: number;
+  available_qty?: number;
 };
 
 const SaleCreate = () => {
@@ -45,6 +48,7 @@ const SaleCreate = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [itemOptions, setItemOptions] = useState<SaleItemOption[]>([]);
+  // Manual tax: user enters percent directly, no dropdown
   const [isDebt, setIsDebt] = useState(false);
 
   const [saleForm, setSaleForm] = useState({
@@ -56,6 +60,8 @@ const SaleCreate = () => {
     quote_valid_until: '',
     subtotal: 0,
     discount: 0,
+    tax_rate: 0,
+    tax_amount: 0,
     total: 0,
     acc_id: '' as number | '',
     paid_amount: 0,
@@ -76,23 +82,31 @@ const SaleCreate = () => {
   useEffect(() => {
     const loadLookups = async () => {
       setLoading(true);
-      const [cRes, aRes, iRes] = await Promise.all([
+      const [cRes, aRes, iRes, stockRes] = await Promise.all([
         customerService.list(),
         accountService.list(),
         inventoryService.listItems({}),
+        inventoryService.listStock({ page: 1, limit: 1000 }),
       ]);
 
       if (cRes.success && cRes.data?.customers) setCustomers(cRes.data.customers);
       if (aRes.success && aRes.data?.accounts) setAccounts(aRes.data.accounts);
+      const stockMap = new Map<number, number>();
+      if (stockRes.success && stockRes.data?.rows) {
+        stockRes.data.rows.forEach((row) =>
+          stockMap.set(Number(row.product_id), Number(row.total_qty ?? row.branch_qty ?? 0))
+        );
+      }
+
       if (iRes.success && iRes.data?.items) {
         const mapped = (iRes.data.items as InventoryItem[]).map((item) => {
           const salePrice = Number(item.sale_price || 0);
-          const costPrice = Number(item.cost_price || 0);
-          const fallbackPrice = salePrice > 0 ? salePrice : costPrice > 0 ? costPrice : 0;
+          const fallbackPrice = salePrice > 0 ? salePrice : Number(item.cost_price || 0);
           return {
             product_id: Number(item.product_id),
             item_name: item.item_name,
             unit_price: Number(fallbackPrice),
+            available_qty: stockMap.get(Number(item.product_id)),
           };
         });
         setItemOptions(mapped);
@@ -135,9 +149,11 @@ const SaleCreate = () => {
         status: sale.status || 'paid',
         sale_date: sale.sale_date?.slice(0, 10) || todayString(),
         quote_valid_until: sale.quote_valid_until?.slice(0, 10) || '',
-        subtotal: Number(sale.subtotal || 0),
-        discount: Number(sale.discount || 0),
-        total: Number(sale.total || 0),
+      subtotal: Number(sale.subtotal || 0),
+      discount: Number(sale.discount || 0),
+      tax_rate: Number((sale as any).tax_amount ? ((sale as any).tax_amount / Math.max(1, (sale as any).total_before_tax || sale.subtotal || 1)) * 100 : 0),
+      tax_amount: Number((sale as any).tax_amount || 0),
+      total: Number(sale.total || 0),
         acc_id: sale.pay_acc_id ?? '',
         paid_amount: Number(sale.paid_amount || 0),
         note: sale.note || '',
@@ -153,11 +169,15 @@ const SaleCreate = () => {
       (sum, line) => sum + Number(line.quantity || 0) * Number(line.unit_price || 0),
       0
     );
-    const total = Math.max(0, subtotal - Number(headerDiscount || 0));
+    const discount = Number(headerDiscount || 0);
+    const taxRate = Number(saleForm.tax_rate || 0);
+    const taxAmount = ((subtotal - discount) * taxRate) / 100;
+    const total = Math.max(0, subtotal - discount + taxAmount);
     setSaleForm((prev) => ({
       ...prev,
       subtotal: Number(subtotal.toFixed(2)),
       total: Number(total.toFixed(2)),
+      tax_amount: Number(taxAmount.toFixed(2)),
     }));
   };
 
@@ -205,6 +225,7 @@ const SaleCreate = () => {
           : undefined,
       subtotal: Number(saleForm.subtotal),
       discount: Number(saleForm.discount),
+      taxRate: saleForm.tax_rate ? Number(saleForm.tax_rate) : undefined,
       total: Number(saleForm.total),
       saleType: effectiveSaleType,
       status: effectiveStatus,
@@ -351,6 +372,23 @@ const SaleCreate = () => {
               <option value="void">Void</option>
             </select>
           </label>
+
+          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+            Tax %
+            <input
+              type="number"
+              min={0}
+              className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
+              value={saleForm.tax_rate}
+              onChange={(e) => {
+                const rate = Number(e.target.value || 0);
+                setSaleForm((prev) => ({ ...prev, tax_rate: rate }));
+                recalcTotals(saleForm.items, saleForm.discount);
+              }}
+              disabled={loading}
+              placeholder="0"
+            />
+          </label>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -446,9 +484,10 @@ const SaleCreate = () => {
             </button>
           </div>
 
-          <div className="hidden md:grid md:grid-cols-[2fr_1fr_1fr_auto] gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400 px-1">
+          <div className="hidden md:grid md:grid-cols-[2fr_1fr_1fr_1fr_auto] gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400 px-1">
             <span>Item</span>
             <span className="text-right">Qty</span>
+            <span className="text-right">Available</span>
             <span className="text-right">Unit Price</span>
             <span className="text-right pr-6">Line Total / Action</span>
           </div>
@@ -457,7 +496,7 @@ const SaleCreate = () => {
             {saleForm.items.map((line, idx) => (
               <div
                 key={idx}
-                className="grid grid-cols-1 md:grid-cols-[2fr_1fr_1fr_auto] gap-2 items-center"
+                className="grid grid-cols-1 md:grid-cols-[2fr_1fr_1fr_1fr_auto] gap-2 items-center"
               >
                 <select
                   className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-sm"
@@ -470,6 +509,7 @@ const SaleCreate = () => {
                       ...nextItems[idx],
                       product_id: productId,
                       unit_price: option ? Number(option.unit_price || 0) : nextItems[idx].unit_price,
+                      available_qty: option?.available_qty,
                     };
                     setSaleForm((prev) => ({ ...prev, items: nextItems }));
                     recalcTotals(nextItems, saleForm.discount);
@@ -480,6 +520,7 @@ const SaleCreate = () => {
                   {itemOptions.map((item) => (
                     <option key={item.product_id} value={item.product_id}>
                       {item.item_name}
+                      {item.available_qty !== undefined ? ` (Qty: ${item.available_qty})` : ''}
                     </option>
                   ))}
                 </select>
@@ -506,6 +547,12 @@ const SaleCreate = () => {
                   }}
                   disabled={loading}
                 />
+
+                <div className="text-right text-xs text-slate-500 dark:text-slate-400">
+                  {line.available_qty !== undefined
+                    ? `${line.available_qty} in stock`
+                    : '—'}
+                </div>
 
                 <input
                   type="number"
@@ -569,6 +616,10 @@ const SaleCreate = () => {
               }}
               disabled={loading}
             />
+          </div>
+          <div className="flex flex-col items-end">
+            <span className="text-slate-500">Tax</span>
+            <span className="font-semibold">${(saleForm.tax_amount || 0).toFixed(2)}</span>
           </div>
           <div className="flex flex-col items-end">
             <span className="text-slate-500">Total</span>

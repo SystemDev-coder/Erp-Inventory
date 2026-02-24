@@ -9,11 +9,10 @@ import { PoolClient } from 'pg';
 export interface Purchase {
   purchase_id: number;
   branch_id: number;
-  wh_id: number | null;
+  store_id?: number | null;
   user_id: number;
   supplier_id: number;
   supplier_name?: string | null;
-  currency_code: string;
   fx_rate: number;
   purchase_date: string;
   purchase_type: string;
@@ -124,36 +123,36 @@ const resolveProductForPurchaseItem = async (
     );
     return productId;
   }
-
-  const categoryResult = await client.query<{ cat_id: number | null }>(
-    `SELECT cat_id
-       FROM ims.categories
-      WHERE branch_id = $1
-      ORDER BY cat_id
-      LIMIT 1`,
-    [branchId]
-  );
-
-  let fallbackCatId = Number(categoryResult.rows[0]?.cat_id ?? 0) || null;
-  if (!fallbackCatId) {
-    const anyCategory = await client.query<{ cat_id: number | null }>(
-      `SELECT cat_id
-         FROM ims.categories
-        ORDER BY cat_id
-        LIMIT 1`
-    );
-    fallbackCatId = Number(anyCategory.rows[0]?.cat_id ?? 0) || null;
-  }
   const nextSale = item.salePrice !== undefined ? Number(item.salePrice) : requestedCost;
 
   const created = await client.query<{ product_id: number }>(
     `INSERT INTO ims.items
-       (branch_id, cat_id, name, cost_price, sell_price, is_active)
-     VALUES ($1, $2, $3, $4, $5, TRUE)
+       (branch_id, name, cost_price, sell_price, is_active)
+     VALUES ($1, $2, $3, $4, TRUE)
      RETURNING item_id AS product_id`,
-    [branchId, fallbackCatId, itemName, requestedCost, nextSale]
+    [branchId, itemName, requestedCost, nextSale]
   );
-  return Number(created.rows[0].product_id);
+  const newProductId = Number(created.rows[0].product_id);
+
+  // Link supplier to item if provided and not already linked
+  if (supplierId) {
+    const exists = await client.query(
+      `SELECT 1 FROM ims.item_suppliers
+        WHERE branch_id = $1 AND item_id = $2 AND supplier_id = $3
+        LIMIT 1`,
+      [branchId, newProductId, supplierId]
+    );
+    if (!exists.rows[0]) {
+      await client.query(
+        `INSERT INTO ims.item_suppliers
+           (branch_id, item_id, supplier_id, is_default, supplier_sku, default_cost, created_at)
+         VALUES ($1, $2, $3, TRUE, NULL, $4, NOW())`,
+        [branchId, newProductId, supplierId, requestedCost]
+      );
+    }
+  }
+
+  return newProductId;
 };
 
 export const purchasesService = {
@@ -295,20 +294,6 @@ export const purchasesService = {
       const discount = input.discount ?? 0;
       const total = input.total ?? subtotal - discount;
 
-      if (input.whId) {
-        const warehouse = await client.query(
-          `SELECT wh_id
-             FROM ims.warehouses
-            WHERE wh_id = $1
-              AND branch_id = $2
-              AND is_active = TRUE`,
-          [input.whId, context.branchId]
-        );
-        if (!warehouse.rows[0]) {
-          throw ApiError.badRequest('Warehouse does not belong to this branch');
-        }
-      }
-
       if (input.payFromAccId) {
         const account = await client.query(
           `SELECT acc_id
@@ -330,16 +315,14 @@ export const purchasesService = {
 
       const purchaseResult = await client.query<Purchase>(
       `INSERT INTO ims.purchases (
-         branch_id, wh_id, user_id, supplier_id, currency_code, fx_rate,
+         branch_id, user_id, supplier_id, fx_rate,
          purchase_date, subtotal, discount, total, status, note
-       ) VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, NOW()), $8, $9, $10, $11, $12)
+       ) VALUES ($1, $2, $3, $4, COALESCE($5, NOW()), $6, $7, $8, $9, $10)
        RETURNING *`,
       [
         context.branchId,
-        input.whId ?? null,
         context.userId,
         effectiveSupplierId,
-        input.currencyCode || 'USD',
         input.fxRate || 1,
         input.purchaseDate || null,
         subtotal,
@@ -365,9 +348,10 @@ export const purchasesService = {
           const lineTotal = Number(item.quantity) * Number(item.unitCost) - Number(item.discount || 0);
           await client.query(
             `INSERT INTO ims.purchase_items
-               (purchase_id, item_id, quantity, unit_cost, sale_price, line_total, batch_no, expiry_date, description, discount)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+               (branch_id, purchase_id, item_id, quantity, unit_cost, sale_price, line_total, batch_no, expiry_date, description, discount)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
             [
+              context.branchId,
               purchase.purchase_id,
               productId,
               item.quantity,
@@ -474,10 +458,6 @@ export const purchasesService = {
         updates.push(`supplier_id = $${p++}`);
         values.push(effSupplier);
       }
-      if (input.whId !== undefined) {
-        updates.push(`wh_id = $${p++}`);
-        values.push(input.whId);
-      }
       if (input.purchaseDate !== undefined) {
         updates.push(`purchase_date = $${p++}`);
         values.push(input.purchaseDate);
@@ -497,10 +477,6 @@ export const purchasesService = {
       if (input.status !== undefined) {
         updates.push(`status = $${p++}`);
         values.push(input.status);
-      }
-      if (input.currencyCode !== undefined) {
-        updates.push(`currency_code = $${p++}`);
-        values.push(input.currencyCode);
       }
       if (input.fxRate !== undefined) {
         updates.push(`fx_rate = $${p++}`);
@@ -544,9 +520,10 @@ export const purchasesService = {
           const lineTotal = Number(item.quantity) * Number(item.unitCost) - Number(item.discount || 0);
           await client.query(
             `INSERT INTO ims.purchase_items
-               (purchase_id, item_id, quantity, unit_cost, sale_price, line_total, batch_no, expiry_date, description, discount)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+               (branch_id, purchase_id, item_id, quantity, unit_cost, sale_price, line_total, batch_no, expiry_date, description, discount)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
             [
+              currentBranchId,
               id,
               productId,
               item.quantity,

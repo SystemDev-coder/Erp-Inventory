@@ -34,7 +34,6 @@ export interface Purchase {
   discount: number;
   total: number;
   status: 'received' | 'partial' | 'unpaid' | 'void';
-  currency_code: string;
   fx_rate: number;
   note?: string | null;
   items?: PurchaseItem[];
@@ -43,7 +42,6 @@ export interface Purchase {
 export interface PurchaseCreateInput {
   branchId?: number;
   supplierId?: number | null;
-  whId?: number | null;
   purchaseDate?: string;
   purchaseType?: 'cash' | 'credit';
   subtotal?: number;
@@ -51,7 +49,6 @@ export interface PurchaseCreateInput {
   total?: number;
   status?: 'received' | 'partial' | 'unpaid' | 'void';
   note?: string | null;
-  currencyCode?: string;
   fxRate?: number;
   /**
    * Optional: account to pay from when recording an immediate payment
