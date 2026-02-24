@@ -42,19 +42,18 @@ layer(base);
   --color-black: #0b0f1f;
 
   /* ERP palette v2 */
-  /* Premium Primary (Indigo / Royal) */
-  --color-primary-25: #f5f7fa;
-  --color-primary-50: #edf2fb;
-  --color-primary-100: #dce5fb;
-  --color-primary-200: #b9ccf6;
-  --color-primary-300: #8db0f0; /* sky accent */
-  --color-primary-400: #5c8ae4; /* hover / links */
-  --color-primary-500: #1a237e; /* deep navy main */
-  --color-primary-600: #12306d;
-  --color-primary-700: #0d47a1; /* royal secondary */
-  --color-primary-800: #0b3579;
-  --color-primary-900: #071f4d;
-  --color-primary-950: #041531;
+  --color-primary-25: #f2f7ff;
+  --color-primary-50: #e6f0ff;
+  --color-primary-100: #cddffa;
+  --color-primary-200: #a7c7f2;
+  --color-primary-300: #7ca7e6;
+  --color-primary-400: #4f83d6;
+  --color-primary-500: #1c4d8d; /* accent */
+  --color-primary-600: #173f75;
+  --color-primary-700: #12335f;
+  --color-primary-800: #0e2749;
+  --color-primary-900: #0b1e3a;
+  --color-primary-950: #08152a;
 
   /* Brand - mirrors primary to keep compatibility */
   --color-brand-25: var(--color-primary-25);
@@ -70,19 +69,19 @@ layer(base);
   --color-brand-900: var(--color-primary-900);
   --color-brand-950: var(--color-primary-950);
 
-  /* Neutral / Surfaces */
-  --color-slate-25: #ffffff;
-  --color-slate-50: #f5f7fa; /* off-white */
-  --color-slate-100: #eceff4;
-  --color-slate-200: #e0e0e0; /* borders */
-  --color-slate-300: #c7c8cc;
-  --color-slate-400: #a0a2a8;
-  --color-slate-500: #7b7d84;
-  --color-slate-600: #5c5f66;
-  --color-slate-700: #424242; /* body text */
-  --color-slate-800: #303033;
-  --color-slate-900: #212121; /* headings */
-  --color-slate-950: #141414;
+  /* Neutral / Surfaces centered on #2B2A2A */
+  --color-slate-25: #f8f7f7;
+  --color-slate-50: #f5f2f2; /* requested light */
+  --color-slate-100: #ebe8e8;
+  --color-slate-200: #d9d4d4;
+  --color-slate-300: #b7b1b1;
+  --color-slate-400: #938d8d;
+  --color-slate-500: #6f6a6a;
+  --color-slate-600: #555151;
+  --color-slate-700: #3f3c3c;
+  --color-slate-800: #2f2d2d;
+  --color-slate-900: #2b2a2a; /* requested dark */
+  --color-slate-950: #1f1e1e;
 
   /* Success - Emerald */
   --color-success-25: #f0fdf4;
@@ -157,13 +156,13 @@ layer(base);
 
   /* Light & Dark base surfaces */
   body {
-    background: var(--color-slate-50);
-    color: var(--color-slate-700);
+    background: #f5f2f2; /* requested light */
+    color: #2b2a2a;
   }
 
   .dark body {
-    background: #0b1527;
-    color: #e6ecf5;
+    background: #2b2a2a; /* requested dark */
+    color: #f5f2f2;
   }
 
 *::-webkit-scrollbar {
@@ -172,12 +171,12 @@ layer(base);
 }
 
   *::-webkit-scrollbar-thumb {
-    background: var(--color-primary-500);
+    background: #1c4d8d;
     border-radius: 999px;
   }
 
   *::-webkit-scrollbar-track {
-    background: var(--color-slate-200);
+    background: #2b2a2a;
   }
 
 @layer base {
@@ -195,19 +194,6 @@ layer(base);
   .dark ::backdrop,
   .dark ::file-selector-button {
     border-color: var(--color-slate-800, currentColor);
-  }
-
-  /* Gradient helpers */
-  .bg-nav-gradient {
-    background: linear-gradient(135deg, #1a237e 0%, #0d47a1 60%, #42a5f5 100%);
-  }
-
-  .bg-success-gradient {
-    background: linear-gradient(135deg, #00838f 0%, #2e7d32 100%);
-  }
-
-  .bg-critical-gradient {
-    background: linear-gradient(135deg, #ff8f00 0%, #d32f2f 100%);
   }
 
   button:not(:disabled),
