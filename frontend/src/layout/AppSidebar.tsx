@@ -1,29 +1,25 @@
-import { useCallback, useMemo, useState } from 'react';
-import { Link, useLocation } from 'react-router';
-import {
-  BriefcaseBusiness,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  Cog,
-  DollarSign,
-  FileText,
-  LayoutDashboard,
-  LucideIcon,
-  ReceiptText,
-  Settings,
-  ShoppingBag,
-  ShoppingCart,
-  Store,
-  Users,
-  Lock as LockIcon,
-  Sun,
-  Moon,
-} from 'lucide-react';
+import { ElementType, useCallback, useMemo, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router';
 import { useSidebar } from '../context/SidebarContext';
 import { useAuth } from '../context/AuthContext';
-import { useNavigate } from 'react-router';
 import { useTheme } from '../hooks/useTheme';
+import {
+  SpaceDashboardOutlined,
+  PeopleAltOutlined,
+  Inventory2Outlined,
+  AssignmentReturnOutlined,
+  ShoppingBagOutlined,
+  ReceiptLongOutlined,
+  AccountBalanceWalletOutlined,
+  SettingsOutlined,
+  LockOutlined,
+  ChevronLeft,
+  ChevronRight,
+  ExpandLess,
+  ExpandMore,
+  StorefrontOutlined,
+  BusinessCenterOutlined,
+} from '@mui/icons-material';
 
 type SidebarSubItem = {
   id: string;
@@ -36,7 +32,7 @@ type SidebarSubItem = {
 type SidebarItem = {
   id: string;
   label: string;
-  icon: LucideIcon;
+  icon: ElementType;
   to?: string;
   permissionAny?: string[];
   exact?: boolean;
@@ -92,8 +88,8 @@ const AppSidebar: React.FC = () => {
       {
         title: 'Main',
         items: [
-          { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: '/', exact: true, permissionAny: ['dashboard.view'] },
-          { id: 'customers', label: 'Customers', icon: Users, to: '/customers', permissionAny: ['customers.view'] },
+          { id: 'dashboard', label: 'Dashboard', icon: SpaceDashboardOutlined, to: '/', exact: true, permissionAny: ['dashboard.view'] },
+          { id: 'customers', label: 'Customers', icon: PeopleAltOutlined, to: '/customers', permissionAny: ['customers.view'] },
         ],
       },
       {
@@ -102,7 +98,7 @@ const AppSidebar: React.FC = () => {
           {
             id: 'stockManagement',
             label: 'Stock Management',
-            icon: Store,
+            icon: Inventory2Outlined,
             permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'],
             expandable: true,
             subItems: [
@@ -110,9 +106,9 @@ const AppSidebar: React.FC = () => {
               { id: 'adjust-items', label: 'Adjust Items', to: '/stock-management/adjust-items', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
             ],
           },
-          { id: 'return', label: 'Return', icon: FileText, to: '/return', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
-          { id: 'purchases', label: 'Purchases', icon: ShoppingBag, to: '/purchases', permissionAny: ['purchases.view', 'suppliers.view'] },
-          { id: 'sales', label: 'Sales', icon: ReceiptText, to: '/sales', exact: true, permissionAny: ['sales.view'] },
+          { id: 'return', label: 'Return', icon: AssignmentReturnOutlined, to: '/return', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
+          { id: 'purchases', label: 'Purchases', icon: ShoppingBagOutlined, to: '/purchases', permissionAny: ['purchases.view', 'suppliers.view'] },
+          { id: 'sales', label: 'Sales', icon: ReceiptLongOutlined, to: '/sales', exact: true, permissionAny: ['sales.view'] },
         ],
       },
       {
@@ -121,7 +117,7 @@ const AppSidebar: React.FC = () => {
           {
             id: 'finance',
             label: 'Finance',
-            icon: DollarSign,
+            icon: AccountBalanceWalletOutlined,
             to: '/finance',
             exact: true,
             expandable: true,
@@ -137,14 +133,12 @@ const AppSidebar: React.FC = () => {
       },
       {
         title: 'People',
-        items: [{ id: 'hr', label: 'HR', icon: BriefcaseBusiness, to: '/employees/registration', permissionAny: ['employees.view'] }],
+        items: [{ id: 'hr', label: 'HR', icon: BusinessCenterOutlined, to: '/employees/registration', permissionAny: ['employees.view'] }],
       },
       {
         title: 'System',
         items: [
-          { id: 'system', label: 'System', icon: Settings, to: '/system', permissionAny: ['users.view', 'roles.view', 'permissions.view', 'system.users.manage', 'system.roles.manage', 'system.permissions.manage'] },
-          { id: 'setting', label: 'Setting', icon: Cog, to: '/settings', permissionAny: ['system.settings'] },
-          { id: 'reports', label: 'Reports', icon: FileText, to: '/reports', permissionAny: ['reports.all'] },
+          { id: 'system', label: 'System', icon: SettingsOutlined, to: '/system', permissionAny: ['users.view', 'roles.view', 'permissions.view', 'system.users.manage', 'system.roles.manage', 'system.permissions.manage'] },
         ],
       },
     ];
@@ -171,24 +165,24 @@ const AppSidebar: React.FC = () => {
 
   return (
     <aside
-      className={`fixed mt-16 flex flex-col lg:mt-0 top-0 left-0 bg-primary-900 text-slate-50 border-r border-primary-800/60 h-screen transition-all duration-300 ease-in-out z-50 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.55)]
-        ${showExpanded ? 'w-[280px]' : 'w-[80px]'}
+      className={`fixed mt-16 flex flex-col lg:mt-0 top-0 left-0 bg-white bg-gradient-to-br from-white via-[#f5f7fa] to-[#e0e0e0]/60 text-slate-800 border-r border-slate-200 h-screen transition-all duration-300 ease-in-out z-50 shadow-[0_12px_28px_-12px_rgba(26,35,126,0.35)]
+        ${showExpanded ? 'w-[260px]' : 'w-[80px]'}
         ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'}
         lg:translate-x-0`}
       onMouseEnter={() => !isExpanded && setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
       <div
-        className={`py-5 flex items-center gap-2 border-b border-primary-800/60 ${
-          !showExpanded ? 'lg:justify-center px-2' : 'justify-between px-4'
+        className={`py-5 flex items-center gap-2 border-b border-slate-200 ${
+          !showExpanded ? 'lg:justify-center px-3' : 'justify-between px-5'
         }`}
       >
         <Link to="/" className="flex items-center gap-3 min-w-0">
-          <div className="w-9 h-9 shrink-0 bg-primary-500 rounded-lg flex items-center justify-center shadow-lg shadow-primary-950/30">
-            <ShoppingCart className="w-5 h-5 text-white" />
+          <div className="w-9 h-9 shrink-0 bg-gradient-to-br from-primary-700 to-primary-500 rounded-lg flex items-center justify-center shadow-lg shadow-primary-900/25">
+            <StorefrontOutlined sx={{ fontSize: 20, color: '#fff' }} />
           </div>
           {showExpanded && (
-            <span className="text-lg font-semibold text-white truncate">
+            <span className="text-lg font-semibold text-slate-900 truncate">
               {user?.branch_name || 'ERP Premium'}
             </span>
           )}
@@ -198,16 +192,23 @@ const AppSidebar: React.FC = () => {
           <button
             onClick={toggleTheme}
             aria-label="Toggle theme"
-            className="p-1.5 hover:bg-primary-700/70 rounded-lg transition-colors text-slate-200"
+            className="flex items-center gap-2 px-3 py-2 rounded-full bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-700 transition-colors"
           >
-            {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+            <span>{theme === 'dark' ? 'Dark' : 'Light'}</span>
+            <span className="relative inline-flex h-5 w-9 rounded-full bg-slate-300">
+              <span
+                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                  theme === 'dark' ? 'translate-x-4 bg-primary-500' : 'translate-x-0.5'
+                }`}
+              ></span>
+            </span>
           </button>
           <button
-          onClick={toggleSidebar}
-          aria-label={showExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
-          className="hidden lg:flex shrink-0 p-1.5 hover:bg-primary-700/70 rounded-lg transition-colors text-slate-200"
-        >
-          {showExpanded ? <ChevronLeft className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
+            onClick={toggleSidebar}
+            aria-label={showExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
+            className="hidden lg:flex shrink-0 p-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-700 border border-slate-200"
+          >
+            {showExpanded ? <ChevronLeft fontSize="small" /> : <ChevronRight fontSize="small" />}
           </button>
         </div>
       </div>
@@ -218,91 +219,83 @@ const AppSidebar: React.FC = () => {
             {visibleGroups.map((group) => (
               <li key={group.title} className="mt-2">
                 {showExpanded && (
-                  <div className="px-3 py-2 text-[11px] uppercase tracking-[0.08em] text-primary-200/80">
+                  <div className="px-3 py-2 text-[11px] uppercase tracking-[0.08em] text-slate-500 font-semibold">
                     {group.title}
                   </div>
                 )}
                 <ul className="space-y-1">
                   {group.items.map((item) => {
-                const Icon = item.icon;
-                const hasSubs = Boolean(item.expandable && item.subItems && item.subItems.length > 0);
-                const active = item.to ? isActive(item.to, item.exact) : false;
+                    const Icon = item.icon;
+                    const hasSubs = Boolean(item.expandable && item.subItems && item.subItems.length > 0);
+                    const active = item.to ? isActive(item.to, item.exact) : false;
 
-                if (hasSubs) {
-                const groupOpen = Boolean(openGroups[item.id]);
-                const hasActiveSub = (item.subItems || []).some((sub) => isActive(sub.to, sub.exact));
-                return (
-                  <li key={item.id}>
-                    <button
-                      type="button"
-                      onClick={() => toggleGroup(item.id)}
-                      className={`flex items-center w-full rounded-lg px-3 py-2.5 transition-colors ${
-                        hasActiveSub
-                          ? 'bg-primary-700 text-white'
-                          : 'text-slate-100 hover:bg-primary-800/60'
-                      } ${!showExpanded ? 'lg:justify-center px-0' : ''}`}
-                    >
-                      <span className={`flex items-center min-w-0 flex-1 ${!showExpanded ? 'lg:justify-center' : 'gap-3'}`}>
-                        <span
-                          className={`flex-shrink-0 ${
-                            hasActiveSub ? 'text-primary-100' : 'text-slate-200'
-                          }`}
+                    if (hasSubs) {
+                      const groupOpen = Boolean(openGroups[item.id]);
+                      const hasActiveSub = (item.subItems || []).some((sub) => isActive(sub.to, sub.exact));
+                      return (
+                        <li key={item.id}>
+                          <button
+                            type="button"
+                            onClick={() => toggleGroup(item.id)}
+                            className={`flex items-center w-full rounded-lg px-3 py-2.5 transition-colors border-l-4 ${
+                              hasActiveSub
+                                ? 'bg-[#e8f0ff] text-primary-700 font-semibold border-primary-500'
+                                : 'text-slate-700 hover:bg-slate-100 border-transparent'
+                            } ${!showExpanded ? 'lg:justify-center px-2' : ''}`}
+                          >
+                            <span className={`flex items-center min-w-0 flex-1 ${!showExpanded ? 'lg:justify-center' : 'gap-3'}`}>
+                              <Icon fontSize="small" />
+                              {showExpanded && <span className="text-[14px] font-medium truncate">{item.label}</span>}
+                            </span>
+                            {showExpanded && (
+                              <span className="ml-auto text-slate-500">
+                                {groupOpen ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
+                              </span>
+                            )}
+                          </button>
+                          {showExpanded && groupOpen && (
+                            <ul className="ml-5 mt-2 space-y-1 border-l border-slate-200 pl-3">
+                              {(item.subItems || []).map((sub) => {
+                                const subActive = isActive(sub.to, sub.exact);
+                                return (
+                                  <li key={sub.id}>
+                                    <Link
+                                      to={sub.to}
+                                      className={`block rounded-lg px-3 py-2 text-sm transition-colors border-l-4 ${
+                                        subActive
+                                          ? 'bg-[#e8f0ff] text-primary-700 font-semibold border-primary-500'
+                                          : 'text-slate-700 hover:bg-slate-100 border-transparent'
+                                      }`}
+                                    >
+                                      {sub.label}
+                                    </Link>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          )}
+                        </li>
+                      );
+                    }
+
+                    return (
+                      <li key={item.id}>
+                        <Link
+                          to={item.to || '/'}
+                          className={`flex items-center w-full rounded-lg transition-colors border-l-4 ${
+                            active
+                              ? 'bg-[#e8f0ff] text-primary-700 font-semibold border-primary-500'
+                              : 'text-slate-700 hover:bg-slate-100 border-transparent'
+                          } ${!showExpanded ? 'lg:justify-center px-2' : 'px-3'}`}
                         >
-                          <Icon className="w-4 h-4" />
-                        </span>
-                        {showExpanded && <span className="text-sm font-medium truncate">{item.label}</span>}
-                      </span>
-                      {showExpanded && (
-                        <ChevronDown
-                          className={`h-4 w-4 transition-transform ${groupOpen ? 'rotate-0' : '-rotate-90'}`}
-                        />
-                      )}
-                    </button>
-                    {showExpanded && groupOpen && (
-                      <ul className="ml-5 mt-2 space-y-1 border-l border-primary-800/50 pl-3">
-                        {(item.subItems || []).map((sub) => {
-                          const subActive = isActive(sub.to, sub.exact);
-                          return (
-                            <li key={sub.id}>
-                              <Link
-                                to={sub.to}
-                                className={`block rounded-lg px-3 py-2 text-sm transition-colors ${
-                                  subActive
-                                    ? 'bg-primary-700 text-white'
-                                    : 'text-slate-200 hover:bg-primary-800/60'
-                                }`}
-                              >
-                                {sub.label}
-                              </Link>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-                  </li>
-                );
-                }
-
-                return (
-                  <li key={item.id}>
-                    <Link
-                    to={item.to || '/'}
-                    className={`flex items-center w-full rounded-lg transition-colors ${
-                      active
-                        ? 'bg-primary-700 text-white'
-                        : 'text-slate-100 hover:bg-primary-800/60'
-                    } ${!showExpanded ? 'lg:justify-center px-0' : 'px-3'}`}
-                  >
-                    <span className={`flex items-center min-w-0 flex-1 py-2.5 ${!showExpanded ? 'lg:justify-center' : 'gap-3'}`}>
-                      <span className="flex-shrink-0 text-primary-100">
-                        <Icon className="w-4 h-4" />
-                      </span>
-                      {showExpanded && <span className="text-sm font-medium truncate">{item.label}</span>}
-                    </span>
-                    </Link>
-                  </li>
-                );
-              })}
+                          <span className={`flex items-center min-w-0 flex-1 py-2.5 ${!showExpanded ? 'lg:justify-center' : 'gap-3'}`}>
+                            <Icon fontSize="small" />
+                            {showExpanded && <span className="text-[14px] font-medium truncate">{item.label}</span>}
+                          </span>
+                        </Link>
+                      </li>
+                    );
+                  })}
                 </ul>
               </li>
             ))}
@@ -311,18 +304,18 @@ const AppSidebar: React.FC = () => {
       </div>
 
       {showExpanded && (
-        <div className="p-4 border-t border-primary-800/60 space-y-3">
+        <div className="p-4 border-t border-slate-200 space-y-3">
           <button
             onClick={() => {
               lock();
               navigate('/lock');
             }}
-            className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-primary-700 px-3 py-2 text-sm font-semibold text-white hover:bg-primary-700/70"
+            className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-primary-200 px-3 py-2 text-sm font-semibold text-primary-700 hover:bg-[#e8f0ff] transition-colors"
           >
-            <LockIcon className="h-4 w-4" /> Lock
+            <LockOutlined sx={{ fontSize: 16 }} /> Lock
           </button>
-          <p className="text-xs text-slate-300 text-center">
-            (c) 2026 {user?.branch_name || 'ERP Premium'} | All rights reserved
+          <p className="text-xs text-slate-500 text-center">
+            © 2026 {user?.branch_name || 'ERP Premium'} | All rights reserved
           </p>
         </div>
       )}
