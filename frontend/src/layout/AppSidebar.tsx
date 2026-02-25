@@ -167,7 +167,7 @@ const AppSidebar: React.FC = () => {
 
   return (
     <aside
-      className={`fixed mt-16 flex flex-col lg:mt-0 top-0 left-0 bg-primary-900 text-slate-50 border-r border-primary-800/60 h-screen transition-all duration-300 ease-in-out z-50 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.55)]
+      className={`fixed mt-16 flex flex-col lg:mt-0 top-0 left-0 bg-white text-slate-700 border-r border-slate-200 dark:bg-slate-900 dark:text-slate-200 dark:border-slate-800 h-screen transition-all duration-300 ease-in-out z-50 shadow-[0_8px_26px_-12px_rgba(15,23,42,0.2)] dark:shadow-[0_10px_30px_-14px_rgba(0,0,0,0.7)]
         ${showExpanded ? 'w-[280px]' : 'w-[80px]'}
         ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'}
         lg:translate-x-0`}
@@ -175,16 +175,16 @@ const AppSidebar: React.FC = () => {
       onMouseLeave={() => setIsHovered(false)}
     >
       <div
-        className={`py-5 flex items-center gap-2 border-b border-primary-800/60 ${
+        className={`py-5 flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 ${
           !showExpanded ? 'lg:justify-center px-2' : 'justify-between px-4'
         }`}
       >
         <Link to="/" className="flex items-center gap-3 min-w-0">
-          <div className="w-9 h-9 shrink-0 bg-primary-500 rounded-lg flex items-center justify-center shadow-lg shadow-primary-950/30">
+          <div className="w-9 h-9 shrink-0 bg-primary-600 rounded-lg flex items-center justify-center shadow-sm">
             <ShoppingCart className="w-5 h-5 text-white" />
           </div>
           {showExpanded && (
-            <span className="text-lg font-semibold text-white truncate">
+            <span className="text-lg font-semibold text-slate-900 dark:text-white truncate">
               {user?.branch_name || 'ERP Premium'}
             </span>
           )}
@@ -193,7 +193,7 @@ const AppSidebar: React.FC = () => {
         <button
           onClick={toggleSidebar}
           aria-label={showExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
-          className="hidden lg:flex shrink-0 p-1.5 hover:bg-primary-700/70 rounded-lg transition-colors text-slate-200"
+          className="hidden lg:flex shrink-0 p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors text-slate-500 dark:text-slate-300"
         >
           {showExpanded ? <ChevronLeft className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
         </button>
@@ -204,11 +204,6 @@ const AppSidebar: React.FC = () => {
           <ul className="space-y-1">
             {visibleGroups.map((group) => (
               <li key={group.title} className="mt-2">
-                {showExpanded && (
-                  <div className="px-3 py-2 text-[11px] uppercase tracking-[0.08em] text-primary-200/80">
-                    {group.title}
-                  </div>
-                )}
                 <ul className="space-y-1">
                   {group.items.map((item) => {
                 const Icon = item.icon;
@@ -225,14 +220,14 @@ const AppSidebar: React.FC = () => {
                       onClick={() => toggleGroup(item.id)}
                       className={`flex items-center w-full rounded-lg px-3 py-2.5 transition-colors ${
                         hasActiveSub
-                          ? 'bg-primary-700 text-white'
-                          : 'text-slate-100 hover:bg-primary-800/60'
+                          ? 'bg-primary-50 text-primary-700 ring-1 ring-primary-200 dark:bg-primary-500/20 dark:text-primary-200 dark:ring-primary-500/40'
+                          : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
                       } ${!showExpanded ? 'lg:justify-center px-0' : ''}`}
                     >
                       <span className={`flex items-center min-w-0 flex-1 ${!showExpanded ? 'lg:justify-center' : 'gap-3'}`}>
                         <span
                           className={`flex-shrink-0 ${
-                            hasActiveSub ? 'text-primary-100' : 'text-slate-200'
+                            hasActiveSub ? 'text-primary-600 dark:text-primary-300' : 'text-slate-500 dark:text-slate-400'
                           }`}
                         >
                           <Icon className="w-4 h-4" />
@@ -246,7 +241,7 @@ const AppSidebar: React.FC = () => {
                       )}
                     </button>
                     {showExpanded && groupOpen && (
-                      <ul className="ml-5 mt-2 space-y-1 border-l border-primary-800/50 pl-3">
+                      <ul className="ml-5 mt-2 space-y-1 border-l border-slate-200 dark:border-slate-700 pl-3">
                         {(item.subItems || []).map((sub) => {
                           const subActive = isActive(sub.to, sub.exact);
                           return (
@@ -255,8 +250,8 @@ const AppSidebar: React.FC = () => {
                                 to={sub.to}
                                 className={`block rounded-lg px-3 py-2 text-sm transition-colors ${
                                   subActive
-                                    ? 'bg-primary-700 text-white'
-                                    : 'text-slate-200 hover:bg-primary-800/60'
+                                    ? 'bg-primary-50 text-primary-700 ring-1 ring-primary-200 dark:bg-primary-500/20 dark:text-primary-200 dark:ring-primary-500/40'
+                                    : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
                                 }`}
                               >
                                 {sub.label}
@@ -276,12 +271,12 @@ const AppSidebar: React.FC = () => {
                     to={item.to || '/'}
                     className={`flex items-center w-full rounded-lg transition-colors ${
                       active
-                        ? 'bg-primary-700 text-white'
-                        : 'text-slate-100 hover:bg-primary-800/60'
+                        ? 'bg-primary-50 text-primary-700 ring-1 ring-primary-200 dark:bg-primary-500/20 dark:text-primary-200 dark:ring-primary-500/40'
+                        : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
                     } ${!showExpanded ? 'lg:justify-center px-0' : 'px-3'}`}
                   >
                     <span className={`flex items-center min-w-0 flex-1 py-2.5 ${!showExpanded ? 'lg:justify-center' : 'gap-3'}`}>
-                      <span className="flex-shrink-0 text-primary-100">
+                      <span className={`${active ? 'text-primary-600 dark:text-primary-300' : 'text-slate-500 dark:text-slate-400'} flex-shrink-0`}>
                         <Icon className="w-4 h-4" />
                       </span>
                       {showExpanded && <span className="text-sm font-medium truncate">{item.label}</span>}
@@ -298,17 +293,17 @@ const AppSidebar: React.FC = () => {
       </div>
 
       {showExpanded && (
-        <div className="p-4 border-t border-primary-800/60 space-y-3">
+        <div className="p-4 border-t border-slate-200 dark:border-slate-800 space-y-3">
           <button
             onClick={() => {
               lock();
               navigate('/lock');
             }}
-            className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-primary-700 px-3 py-2 text-sm font-semibold text-white hover:bg-primary-700/70"
+            className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
           >
             <LockIcon className="h-4 w-4" /> Lock
           </button>
-          <p className="text-xs text-slate-300 text-center">
+          <p className="text-xs text-slate-500 dark:text-slate-400 text-center">
             (c) 2026 {user?.branch_name || 'ERP Premium'} | All rights reserved
           </p>
         </div>

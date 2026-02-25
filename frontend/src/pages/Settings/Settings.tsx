@@ -5,6 +5,7 @@ import { Tabs } from '../../components/ui/tabs';
 import { settingsService, CompanyInfo, AuditLog } from '../../services/settings.service';
 import { useToast } from '../../components/ui/toast/Toast';
 import { Modal } from '../../components/ui/modal/Modal';
+import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { env } from '../../config/env';
 
 const formatAuditValue = (val: unknown): string => {
@@ -86,6 +87,14 @@ const resolveImagePath = (value?: string | null): string | null => {
 const buildProxyUrl = (url: string): string =>
   `${env.API_URL}/api/media/proxy?url=${encodeURIComponent(url)}`;
 
+const emptyCompanyForm = {
+  company_name: '',
+  phone: '',
+  manager_name: '',
+  logo_img: '',
+  banner_img: '',
+};
+
 const getImageCandidates = (value?: string | null): string[] => {
   const resolved = resolveImagePath(value);
   if (!resolved) return [];
@@ -151,13 +160,8 @@ const Settings = () => {
   const [companyModalOpen, setCompanyModalOpen] = useState(false);
   const [companySaving, setCompanySaving] = useState(false);
   const [companyDeleting, setCompanyDeleting] = useState(false);
-  const [companyForm, setCompanyForm] = useState({
-    company_name: '',
-    phone: '',
-    manager_name: '',
-    logo_img: '',
-    banner_img: '',
-  });
+  const [companyDeleteConfirmOpen, setCompanyDeleteConfirmOpen] = useState(false);
+  const [companyForm, setCompanyForm] = useState(emptyCompanyForm);
 
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
@@ -204,14 +208,19 @@ const Settings = () => {
         logo_img: company.logo_img || '',
         banner_img: company.banner_img || '',
       });
+    } else {
+      setCompanyForm(emptyCompanyForm);
     }
     setCompanyModalOpen(true);
   };
 
+  const requestCompanyDelete = () => {
+    if (!company) return;
+    setCompanyDeleteConfirmOpen(true);
+  };
+
   const handleCompanyDelete = async () => {
     if (!company) return;
-    const ok = window.confirm('Delete company profile?');
-    if (!ok) return;
 
     setCompanyDeleting(true);
     const res = await settingsService.deleteCompany();
@@ -223,6 +232,9 @@ const Settings = () => {
     }
 
     setCompany(null);
+    setCompanyForm(emptyCompanyForm);
+    setCompanyModalOpen(false);
+    setCompanyDeleteConfirmOpen(false);
     showToast('success', 'Company Info', 'Deleted');
   };
 
@@ -338,7 +350,7 @@ const Settings = () => {
                       <Pencil className="w-3.5 h-3.5" /> Edit
                     </button>
                     <button
-                      onClick={handleCompanyDelete}
+                      onClick={requestCompanyDelete}
                       disabled={companyDeleting}
                       className="inline-flex items-center gap-1 px-2 py-1 rounded border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-60"
                     >
@@ -411,6 +423,19 @@ const Settings = () => {
           </button>
         </div>
       </Modal>
+
+      <ConfirmDialog
+        isOpen={companyDeleteConfirmOpen}
+        onClose={() => setCompanyDeleteConfirmOpen(false)}
+        onConfirm={handleCompanyDelete}
+        title="Delete Company Profile?"
+        highlightedName={company?.company_name || undefined}
+        message="This action will permanently remove company profile data."
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="danger"
+        isLoading={companyDeleting}
+      />
     </div>
   );
 

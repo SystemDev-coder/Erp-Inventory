@@ -1,11 +1,26 @@
 import { z } from 'zod';
 
+const imageInputSchema = z
+  .string()
+  .max(2048, 'Image path is too long')
+  .optional()
+  .or(z.literal(''))
+  .refine(
+    (value) =>
+      !value ||
+      /^https?:\/\//i.test(value) ||
+      value.startsWith('/') ||
+      value.startsWith('data:image/') ||
+      !/\s/.test(value),
+    'Image must be a valid URL or image path'
+  );
+
 export const companyInfoSchema = z.object({
-  companyName: z.string().min(1, 'Company name is required'),
-  phone: z.string().max(50).optional().or(z.literal('')),
-  managerName: z.string().max(100).optional().or(z.literal('')),
-  logoImg: z.string().url().optional().or(z.literal('')),
-  bannerImg: z.string().url().optional().or(z.literal('')),
+  companyName: z.string().trim().min(1, 'Company name is required').max(150, 'Company name is too long'),
+  phone: z.string().trim().max(50).optional().or(z.literal('')),
+  managerName: z.string().trim().max(100).optional().or(z.literal('')),
+  logoImg: imageInputSchema,
+  bannerImg: imageInputSchema,
 });
 
 export const branchCreateSchema = z.object({

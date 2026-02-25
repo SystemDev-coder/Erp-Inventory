@@ -108,21 +108,21 @@ const Dashboard = () => {
       },
       plotOptions: {},
       grid: {
-        borderColor: '#1f2937',
+        borderColor: '#e2e8f0',
         strokeDashArray: 4,
       },
       xaxis: {
         axisBorder: { show: false },
         axisTicks: { show: false },
-        labels: { style: { colors: '#94a3b8' } },
+        labels: { style: { colors: '#64748b' } },
       },
       yaxis: {
-        labels: { style: { colors: '#94a3b8' } },
+        labels: { style: { colors: '#64748b' } },
       },
       legend: {
         show: true,
         position: 'top',
-        labels: { colors: '#cbd5f5' },
+        labels: { colors: '#475569' },
       },
     };
 
@@ -197,21 +197,21 @@ const Dashboard = () => {
               return (
                 <div
                   key={card.id}
-                  className="group relative overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg"
+                  className="group relative overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg"
                 >
                   <div className="absolute inset-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100 bg-gradient-to-br from-slate-50/80 via-transparent to-transparent dark:from-slate-800/40" />
                   <div className="relative z-10 flex items-center justify-between">
                     <div>
-                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                      <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
                         {card.title}
                       </p>
-                      <p className="mt-3 text-3xl font-semibold text-slate-900 dark:text-white">
+                      <p className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">
                         {formatValue(card.value, card.format)}
                       </p>
-                      <p className="mt-2 text-xs text-slate-500">{card.subtitle}</p>
+                      <p className="mt-1 text-[11px] text-slate-500">{card.subtitle}</p>
                     </div>
-                    <div className="h-12 w-12 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-                      <Icon className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+                    <div className="h-10 w-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
+                      <Icon className="h-4 w-4 text-primary-600 dark:text-primary-400" />
                     </div>
                   </div>
                 </div>

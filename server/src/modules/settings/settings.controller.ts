@@ -29,10 +29,14 @@ export const getCompanyInfo = asyncHandler(async (_req: AuthRequest, res: Respon
 
 export const updateCompanyInfo = asyncHandler(async (req: AuthRequest, res: Response) => {
   const input = companyInfoSchema.parse(req.body);
+  const normalizeNullable = (value?: string | null) => {
+    const trimmed = (value || '').trim();
+    return trimmed.length ? trimmed : null;
+  };
 
   // If user supplies external URLs, upload them to Cloudinary first
-  let logoUrl = input.logoImg || '';
-  let bannerUrl = input.bannerImg || '';
+  let logoUrl = normalizeNullable(input.logoImg) || '';
+  let bannerUrl = normalizeNullable(input.bannerImg) || '';
   try {
     const { uploadImageFromUrl } = await import('../../config/cloudinary');
     const shouldUpload = (url: string) => {
@@ -69,11 +73,11 @@ export const updateCompanyInfo = asyncHandler(async (req: AuthRequest, res: Resp
   }
 
   const company = await settingsService.upsertCompanyInfo({
-    companyName: input.companyName,
-    phone: input.phone,
-    managerName: input.managerName,
-    logoImg: logoUrl,
-    bannerImg: bannerUrl,
+    companyName: input.companyName.trim(),
+    phone: normalizeNullable(input.phone),
+    managerName: normalizeNullable(input.managerName),
+    logoImg: normalizeNullable(logoUrl),
+    bannerImg: normalizeNullable(bannerUrl),
   });
   await logAudit({
     userId: req.user?.userId ?? null,

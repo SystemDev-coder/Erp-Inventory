@@ -53,7 +53,8 @@ is_schema_compatible() {
       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='${DB_SCHEMA}' AND table_name='users' AND column_name='email')
       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='${DB_SCHEMA}' AND table_name='warehouse_stock' AND column_name='branch_id')
       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='${DB_SCHEMA}' AND table_name='warehouse_stock' AND column_name='item_id')
-      AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='${DB_SCHEMA}' AND table_name='expenses' AND column_name='amount')
+      AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='${DB_SCHEMA}' AND table_name='expenses' AND column_name='created_at')
+      AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='${DB_SCHEMA}' AND table_name='expense_charges' AND column_name='amount')
       THEN 1 ELSE 0 END
   " | tr -d '[:space:]'
 }

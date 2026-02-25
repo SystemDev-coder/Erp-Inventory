@@ -10,7 +10,7 @@ import { productService, Tax } from '../../services/product.service';
 import { SaleDocType, SaleStatus, salesService } from '../../services/sales.service';
 
 type FormLine = {
-  product_id: number | '';
+  item_id: number | '';
   quantity: number;
   unit_price: number;
   available_qty?: number;
@@ -24,7 +24,7 @@ const parseDocType = (value: string | null): SaleDocType => {
 };
 
 type SaleItemOption = {
-  product_id: number;
+  item_id: number;
   item_name: string;
   unit_price: number;
   available_qty?: number;
@@ -66,7 +66,7 @@ const SaleCreate = () => {
     acc_id: '' as number | '',
     paid_amount: 0,
     note: '',
-    items: [{ product_id: '' as number | '', quantity: 1, unit_price: 0 }] as FormLine[],
+    items: [{ item_id: '' as number | '', quantity: 1, unit_price: 0 }] as FormLine[],
   });
 
   useEffect(() => {
@@ -94,7 +94,7 @@ const SaleCreate = () => {
       const stockMap = new Map<number, number>();
       if (stockRes.success && stockRes.data?.rows) {
         stockRes.data.rows.forEach((row) =>
-          stockMap.set(Number(row.product_id), Number(row.total_qty ?? row.branch_qty ?? 0))
+          stockMap.set(Number(row.item_id), Number(row.total_qty ?? row.branch_qty ?? 0))
         );
       }
 
@@ -102,11 +102,12 @@ const SaleCreate = () => {
         const mapped = (iRes.data.items as InventoryItem[]).map((item) => {
           const salePrice = Number(item.sale_price || 0);
           const fallbackPrice = salePrice > 0 ? salePrice : Number(item.cost_price || 0);
+          const itemId = Number(item.item_id);
           return {
-            product_id: Number(item.product_id),
+            item_id: itemId,
             item_name: item.item_name,
             unit_price: Number(fallbackPrice),
-            available_qty: stockMap.get(Number(item.product_id)),
+            available_qty: stockMap.get(itemId),
           };
         });
         setItemOptions(mapped);
@@ -130,7 +131,7 @@ const SaleCreate = () => {
 
       const sale = res.data.sale;
       const items = (res.data.items || []).map((item) => ({
-        product_id: Number(item.product_id),
+        item_id: Number(item.item_id),
         quantity: Number(item.quantity),
         unit_price: Number(item.unit_price),
       }));
@@ -157,7 +158,7 @@ const SaleCreate = () => {
         acc_id: sale.pay_acc_id ?? '',
         paid_amount: Number(sale.paid_amount || 0),
         note: sale.note || '',
-        items: items.length ? items : [{ product_id: '', quantity: 1, unit_price: 0 }],
+        items: items.length ? items : [{ item_id: '', quantity: 1, unit_price: 0 }],
       });
       setLoading(false);
     };
@@ -199,7 +200,7 @@ const SaleCreate = () => {
     effectiveStatus !== 'unpaid';
 
   const handleSaveSale = async () => {
-    const validItems = saleForm.items.filter((line) => line.product_id && line.quantity > 0);
+    const validItems = saleForm.items.filter((line) => line.item_id && line.quantity > 0);
     if (!validItems.length) {
       showToast('error', 'Sales', 'Select at least one item with quantity');
       return;
@@ -231,7 +232,7 @@ const SaleCreate = () => {
       status: effectiveStatus,
       note: saleForm.note || undefined,
       items: validItems.map((line) => ({
-        productId: Number(line.product_id),
+        itemId: Number(line.item_id),
         quantity: Number(line.quantity),
         unitPrice: Number(line.unit_price),
       })),
@@ -475,7 +476,7 @@ const SaleCreate = () => {
               onClick={() =>
                 setSaleForm((prev) => ({
                   ...prev,
-                  items: [...prev.items, { product_id: '', quantity: 1, unit_price: 0 }],
+                  items: [...prev.items, { item_id: '', quantity: 1, unit_price: 0 }],
                 }))
               }
               className="inline-flex items-center gap-1 text-sm px-3 py-1 rounded-lg bg-primary-600 text-white hover:bg-primary-700"
@@ -500,14 +501,14 @@ const SaleCreate = () => {
               >
                 <select
                   className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-sm"
-                  value={line.product_id}
+                  value={line.item_id}
                   onChange={(e) => {
-                    const productId = e.target.value ? Number(e.target.value) : '';
-                    const option = itemOptions.find((item) => item.product_id === productId);
+                    const itemId = e.target.value ? Number(e.target.value) : '';
+                    const option = itemOptions.find((item) => item.item_id === itemId);
                     const nextItems = [...saleForm.items];
                     nextItems[idx] = {
                       ...nextItems[idx],
-                      product_id: productId,
+                      item_id: itemId,
                       unit_price: option ? Number(option.unit_price || 0) : nextItems[idx].unit_price,
                       available_qty: option?.available_qty,
                     };
@@ -518,7 +519,7 @@ const SaleCreate = () => {
                 >
                   <option value="">Select item</option>
                   {itemOptions.map((item) => (
-                    <option key={item.product_id} value={item.product_id}>
+                    <option key={item.item_id} value={item.item_id}>
                       {item.item_name}
                       {item.available_qty !== undefined ? ` (Qty: ${item.available_qty})` : ''}
                     </option>
@@ -533,7 +534,7 @@ const SaleCreate = () => {
                   onChange={(e) => {
                     const quantity = Number(e.target.value || 0);
                     const nextItems = [...saleForm.items];
-                    const selected = itemOptions.find((item) => item.product_id === nextItems[idx].product_id);
+                    const selected = itemOptions.find((item) => item.item_id === nextItems[idx].item_id);
                     nextItems[idx] = {
                       ...nextItems[idx],
                       quantity,
@@ -577,10 +578,10 @@ const SaleCreate = () => {
                       const nextItems = saleForm.items.filter((_, itemIdx) => itemIdx !== idx);
                       setSaleForm((prev) => ({
                         ...prev,
-                        items: nextItems.length ? nextItems : [{ product_id: '', quantity: 1, unit_price: 0 }],
+                        items: nextItems.length ? nextItems : [{ item_id: '', quantity: 1, unit_price: 0 }],
                       }));
                       recalcTotals(
-                        nextItems.length ? nextItems : [{ product_id: '', quantity: 1, unit_price: 0 }],
+                        nextItems.length ? nextItems : [{ item_id: '', quantity: 1, unit_price: 0 }],
                         saleForm.discount
                       );
                     }}

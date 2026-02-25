@@ -37,9 +37,11 @@ const buildPrintableInvoice = (sale: Sale, items: SaleItem[]) => {
       const qty = Number(line.quantity || 0);
       const unitPrice = Number(line.unit_price || 0);
       const lineTotal = Number(line.line_total || qty * unitPrice);
-      const itemLabel = line.product_name
-        ? `${escapeHtml(line.product_name)} (ID ${line.product_id})`
-        : `Item ${line.product_id}`;
+      const itemId = Number(line.item_id || 0);
+      const itemName = line.item_name || '';
+      const itemLabel = itemName
+        ? `${escapeHtml(itemName)} (ID ${itemId})`
+        : `Item ${itemId}`;
       return `
         <tr>
           <td>${idx + 1}</td>

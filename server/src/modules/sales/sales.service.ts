@@ -21,8 +21,6 @@ export interface Sale {
   user_id: number;
   customer_id: number | null;
   customer_name?: string | null;
-  currency_code: string;
-  fx_rate: number;
   tax_id: number | null;
   total_before_tax: number;
   tax_amount: number;
@@ -45,8 +43,8 @@ export interface Sale {
 export interface SaleItem {
   sale_item_id: number;
   sale_id: number;
-  product_id: number;
-  product_name?: string | null;
+  item_id: number;
+  item_name?: string | null;
   quantity: number;
   unit_price: number;
   line_total: number;
@@ -63,6 +61,22 @@ interface SalesListFilters {
 interface UpdateSaleContext {
   userId?: number | null;
 }
+
+let salesColumnsCache: Set<string> | null = null;
+let hasApplyStockMoveFnCache: boolean | null = null;
+let customerBalanceColumnCache: 'open_balance' | 'remaining_balance' | null = null;
+
+const getSalesColumns = async (client: PoolClient): Promise<Set<string>> => {
+  if (salesColumnsCache) return salesColumnsCache;
+  const result = await client.query<{ column_name: string }>(
+    `SELECT column_name
+       FROM information_schema.columns
+      WHERE table_schema = 'ims'
+        AND table_name = 'sales'`
+  );
+  salesColumnsCache = new Set(result.rows.map((row) => row.column_name));
+  return salesColumnsCache;
+};
 
 const canApplyStock = (docType: SaleDocType, status: SaleStatus) =>
   docType !== 'quotation' && status !== 'void';
@@ -110,20 +124,6 @@ const ensureAccount = async (client: PoolClient, branchId: number, accId?: numbe
   );
   if (!account.rows[0]) {
     throw ApiError.badRequest('Selected account is not available in this branch');
-  }
-};
-
-const ensureProductInBranch = async (client: PoolClient, branchId: number, productId: number) => {
-  const product = await client.query(
-    `SELECT item_id AS product_id
-       FROM ims.items
-      WHERE item_id = $1
-        AND branch_id = $2
-        AND is_active = TRUE`,
-    [productId, branchId]
-  );
-  if (!product.rows[0]) {
-    throw ApiError.badRequest(`Item ${productId} not found in selected branch`);
   }
 };
 
@@ -200,7 +200,7 @@ const normalizePayment = (input: {
   };
 };
 
-type PreparedSaleItem = SaleItemInput & { unitPrice: number; productId: number; quantity: number };
+type PreparedSaleItem = SaleItemInput & { unitPrice: number; itemId: number; quantity: number };
 
 const prepareSaleItems = async (
   client: PoolClient,
@@ -209,37 +209,122 @@ const prepareSaleItems = async (
 ): Promise<PreparedSaleItem[]> => {
   const prepared: PreparedSaleItem[] = [];
   for (const item of items) {
-    const productId = Number(item.productId);
+    const itemId = Number(item.itemId);
     const quantity = Number(item.quantity);
-    if (!productId || Number.isNaN(productId)) throw ApiError.badRequest('Item is required for each line');
+    if (!itemId || Number.isNaN(itemId)) throw ApiError.badRequest('Item is required for each line');
     if (!quantity || Number.isNaN(quantity) || quantity <= 0) {
       throw ApiError.badRequest('Quantity must be greater than zero');
     }
 
     const prod = await queryOne<{ sell_price: number }>(
       `SELECT sell_price FROM ims.items WHERE item_id = $1 AND branch_id = $2 AND is_active = TRUE`,
-      [productId, branchId]
+      [itemId, branchId]
     );
-    if (!prod) throw ApiError.badRequest(`Item ${productId} not found in selected branch`);
+    if (!prod) throw ApiError.badRequest(`Item ${itemId} not found in selected branch`);
 
     const unitPrice = item.unitPrice !== undefined && item.unitPrice > 0 ? Number(item.unitPrice) : Number(prod.sell_price || 0);
     if (unitPrice <= 0) throw ApiError.badRequest('Unit price must be greater than zero (uses item sell price by default)');
 
-    prepared.push({ ...item, productId, quantity, unitPrice });
+    prepared.push({ ...item, itemId, quantity, unitPrice });
   }
   return prepared;
 };
 
+const hasApplyStockMoveFn = async (client: PoolClient): Promise<boolean> => {
+  if (hasApplyStockMoveFnCache !== null) return hasApplyStockMoveFnCache;
+  const result = await client.query<{ has_fn: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM pg_proc p
+         JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'ims'
+          AND p.proname = 'fn_apply_stock_move'
+     ) AS has_fn`
+  );
+  hasApplyStockMoveFnCache = Boolean(result.rows[0]?.has_fn);
+  return hasApplyStockMoveFnCache;
+};
+
+const getCustomerBalanceColumn = async (
+  client: PoolClient
+): Promise<'open_balance' | 'remaining_balance'> => {
+  if (customerBalanceColumnCache) return customerBalanceColumnCache;
+  const result = await client.query<{ column_name: string }>(
+    `SELECT column_name
+       FROM information_schema.columns
+      WHERE table_schema = 'ims'
+        AND table_name = 'customers'
+        AND column_name IN ('open_balance', 'remaining_balance')`
+  );
+  const names = new Set(result.rows.map((row) => row.column_name));
+  customerBalanceColumnCache = names.has('open_balance') ? 'open_balance' : 'remaining_balance';
+  return customerBalanceColumnCache;
+};
+
+const adjustCustomerBalance = async (
+  client: PoolClient,
+  params: { customerId?: number | null; branchId: number; delta: number }
+) => {
+  const customerId = params.customerId ? Number(params.customerId) : null;
+  const delta = Number(params.delta || 0);
+  if (!customerId || !delta) return;
+  const balanceColumn = await getCustomerBalanceColumn(client);
+  const result = await client.query(
+    `UPDATE ims.customers
+        SET ${balanceColumn} = GREATEST(COALESCE(${balanceColumn}, 0) + $1, 0)
+      WHERE customer_id = $2
+        AND branch_id = $3`,
+    [delta, customerId, params.branchId]
+  );
+  if ((result.rowCount ?? 0) === 0) {
+    throw ApiError.badRequest('Selected customer is not available in this branch');
+  }
+};
+
+const calculateOutstandingBalance = (params: {
+  docType?: string | null;
+  status?: string | null;
+  total?: number | null;
+  paidAmount?: number | null;
+}) => {
+  const docType = String(params.docType || 'sale');
+  const status = String(params.status || 'paid');
+  if (docType === 'quotation' || status === 'void') return 0;
+  return Math.max(Number(params.total || 0) - Number(params.paidAmount || 0), 0);
+};
+
 const insertSaleItems = async (
   client: PoolClient,
+  branchId: number,
   saleId: number,
   items: PreparedSaleItem[]
 ) => {
+  const saleItemsColumnsResult = await client.query<{ column_name: string }>(
+    `SELECT column_name
+       FROM information_schema.columns
+      WHERE table_schema = 'ims'
+        AND table_name = 'sale_items'`
+  );
+  const saleItemsColumns = new Set(saleItemsColumnsResult.rows.map((row) => row.column_name));
+
   for (const item of items) {
+    const columns: string[] = ['sale_id', 'item_id', 'quantity', 'unit_price', 'line_total'];
+    const values: unknown[] = [
+      saleId,
+      item.itemId,
+      item.quantity,
+      item.unitPrice,
+      item.quantity * item.unitPrice,
+    ];
+    if (saleItemsColumns.has('branch_id')) {
+      columns.unshift('branch_id');
+      values.unshift(branchId);
+    }
+    const placeholders = values.map((_, idx) => `$${idx + 1}`).join(', ');
     await client.query(
-      `INSERT INTO ims.sale_items (sale_id, product_id, quantity, unit_price, line_total)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [saleId, item.productId, item.quantity, item.unitPrice, item.quantity * item.unitPrice]
+      `INSERT INTO ims.sale_items (${columns.join(', ')})
+       VALUES (${placeholders})`,
+      values
     );
   }
 };
@@ -250,11 +335,28 @@ const applyStockByFunction = async (
     branchId: number;
     whId?: number | null;
     saleId: number;
-    items: Array<{ product_id: number; quantity: number }>;
+    items: Array<{ item_id: number; quantity: number }>;
     movementType: 'sale' | 'sales_return';
     direction: 'out' | 'in';
   }
-) => {
+): Promise<boolean> => {
+  const hasApplyStockFn = await hasApplyStockMoveFn(client);
+  let fallbackWhId = params.whId ?? null;
+  if (!hasApplyStockFn && !fallbackWhId) {
+    const defaultWarehouse = await client.query<{ wh_id: number }>(
+      `SELECT wh_id
+         FROM ims.warehouses
+        WHERE branch_id = $1
+          AND is_active = TRUE
+        ORDER BY wh_id
+        LIMIT 1`,
+      [params.branchId]
+    );
+    fallbackWhId = defaultWarehouse.rows[0]?.wh_id ?? null;
+  }
+  if (!hasApplyStockFn && !fallbackWhId) {
+    return false;
+  }
   for (const item of params.items) {
     const quantity = Number(item.quantity || 0);
     if (!quantity) continue;
@@ -263,35 +365,71 @@ const applyStockByFunction = async (
       `SELECT COALESCE(cost_price, 0)::text AS cost_price
          FROM ims.items
         WHERE item_id = $1`,
-      [item.product_id]
+      [item.item_id]
     );
     const costPrice = Number(product.rows[0]?.cost_price || 0);
-    const delta = params.direction === 'out' ? -quantity : quantity;
+    if (hasApplyStockFn) {
+      const delta = params.direction === 'out' ? -quantity : quantity;
+      await client.query(
+        `SELECT ims.fn_apply_stock_move(
+           $1,
+           $2,
+           $3,
+           $4,
+           $5::ims.movement_type_enum,
+           'sales',
+           $6,
+           $7,
+           $8
+         )`,
+        [
+          params.branchId,
+          params.whId ?? null,
+          item.item_id,
+          delta,
+          params.movementType,
+          params.saleId,
+          costPrice,
+          params.direction === 'out',
+        ]
+      );
+      continue;
+    }
+
+    if (params.direction === 'out') {
+      await client.query(`SELECT ims.fn_stock_sub($1, $2, $3, $4)`, [
+        params.branchId,
+        fallbackWhId,
+        item.item_id,
+        quantity,
+      ]);
+    } else {
+      await client.query(`SELECT ims.fn_stock_add($1, $2, $3, $4)`, [
+        params.branchId,
+        fallbackWhId,
+        item.item_id,
+        quantity,
+      ]);
+    }
 
     await client.query(
-      `SELECT ims.fn_apply_stock_move(
-         $1,
-         $2,
-         $3,
-         $4,
-         $5::ims.movement_type_enum,
-         'sales',
-         $6,
-         $7,
-         $8
-       )`,
+      `INSERT INTO ims.inventory_movements
+         (branch_id, wh_id, item_id, move_type, ref_table, ref_id, qty_in, qty_out, unit_cost, note)
+       VALUES ($1, $2, $3, $4::ims.movement_type_enum, 'sales', $5, $6, $7, $8, $9)`,
       [
         params.branchId,
-        params.whId ?? null,
-        item.product_id,
-        delta,
+        fallbackWhId,
+        item.item_id,
         params.movementType,
         params.saleId,
+        params.direction === 'in' ? quantity : 0,
+        params.direction === 'out' ? quantity : 0,
         costPrice,
-        params.direction === 'out',
+        params.direction === 'out' ? 'Sale issue' : 'Sale reversal',
       ]
     );
   }
+  return true;
 };
 
 const adjustAccountBalance = async (
@@ -340,7 +478,7 @@ const getSaleForUpdate = async (
 };
 
 const mapCurrentItemToInput = (item: SaleItem): SaleItemInput => ({
-  productId: Number(item.product_id),
+  itemId: Number(item.item_id),
   quantity: Number(item.quantity),
   unitPrice: Number(item.unit_price),
 });
@@ -417,9 +555,9 @@ export const salesService = {
 
   async listItems(saleId: number): Promise<SaleItem[]> {
     return queryMany<SaleItem>(
-      `SELECT si.*, p.name AS product_name
+      `SELECT si.*, p.name AS item_name
          FROM ims.sale_items si
-         JOIN ims.items p ON p.item_id = si.product_id
+         JOIN ims.items p ON p.item_id = si.item_id
         WHERE si.sale_id = $1
         ORDER BY si.sale_item_id`,
       [saleId]
@@ -460,64 +598,75 @@ export const salesService = {
 
       await ensureWarehouse(client, context.branchId, input.whId);
       await ensureAccount(client, context.branchId, payment.payAccId);
+      const salesColumns = await getSalesColumns(client);
+
+      const insertColumns: string[] = ['branch_id', 'wh_id', 'user_id', 'customer_id'];
+      const insertValues: unknown[] = [
+        context.branchId,
+        input.whId ?? null,
+        context.userId,
+        input.customerId ?? null,
+      ];
+      const pushInsert = (column: string, value: unknown) => {
+        if (!salesColumns.has(column)) return;
+        insertColumns.push(column);
+        insertValues.push(value);
+      };
+
+      pushInsert('tax_id', tax?.tax_id ?? null);
+      pushInsert('total_before_tax', totals.subtotal);
+      pushInsert('tax_amount', taxAmount);
+      if (salesColumns.has('sale_date') && input.saleDate) {
+        insertColumns.push('sale_date');
+        insertValues.push(input.saleDate);
+      }
+      pushInsert('sale_type', saleType);
+      pushInsert('doc_type', docType);
+      pushInsert('quote_valid_until', input.quoteValidUntil || null);
+      pushInsert('subtotal', totals.subtotal);
+      pushInsert('discount', totals.discount);
+      pushInsert('total', totalWithTax);
+      pushInsert('status', status);
+      pushInsert('note', input.note || null);
+      pushInsert('pay_acc_id', payment.payAccId);
+      pushInsert('paid_amount', payment.paidAmount);
+      pushInsert('is_stock_applied', shouldApplyStock);
+
+      const placeholders = insertValues.map((_, idx) => `$${idx + 1}`).join(', ');
 
       const saleResult = await client.query<Sale>(
-        `INSERT INTO ims.sales (
-           branch_id, wh_id, user_id, customer_id, currency_code, fx_rate,
-           tax_id, total_before_tax, tax_amount,
-           sale_date, sale_type, doc_type, quote_valid_until,
-           subtotal, discount, total, status, note,
-           pay_acc_id, paid_amount, is_stock_applied
-         ) VALUES (
-           $1, $2, $3, $4, $5, $6,
-           $7, $8, $9,
-           COALESCE($8, NOW()), $9, $10, $11,
-           $12, $13, $14, $15, $16,
-           $17, $18, $19
-         )
+        `INSERT INTO ims.sales (${insertColumns.join(', ')})
+         VALUES (${placeholders})
          RETURNING *`,
-        [
-          context.branchId,
-          input.whId ?? null,
-          context.userId,
-          input.customerId ?? null,
-          input.currencyCode || 'USD',
-          input.fxRate || 1,
-          tax?.tax_id ?? null,
-          totals.subtotal,
-          taxAmount,
-          input.saleDate || null,
-          saleType,
-          docType,
-          input.quoteValidUntil || null,
-          totals.subtotal,
-          totals.discount,
-          totalWithTax,
-          status,
-          input.note || null,
-          payment.payAccId,
-          payment.paidAmount,
-          shouldApplyStock,
-        ]
+        insertValues
       );
 
       const sale = saleResult.rows[0];
-      const affectedProductIds = Array.from(new Set(items.map((line) => Number(line.productId))));
+      const affectedItemIds = Array.from(new Set(items.map((line) => Number(line.itemId))));
       const triggerEnabled = await hasSaleTrigger(client);
+      let stockApplied = shouldApplyStock;
 
-      await insertSaleItems(client, sale.sale_id, preparedItems);
+      await insertSaleItems(client, context.branchId, sale.sale_id, preparedItems);
       if (!triggerEnabled && shouldApplyStock) {
-        await applyStockByFunction(client, {
+        stockApplied = await applyStockByFunction(client, {
           branchId: context.branchId,
           whId: input.whId ?? null,
           saleId: sale.sale_id,
           items: items.map((line) => ({
-            product_id: Number(line.productId),
+            item_id: Number(line.itemId),
             quantity: Number(line.quantity),
           })),
           movementType: 'sale',
           direction: 'out',
         });
+      }
+
+      if (salesColumns.has('is_stock_applied') && stockApplied !== shouldApplyStock) {
+        await client.query(`UPDATE ims.sales SET is_stock_applied = $1 WHERE sale_id = $2`, [
+          stockApplied,
+          sale.sale_id,
+        ]);
+        sale.is_stock_applied = stockApplied;
       }
 
       if (payment.payAccId && payment.paidAmount > 0) {
@@ -529,9 +678,21 @@ export const salesService = {
         });
       }
 
+      const customerOutstanding = calculateOutstandingBalance({
+        docType,
+        status,
+        total: totalWithTax,
+        paidAmount: payment.paidAmount,
+      });
+      await adjustCustomerBalance(client, {
+        customerId: input.customerId ?? null,
+        branchId: context.branchId,
+        delta: customerOutstanding,
+      });
+
       await syncLowStockNotifications(client, {
         branchId: context.branchId,
-        productIds: affectedProductIds,
+        productIds: affectedItemIds,
         actorUserId: context.userId,
       });
 
@@ -578,6 +739,8 @@ export const salesService = {
       const nextQuoteValidUntil =
         input.quoteValidUntil === undefined ? current.quote_valid_until : input.quoteValidUntil;
       const nextWhId = input.whId === undefined ? current.wh_id : input.whId;
+      const nextCustomerId =
+        input.customerId === undefined ? current.customer_id : input.customerId ?? null;
       const totals = normalizeTotals(preparedItems, input.discount ?? current.discount, input.total);
       const tax = await resolveTaxRate(
         client,
@@ -621,8 +784,9 @@ export const salesService = {
 
       const triggerEnabled = await hasSaleTrigger(client);
       const needsItemReset = Boolean(input.items) || previousApplyStock !== nextApplyStock;
-      const affectedProductIds = new Set<number>(
-        currentItems.map((line) => Number(line.product_id))
+      let nextStockApplied = nextApplyStock;
+      const affectedItemIds = new Set<number>(
+        currentItems.map((line) => Number(line.item_id))
       );
 
       if (needsItemReset) {
@@ -632,7 +796,7 @@ export const salesService = {
             whId: current.wh_id,
             saleId: current.sale_id,
             items: currentItems.map((line) => ({
-              product_id: Number(line.product_id),
+              item_id: Number(line.item_id),
               quantity: Number(line.quantity),
             })),
             movementType: 'sales_return',
@@ -641,15 +805,15 @@ export const salesService = {
         }
 
         await client.query(`DELETE FROM ims.sale_items WHERE sale_id = $1`, [id]);
-        await insertSaleItems(client, id, preparedItems);
+        await insertSaleItems(client, current.branch_id, id, preparedItems);
 
         if (!triggerEnabled && nextApplyStock) {
-          await applyStockByFunction(client, {
+          nextStockApplied = await applyStockByFunction(client, {
             branchId: current.branch_id,
             whId: nextWhId,
             saleId: current.sale_id,
             items: preparedItems.map((line) => ({
-              product_id: Number(line.productId),
+              item_id: Number(line.itemId),
               quantity: Number(line.quantity),
             })),
             movementType: 'sale',
@@ -658,7 +822,7 @@ export const salesService = {
         }
       }
 
-      preparedItems.forEach((line) => affectedProductIds.add(Number(line.productId)));
+      preparedItems.forEach((line) => affectedItemIds.add(Number(line.itemId)));
 
       if (payment.payAccId && payment.paidAmount > 0) {
         await adjustAccountBalance(client, {
@@ -669,54 +833,96 @@ export const salesService = {
         });
       }
 
+      const previousOutstanding = calculateOutstandingBalance({
+        docType: current.doc_type,
+        status: current.status,
+        total: Number(current.total || 0),
+        paidAmount: Number(current.paid_amount || 0),
+      });
+      const nextOutstanding = calculateOutstandingBalance({
+        docType: nextDocType,
+        status: nextStatus,
+        total: totalWithTax,
+        paidAmount: payment.paidAmount,
+      });
+      const previousCustomerId = current.customer_id ? Number(current.customer_id) : null;
+      const normalizedNextCustomerId = nextCustomerId ? Number(nextCustomerId) : null;
+      if (previousCustomerId === normalizedNextCustomerId) {
+        await adjustCustomerBalance(client, {
+          customerId: normalizedNextCustomerId,
+          branchId: current.branch_id,
+          delta: nextOutstanding - previousOutstanding,
+        });
+      } else {
+        await adjustCustomerBalance(client, {
+          customerId: previousCustomerId,
+          branchId: current.branch_id,
+          delta: -previousOutstanding,
+        });
+        await adjustCustomerBalance(client, {
+          customerId: normalizedNextCustomerId,
+          branchId: current.branch_id,
+          delta: nextOutstanding,
+        });
+      }
+
+      const salesColumns = await getSalesColumns(client);
+      const nextNote = input.note === undefined ? current.note : input.note;
+      const updateValues: unknown[] = [];
+      const updateClauses: string[] = [];
+      const pushUpdate = (column: string, value: unknown) => {
+        if (!salesColumns.has(column)) return;
+        updateValues.push(value);
+        updateClauses.push(`${column} = $${updateValues.length}`);
+      };
+
+      pushUpdate('customer_id', nextCustomerId);
+      pushUpdate('wh_id', nextWhId ?? null);
+      pushUpdate('sale_date', input.saleDate || current.sale_date);
+      pushUpdate('sale_type', nextSaleType);
+      pushUpdate('doc_type', nextDocType);
+      pushUpdate('quote_valid_until', nextQuoteValidUntil || null);
+      pushUpdate('subtotal', totals.subtotal);
+      pushUpdate('discount', totals.discount);
+      pushUpdate('total', totalWithTax);
+      pushUpdate('status', nextStatus);
+      pushUpdate('note', nextNote ?? null);
+      pushUpdate('pay_acc_id', payment.payAccId);
+      pushUpdate('paid_amount', payment.paidAmount);
+      pushUpdate('is_stock_applied', nextStockApplied);
+      pushUpdate('tax_id', tax?.tax_id ?? current.tax_id ?? null);
+      pushUpdate('total_before_tax', totals.subtotal);
+      pushUpdate('tax_amount', taxAmount);
+      if (salesColumns.has('voided_at')) {
+        updateClauses.push(
+          `voided_at = ${nextStatus === 'void' ? 'COALESCE(voided_at, NOW())' : 'NULL'}`
+        );
+      }
+      if (salesColumns.has('void_reason')) {
+        if (nextStatus === 'void') {
+          updateValues.push((current.void_reason ?? nextNote ?? null) as unknown);
+          updateClauses.push(`void_reason = $${updateValues.length}`);
+        } else {
+          updateClauses.push(`void_reason = NULL`);
+        }
+      }
+      if (updateClauses.length === 0) {
+        await client.query('COMMIT');
+        return current;
+      }
+
+      updateValues.push(id);
       const updatedResult = await client.query<Sale>(
         `UPDATE ims.sales
-            SET customer_id = COALESCE($1, customer_id),
-                wh_id = $2,
-                sale_date = COALESCE($3, sale_date),
-                sale_type = $4,
-                doc_type = $5,
-                quote_valid_until = $6,
-                subtotal = $7,
-                discount = $8,
-                total = $9,
-                status = $10,
-                note = $11,
-                pay_acc_id = $12,
-                paid_amount = $13,
-                is_stock_applied = $14,
-                tax_id = $15,
-                total_before_tax = $16,
-                tax_amount = $17,
-                voided_at = CASE WHEN $10 = 'void' THEN COALESCE(voided_at, NOW()) ELSE NULL END,
-                void_reason = CASE WHEN $10 = 'void' THEN COALESCE(void_reason, note) ELSE NULL END
-          WHERE sale_id = $18
+            SET ${updateClauses.join(', ')}
+          WHERE sale_id = $${updateValues.length}
           RETURNING *`,
-        [
-          input.customerId ?? current.customer_id,
-          nextWhId ?? null,
-          input.saleDate || null,
-          nextSaleType,
-          nextDocType,
-          nextQuoteValidUntil || null,
-          totals.subtotal,
-          totals.discount,
-          totalWithTax,
-          nextStatus,
-          input.note === undefined ? current.note : input.note,
-          payment.payAccId,
-          payment.paidAmount,
-          nextApplyStock,
-          tax?.tax_id ?? current.tax_id ?? null,
-          totals.subtotal,
-          taxAmount,
-          id,
-        ]
+        updateValues
       );
 
       await syncLowStockNotifications(client, {
         branchId: current.branch_id,
-        productIds: Array.from(affectedProductIds),
+        productIds: Array.from(affectedItemIds),
         actorUserId: ctx?.userId ?? null,
       });
 
@@ -767,13 +973,25 @@ export const salesService = {
         });
       }
 
+      const currentOutstanding = calculateOutstandingBalance({
+        docType: current.doc_type,
+        status: current.status,
+        total: Number(current.total || 0),
+        paidAmount: Number(current.paid_amount || 0),
+      });
+      await adjustCustomerBalance(client, {
+        customerId: current.customer_id ? Number(current.customer_id) : null,
+        branchId: current.branch_id,
+        delta: -currentOutstanding,
+      });
+
       if (previouslyApplied && currentItems.length) {
         await applyStockByFunction(client, {
           branchId: current.branch_id,
           whId: current.wh_id,
           saleId: current.sale_id,
           items: currentItems.map((line) => ({
-            product_id: Number(line.product_id),
+            item_id: Number(line.item_id),
             quantity: Number(line.quantity),
           })),
           movementType: 'sales_return',
@@ -781,26 +999,46 @@ export const salesService = {
         });
       }
 
+      const salesColumns = await getSalesColumns(client);
+      const trimmedReason = String(reason || '').trim();
+      const updateValues: unknown[] = [];
+      const updateClauses: string[] = [];
+      const pushUpdate = (column: string, value: unknown) => {
+        if (!salesColumns.has(column)) return;
+        updateValues.push(value);
+        updateClauses.push(`${column} = $${updateValues.length}`);
+      };
+      const nextVoidNote = trimmedReason
+        ? `${current.note ? `${current.note}\n` : ''}[VOID] ${trimmedReason}`
+        : current.note;
+
+      pushUpdate('status', 'void');
+      pushUpdate('is_stock_applied', false);
+      pushUpdate('pay_acc_id', null);
+      pushUpdate('paid_amount', 0);
+      if (salesColumns.has('voided_at')) {
+        updateClauses.push('voided_at = NOW()');
+      }
+      pushUpdate('void_reason', trimmedReason || null);
+      pushUpdate('note', nextVoidNote);
+
+      if (updateClauses.length === 0) {
+        await client.query('COMMIT');
+        return current;
+      }
+
+      updateValues.push(id);
       const updatedResult = await client.query<Sale>(
         `UPDATE ims.sales
-            SET status = 'void',
-                is_stock_applied = FALSE,
-                pay_acc_id = NULL,
-                paid_amount = 0,
-                voided_at = NOW(),
-                void_reason = NULLIF($2, ''),
-                note = CASE
-                  WHEN COALESCE($2, '') = '' THEN note
-                  ELSE COALESCE(note, '') || CASE WHEN COALESCE(note, '') = '' THEN '' ELSE E'\n' END || '[VOID] ' || $2
-                END
-          WHERE sale_id = $1
+            SET ${updateClauses.join(', ')}
+          WHERE sale_id = $${updateValues.length}
           RETURNING *`,
-        [id, reason || '']
+        updateValues
       );
 
       await syncLowStockNotifications(client, {
         branchId: current.branch_id,
-        productIds: currentItems.map((line) => Number(line.product_id)),
+        productIds: currentItems.map((line) => Number(line.item_id)),
         actorUserId: context.userId ?? null,
       });
 

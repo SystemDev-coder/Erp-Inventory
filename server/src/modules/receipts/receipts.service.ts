@@ -1,4 +1,5 @@
 import { queryMany, queryOne } from '../../db/query';
+import { pool } from '../../db/pool';
 import { ApiError } from '../../utils/ApiError';
 import { BranchScope } from '../../utils/branchScope';
 import { ReceiptInput } from './receipts.schemas';
@@ -49,117 +50,210 @@ export const receiptsService = {
   },
 
   async createReceipt(input: ReceiptInput, ctx: { branchId: number; userId: number }): Promise<Receipt> {
-    const account = await queryOne<{ acc_id: number }>(
-      `SELECT acc_id
-         FROM ims.accounts
-        WHERE acc_id = $1
-          AND branch_id = $2
-          AND is_active = TRUE`,
-      [input.accId, ctx.branchId]
-    );
-    if (!account) {
-      throw ApiError.badRequest('Selected account is not available in this branch');
-    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    return queryOne<Receipt>(
-      `INSERT INTO ims.receipts (
-         charge_id, customer_id, branch_id, user_id, acc_id,
-         currency_code, fx_rate, receipt_date, amount, reference_no, note
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, NOW()), $9, $10, $11)
-       RETURNING *`,
-      [
-        input.chargeId,
-        input.customerId ?? null,
-        ctx.branchId,
-        ctx.userId,
-        input.accId,
-        input.currencyCode || 'USD',
-        input.fxRate || 1,
-        input.receiptDate || null,
-        input.amount,
-        input.referenceNo || null,
-        input.note || null,
-      ]
-    ) as Promise<Receipt>;
-  },
-
-  async updateReceipt(id: number, input: Partial<ReceiptInput>, scope: BranchScope): Promise<Receipt | null> {
-    const target = await this.getReceipt(id, scope);
-    if (!target) {
-      return null;
-    }
-
-    if (input.accId !== undefined) {
-      const account = await queryOne<{ acc_id: number }>(
+      const account = await client.query<{ acc_id: number }>(
         `SELECT acc_id
            FROM ims.accounts
           WHERE acc_id = $1
             AND branch_id = $2
             AND is_active = TRUE`,
-        [input.accId, target.branch_id]
+        [input.accId, ctx.branchId]
       );
-      if (!account) {
+      if (!account.rows[0]) {
         throw ApiError.badRequest('Selected account is not available in this branch');
       }
-    }
 
-    const updates: string[] = [];
-    const values: any[] = [];
-    let p = 1;
+      const inserted = await client.query<Receipt>(
+        `INSERT INTO ims.receipts (
+           charge_id, customer_id, branch_id, user_id, acc_id,
+           currency_code, fx_rate, receipt_date, amount, reference_no, note
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, NOW()), $9, $10, $11)
+         RETURNING *`,
+        [
+          input.chargeId,
+          input.customerId ?? null,
+          ctx.branchId,
+          ctx.userId,
+          input.accId,
+          input.currencyCode || 'USD',
+          input.fxRate || 1,
+          input.receiptDate || null,
+          input.amount,
+          input.referenceNo || null,
+          input.note || null,
+        ]
+      );
 
-    if (input.chargeId !== undefined) {
-      updates.push(`charge_id = $${p++}`);
-      values.push(input.chargeId);
-    }
-    if (input.customerId !== undefined) {
-      updates.push(`customer_id = $${p++}`);
-      values.push(input.customerId);
-    }
-    if (input.accId !== undefined) {
-      updates.push(`acc_id = $${p++}`);
-      values.push(input.accId);
-    }
-    if (input.currencyCode !== undefined) {
-      updates.push(`currency_code = $${p++}`);
-      values.push(input.currencyCode);
-    }
-    if (input.fxRate !== undefined) {
-      updates.push(`fx_rate = $${p++}`);
-      values.push(input.fxRate);
-    }
-    if (input.receiptDate !== undefined) {
-      updates.push(`receipt_date = $${p++}`);
-      values.push(input.receiptDate);
-    }
-    if (input.amount !== undefined) {
-      updates.push(`amount = $${p++}`);
-      values.push(input.amount);
-    }
-    if (input.referenceNo !== undefined) {
-      updates.push(`reference_no = $${p++}`);
-      values.push(input.referenceNo);
-    }
-    if (input.note !== undefined) {
-      updates.push(`note = $${p++}`);
-      values.push(input.note);
-    }
+      const receipt = inserted.rows[0];
+      if (!receipt) {
+        throw ApiError.internal('Failed to create receipt');
+      }
 
-    if (updates.length === 0) return target;
+      const balanceResult = await client.query(
+        `UPDATE ims.accounts
+            SET balance = balance + $1
+          WHERE acc_id = $2
+            AND branch_id = $3`,
+        [input.amount, input.accId, ctx.branchId]
+      );
+      if ((balanceResult.rowCount ?? 0) === 0) {
+        throw ApiError.badRequest('Selected account is not available in this branch');
+      }
 
-    values.push(id);
-    let whereSql = `receipt_id = $${p}`;
-    if (!scope.isAdmin) {
-      values.push(scope.branchIds);
-      whereSql += ` AND branch_id = ANY($${p + 1})`;
+      await client.query('COMMIT');
+      return receipt;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
+  },
 
-    return queryOne<Receipt>(
-      `UPDATE ims.receipts
-          SET ${updates.join(', ')}
-        WHERE ${whereSql}
-        RETURNING *`,
-      values
-    );
+  async updateReceipt(id: number, input: Partial<ReceiptInput>, scope: BranchScope): Promise<Receipt | null> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const targetResult = scope.isAdmin
+        ? await client.query<Receipt>(
+            `SELECT *
+               FROM ims.receipts
+              WHERE receipt_id = $1
+              FOR UPDATE`,
+            [id]
+          )
+        : await client.query<Receipt>(
+            `SELECT *
+               FROM ims.receipts
+              WHERE receipt_id = $1
+                AND branch_id = ANY($2)
+              FOR UPDATE`,
+            [id, scope.branchIds]
+          );
+      const target = targetResult.rows[0] || null;
+      if (!target) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+
+      const nextAccId = input.accId ?? Number(target.acc_id);
+      const nextAmount = input.amount ?? Number(target.amount);
+
+      const account = await client.query<{ acc_id: number }>(
+        `SELECT acc_id
+           FROM ims.accounts
+          WHERE acc_id = $1
+            AND branch_id = $2
+            AND is_active = TRUE`,
+        [nextAccId, Number(target.branch_id)]
+      );
+      if (!account.rows[0]) {
+        throw ApiError.badRequest('Selected account is not available in this branch');
+      }
+
+      const updates: string[] = [];
+      const values: any[] = [];
+      let p = 1;
+
+      if (input.chargeId !== undefined) {
+        updates.push(`charge_id = $${p++}`);
+        values.push(input.chargeId);
+      }
+      if (input.customerId !== undefined) {
+        updates.push(`customer_id = $${p++}`);
+        values.push(input.customerId);
+      }
+      if (input.accId !== undefined) {
+        updates.push(`acc_id = $${p++}`);
+        values.push(input.accId);
+      }
+      if (input.currencyCode !== undefined) {
+        updates.push(`currency_code = $${p++}`);
+        values.push(input.currencyCode);
+      }
+      if (input.fxRate !== undefined) {
+        updates.push(`fx_rate = $${p++}`);
+        values.push(input.fxRate);
+      }
+      if (input.receiptDate !== undefined) {
+        updates.push(`receipt_date = $${p++}`);
+        values.push(input.receiptDate);
+      }
+      if (input.amount !== undefined) {
+        updates.push(`amount = $${p++}`);
+        values.push(input.amount);
+      }
+      if (input.referenceNo !== undefined) {
+        updates.push(`reference_no = $${p++}`);
+        values.push(input.referenceNo);
+      }
+      if (input.note !== undefined) {
+        updates.push(`note = $${p++}`);
+        values.push(input.note);
+      }
+
+      if (updates.length === 0) {
+        await client.query('COMMIT');
+        return target;
+      }
+
+      values.push(id);
+      const updatedResult = await client.query<Receipt>(
+        `UPDATE ims.receipts
+            SET ${updates.join(', ')}
+          WHERE receipt_id = $${p}
+          RETURNING *`,
+        values
+      );
+      const updated = updatedResult.rows[0] || null;
+      if (!updated) {
+        throw ApiError.internal('Failed to update receipt');
+      }
+
+      const previousAccId = Number(target.acc_id);
+      const previousAmount = Number(target.amount);
+      const branchId = Number(target.branch_id);
+
+      if (previousAccId === Number(nextAccId)) {
+        const delta = Number(nextAmount) - previousAmount;
+        if (delta !== 0) {
+          await client.query(
+            `UPDATE ims.accounts
+                SET balance = balance + $1
+              WHERE acc_id = $2
+                AND branch_id = $3`,
+            [delta, nextAccId, branchId]
+          );
+        }
+      } else {
+        await client.query(
+          `UPDATE ims.accounts
+              SET balance = balance - $1
+            WHERE acc_id = $2
+              AND branch_id = $3`,
+          [previousAmount, previousAccId, branchId]
+        );
+        await client.query(
+          `UPDATE ims.accounts
+              SET balance = balance + $1
+            WHERE acc_id = $2
+              AND branch_id = $3`,
+          [nextAmount, nextAccId, branchId]
+        );
+      }
+
+      await client.query('COMMIT');
+      return updated;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   },
 
   async getReceipt(id: number, scope: BranchScope): Promise<Receipt | null> {
@@ -184,11 +278,47 @@ export const receiptsService = {
   },
 
   async deleteReceipt(id: number, scope: BranchScope): Promise<void> {
-    if (scope.isAdmin) {
-      await queryOne(`DELETE FROM ims.receipts WHERE receipt_id = $1`, [id]);
-      return;
-    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    await queryOne(`DELETE FROM ims.receipts WHERE receipt_id = $1 AND branch_id = ANY($2)`, [id, scope.branchIds]);
+      const targetResult = scope.isAdmin
+        ? await client.query<Receipt>(
+            `SELECT *
+               FROM ims.receipts
+              WHERE receipt_id = $1
+              FOR UPDATE`,
+            [id]
+          )
+        : await client.query<Receipt>(
+            `SELECT *
+               FROM ims.receipts
+              WHERE receipt_id = $1
+                AND branch_id = ANY($2)
+              FOR UPDATE`,
+            [id, scope.branchIds]
+          );
+      const target = targetResult.rows[0] || null;
+      if (!target) {
+        await client.query('ROLLBACK');
+        return;
+      }
+
+      await client.query(`DELETE FROM ims.receipts WHERE receipt_id = $1`, [id]);
+      await client.query(
+        `UPDATE ims.accounts
+            SET balance = balance - $1
+          WHERE acc_id = $2
+            AND branch_id = $3`,
+        [Number(target.amount), Number(target.acc_id), Number(target.branch_id)]
+      );
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   },
 };

@@ -6,8 +6,8 @@ export type SaleDocType = 'sale' | 'invoice' | 'quotation';
 
 export interface SaleItem {
   sale_item_id?: number;
-  product_id: number;
-  product_name?: string | null;
+  item_id: number;
+  item_name?: string | null;
   quantity: number;
   unit_price: number;
   line_total?: number;
@@ -31,8 +31,6 @@ export interface Sale {
   discount: number;
   total: number;
   status: SaleStatus;
-  currency_code: string;
-  fx_rate: number;
   note?: string | null;
   pay_acc_id?: number | null;
   paid_amount?: number;
@@ -56,10 +54,8 @@ export interface SaleCreateInput {
   docType?: SaleDocType;
   status?: SaleStatus;
   note?: string | null;
-  currencyCode?: string;
-  fxRate?: number;
   items: Array<{
-    productId: number;
+    itemId: number;
     quantity: number;
     unitPrice: number;
   }>;

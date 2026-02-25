@@ -585,7 +585,17 @@ const Receipts = () => {
                         <select
                             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                             value={receiptForm.customer_id ?? ''}
-                            onChange={(e) => setReceiptForm(f => ({ ...f, customer_id: e.target.value ? Number(e.target.value) : undefined }))}
+                            onChange={(e) => {
+                                const customerId = e.target.value ? Number(e.target.value) : undefined;
+                                const unpaid = unpaidCustomers.find((u) => u.customer_id === customerId);
+                                const customer = customers.find((c) => c.customer_id === customerId);
+                                const nextAmount = Number(unpaid?.balance ?? customer?.balance ?? 0);
+                                setReceiptForm((f) => ({
+                                    ...f,
+                                    customer_id: customerId,
+                                    amount: customerId ? nextAmount : f.amount,
+                                }));
+                            }}
                         >
                             <option value="">— Select Customer (optional) —</option>
                             {customers.map(c => (

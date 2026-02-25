@@ -47,6 +47,35 @@ export interface PurchaseItemView extends PurchaseItem {
 
 const normalizeItemName = (value: string) => value.trim().replace(/\s+/g, ' ');
 
+const resolvePurchasePayment = (params: {
+  total: number;
+  status: string;
+  payFromAccId?: number;
+  paidAmount?: number;
+}) => {
+  const total = Number(params.total || 0);
+  let paidAmount = Number(params.paidAmount ?? 0);
+  const status = params.status || 'received';
+
+  if (status === 'void' || status === 'unpaid') {
+    paidAmount = 0;
+  } else if (status === 'received') {
+    paidAmount = paidAmount > 0 ? paidAmount : total;
+  } else if (status === 'partial' && paidAmount <= 0) {
+    throw ApiError.badRequest('Paid amount is required for partial purchases');
+  }
+
+  paidAmount = Math.min(Math.max(paidAmount, 0), total);
+  if (paidAmount > 0 && !params.payFromAccId) {
+    throw ApiError.badRequest('Select account for paid amount');
+  }
+
+  return {
+    payFromAccId: params.payFromAccId ?? null,
+    paidAmount,
+  };
+};
+
 const resolveProductForPurchaseItem = async (
   client: PoolClient,
   item: PurchaseItemInput,
@@ -293,15 +322,22 @@ export const purchasesService = {
       const subtotal = items.length > 0 ? subtotalFromItems : input.subtotal ?? 0;
       const discount = input.discount ?? 0;
       const total = input.total ?? subtotal - discount;
+      const purchaseStatus = input.status || 'received';
+      const payment = resolvePurchasePayment({
+        total,
+        status: purchaseStatus,
+        payFromAccId: input.payFromAccId,
+        paidAmount: input.paidAmount,
+      });
 
-      if (input.payFromAccId) {
+      if (payment.payFromAccId) {
         const account = await client.query(
           `SELECT acc_id
              FROM ims.accounts
             WHERE acc_id = $1
               AND branch_id = $2
               AND is_active = TRUE`,
-          [input.payFromAccId, context.branchId]
+          [payment.payFromAccId, context.branchId]
         );
         if (!account.rows[0]) {
           throw ApiError.badRequest('Selected account is not available in this branch');
@@ -328,7 +364,7 @@ export const purchasesService = {
         subtotal,
         discount,
         total,
-        input.status || 'received',
+        purchaseStatus,
         input.note || null,
       ]
       );
@@ -369,7 +405,7 @@ export const purchasesService = {
 
       // ---- Financial side effects: supplier remaining balance & account balance ----
       // 1) Always increase supplier remaining_balance by the full purchase total (if not void and supplier exists)
-      if (total > 0 && (input.status || 'received') !== 'void' && effectiveSupplierId) {
+      if (total > 0 && purchaseStatus !== 'void' && effectiveSupplierId) {
         await client.query(
           `UPDATE ims.suppliers
              SET remaining_balance = remaining_balance + $1
@@ -379,32 +415,27 @@ export const purchasesService = {
       }
 
       // 2) If there is an inline payment, reduce account balance and supplier remaining_balance
-      const paidAmountRaw = input.paidAmount ?? 0;
-      const payFromAccId = input.payFromAccId;
-      if (payFromAccId && paidAmountRaw > 0 && (input.status || 'received') !== 'void') {
-        const paidAmount = Math.min(paidAmountRaw, total);
-        if (paidAmount > 0) {
-          // Subtract from cash/bank account
-          const accountResult = await client.query(
-            `UPDATE ims.accounts
-               SET balance = balance - $1
-             WHERE acc_id = $2
-               AND branch_id = $3`,
-            [paidAmount, payFromAccId, context.branchId]
-          );
-          if ((accountResult.rowCount ?? 0) === 0) {
-            throw ApiError.badRequest('Payment account is not allowed for this branch');
-          }
+      if (payment.payFromAccId && payment.paidAmount > 0 && purchaseStatus !== 'void') {
+        // Subtract from cash/bank account
+        const accountResult = await client.query(
+          `UPDATE ims.accounts
+             SET balance = balance - $1
+           WHERE acc_id = $2
+             AND branch_id = $3`,
+          [payment.paidAmount, payment.payFromAccId, context.branchId]
+        );
+        if ((accountResult.rowCount ?? 0) === 0) {
+          throw ApiError.badRequest('Payment account is not allowed for this branch');
+        }
 
-          // Reduce supplier remaining balance
-          if (effectiveSupplierId) {
-            await client.query(
-              `UPDATE ims.suppliers
-                 SET remaining_balance = remaining_balance - $1
-               WHERE supplier_id = $2`,
-              [paidAmount, effectiveSupplierId]
-            );
-          }
+        // Reduce supplier remaining balance
+        if (effectiveSupplierId) {
+          await client.query(
+            `UPDATE ims.suppliers
+               SET remaining_balance = remaining_balance - $1
+             WHERE supplier_id = $2`,
+            [payment.paidAmount, effectiveSupplierId]
+          );
         }
       }
 

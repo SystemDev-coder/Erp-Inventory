@@ -239,8 +239,24 @@ const PurchaseEditor = () => {
       showToast('error', 'Add items', 'A purchase needs at least one line');
       return;
     }
+    if (form.status !== 'void' && form.status !== 'unpaid' && !form.acc_id) {
+      showToast('error', 'Account required', 'Select account for paid amount');
+      return;
+    }
+    if (form.status === 'partial' && Number(form.paid_amount || 0) <= 0) {
+      showToast('error', 'Paid amount required', 'Enter partial amount paid');
+      return;
+    }
     recalcTotals(lineItems, form.discount);
     setLoading(true);
+    const paidAmount =
+      form.status === 'void'
+        ? undefined
+        : form.status === 'unpaid'
+        ? 0
+        : form.status === 'partial'
+        ? Number(form.paid_amount || 0)
+        : Number(form.total || 0);
     const payload = {
       supplierId: supplierId ? Number(supplierId) : null,
       purchaseDate: form.purchase_date,
@@ -251,11 +267,11 @@ const PurchaseEditor = () => {
       note: form.note,
       items: preparedItems,
       // Inline payment info: optional, will update supplier remaining balance and account
-      payFromAccId: form.status === 'void' || !form.acc_id ? undefined : Number(form.acc_id),
-      paidAmount:
-        form.status === 'void'
+      payFromAccId:
+        form.status === 'void' || form.status === 'unpaid' || !form.acc_id
           ? undefined
-          : Number(form.paid_amount || 0),
+          : Number(form.acc_id),
+      paidAmount,
     };
     const res = isEdit
       ? await purchaseService.update(Number(id), payload)

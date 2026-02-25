@@ -439,15 +439,51 @@ export const financeService = {
     const balanceColumn = await detectColumn('customers', 'remaining_balance', ['open_balance', 'remaining_balance']);
     if (!month) {
       return queryMany(
-        `SELECT c.branch_id,
-                c.customer_id,
-                c.full_name AS customer_name,
-                c.${balanceColumn} AS balance,
-                c.${balanceColumn} AS total,
-                0 AS paid
-         FROM ims.customers c
-         WHERE ${branchFilter}
-           AND c.${balanceColumn} > 0
+        `WITH sales_bal AS (
+           SELECT s.branch_id,
+                  s.customer_id,
+                  COALESCE(SUM(GREATEST(COALESCE(s.total, 0) - COALESCE(s.paid_amount, 0), 0)), 0) AS sales_balance,
+                  COALESCE(SUM(COALESCE(s.total, 0)), 0) AS total_sales,
+                  COALESCE(SUM(COALESCE(s.paid_amount, 0)), 0) AS paid_from_sales
+             FROM ims.sales s
+            WHERE s.customer_id IS NOT NULL
+              AND s.status <> 'void'
+              AND COALESCE(s.doc_type, 'sale') <> 'quotation'
+            GROUP BY s.branch_id, s.customer_id
+         ),
+         receipt_bal AS (
+           SELECT r.branch_id,
+                  r.customer_id,
+                  COALESCE(SUM(COALESCE(r.amount, 0)), 0) AS paid_from_receipts
+             FROM ims.customer_receipts r
+            WHERE r.customer_id IS NOT NULL
+            GROUP BY r.branch_id, r.customer_id
+         ),
+         merged AS (
+           SELECT c.branch_id,
+                  c.customer_id,
+                  c.full_name AS customer_name,
+                  GREATEST(
+                    CASE
+                      WHEN COALESCE(c.${balanceColumn}, 0) > 0 THEN COALESCE(c.${balanceColumn}, 0)
+                      ELSE COALESCE(sb.sales_balance, 0) - COALESCE(rb.paid_from_receipts, 0)
+                    END,
+                    0
+                  ) AS balance,
+                  COALESCE(sb.total_sales, 0) AS total,
+                  COALESCE(sb.paid_from_sales, 0) + COALESCE(rb.paid_from_receipts, 0) AS paid
+             FROM ims.customers c
+             LEFT JOIN sales_bal sb
+               ON sb.branch_id = c.branch_id
+              AND sb.customer_id = c.customer_id
+             LEFT JOIN receipt_bal rb
+               ON rb.branch_id = c.branch_id
+              AND rb.customer_id = c.customer_id
+            WHERE ${branchFilter}
+         )
+         SELECT *
+           FROM merged
+          WHERE balance > 0
          ORDER BY balance DESC, customer_name`,
         params
       );

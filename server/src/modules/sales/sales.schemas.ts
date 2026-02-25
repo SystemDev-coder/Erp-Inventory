@@ -1,10 +1,16 @@
 import { z } from 'zod';
 
-export const saleItemSchema = z.object({
-  productId: z.coerce.number().int().positive(),
-  quantity: z.coerce.number().positive(),
-  unitPrice: z.coerce.number().nonnegative(),
-});
+export const saleItemSchema = z
+  .object({
+    itemId: z.coerce.number().int().positive(),
+    quantity: z.coerce.number().positive(),
+    unitPrice: z.coerce.number().nonnegative(),
+  })
+  .transform((value) => ({
+    itemId: Number(value.itemId),
+    quantity: value.quantity,
+    unitPrice: value.unitPrice,
+  }));
 
 export const saleSchema = z.object({
   branchId: z.coerce.number().int().positive().optional(),
@@ -20,8 +26,6 @@ export const saleSchema = z.object({
   docType: z.enum(['sale', 'invoice', 'quotation']).default('sale'),
   quoteValidUntil: z.string().optional(),
   status: z.enum(['paid', 'partial', 'unpaid', 'void']).default('paid'),
-  currencyCode: z.string().length(3).optional().default('USD'),
-  fxRate: z.coerce.number().positive().default(1),
   note: z.string().optional().or(z.literal('')),
   items: z.array(saleItemSchema).min(1, 'At least one item is required'),
   // Optional inline payment details (used to update accounts and customer balance)

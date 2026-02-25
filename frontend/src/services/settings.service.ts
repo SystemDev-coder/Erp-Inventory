@@ -1,7 +1,7 @@
 import { apiClient, ApiResponse } from './api';
 
 export interface CompanyInfo {
-  system_id: number;
+  company_id: number;
   company_name?: string;
   logo_img?: string | null;
   banner_img?: string | null;
@@ -26,9 +26,9 @@ export interface AuditLog {
   action: string;
   entity: string | null;
   entity_id: number | null;
-  old_value?: any;
-  new_value?: any;
-  meta?: any;
+  old_value?: unknown;
+  new_value?: unknown;
+  meta?: unknown;
   ip_address?: string | null;
   user_agent?: string | null;
   created_at: string;
@@ -39,7 +39,13 @@ export const settingsService = {
     return apiClient.get('/api/settings/company');
   },
   async updateCompany(input: Partial<CompanyInfo> & { system_name?: string; systemName?: string }): Promise<ApiResponse<{ company: CompanyInfo }>> {
-    const payload: any = {
+    const payload: {
+      companyName?: string;
+      phone?: string | null;
+      managerName?: string | null;
+      logoImg?: string | null;
+      bannerImg?: string | null;
+    } = {
       companyName: input.company_name ?? input.systemName ?? input.system_name,
       phone: input.phone,
       managerName: input.manager_name,

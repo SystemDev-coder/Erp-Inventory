@@ -3,6 +3,7 @@ import { History, Lock, Pencil, Plus, Shield, Trash2, Users } from 'lucide-react
 import { PageHeader } from '../../components/ui/layout';
 import { Tabs } from '../../components/ui/tabs';
 import { Modal } from '../../components/ui/modal/Modal';
+import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { useToast } from '../../components/ui/toast/Toast';
 import {
   systemService,
@@ -14,6 +15,12 @@ import {
 } from '../../services/system.service';
 
 const LOGS_LIMIT = 20;
+type ConfirmTarget =
+  | { type: 'user'; payload: SystemUser }
+  | { type: 'role'; payload: SystemRole }
+  | { type: 'permission'; payload: SystemPermission }
+  | { type: 'log'; payload: SystemAuditLog }
+  | { type: 'clearLogs' };
 
 const System = () => {
   const { showToast } = useToast();
@@ -60,6 +67,8 @@ const System = () => {
     actionType: '',
     description: '',
   });
+  const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget | null>(null);
+  const [confirmLoading, setConfirmLoading] = useState(false);
 
   const loadUsers = async () => {
     const res = await systemService.getUsers();
@@ -213,13 +222,7 @@ const System = () => {
     await loadUsers();
   };
 
-  const deleteUser = async (user: SystemUser) => {
-    if (!window.confirm(`Delete user "${user.username}"?`)) return;
-    const res = await systemService.deleteUser(user.user_id);
-    if (!res.success) return showToast('error', 'Users', res.error || 'Delete failed');
-    showToast('success', 'Users', 'User deleted');
-    await loadUsers();
-  };
+  const requestDeleteUser = (user: SystemUser) => setConfirmTarget({ type: 'user', payload: user });
 
   const openCreateRole = () => {
     setEditingRole(null);
@@ -266,13 +269,7 @@ const System = () => {
     await loadRoles();
   };
 
-  const deleteRole = async (role: SystemRole) => {
-    if (!window.confirm(`Delete role "${role.role_name}"?`)) return;
-    const res = await systemService.deleteRole(role.role_id);
-    if (!res.success) return showToast('error', 'Roles', res.error || 'Delete failed');
-    showToast('success', 'Roles', 'Role deleted');
-    await loadRoles();
-  };
+  const requestDeleteRole = (role: SystemRole) => setConfirmTarget({ type: 'role', payload: role });
 
   const openCreatePermission = () => {
     setEditingPermission(null);
@@ -330,29 +327,86 @@ const System = () => {
     await loadPermissions();
   };
 
-  const deletePermission = async (permission: SystemPermission) => {
-    if (!window.confirm(`Delete permission "${permission.perm_key}"?`)) return;
-    const res = await systemService.deletePermission(permission.perm_id);
-    if (!res.success) return showToast('error', 'Permissions', res.error || 'Delete failed');
-    showToast('success', 'Permissions', 'Permission deleted');
-    await loadPermissions();
+  const requestDeletePermission = (permission: SystemPermission) =>
+    setConfirmTarget({ type: 'permission', payload: permission });
+
+  const requestDeleteLog = (log: SystemAuditLog) => setConfirmTarget({ type: 'log', payload: log });
+
+  const requestClearLogs = () => setConfirmTarget({ type: 'clearLogs' });
+
+  const confirmAction = async () => {
+    if (!confirmTarget) return;
+    setConfirmLoading(true);
+    if (confirmTarget.type === 'user') {
+      const res = await systemService.deleteUser(confirmTarget.payload.user_id);
+      if (!res.success) {
+        showToast('error', 'Users', res.error || 'Delete failed');
+      } else {
+        showToast('success', 'Users', 'User deleted');
+        await loadUsers();
+      }
+    } else if (confirmTarget.type === 'role') {
+      const res = await systemService.deleteRole(confirmTarget.payload.role_id);
+      if (!res.success) {
+        showToast('error', 'Roles', res.error || 'Delete failed');
+      } else {
+        showToast('success', 'Roles', 'Role deleted');
+        await loadRoles();
+      }
+    } else if (confirmTarget.type === 'permission') {
+      const res = await systemService.deletePermission(confirmTarget.payload.perm_id);
+      if (!res.success) {
+        showToast('error', 'Permissions', res.error || 'Delete failed');
+      } else {
+        showToast('success', 'Permissions', 'Permission deleted');
+        await loadPermissions();
+      }
+    } else if (confirmTarget.type === 'log') {
+      const res = await systemService.deleteLog(confirmTarget.payload.audit_id);
+      if (!res.success) {
+        showToast('error', 'Activity Logs', res.error || 'Delete failed');
+      } else {
+        showToast('success', 'Activity Logs', 'Log deleted');
+        await loadLogs(logsPage);
+      }
+    } else {
+      const res = await systemService.clearLogs();
+      if (!res.success) {
+        showToast('error', 'Activity Logs', res.error || 'Clear failed');
+      } else {
+        showToast('success', 'Activity Logs', 'Logs cleared');
+        await loadLogs(1);
+      }
+    }
+    setConfirmLoading(false);
+    setConfirmTarget(null);
   };
 
-  const deleteLog = async (log: SystemAuditLog) => {
-    if (!window.confirm('Delete this log?')) return;
-    const res = await systemService.deleteLog(log.audit_id);
-    if (!res.success) return showToast('error', 'Activity Logs', res.error || 'Delete failed');
-    showToast('success', 'Activity Logs', 'Log deleted');
-    await loadLogs(logsPage);
-  };
+  const confirmTitle = (() => {
+    if (!confirmTarget) return '';
+    if (confirmTarget.type === 'user') return 'Delete User?';
+    if (confirmTarget.type === 'role') return 'Delete Role?';
+    if (confirmTarget.type === 'permission') return 'Delete Permission?';
+    if (confirmTarget.type === 'log') return 'Delete Activity Log?';
+    return 'Clear All Activity Logs?';
+  })();
 
-  const clearLogs = async () => {
-    if (!window.confirm('Clear all logs?')) return;
-    const res = await systemService.clearLogs();
-    if (!res.success) return showToast('error', 'Activity Logs', res.error || 'Clear failed');
-    showToast('success', 'Activity Logs', 'Logs cleared');
-    await loadLogs(1);
-  };
+  const confirmMessage = (() => {
+    if (!confirmTarget) return '';
+    if (confirmTarget.type === 'user') return 'This user account and related assignments may stop working.';
+    if (confirmTarget.type === 'role') return 'Users mapped to this role may lose access.';
+    if (confirmTarget.type === 'permission') return 'This permission will be removed from role mappings.';
+    if (confirmTarget.type === 'log') return 'This audit entry will be removed permanently.';
+    return 'All audit logs will be deleted permanently.';
+  })();
+
+  const confirmHighlightedName = (() => {
+    if (!confirmTarget) return undefined;
+    if (confirmTarget.type === 'user') return confirmTarget.payload.username;
+    if (confirmTarget.type === 'role') return confirmTarget.payload.role_name || String(confirmTarget.payload.role_id);
+    if (confirmTarget.type === 'permission') return confirmTarget.payload.perm_key;
+    return undefined;
+  })();
 
   const tabs = [
     {
@@ -363,15 +417,15 @@ const System = () => {
       content: (
         <div className="space-y-3">
           <div className="flex flex-wrap justify-end gap-2">
-            <button onClick={displayUsers} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-300 text-sm" disabled={loadingUsers}>
+            <button onClick={displayUsers} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm hover:bg-slate-50 dark:hover:bg-slate-800" disabled={loadingUsers}>
               {loadingUsers ? 'Loading...' : usersDisplayed ? 'Refresh Users' : 'Display Users'}
             </button>
             <button onClick={openCreateUser} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white text-sm"><Plus className="w-4 h-4" /> Add User</button>
           </div>
           {usersDisplayed ? (
             <div className="overflow-x-auto bg-white rounded-xl border border-slate-200 p-4 dark:bg-slate-900 dark:border-slate-800">
-              <table className="min-w-full text-sm"><thead><tr className="text-left text-slate-500"><th>Name</th><th>Username</th><th>Role</th><th>Branch</th><th>Status</th><th>Actions</th></tr></thead><tbody>
-                {users.map((u) => <tr key={u.user_id} className="border-t border-slate-200 dark:border-slate-800"><td>{u.name}</td><td>{u.username}</td><td>{u.role_name || '-'}</td><td>{u.branch_name || u.branch_id}</td><td>{u.is_active ? 'Active' : 'Inactive'}</td><td className="space-x-2 py-2"><button onClick={() => openEditUser(u)} className="px-2 py-1 border rounded"><Pencil className="w-3 h-3 inline" /></button><button onClick={() => deleteUser(u)} className="px-2 py-1 border border-rose-300 text-rose-700 rounded"><Trash2 className="w-3 h-3 inline" /></button></td></tr>)}
+              <table className="min-w-full text-sm"><thead><tr className="text-left text-slate-500 dark:text-slate-300"><th>Name</th><th>Username</th><th>Role</th><th>Branch</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+                {users.map((u) => <tr key={u.user_id} className="border-t border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200"><td>{u.name}</td><td>{u.username}</td><td>{u.role_name || '-'}</td><td>{u.branch_name || u.branch_id}</td><td>{u.is_active ? 'Active' : 'Inactive'}</td><td className="space-x-2 py-2"><button onClick={() => openEditUser(u)} className="px-2 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"><Pencil className="w-3 h-3 inline" /></button><button onClick={() => requestDeleteUser(u)} className="px-2 py-1 border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-300 rounded hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="w-3 h-3 inline" /></button></td></tr>)}
               </tbody></table>
             </div>
           ) : (
@@ -390,15 +444,15 @@ const System = () => {
       content: (
         <div className="space-y-3">
           <div className="flex flex-wrap justify-end gap-2">
-            <button onClick={displayRoles} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-300 text-sm" disabled={loadingRoles}>
+            <button onClick={displayRoles} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm hover:bg-slate-50 dark:hover:bg-slate-800" disabled={loadingRoles}>
               {loadingRoles ? 'Loading...' : rolesDisplayed ? 'Refresh Roles' : 'Display Roles'}
             </button>
             <button onClick={openCreateRole} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white text-sm"><Plus className="w-4 h-4" /> Add Role</button>
           </div>
           {rolesDisplayed ? (
             <div className="overflow-x-auto bg-white rounded-xl border border-slate-200 p-4 dark:bg-slate-900 dark:border-slate-800">
-              <table className="min-w-full text-sm"><thead><tr className="text-left text-slate-500"><th>Code</th><th>Name</th><th>Description</th><th>Permissions</th><th>Actions</th></tr></thead><tbody>
-                {roles.map((r) => <tr key={r.role_id} className="border-t border-slate-200 dark:border-slate-800"><td className="font-mono text-xs">{r.role_code}</td><td>{r.role_name}</td><td>{r.description || '-'}</td><td>{r.permission_count}</td><td className="space-x-2 py-2"><button onClick={() => openEditRole(r)} className="px-2 py-1 border rounded"><Pencil className="w-3 h-3 inline" /></button><button onClick={() => deleteRole(r)} className="px-2 py-1 border border-rose-300 text-rose-700 rounded"><Trash2 className="w-3 h-3 inline" /></button></td></tr>)}
+              <table className="min-w-full text-sm"><thead><tr className="text-left text-slate-500 dark:text-slate-300"><th>Code</th><th>Name</th><th>Description</th><th>Permissions</th><th>Actions</th></tr></thead><tbody>
+                {roles.map((r) => <tr key={r.role_id} className="border-t border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200"><td className="font-mono text-xs">{r.role_code}</td><td>{r.role_name}</td><td>{r.description || '-'}</td><td>{r.permission_count}</td><td className="space-x-2 py-2"><button onClick={() => openEditRole(r)} className="px-2 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"><Pencil className="w-3 h-3 inline" /></button><button onClick={() => requestDeleteRole(r)} className="px-2 py-1 border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-300 rounded hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="w-3 h-3 inline" /></button></td></tr>)}
               </tbody></table>
             </div>
           ) : (
@@ -417,15 +471,15 @@ const System = () => {
       content: (
         <div className="space-y-3">
           <div className="flex flex-wrap justify-end gap-2">
-            <button onClick={displayPermissions} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-300 text-sm" disabled={loadingPermissions}>
+            <button onClick={displayPermissions} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm hover:bg-slate-50 dark:hover:bg-slate-800" disabled={loadingPermissions}>
               {loadingPermissions ? 'Loading...' : permissionsDisplayed ? 'Refresh Permissions' : 'Display Permissions'}
             </button>
             <button onClick={openCreatePermission} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white text-sm"><Plus className="w-4 h-4" /> Add Permission</button>
           </div>
           {permissionsDisplayed ? (
             <div className="overflow-x-auto bg-white rounded-xl border border-slate-200 p-4 dark:bg-slate-900 dark:border-slate-800">
-              <table className="min-w-full text-sm"><thead><tr className="text-left text-slate-500"><th>Key</th><th>Name</th><th>Module</th><th>Action</th><th>Actions</th></tr></thead><tbody>
-                {permissions.map((p) => <tr key={p.perm_id} className="border-t border-slate-200 dark:border-slate-800"><td className="font-mono text-xs">{p.perm_key}</td><td>{p.perm_name}</td><td>{p.module}{p.sub_module ? ` / ${p.sub_module}` : ''}</td><td>{p.action_type || '-'}</td><td className="space-x-2 py-2"><button onClick={() => openEditPermission(p)} className="px-2 py-1 border rounded"><Pencil className="w-3 h-3 inline" /></button><button onClick={() => deletePermission(p)} className="px-2 py-1 border border-rose-300 text-rose-700 rounded"><Trash2 className="w-3 h-3 inline" /></button></td></tr>)}
+              <table className="min-w-full text-sm"><thead><tr className="text-left text-slate-500 dark:text-slate-300"><th>Key</th><th>Name</th><th>Module</th><th>Action</th><th>Actions</th></tr></thead><tbody>
+                {permissions.map((p) => <tr key={p.perm_id} className="border-t border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200"><td className="font-mono text-xs">{p.perm_key}</td><td>{p.perm_name}</td><td>{p.module}{p.sub_module ? ` / ${p.sub_module}` : ''}</td><td>{p.action_type || '-'}</td><td className="space-x-2 py-2"><button onClick={() => openEditPermission(p)} className="px-2 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"><Pencil className="w-3 h-3 inline" /></button><button onClick={() => requestDeletePermission(p)} className="px-2 py-1 border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-300 rounded hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="w-3 h-3 inline" /></button></td></tr>)}
               </tbody></table>
             </div>
           ) : (
@@ -444,19 +498,19 @@ const System = () => {
       content: (
         <div className="space-y-3">
           <div className="flex flex-wrap justify-end gap-2">
-            <button onClick={() => loadLogs(1)} className="px-3 py-2 rounded-lg border border-slate-300 text-sm">Refresh</button>
-            <button onClick={clearLogs} className="px-3 py-2 rounded-lg border border-rose-300 text-rose-700 text-sm">Clear All</button>
+            <button onClick={() => loadLogs(1)} className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm hover:bg-slate-50 dark:hover:bg-slate-800">Refresh</button>
+            <button onClick={requestClearLogs} className="px-3 py-2 rounded-lg border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-300 text-sm hover:bg-rose-50 dark:hover:bg-rose-500/10">Clear All</button>
           </div>
           <div className="overflow-x-auto bg-white rounded-xl border border-slate-200 p-4 dark:bg-slate-900 dark:border-slate-800">
-            <table className="min-w-full text-sm"><thead><tr className="text-left text-slate-500"><th>Action</th><th>Entity</th><th>User</th><th>Date</th><th>Actions</th></tr></thead><tbody>
-              {logs.map((l) => <tr key={l.audit_id} className="border-t border-slate-200 dark:border-slate-800"><td>{l.action}</td><td>{l.entity || '-'}</td><td>{l.username || l.user_id || '-'}</td><td>{new Date(l.created_at).toLocaleString()}</td><td className="py-2"><button onClick={() => deleteLog(l)} className="px-2 py-1 border border-rose-300 text-rose-700 rounded"><Trash2 className="w-3 h-3 inline" /></button></td></tr>)}
+            <table className="min-w-full text-sm"><thead><tr className="text-left text-slate-500 dark:text-slate-300"><th>Action</th><th>Entity</th><th>User</th><th>Date</th><th>Actions</th></tr></thead><tbody>
+              {logs.map((l) => <tr key={l.audit_id} className="border-t border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200"><td>{l.action}</td><td>{l.entity || '-'}</td><td>{l.username || l.user_id || '-'}</td><td>{new Date(l.created_at).toLocaleString()}</td><td className="py-2"><button onClick={() => requestDeleteLog(l)} className="px-2 py-1 border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-300 rounded hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="w-3 h-3 inline" /></button></td></tr>)}
             </tbody></table>
           </div>
-          <div className="flex justify-between text-sm text-slate-600">
+          <div className="flex justify-between text-sm text-slate-600 dark:text-slate-300">
             <span>Page {logsPage} of {Math.max(1, Math.ceil(logsTotal / LOGS_LIMIT))}</span>
             <div className="space-x-2">
-              <button onClick={() => loadLogs(Math.max(1, logsPage - 1))} disabled={logsPage <= 1} className="px-3 py-1 border rounded disabled:opacity-50">Prev</button>
-              <button onClick={() => loadLogs(logsPage + 1)} disabled={logsPage * LOGS_LIMIT >= logsTotal} className="px-3 py-1 border rounded disabled:opacity-50">Next</button>
+              <button onClick={() => loadLogs(Math.max(1, logsPage - 1))} disabled={logsPage <= 1} className="px-3 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50">Prev</button>
+              <button onClick={() => loadLogs(logsPage + 1)} disabled={logsPage * LOGS_LIMIT >= logsTotal} className="px-3 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50">Next</button>
             </div>
           </div>
         </div>
@@ -685,6 +739,19 @@ const System = () => {
           </button>
         </div>
       </Modal>
+
+      <ConfirmDialog
+        isOpen={!!confirmTarget}
+        onClose={() => setConfirmTarget(null)}
+        onConfirm={confirmAction}
+        title={confirmTitle}
+        highlightedName={confirmHighlightedName}
+        message={confirmMessage}
+        confirmText={confirmTarget?.type === 'clearLogs' ? 'Clear All' : 'Delete'}
+        cancelText="Cancel"
+        variant={confirmTarget?.type === 'clearLogs' ? 'warning' : 'danger'}
+        isLoading={confirmLoading}
+      />
     </div>
   );
 };
