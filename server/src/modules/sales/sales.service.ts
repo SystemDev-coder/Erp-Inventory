@@ -21,30 +21,32 @@ export interface Sale {
   user_id: number;
   customer_id: number | null;
   customer_name?: string | null;
+  currency_code?: string;
+  fx_rate?: number;
   tax_id: number | null;
-  total_before_tax: number;
+  total_before_tax?: number;
   tax_amount: number;
   sale_date: string;
   sale_type: 'cash' | 'credit';
-  doc_type: SaleDocType;
-  quote_valid_until: string | null;
+  doc_type?: SaleDocType;
+  quote_valid_until?: string | null;
   subtotal: number;
   discount: number;
   total: number;
   status: SaleStatus;
   note: string | null;
-  pay_acc_id: number | null;
-  paid_amount: number;
-  is_stock_applied: boolean;
-  voided_at: string | null;
-  void_reason: string | null;
+  pay_acc_id?: number | null;
+  paid_amount?: number;
+  is_stock_applied?: boolean;
+  voided_at?: string | null;
+  void_reason?: string | null;
 }
 
 export interface SaleItem {
   sale_item_id: number;
   sale_id: number;
-  item_id: number;
-  item_name?: string | null;
+  product_id: number;
+  product_name?: string | null;
   quantity: number;
   unit_price: number;
   line_total: number;
@@ -62,24 +64,48 @@ interface UpdateSaleContext {
   userId?: number | null;
 }
 
-let salesColumnsCache: Set<string> | null = null;
-let hasApplyStockMoveFnCache: boolean | null = null;
-let customerBalanceColumnCache: 'open_balance' | 'remaining_balance' | null = null;
-
-const getSalesColumns = async (client: PoolClient): Promise<Set<string>> => {
-  if (salesColumnsCache) return salesColumnsCache;
-  const result = await client.query<{ column_name: string }>(
-    `SELECT column_name
-       FROM information_schema.columns
-      WHERE table_schema = 'ims'
-        AND table_name = 'sales'`
-  );
-  salesColumnsCache = new Set(result.rows.map((row) => row.column_name));
-  return salesColumnsCache;
-};
-
 const canApplyStock = (docType: SaleDocType, status: SaleStatus) =>
   docType !== 'quotation' && status !== 'void';
+
+interface SalesSchemaMeta {
+  salesColumns: Set<string>;
+  saleItemIdColumn: 'product_id' | 'item_id';
+  saleItemsHasBranchId: boolean;
+}
+
+let cachedSalesSchemaMeta: SalesSchemaMeta | null = null;
+
+const getSalesSchemaMeta = async (): Promise<SalesSchemaMeta> => {
+  if (cachedSalesSchemaMeta) return cachedSalesSchemaMeta;
+
+  const [salesCols, saleItemCols] = await Promise.all([
+    queryMany<{ column_name: string }>(
+      `SELECT column_name
+         FROM information_schema.columns
+        WHERE table_schema = 'ims'
+          AND table_name = 'sales'`
+    ),
+    queryMany<{ column_name: string }>(
+      `SELECT column_name
+         FROM information_schema.columns
+        WHERE table_schema = 'ims'
+          AND table_name = 'sale_items'`
+    ),
+  ]);
+
+  const salesColumns = new Set(salesCols.map((row) => row.column_name));
+  const saleItemColumnSet = new Set(saleItemCols.map((row) => row.column_name));
+  const saleItemIdColumn = saleItemColumnSet.has('product_id') ? 'product_id' : 'item_id';
+  const saleItemsHasBranchId = saleItemColumnSet.has('branch_id');
+
+  cachedSalesSchemaMeta = {
+    salesColumns,
+    saleItemIdColumn,
+    saleItemsHasBranchId,
+  };
+
+  return cachedSalesSchemaMeta;
+};
 
 const hasSaleTrigger = async (client: PoolClient): Promise<boolean> => {
   const result = await client.query<{ has_trigger: boolean }>(
@@ -95,21 +121,6 @@ const hasSaleTrigger = async (client: PoolClient): Promise<boolean> => {
      ) AS has_trigger`
   );
   return Boolean(result.rows[0]?.has_trigger);
-};
-
-const ensureWarehouse = async (client: PoolClient, branchId: number, whId?: number | null) => {
-  if (!whId) return;
-  const warehouse = await client.query(
-    `SELECT wh_id
-       FROM ims.warehouses
-      WHERE wh_id = $1
-        AND branch_id = $2
-        AND is_active = TRUE`,
-    [whId, branchId]
-  );
-  if (!warehouse.rows[0]) {
-    throw ApiError.badRequest('Warehouse does not belong to this branch');
-  }
 };
 
 const ensureAccount = async (client: PoolClient, branchId: number, accId?: number | null) => {
@@ -128,8 +139,15 @@ const ensureAccount = async (client: PoolClient, branchId: number, accId?: numbe
 };
 
 const listSaleItemsTx = async (client: PoolClient, saleId: number): Promise<SaleItem[]> => {
+  const schema = await getSalesSchemaMeta();
   const result = await client.query<SaleItem>(
-    `SELECT *
+    `SELECT
+       sale_item_id,
+       sale_id,
+       ${schema.saleItemIdColumn} AS product_id,
+       quantity,
+       unit_price,
+       line_total
        FROM ims.sale_items
       WHERE sale_id = $1
       ORDER BY sale_item_id`,
@@ -152,7 +170,7 @@ const normalizeTotals = (items: SaleItemInput[], discountInput?: number, totalIn
 };
 
 const resolveTaxRate = async (
-  client: PoolClient,
+  _client: PoolClient,
   branchId: number,
   taxId?: number | null,
   taxRate?: number
@@ -200,127 +218,52 @@ const normalizePayment = (input: {
   };
 };
 
-type PreparedSaleItem = SaleItemInput & { unitPrice: number; itemId: number; quantity: number };
+type PreparedSaleItem = SaleItemInput & { unitPrice: number; productId: number; quantity: number };
 
 const prepareSaleItems = async (
-  client: PoolClient,
+  _client: PoolClient,
   branchId: number,
   items: SaleItemInput[]
 ): Promise<PreparedSaleItem[]> => {
   const prepared: PreparedSaleItem[] = [];
   for (const item of items) {
-    const itemId = Number(item.itemId);
+    const productId = Number(item.productId);
     const quantity = Number(item.quantity);
-    if (!itemId || Number.isNaN(itemId)) throw ApiError.badRequest('Item is required for each line');
+    if (!productId || Number.isNaN(productId)) throw ApiError.badRequest('Item is required for each line');
     if (!quantity || Number.isNaN(quantity) || quantity <= 0) {
       throw ApiError.badRequest('Quantity must be greater than zero');
     }
 
     const prod = await queryOne<{ sell_price: number }>(
       `SELECT sell_price FROM ims.items WHERE item_id = $1 AND branch_id = $2 AND is_active = TRUE`,
-      [itemId, branchId]
+      [productId, branchId]
     );
-    if (!prod) throw ApiError.badRequest(`Item ${itemId} not found in selected branch`);
+    if (!prod) throw ApiError.badRequest(`Item ${productId} not found in selected branch`);
 
     const unitPrice = item.unitPrice !== undefined && item.unitPrice > 0 ? Number(item.unitPrice) : Number(prod.sell_price || 0);
     if (unitPrice <= 0) throw ApiError.badRequest('Unit price must be greater than zero (uses item sell price by default)');
 
-    prepared.push({ ...item, itemId, quantity, unitPrice });
+    prepared.push({ ...item, productId, quantity, unitPrice });
   }
   return prepared;
 };
 
-const hasApplyStockMoveFn = async (client: PoolClient): Promise<boolean> => {
-  if (hasApplyStockMoveFnCache !== null) return hasApplyStockMoveFnCache;
-  const result = await client.query<{ has_fn: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1
-         FROM pg_proc p
-         JOIN pg_namespace n ON n.oid = p.pronamespace
-        WHERE n.nspname = 'ims'
-          AND p.proname = 'fn_apply_stock_move'
-     ) AS has_fn`
-  );
-  hasApplyStockMoveFnCache = Boolean(result.rows[0]?.has_fn);
-  return hasApplyStockMoveFnCache;
-};
-
-const getCustomerBalanceColumn = async (
-  client: PoolClient
-): Promise<'open_balance' | 'remaining_balance'> => {
-  if (customerBalanceColumnCache) return customerBalanceColumnCache;
-  const result = await client.query<{ column_name: string }>(
-    `SELECT column_name
-       FROM information_schema.columns
-      WHERE table_schema = 'ims'
-        AND table_name = 'customers'
-        AND column_name IN ('open_balance', 'remaining_balance')`
-  );
-  const names = new Set(result.rows.map((row) => row.column_name));
-  customerBalanceColumnCache = names.has('open_balance') ? 'open_balance' : 'remaining_balance';
-  return customerBalanceColumnCache;
-};
-
-const adjustCustomerBalance = async (
-  client: PoolClient,
-  params: { customerId?: number | null; branchId: number; delta: number }
-) => {
-  const customerId = params.customerId ? Number(params.customerId) : null;
-  const delta = Number(params.delta || 0);
-  if (!customerId || !delta) return;
-  const balanceColumn = await getCustomerBalanceColumn(client);
-  const result = await client.query(
-    `UPDATE ims.customers
-        SET ${balanceColumn} = GREATEST(COALESCE(${balanceColumn}, 0) + $1, 0)
-      WHERE customer_id = $2
-        AND branch_id = $3`,
-    [delta, customerId, params.branchId]
-  );
-  if ((result.rowCount ?? 0) === 0) {
-    throw ApiError.badRequest('Selected customer is not available in this branch');
-  }
-};
-
-const calculateOutstandingBalance = (params: {
-  docType?: string | null;
-  status?: string | null;
-  total?: number | null;
-  paidAmount?: number | null;
-}) => {
-  const docType = String(params.docType || 'sale');
-  const status = String(params.status || 'paid');
-  if (docType === 'quotation' || status === 'void') return 0;
-  return Math.max(Number(params.total || 0) - Number(params.paidAmount || 0), 0);
-};
-
 const insertSaleItems = async (
   client: PoolClient,
-  branchId: number,
   saleId: number,
+  branchId: number,
   items: PreparedSaleItem[]
 ) => {
-  const saleItemsColumnsResult = await client.query<{ column_name: string }>(
-    `SELECT column_name
-       FROM information_schema.columns
-      WHERE table_schema = 'ims'
-        AND table_name = 'sale_items'`
-  );
-  const saleItemsColumns = new Set(saleItemsColumnsResult.rows.map((row) => row.column_name));
-
+  const schema = await getSalesSchemaMeta();
   for (const item of items) {
-    const columns: string[] = ['sale_id', 'item_id', 'quantity', 'unit_price', 'line_total'];
-    const values: unknown[] = [
-      saleId,
-      item.itemId,
-      item.quantity,
-      item.unitPrice,
-      item.quantity * item.unitPrice,
-    ];
-    if (saleItemsColumns.has('branch_id')) {
-      columns.unshift('branch_id');
-      values.unshift(branchId);
-    }
+    const columns = schema.saleItemsHasBranchId
+      ? ['branch_id', 'sale_id', schema.saleItemIdColumn, 'quantity', 'unit_price', 'line_total']
+      : ['sale_id', schema.saleItemIdColumn, 'quantity', 'unit_price', 'line_total'];
+    const values = schema.saleItemsHasBranchId
+      ? [branchId, saleId, item.productId, item.quantity, item.unitPrice, item.quantity * item.unitPrice]
+      : [saleId, item.productId, item.quantity, item.unitPrice, item.quantity * item.unitPrice];
     const placeholders = values.map((_, idx) => `$${idx + 1}`).join(', ');
+
     await client.query(
       `INSERT INTO ims.sale_items (${columns.join(', ')})
        VALUES (${placeholders})`,
@@ -329,34 +272,101 @@ const insertSaleItems = async (
   }
 };
 
+const AUTO_SALE_NOTE_PREFIX = '[AUTO-SALE]';
+
+interface CustomerBalanceColumns {
+  hasOpenBalance: boolean;
+  hasRemainingBalance: boolean;
+}
+
+let cachedCustomerBalanceColumns: CustomerBalanceColumns | null = null;
+
+const resolveStoreForItem = async (
+  client: PoolClient,
+  branchId: number,
+  itemId: number,
+  fallbackStoreId?: number | null
+): Promise<number> => {
+  if (fallbackStoreId && Number(fallbackStoreId) > 0) {
+    const scoped = await client.query<{ store_id: number }>(
+      `SELECT store_id
+         FROM ims.stores
+        WHERE store_id = $1
+          AND branch_id = $2
+        LIMIT 1`,
+      [fallbackStoreId, branchId]
+    );
+    if (scoped.rows[0]) return Number(scoped.rows[0].store_id);
+  }
+
+  const item = await client.query<{ store_id: number | null }>(
+    `SELECT store_id
+       FROM ims.items
+      WHERE item_id = $1
+        AND branch_id = $2
+      LIMIT 1`,
+    [itemId, branchId]
+  );
+  const itemStoreId = Number(item.rows[0]?.store_id || 0);
+  if (itemStoreId > 0) return itemStoreId;
+
+  const defaultStore = await client.query<{ store_id: number }>(
+    `SELECT store_id
+       FROM ims.stores
+      WHERE branch_id = $1
+      ORDER BY store_id
+      LIMIT 1`,
+    [branchId]
+  );
+  const storeId = Number(defaultStore.rows[0]?.store_id || 0);
+  if (storeId > 0) return storeId;
+
+  throw ApiError.badRequest(`No store is configured to apply stock for item ${itemId}`);
+};
+
+const applyStoreItemDelta = async (
+  client: PoolClient,
+  params: { storeId: number; itemId: number; delta: number }
+) => {
+  if (!params.delta) return;
+
+  const existing = await client.query<{ quantity: string }>(
+    `SELECT quantity::text AS quantity
+       FROM ims.store_items
+      WHERE store_id = $1
+        AND product_id = $2
+      FOR UPDATE`,
+    [params.storeId, params.itemId]
+  );
+
+  const currentQty = Number(existing.rows[0]?.quantity || 0);
+  const nextQty = currentQty + params.delta;
+  if (nextQty < 0) {
+    throw ApiError.badRequest(`Insufficient store stock for item ${params.itemId}`);
+  }
+
+  await client.query(
+    `INSERT INTO ims.store_items (store_id, product_id, quantity)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (store_id, product_id)
+     DO UPDATE
+           SET quantity = EXCLUDED.quantity,
+               updated_at = NOW()`,
+    [params.storeId, params.itemId, nextQty]
+  );
+};
+
 const applyStockByFunction = async (
   client: PoolClient,
   params: {
     branchId: number;
-    whId?: number | null;
+    storeId?: number | null;
     saleId: number;
-    items: Array<{ item_id: number; quantity: number }>;
+    items: Array<{ product_id: number; quantity: number }>;
     movementType: 'sale' | 'sales_return';
     direction: 'out' | 'in';
   }
-): Promise<boolean> => {
-  const hasApplyStockFn = await hasApplyStockMoveFn(client);
-  let fallbackWhId = params.whId ?? null;
-  if (!hasApplyStockFn && !fallbackWhId) {
-    const defaultWarehouse = await client.query<{ wh_id: number }>(
-      `SELECT wh_id
-         FROM ims.warehouses
-        WHERE branch_id = $1
-          AND is_active = TRUE
-        ORDER BY wh_id
-        LIMIT 1`,
-      [params.branchId]
-    );
-    fallbackWhId = defaultWarehouse.rows[0]?.wh_id ?? null;
-  }
-  if (!hasApplyStockFn && !fallbackWhId) {
-    return false;
-  }
+) => {
   for (const item of params.items) {
     const quantity = Number(item.quantity || 0);
     if (!quantity) continue;
@@ -365,71 +375,44 @@ const applyStockByFunction = async (
       `SELECT COALESCE(cost_price, 0)::text AS cost_price
          FROM ims.items
         WHERE item_id = $1`,
-      [item.item_id]
+      [item.product_id]
     );
     const costPrice = Number(product.rows[0]?.cost_price || 0);
-    if (hasApplyStockFn) {
-      const delta = params.direction === 'out' ? -quantity : quantity;
-      await client.query(
-        `SELECT ims.fn_apply_stock_move(
-           $1,
-           $2,
-           $3,
-           $4,
-           $5::ims.movement_type_enum,
-           'sales',
-           $6,
-           $7,
-           $8
-         )`,
-        [
-          params.branchId,
-          params.whId ?? null,
-          item.item_id,
-          delta,
-          params.movementType,
-          params.saleId,
-          costPrice,
-          params.direction === 'out',
-        ]
-      );
-      continue;
-    }
+    const delta = params.direction === 'out' ? -quantity : quantity;
+    const storeId = await resolveStoreForItem(
+      client,
+      params.branchId,
+      item.product_id,
+      params.storeId ?? null
+    );
+    await applyStoreItemDelta(client, {
+      storeId,
+      itemId: item.product_id,
+      delta,
+    });
 
-    if (params.direction === 'out') {
-      await client.query(`SELECT ims.fn_stock_sub($1, $2, $3, $4)`, [
-        params.branchId,
-        fallbackWhId,
-        item.item_id,
-        quantity,
-      ]);
-    } else {
-      await client.query(`SELECT ims.fn_stock_add($1, $2, $3, $4)`, [
-        params.branchId,
-        fallbackWhId,
-        item.item_id,
-        quantity,
-      ]);
-    }
+    const qtyIn = params.direction === 'in' ? quantity : 0;
+    const qtyOut = params.direction === 'out' ? quantity : 0;
 
     await client.query(
-      `INSERT INTO ims.inventory_movements
-         (branch_id, wh_id, item_id, move_type, ref_table, ref_id, qty_in, qty_out, unit_cost, note)
-       VALUES ($1, $2, $3, $4::ims.movement_type_enum, 'sales', $5, $6, $7, $8, $9)`,
+      `INSERT INTO ims.inventory_movements (
+         branch_id, wh_id, item_id, move_type, ref_table, ref_id, qty_in, qty_out, unit_cost, note
+       )
+       VALUES (
+         $1, NULL, $2, $3::ims.movement_type_enum, 'sales', $4, $5, $6, $7, $8
+       )`,
       [
         params.branchId,
-        fallbackWhId,
-        item.item_id,
+        item.product_id,
         params.movementType,
         params.saleId,
-        params.direction === 'in' ? quantity : 0,
-        params.direction === 'out' ? quantity : 0,
+        qtyIn,
+        qtyOut,
         costPrice,
-        params.direction === 'out' ? 'Sale issue' : 'Sale reversal',
+        params.direction === 'out' ? 'Sale issue' : 'Sales return restock',
       ]
     );
   }
-  return true;
 };
 
 const adjustAccountBalance = async (
@@ -447,6 +430,141 @@ const adjustAccountBalance = async (
   );
   if ((result.rowCount ?? 0) === 0) {
     throw ApiError.badRequest('Payment account is not allowed for this branch');
+  }
+};
+
+const getCustomerBalanceColumns = async (client: PoolClient): Promise<CustomerBalanceColumns> => {
+  if (cachedCustomerBalanceColumns) return cachedCustomerBalanceColumns;
+  const result = await client.query<{ column_name: string }>(
+    `SELECT column_name
+       FROM information_schema.columns
+      WHERE table_schema = 'ims'
+        AND table_name = 'customers'`
+  );
+  const names = new Set(result.rows.map((row) => row.column_name));
+  cachedCustomerBalanceColumns = {
+    hasOpenBalance: names.has('open_balance'),
+    hasRemainingBalance: names.has('remaining_balance'),
+  };
+  return cachedCustomerBalanceColumns;
+};
+
+const adjustCustomerBalance = async (
+  client: PoolClient,
+  params: { branchId: number; customerId?: number | null; amount: number; mode: 'add' | 'subtract' }
+) => {
+  if (!params.customerId || !params.amount) return;
+
+  const cols = await getCustomerBalanceColumns(client);
+  const updates: string[] = [];
+  const signedAmount = params.mode === 'add' ? params.amount : -params.amount;
+  if (cols.hasOpenBalance) {
+    updates.push(`open_balance = GREATEST(open_balance + $1, 0)`);
+  }
+  if (cols.hasRemainingBalance) {
+    updates.push(`remaining_balance = GREATEST(remaining_balance + $1, 0)`);
+  }
+  if (!updates.length) return;
+
+  await client.query(
+    `UPDATE ims.customers
+        SET ${updates.join(', ')}
+      WHERE customer_id = $2
+        AND branch_id = $3`,
+    [signedAmount, params.customerId, params.branchId]
+  );
+};
+
+const clearSaleFinancialEntries = async (
+  client: PoolClient,
+  params: { branchId: number; saleId: number }
+) => {
+  await client.query(
+    `DELETE FROM ims.account_transactions
+      WHERE branch_id = $1
+        AND ref_table = 'sales'
+        AND ref_id = $2
+        AND txn_type = 'sale_payment'`,
+    [params.branchId, params.saleId]
+  );
+  await client.query(
+    `DELETE FROM ims.customer_ledger
+      WHERE branch_id = $1
+        AND ref_table = 'sales'
+        AND ref_id = $2
+        AND entry_type IN ('sale', 'payment')`,
+    [params.branchId, params.saleId]
+  );
+  await client.query(
+    `DELETE FROM ims.sale_payments
+      WHERE branch_id = $1
+        AND sale_id = $2`,
+    [params.branchId, params.saleId]
+  );
+};
+
+const insertSaleFinancialEntries = async (
+  client: PoolClient,
+  params: {
+    branchId: number;
+    saleId: number;
+    userId: number;
+    customerId?: number | null;
+    payAccId?: number | null;
+    paidAmount: number;
+    total: number;
+    note?: string | null;
+    payDate?: string | null;
+  }
+) => {
+  const note = `${AUTO_SALE_NOTE_PREFIX}${params.note ? ` ${params.note}` : ''}`;
+  if (params.customerId && params.total > 0) {
+    await client.query(
+      `INSERT INTO ims.customer_ledger
+         (branch_id, customer_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
+       VALUES ($1, $2, 'sale', 'sales', $3, NULL, $4, 0, $5)`,
+      [params.branchId, params.customerId, params.saleId, params.total, note]
+    );
+  }
+
+  if (params.payAccId && params.paidAmount > 0) {
+    await client.query(
+      `INSERT INTO ims.sale_payments
+         (branch_id, sale_id, user_id, acc_id, pay_date, amount_paid, reference_no, note)
+       VALUES ($1, $2, $3, $4, COALESCE($5::timestamptz, NOW()), $6, NULL, $7)`,
+      [
+        params.branchId,
+        params.saleId,
+        params.userId,
+        params.payAccId,
+        params.payDate || null,
+        params.paidAmount,
+        note,
+      ]
+    );
+
+    await client.query(
+      `INSERT INTO ims.account_transactions
+         (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, note)
+       VALUES ($1, $2, 'sale_payment', 'sales', $3, 0, $4, $5)`,
+      [params.branchId, params.payAccId, params.saleId, params.paidAmount, note]
+    );
+
+    if (params.customerId) {
+      await client.query(
+        `INSERT INTO ims.customer_ledger
+           (branch_id, customer_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
+         VALUES ($1, $2, 'payment', 'sales', $3, $4, 0, $5, $6)`,
+        [
+          params.branchId,
+          params.customerId,
+          params.saleId,
+          params.payAccId,
+          params.paidAmount,
+          note,
+        ]
+      );
+    }
   }
 };
 
@@ -478,7 +596,8 @@ const getSaleForUpdate = async (
 };
 
 const mapCurrentItemToInput = (item: SaleItem): SaleItemInput => ({
-  itemId: Number(item.item_id),
+  itemId: Number(item.product_id),
+  productId: Number(item.product_id),
   quantity: Number(item.quantity),
   unitPrice: Number(item.unit_price),
 });
@@ -498,6 +617,7 @@ const listScopeCondition = (scope: BranchScope, branchId?: number) => {
 
 export const salesService = {
   async listSales(scope: BranchScope, filters: SalesListFilters): Promise<Sale[]> {
+    const schema = await getSalesSchemaMeta();
     const { search, status, branchId, docType, includeVoided } = filters;
     const scoped = listScopeCondition(scope, branchId);
     const params = scoped.params;
@@ -509,7 +629,7 @@ export const salesService = {
         `(COALESCE(c.full_name,'') ILIKE $${params.length} OR COALESCE(s.note,'') ILIKE $${params.length})`
       );
     }
-    if (docType && docType !== 'all') {
+    if (schema.salesColumns.has('doc_type') && docType && docType !== 'all') {
       params.push(docType);
       clauses.push(`COALESCE(s.doc_type, 'sale') = $${params.length}`);
     }
@@ -554,10 +674,18 @@ export const salesService = {
   },
 
   async listItems(saleId: number): Promise<SaleItem[]> {
+    const schema = await getSalesSchemaMeta();
     return queryMany<SaleItem>(
-      `SELECT si.*, p.name AS item_name
+      `SELECT
+         si.sale_item_id,
+         si.sale_id,
+         si.${schema.saleItemIdColumn} AS product_id,
+         si.quantity,
+         si.unit_price,
+         si.line_total,
+         p.name AS product_name
          FROM ims.sale_items si
-         JOIN ims.items p ON p.item_id = si.item_id
+         JOIN ims.items p ON p.item_id = si.${schema.saleItemIdColumn}
         WHERE si.sale_id = $1
         ORDER BY si.sale_item_id`,
       [saleId]
@@ -568,6 +696,9 @@ export const salesService = {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      const schema = await getSalesSchemaMeta();
+      const supportsInlinePayment =
+        schema.salesColumns.has('pay_acc_id') && schema.salesColumns.has('paid_amount');
 
       const items = input.items || [];
       if (!items.length) {
@@ -579,7 +710,8 @@ export const salesService = {
       const tax = await resolveTaxRate(client, context.branchId, input.taxId ?? null, input.taxRate);
       const taxableBase = totals.subtotal - totals.discount;
       const taxAmount = (taxableBase * Number(tax?.rate_percent || 0)) / 100;
-      const totalWithTax = totals.total !== undefined ? totals.total : taxableBase + taxAmount;
+      const totalWithTax =
+        input.total !== undefined ? Number(input.total) : taxableBase + taxAmount;
 
       const docType: SaleDocType = input.docType || 'sale';
       const status: SaleStatus = input.status || (docType === 'quotation' ? 'unpaid' : 'paid');
@@ -588,49 +720,50 @@ export const salesService = {
         docType === 'quotation'
           ? 'credit'
           : input.saleType || (status === 'unpaid' ? 'credit' : 'cash');
-      const payment = normalizePayment({
-        total: totals.total,
-        docType,
-        status,
-        payAccId: input.payFromAccId,
-        paidAmount: input.paidAmount,
-      });
+      const payment = supportsInlinePayment
+        ? normalizePayment({
+            total: totalWithTax,
+            docType,
+            status,
+            payAccId: input.payFromAccId,
+            paidAmount: input.paidAmount,
+          })
+        : { payAccId: null, paidAmount: 0 };
 
-      await ensureWarehouse(client, context.branchId, input.whId);
-      await ensureAccount(client, context.branchId, payment.payAccId);
-      const salesColumns = await getSalesColumns(client);
+      if (supportsInlinePayment) {
+        await ensureAccount(client, context.branchId, payment.payAccId);
+      }
 
-      const insertColumns: string[] = ['branch_id', 'wh_id', 'user_id', 'customer_id'];
-      const insertValues: unknown[] = [
-        context.branchId,
-        input.whId ?? null,
-        context.userId,
-        input.customerId ?? null,
-      ];
-      const pushInsert = (column: string, value: unknown) => {
-        if (!salesColumns.has(column)) return;
-        insertColumns.push(column);
-        insertValues.push(value);
+      const insertColumns: string[] = [];
+      const insertValues: Array<string | number | boolean | null> = [];
+      const pushColumn = (column: string, value: string | number | boolean | null, required = false) => {
+        if (required || schema.salesColumns.has(column)) {
+          insertColumns.push(column);
+          insertValues.push(value);
+        }
       };
 
-      pushInsert('tax_id', tax?.tax_id ?? null);
-      pushInsert('total_before_tax', totals.subtotal);
-      pushInsert('tax_amount', taxAmount);
-      if (salesColumns.has('sale_date') && input.saleDate) {
-        insertColumns.push('sale_date');
-        insertValues.push(input.saleDate);
-      }
-      pushInsert('sale_type', saleType);
-      pushInsert('doc_type', docType);
-      pushInsert('quote_valid_until', input.quoteValidUntil || null);
-      pushInsert('subtotal', totals.subtotal);
-      pushInsert('discount', totals.discount);
-      pushInsert('total', totalWithTax);
-      pushInsert('status', status);
-      pushInsert('note', input.note || null);
-      pushInsert('pay_acc_id', payment.payAccId);
-      pushInsert('paid_amount', payment.paidAmount);
-      pushInsert('is_stock_applied', shouldApplyStock);
+      pushColumn('branch_id', context.branchId, true);
+      pushColumn('wh_id', null, true);
+      pushColumn('user_id', context.userId, true);
+      pushColumn('customer_id', input.customerId ?? null, true);
+      pushColumn('currency_code', input.currencyCode || 'USD');
+      pushColumn('fx_rate', input.fxRate || 1);
+      pushColumn('tax_id', tax?.tax_id ?? null, true);
+      pushColumn('total_before_tax', totals.subtotal);
+      pushColumn('tax_amount', taxAmount, true);
+      pushColumn('sale_date', input.saleDate || new Date().toISOString(), true);
+      pushColumn('sale_type', saleType, true);
+      pushColumn('doc_type', docType);
+      pushColumn('quote_valid_until', input.quoteValidUntil || null);
+      pushColumn('subtotal', totals.subtotal, true);
+      pushColumn('discount', totals.discount, true);
+      pushColumn('total', totalWithTax, true);
+      pushColumn('status', status, true);
+      pushColumn('note', input.note || null, true);
+      pushColumn('pay_acc_id', payment.payAccId);
+      pushColumn('paid_amount', payment.paidAmount);
+      pushColumn('is_stock_applied', shouldApplyStock);
 
       const placeholders = insertValues.map((_, idx) => `$${idx + 1}`).join(', ');
 
@@ -642,18 +775,17 @@ export const salesService = {
       );
 
       const sale = saleResult.rows[0];
-      const affectedItemIds = Array.from(new Set(items.map((line) => Number(line.itemId))));
+      const affectedProductIds = Array.from(new Set(items.map((line) => Number(line.productId))));
       const triggerEnabled = await hasSaleTrigger(client);
-      let stockApplied = shouldApplyStock;
 
-      await insertSaleItems(client, context.branchId, sale.sale_id, preparedItems);
+      await insertSaleItems(client, sale.sale_id, context.branchId, preparedItems);
       if (!triggerEnabled && shouldApplyStock) {
-        stockApplied = await applyStockByFunction(client, {
+        await applyStockByFunction(client, {
           branchId: context.branchId,
-          whId: input.whId ?? null,
+          storeId: input.storeId ?? null,
           saleId: sale.sale_id,
           items: items.map((line) => ({
-            item_id: Number(line.itemId),
+            product_id: Number(line.productId),
             quantity: Number(line.quantity),
           })),
           movementType: 'sale',
@@ -661,15 +793,7 @@ export const salesService = {
         });
       }
 
-      if (salesColumns.has('is_stock_applied') && stockApplied !== shouldApplyStock) {
-        await client.query(`UPDATE ims.sales SET is_stock_applied = $1 WHERE sale_id = $2`, [
-          stockApplied,
-          sale.sale_id,
-        ]);
-        sale.is_stock_applied = stockApplied;
-      }
-
-      if (payment.payAccId && payment.paidAmount > 0) {
+      if (supportsInlinePayment && payment.payAccId && payment.paidAmount > 0) {
         await adjustAccountBalance(client, {
           accId: payment.payAccId,
           branchId: context.branchId,
@@ -678,21 +802,37 @@ export const salesService = {
         });
       }
 
-      const customerOutstanding = calculateOutstandingBalance({
-        docType,
-        status,
-        total: totalWithTax,
-        paidAmount: payment.paidAmount,
-      });
-      await adjustCustomerBalance(client, {
-        customerId: input.customerId ?? null,
+      const applyFinancialEffects = docType !== 'quotation' && status !== 'void';
+      await clearSaleFinancialEntries(client, {
         branchId: context.branchId,
-        delta: customerOutstanding,
+        saleId: sale.sale_id,
       });
+      if (applyFinancialEffects) {
+        await insertSaleFinancialEntries(client, {
+          branchId: context.branchId,
+          saleId: sale.sale_id,
+          userId: context.userId,
+          customerId: input.customerId ?? null,
+          payAccId: payment.payAccId,
+          paidAmount: Number(payment.paidAmount || 0),
+          total: totalWithTax,
+          note: input.note || null,
+          payDate: input.saleDate || null,
+        });
+        const outstanding = Math.max(totalWithTax - Number(payment.paidAmount || 0), 0);
+        if (outstanding > 0 && input.customerId) {
+          await adjustCustomerBalance(client, {
+            branchId: context.branchId,
+            customerId: input.customerId,
+            amount: outstanding,
+            mode: 'add',
+          });
+        }
+      }
 
       await syncLowStockNotifications(client, {
         branchId: context.branchId,
-        productIds: affectedItemIds,
+        productIds: affectedProductIds,
         actorUserId: context.userId,
       });
 
@@ -715,6 +855,9 @@ export const salesService = {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      const schema = await getSalesSchemaMeta();
+      const supportsInlinePayment =
+        schema.salesColumns.has('pay_acc_id') && schema.salesColumns.has('paid_amount');
 
       const current = await getSaleForUpdate(client, id, scope);
       if (!current) {
@@ -738,9 +881,7 @@ export const salesService = {
           (nextStatus === 'unpaid' ? 'credit' : 'cash')) as 'cash' | 'credit';
       const nextQuoteValidUntil =
         input.quoteValidUntil === undefined ? current.quote_valid_until : input.quoteValidUntil;
-      const nextWhId = input.whId === undefined ? current.wh_id : input.whId;
-      const nextCustomerId =
-        input.customerId === undefined ? current.customer_id : input.customerId ?? null;
+      const nextStoreId = input.storeId === undefined ? null : input.storeId;
       const totals = normalizeTotals(preparedItems, input.discount ?? current.discount, input.total);
       const tax = await resolveTaxRate(
         client,
@@ -755,20 +896,27 @@ export const salesService = {
       const nextApplyStock = canApplyStock(nextDocType, nextStatus);
       const previousApplyStock =
         current.is_stock_applied ?? canApplyStock(current.doc_type || 'sale', current.status);
-      const payment = normalizePayment({
-        total: totals.total,
-        docType: nextDocType,
-        status: nextStatus,
-        payAccId:
-          input.payFromAccId === undefined ? current.pay_acc_id : input.payFromAccId,
-        paidAmount:
-          input.paidAmount === undefined ? Number(current.paid_amount || 0) : input.paidAmount,
-      });
+      const previousFinancialApplied =
+        current.status !== 'void' && (current.doc_type || 'sale') !== 'quotation';
+      const nextFinancialApplied = nextStatus !== 'void' && nextDocType !== 'quotation';
+      const payment = supportsInlinePayment
+        ? normalizePayment({
+            total: totalWithTax,
+            docType: nextDocType,
+            status: nextStatus,
+            payAccId:
+              input.payFromAccId === undefined ? current.pay_acc_id : input.payFromAccId,
+            paidAmount:
+              input.paidAmount === undefined ? Number(current.paid_amount || 0) : input.paidAmount,
+          })
+        : { payAccId: null, paidAmount: 0 };
 
-      await ensureWarehouse(client, current.branch_id, nextWhId);
-      await ensureAccount(client, current.branch_id, payment.payAccId);
+      if (supportsInlinePayment) {
+        await ensureAccount(client, current.branch_id, payment.payAccId);
+      }
 
       const hadPreviousPayment =
+        supportsInlinePayment &&
         Number(current.paid_amount || 0) > 0 &&
         Number(current.pay_acc_id || 0) > 0 &&
         current.status !== 'void' &&
@@ -784,19 +932,18 @@ export const salesService = {
 
       const triggerEnabled = await hasSaleTrigger(client);
       const needsItemReset = Boolean(input.items) || previousApplyStock !== nextApplyStock;
-      let nextStockApplied = nextApplyStock;
-      const affectedItemIds = new Set<number>(
-        currentItems.map((line) => Number(line.item_id))
+      const affectedProductIds = new Set<number>(
+        currentItems.map((line) => Number(line.product_id))
       );
 
       if (needsItemReset) {
         if (!triggerEnabled && previousApplyStock) {
           await applyStockByFunction(client, {
             branchId: current.branch_id,
-            whId: current.wh_id,
+            storeId: null,
             saleId: current.sale_id,
             items: currentItems.map((line) => ({
-              item_id: Number(line.item_id),
+              product_id: Number(line.product_id),
               quantity: Number(line.quantity),
             })),
             movementType: 'sales_return',
@@ -805,15 +952,15 @@ export const salesService = {
         }
 
         await client.query(`DELETE FROM ims.sale_items WHERE sale_id = $1`, [id]);
-        await insertSaleItems(client, current.branch_id, id, preparedItems);
+        await insertSaleItems(client, id, current.branch_id, preparedItems);
 
         if (!triggerEnabled && nextApplyStock) {
-          nextStockApplied = await applyStockByFunction(client, {
+          await applyStockByFunction(client, {
             branchId: current.branch_id,
-            whId: nextWhId,
+            storeId: nextStoreId ?? null,
             saleId: current.sale_id,
             items: preparedItems.map((line) => ({
-              item_id: Number(line.itemId),
+              product_id: Number(line.productId),
               quantity: Number(line.quantity),
             })),
             movementType: 'sale',
@@ -822,9 +969,9 @@ export const salesService = {
         }
       }
 
-      preparedItems.forEach((line) => affectedItemIds.add(Number(line.itemId)));
+      preparedItems.forEach((line) => affectedProductIds.add(Number(line.productId)));
 
-      if (payment.payAccId && payment.paidAmount > 0) {
+      if (supportsInlinePayment && payment.payAccId && payment.paidAmount > 0) {
         await adjustAccountBalance(client, {
           accId: payment.payAccId,
           branchId: current.branch_id,
@@ -833,96 +980,112 @@ export const salesService = {
         });
       }
 
-      const previousOutstanding = calculateOutstandingBalance({
-        docType: current.doc_type,
-        status: current.status,
-        total: Number(current.total || 0),
-        paidAmount: Number(current.paid_amount || 0),
-      });
-      const nextOutstanding = calculateOutstandingBalance({
-        docType: nextDocType,
-        status: nextStatus,
-        total: totalWithTax,
-        paidAmount: payment.paidAmount,
-      });
-      const previousCustomerId = current.customer_id ? Number(current.customer_id) : null;
-      const normalizedNextCustomerId = nextCustomerId ? Number(nextCustomerId) : null;
-      if (previousCustomerId === normalizedNextCustomerId) {
+      const nextCustomerId =
+        input.customerId === undefined
+          ? (current.customer_id ?? null)
+          : (input.customerId ?? null);
+      const previousOutstanding = previousFinancialApplied
+        ? Math.max(Number(current.total || 0) - Number(current.paid_amount || 0), 0)
+        : 0;
+      const nextOutstanding = nextFinancialApplied
+        ? Math.max(totalWithTax - Number(payment.paidAmount || 0), 0)
+        : 0;
+
+      if (previousOutstanding > 0 && current.customer_id) {
         await adjustCustomerBalance(client, {
-          customerId: normalizedNextCustomerId,
           branchId: current.branch_id,
-          delta: nextOutstanding - previousOutstanding,
+          customerId: current.customer_id,
+          amount: previousOutstanding,
+          mode: 'subtract',
         });
-      } else {
+      }
+      if (nextOutstanding > 0 && nextCustomerId) {
         await adjustCustomerBalance(client, {
-          customerId: previousCustomerId,
           branchId: current.branch_id,
-          delta: -previousOutstanding,
-        });
-        await adjustCustomerBalance(client, {
-          customerId: normalizedNextCustomerId,
-          branchId: current.branch_id,
-          delta: nextOutstanding,
+          customerId: nextCustomerId,
+          amount: nextOutstanding,
+          mode: 'add',
         });
       }
 
-      const salesColumns = await getSalesColumns(client);
-      const nextNote = input.note === undefined ? current.note : input.note;
-      const updateValues: unknown[] = [];
-      const updateClauses: string[] = [];
-      const pushUpdate = (column: string, value: unknown) => {
-        if (!salesColumns.has(column)) return;
-        updateValues.push(value);
-        updateClauses.push(`${column} = $${updateValues.length}`);
+      await clearSaleFinancialEntries(client, {
+        branchId: current.branch_id,
+        saleId: current.sale_id,
+      });
+      if (nextFinancialApplied) {
+        await insertSaleFinancialEntries(client, {
+          branchId: current.branch_id,
+          saleId: current.sale_id,
+          userId: ctx?.userId ?? current.user_id,
+          customerId: nextCustomerId,
+          payAccId: payment.payAccId,
+          paidAmount: Number(payment.paidAmount || 0),
+          total: totalWithTax,
+          note: input.note === undefined ? current.note : input.note,
+          payDate: input.saleDate || current.sale_date,
+        });
+      }
+
+      const updates: string[] = [];
+      const values: Array<string | number | boolean | null> = [];
+
+      const pushSet = (column: string, value: string | number | boolean | null) => {
+        if (!schema.salesColumns.has(column)) return;
+        values.push(value);
+        updates.push(`${column} = $${values.length}`);
       };
 
-      pushUpdate('customer_id', nextCustomerId);
-      pushUpdate('wh_id', nextWhId ?? null);
-      pushUpdate('sale_date', input.saleDate || current.sale_date);
-      pushUpdate('sale_type', nextSaleType);
-      pushUpdate('doc_type', nextDocType);
-      pushUpdate('quote_valid_until', nextQuoteValidUntil || null);
-      pushUpdate('subtotal', totals.subtotal);
-      pushUpdate('discount', totals.discount);
-      pushUpdate('total', totalWithTax);
-      pushUpdate('status', nextStatus);
-      pushUpdate('note', nextNote ?? null);
-      pushUpdate('pay_acc_id', payment.payAccId);
-      pushUpdate('paid_amount', payment.paidAmount);
-      pushUpdate('is_stock_applied', nextStockApplied);
-      pushUpdate('tax_id', tax?.tax_id ?? current.tax_id ?? null);
-      pushUpdate('total_before_tax', totals.subtotal);
-      pushUpdate('tax_amount', taxAmount);
-      if (salesColumns.has('voided_at')) {
-        updateClauses.push(
-          `voided_at = ${nextStatus === 'void' ? 'COALESCE(voided_at, NOW())' : 'NULL'}`
-        );
+      pushSet('customer_id', input.customerId ?? current.customer_id);
+      pushSet('wh_id', null);
+      if (schema.salesColumns.has('sale_date')) {
+        values.push(input.saleDate || null);
+        updates.push(`sale_date = COALESCE($${values.length}, sale_date)`);
       }
-      if (salesColumns.has('void_reason')) {
-        if (nextStatus === 'void') {
-          updateValues.push((current.void_reason ?? nextNote ?? null) as unknown);
-          updateClauses.push(`void_reason = $${updateValues.length}`);
-        } else {
-          updateClauses.push(`void_reason = NULL`);
-        }
+      pushSet('sale_type', nextSaleType);
+      pushSet('doc_type', nextDocType);
+      pushSet('quote_valid_until', nextQuoteValidUntil || null);
+      pushSet('subtotal', totals.subtotal);
+      pushSet('discount', totals.discount);
+      pushSet('total', totalWithTax);
+      pushSet('status', nextStatus);
+      pushSet('note', input.note === undefined ? current.note : input.note);
+      if (supportsInlinePayment) {
+        pushSet('pay_acc_id', payment.payAccId);
+        pushSet('paid_amount', payment.paidAmount);
       }
-      if (updateClauses.length === 0) {
-        await client.query('COMMIT');
-        return current;
+      pushSet('is_stock_applied', nextApplyStock);
+      pushSet('tax_id', tax?.tax_id ?? current.tax_id ?? null);
+      pushSet('total_before_tax', totals.subtotal);
+      pushSet('tax_amount', taxAmount);
+
+      if (schema.salesColumns.has('voided_at')) {
+        values.push(nextStatus);
+        updates.push(`voided_at = CASE WHEN $${values.length} = 'void' THEN COALESCE(voided_at, NOW()) ELSE NULL END`);
+      }
+      if (schema.salesColumns.has('void_reason')) {
+        values.push(nextStatus);
+        const statusIdx = values.length;
+        values.push((input.note === undefined ? current.note : input.note) || null);
+        const noteIdx = values.length;
+        updates.push(`void_reason = CASE WHEN $${statusIdx} = 'void' THEN COALESCE(void_reason, $${noteIdx}) ELSE NULL END`);
       }
 
-      updateValues.push(id);
+      if (!updates.length) {
+        throw ApiError.internal('Sales update is not supported by current schema');
+      }
+
+      values.push(id);
       const updatedResult = await client.query<Sale>(
         `UPDATE ims.sales
-            SET ${updateClauses.join(', ')}
-          WHERE sale_id = $${updateValues.length}
+            SET ${updates.join(', ')}
+          WHERE sale_id = $${values.length}
           RETURNING *`,
-        updateValues
+        values
       );
 
       await syncLowStockNotifications(client, {
         branchId: current.branch_id,
-        productIds: Array.from(affectedItemIds),
+        productIds: Array.from(affectedProductIds),
         actorUserId: ctx?.userId ?? null,
       });
 
@@ -945,6 +1108,9 @@ export const salesService = {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      const schema = await getSalesSchemaMeta();
+      const supportsInlinePayment =
+        schema.salesColumns.has('pay_acc_id') && schema.salesColumns.has('paid_amount');
 
       const current = await getSaleForUpdate(client, id, scope);
       if (!current) {
@@ -959,8 +1125,13 @@ export const salesService = {
       const currentItems = await listSaleItemsTx(client, id);
       const previouslyApplied =
         current.is_stock_applied ?? canApplyStock(current.doc_type || 'sale', current.status);
+      const previousFinancialApplied = (current.doc_type || 'sale') !== 'quotation';
+      const previousOutstanding = previousFinancialApplied
+        ? Math.max(Number(current.total || 0) - Number(current.paid_amount || 0), 0)
+        : 0;
 
       if (
+        supportsInlinePayment &&
         Number(current.paid_amount || 0) > 0 &&
         Number(current.pay_acc_id || 0) > 0 &&
         current.doc_type !== 'quotation'
@@ -973,25 +1144,13 @@ export const salesService = {
         });
       }
 
-      const currentOutstanding = calculateOutstandingBalance({
-        docType: current.doc_type,
-        status: current.status,
-        total: Number(current.total || 0),
-        paidAmount: Number(current.paid_amount || 0),
-      });
-      await adjustCustomerBalance(client, {
-        customerId: current.customer_id ? Number(current.customer_id) : null,
-        branchId: current.branch_id,
-        delta: -currentOutstanding,
-      });
-
       if (previouslyApplied && currentItems.length) {
         await applyStockByFunction(client, {
           branchId: current.branch_id,
-          whId: current.wh_id,
+          storeId: null,
           saleId: current.sale_id,
           items: currentItems.map((line) => ({
-            item_id: Number(line.item_id),
+            product_id: Number(line.product_id),
             quantity: Number(line.quantity),
           })),
           movementType: 'sales_return',
@@ -999,46 +1158,71 @@ export const salesService = {
         });
       }
 
-      const salesColumns = await getSalesColumns(client);
-      const trimmedReason = String(reason || '').trim();
-      const updateValues: unknown[] = [];
-      const updateClauses: string[] = [];
-      const pushUpdate = (column: string, value: unknown) => {
-        if (!salesColumns.has(column)) return;
-        updateValues.push(value);
-        updateClauses.push(`${column} = $${updateValues.length}`);
-      };
-      const nextVoidNote = trimmedReason
-        ? `${current.note ? `${current.note}\n` : ''}[VOID] ${trimmedReason}`
-        : current.note;
-
-      pushUpdate('status', 'void');
-      pushUpdate('is_stock_applied', false);
-      pushUpdate('pay_acc_id', null);
-      pushUpdate('paid_amount', 0);
-      if (salesColumns.has('voided_at')) {
-        updateClauses.push('voided_at = NOW()');
-      }
-      pushUpdate('void_reason', trimmedReason || null);
-      pushUpdate('note', nextVoidNote);
-
-      if (updateClauses.length === 0) {
-        await client.query('COMMIT');
-        return current;
+      if (previousOutstanding > 0 && current.customer_id) {
+        await adjustCustomerBalance(client, {
+          branchId: current.branch_id,
+          customerId: current.customer_id,
+          amount: previousOutstanding,
+          mode: 'subtract',
+        });
       }
 
-      updateValues.push(id);
+      await clearSaleFinancialEntries(client, {
+        branchId: current.branch_id,
+        saleId: current.sale_id,
+      });
+
+      const updates: string[] = [];
+      const values: Array<string | number | boolean | null> = [id];
+
+      if (schema.salesColumns.has('status')) {
+        updates.push(`status = 'void'`);
+      }
+      if (schema.salesColumns.has('is_stock_applied')) {
+        updates.push('is_stock_applied = FALSE');
+      }
+      if (supportsInlinePayment) {
+        updates.push('pay_acc_id = NULL');
+        updates.push('paid_amount = 0');
+      }
+      if (schema.salesColumns.has('voided_at')) {
+        updates.push('voided_at = NOW()');
+      }
+
+      const reasonValue = reason || '';
+      let reasonIdx = -1;
+      if (schema.salesColumns.has('void_reason') || schema.salesColumns.has('note')) {
+        values.push(reasonValue);
+        reasonIdx = values.length;
+      }
+
+      if (schema.salesColumns.has('void_reason') && reasonIdx > 0) {
+        updates.push(`void_reason = NULLIF($${reasonIdx}, '')`);
+      }
+      if (schema.salesColumns.has('note') && reasonIdx > 0) {
+        updates.push(
+          `note = CASE
+             WHEN COALESCE($${reasonIdx}, '') = '' THEN note
+             ELSE COALESCE(note, '') || CASE WHEN COALESCE(note, '') = '' THEN '' ELSE E'\n' END || '[VOID] ' || $${reasonIdx}
+           END`
+        );
+      }
+
+      if (!updates.length) {
+        throw ApiError.internal('Sales void is not supported by current schema');
+      }
+
       const updatedResult = await client.query<Sale>(
         `UPDATE ims.sales
-            SET ${updateClauses.join(', ')}
-          WHERE sale_id = $${updateValues.length}
+            SET ${updates.join(', ')}
+          WHERE sale_id = $1
           RETURNING *`,
-        updateValues
+        values
       );
 
       await syncLowStockNotifications(client, {
         branchId: current.branch_id,
-        productIds: currentItems.map((line) => Number(line.item_id)),
+        productIds: currentItems.map((line) => Number(line.product_id)),
         actorUserId: context.userId ?? null,
       });
 
@@ -1058,6 +1242,11 @@ export const salesService = {
     scope: BranchScope,
     context: { userId?: number | null }
   ): Promise<Sale | null> {
+    const schema = await getSalesSchemaMeta();
+    if (!schema.salesColumns.has('doc_type')) {
+      throw ApiError.badRequest('Quotation conversion is not supported on current database schema');
+    }
+
     const current = await this.getSale(id, scope);
     if (!current) return null;
     if (current.doc_type !== 'quotation') {
@@ -1086,13 +1275,15 @@ export const salesService = {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      const schema = await getSalesSchemaMeta();
       const current = await getSaleForUpdate(client, id, scope);
       if (!current) {
         await client.query('ROLLBACK');
         return;
       }
 
-      if (!(current.status === 'void' || current.doc_type === 'quotation')) {
+      const allowQuotationDelete = schema.salesColumns.has('doc_type') && current.doc_type === 'quotation';
+      if (!(current.status === 'void' || allowQuotationDelete)) {
         throw ApiError.badRequest('Only voided sales or quotations can be deleted');
       }
 

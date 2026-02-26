@@ -2,12 +2,23 @@ import { z } from 'zod';
 
 export const saleItemSchema = z
   .object({
-    itemId: z.coerce.number().int().positive(),
+    itemId: z.coerce.number().int().positive().optional(),
+    productId: z.coerce.number().int().positive().optional(),
     quantity: z.coerce.number().positive(),
     unitPrice: z.coerce.number().nonnegative(),
   })
+  .superRefine((value, ctx) => {
+    if (!value.itemId && !value.productId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'itemId or productId is required',
+        path: ['itemId'],
+      });
+    }
+  })
   .transform((value) => ({
-    itemId: Number(value.itemId),
+    itemId: Number(value.productId ?? value.itemId),
+    productId: Number(value.productId ?? value.itemId),
     quantity: value.quantity,
     unitPrice: value.unitPrice,
   }));
@@ -15,9 +26,12 @@ export const saleItemSchema = z
 export const saleSchema = z.object({
   branchId: z.coerce.number().int().positive().optional(),
   customerId: z.coerce.number().int().positive().optional(),
+  storeId: z.coerce.number().int().positive().nullable().optional(),
   whId: z.coerce.number().int().positive().nullable().optional(),
   taxId: z.coerce.number().int().positive().nullable().optional(),
   taxRate: z.coerce.number().nonnegative().optional(),
+  currencyCode: z.string().trim().max(12).optional(),
+  fxRate: z.coerce.number().positive().optional(),
   saleDate: z.string().optional(),
   subtotal: z.coerce.number().nonnegative().default(0),
   discount: z.coerce.number().nonnegative().default(0),
@@ -35,9 +49,12 @@ export const saleSchema = z.object({
 
 export const saleUpdateSchema = z.object({
   customerId: z.coerce.number().int().positive().optional(),
+  storeId: z.coerce.number().int().positive().nullable().optional(),
   whId: z.coerce.number().int().positive().nullable().optional(),
   taxId: z.coerce.number().int().positive().nullable().optional(),
   taxRate: z.coerce.number().nonnegative().optional(),
+  currencyCode: z.string().trim().max(12).optional(),
+  fxRate: z.coerce.number().positive().optional(),
   saleDate: z.string().optional(),
   saleType: z.enum(['cash', 'credit']).optional(),
   docType: z.enum(['sale', 'invoice', 'quotation']).optional(),
