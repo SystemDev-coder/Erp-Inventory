@@ -3,6 +3,7 @@ import { ColumnDef } from '@tanstack/react-table';
 import { Ban, Edit3, FileCheck2, Printer, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { PageHeader, TabActionToolbar } from '../../components/ui/layout';
+import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { DataTable } from '../../components/ui/table/DataTable';
 import Badge from '../../components/ui/badge/Badge';
 import { useToast } from '../../components/ui/toast/Toast';
@@ -138,6 +139,8 @@ const Sales = () => {
   const [loading, setLoading] = useState(false);
   const [sales, setSales] = useState<Sale[]>([]);
   const [hasLoaded, setHasLoaded] = useState(false);
+  const [voidOpen, setVoidOpen] = useState(false);
+  const [saleToVoid, setSaleToVoid] = useState<Sale | null>(null);
 
   const loadSales = useCallback(async () => {
     setLoading(true);
@@ -190,22 +193,20 @@ const Sales = () => {
     [showToast]
   );
 
-  const handleVoid = useCallback(
-    async (sale: Sale) => {
-      const ok = window.confirm(
-        `Void #S-${sale.sale_id}? This will reverse stock/account effects for this sale.`
-      );
-      if (!ok) return;
-      const res = await salesService.void(sale.sale_id, 'Voided from sales list');
-      if (res.success) {
-        showToast('success', 'Sales', 'Document voided');
-        await loadSales();
-      } else {
-        showToast('error', 'Sales', res.error || 'Failed to void');
-      }
-    },
-    [loadSales, showToast]
-  );
+  const confirmVoid = useCallback(async () => {
+    if (!saleToVoid) return;
+    setLoading(true);
+    const res = await salesService.void(saleToVoid.sale_id, 'Voided from sales list');
+    if (res.success) {
+      showToast('success', 'Sales', 'Document voided');
+      await loadSales();
+    } else {
+      showToast('error', 'Sales', res.error || 'Failed to void');
+    }
+    setLoading(false);
+    setSaleToVoid(null);
+    setVoidOpen(false);
+  }, [loadSales, saleToVoid, showToast]);
 
   const handleConvertQuotation = useCallback(
     async (sale: Sale) => {
@@ -332,7 +333,10 @@ const Sales = () => {
               {sale.status !== 'void' && (
                 <button
                   type="button"
-                  onClick={() => void handleVoid(sale)}
+                  onClick={() => {
+                    setSaleToVoid(sale);
+                    setVoidOpen(true);
+                  }}
                   className="inline-flex items-center gap-1 rounded-lg border border-amber-200 px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-900/30"
                   title="Void"
                 >
@@ -357,7 +361,7 @@ const Sales = () => {
         },
       },
     ],
-    [handleConvertQuotation, handleDelete, handleVoid, navigate, printSaleInvoice]
+    [handleConvertQuotation, handleDelete, navigate, printSaleInvoice]
   );
 
   return (
@@ -385,6 +389,27 @@ const Sales = () => {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        isOpen={voidOpen}
+        onClose={() => {
+          setVoidOpen(false);
+          setSaleToVoid(null);
+        }}
+        onConfirm={() => {
+          void confirmVoid();
+        }}
+        title="Void Sale Document?"
+        message={
+          saleToVoid
+            ? `Void #S-${saleToVoid.sale_id}? This will reverse stock/account effects for this sale.`
+            : 'Are you sure you want to void this sale?'
+        }
+        confirmText="Void Document"
+        cancelText="Cancel"
+        variant="warning"
+        isLoading={loading}
+      />
     </div>
   );
 };

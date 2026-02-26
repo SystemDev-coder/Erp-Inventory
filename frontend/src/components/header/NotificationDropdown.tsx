@@ -48,6 +48,20 @@ const categoryDotClass = (category: string, isRead: boolean) => {
   }
 };
 
+const normalizeNotificationLink = (rawLink: string | null) => {
+  if (!rawLink) return null;
+
+  const link = rawLink.trim();
+  if (!link) return null;
+
+  const legacyMap: Record<string, string> = {
+    '/inventory/stock': '/stock-management/items',
+    '/stock': '/stock-management/items',
+  };
+
+  return legacyMap[link] ?? link;
+};
+
 export default function NotificationDropdown() {
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -133,8 +147,9 @@ export default function NotificationDropdown() {
     }
 
     closeDropdown();
-    if (notification.link) {
-      navigate(notification.link);
+    const targetLink = normalizeNotificationLink(notification.link);
+    if (targetLink) {
+      navigate(targetLink);
     }
   };
 

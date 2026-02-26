@@ -6,7 +6,6 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { accountService, Account } from '../../services/account.service';
 import { customerService, Customer } from '../../services/customer.service';
 import { inventoryService, InventoryItem } from '../../services/inventory.service';
-import { productService, Tax } from '../../services/product.service';
 import { SaleDocType, SaleStatus, salesService } from '../../services/sales.service';
 
 type FormLine = {

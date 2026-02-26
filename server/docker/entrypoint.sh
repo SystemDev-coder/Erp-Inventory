@@ -8,6 +8,8 @@ DB_NAME="${PGDATABASE:-erp_inventory}"
 DB_SCHEMA="${PGSCHEMA:-ims}"
 MIGRATIONS_DIR="${MIGRATIONS_DIR:-/app/sql}"
 BASE_SCHEMA_FILE="${BASE_SCHEMA_FILE:-Full_complete_scheme.sql}"
+DEMO_SEED_FILE="${DEMO_SEED_FILE:-seed_demo_data.sql}"
+RUN_DEMO_SEED="${RUN_DEMO_SEED:-true}"
 AUTO_RESET_ON_SCHEMA_MISMATCH="${AUTO_RESET_ON_SCHEMA_MISMATCH:-false}"
 
 echo "Waiting for postgres at ${DB_HOST}:${DB_PORT}..."
@@ -110,6 +112,28 @@ apply_base_schema() {
     echo "Reapplying base schema ${file_name} (checksum changed)"
   else
     echo "Applying base schema ${file_name}"
+  fi
+
+  psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 -f "$file_path"
+
+  psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 -c "INSERT INTO ${DB_SCHEMA}.schema_migrations (filename, checksum) VALUES ('${file_name}', '${file_checksum}') ON CONFLICT (filename) DO UPDATE SET checksum = EXCLUDED.checksum, applied_at = now()"
+}
+
+apply_seed_file() {
+  file_path="$1"
+  file_name=$(basename "$file_path")
+  file_checksum=$(compute_checksum "$file_path")
+  stored_checksum=$(psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -tAc "SELECT checksum FROM ${DB_SCHEMA}.schema_migrations WHERE filename='${file_name}'" | tr -d '[:space:]')
+
+  if [ -n "$stored_checksum" ] && [ "$stored_checksum" = "$file_checksum" ]; then
+    echo "Skipping ${file_name} (already applied)"
+    return
+  fi
+
+  if [ -n "$stored_checksum" ]; then
+    echo "Reapplying demo seed ${file_name} (checksum changed)"
+  else
+    echo "Applying demo seed ${file_name}"
   fi
 
   psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 -f "$file_path"
@@ -248,6 +272,7 @@ SQL
 }
 
 BASE_SCHEMA_PATH="${MIGRATIONS_DIR}/${BASE_SCHEMA_FILE}"
+DEMO_SEED_PATH="${MIGRATIONS_DIR}/${DEMO_SEED_FILE}"
 
 if [ -f "${BASE_SCHEMA_PATH}" ]; then
   apply_base_schema "${BASE_SCHEMA_PATH}"
@@ -257,6 +282,14 @@ else
 fi
 
 run_bootstrap_seed
+
+if [ "$RUN_DEMO_SEED" = "true" ]; then
+  if [ -f "${DEMO_SEED_PATH}" ]; then
+    apply_seed_file "${DEMO_SEED_PATH}"
+  else
+    echo "Skipping demo seed: file not found at ${DEMO_SEED_PATH}"
+  fi
+fi
 
 echo "Starting dev server..."
 exec npm run dev

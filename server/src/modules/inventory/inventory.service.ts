@@ -486,9 +486,9 @@ export const inventoryService = {
       where.push(
         `EXISTS (
            SELECT 1
-             FROM ims.warehouse_stock wsf
-            WHERE wsf.item_id = i.item_id
-              AND wsf.wh_id = $${params.length}
+             FROM ims.store_items sis
+            WHERE sis.product_id = i.item_id
+              AND sis.store_id = $${params.length}
          )`
       );
     }
@@ -502,22 +502,22 @@ export const inventoryService = {
     const alertExpr = hasAlert ? 'i.stock_alert' : '5';
 
     return queryMany(
-      `WITH warehouse_totals AS (
+      `WITH store_totals AS (
          SELECT
-           w.branch_id,
-           ws.item_id,
-           COALESCE(SUM(ws.quantity), 0)::numeric(14,3) AS warehouse_qty,
+           s.branch_id,
+           si.product_id AS item_id,
+           COALESCE(SUM(si.quantity), 0)::numeric(14,3) AS store_qty,
            json_agg(
              json_build_object(
-               'wh_id', ws.wh_id,
-               'wh_name', w.wh_name,
-               'quantity', ws.quantity
+               'wh_id', s.store_id,
+               'wh_name', s.store_name,
+               'quantity', si.quantity
              )
-             ORDER BY w.wh_name
-           ) AS warehouse_breakdown
-         FROM ims.warehouse_stock ws
-         JOIN ims.warehouses w ON w.wh_id = ws.wh_id
-         GROUP BY w.branch_id, ws.item_id
+             ORDER BY s.store_name
+           ) AS store_breakdown
+         FROM ims.store_items si
+         JOIN ims.stores s ON s.store_id = si.store_id
+         GROUP BY s.branch_id, si.product_id
        )
        SELECT
              i.item_id AS product_id,
@@ -527,21 +527,21 @@ export const inventoryService = {
              i.barcode,
              b.branch_id,
              b.branch_name,
-             COALESCE(wt.warehouse_qty, 0)::numeric(14,3) AS warehouse_qty,
+             COALESCE(st.store_qty, 0)::numeric(14,3) AS warehouse_qty,
              0::numeric(14,3) AS branch_qty,
-             COALESCE(wt.warehouse_qty, 0)::numeric(14,3) AS total_qty,
+             COALESCE(st.store_qty, 0)::numeric(14,3) AS total_qty,
              COALESCE(i.cost_price, 0)::numeric(14,2) AS cost_price,
              COALESCE(i.sell_price, i.cost_price, 0)::numeric(14,2) AS sale_price,
-             (COALESCE(wt.warehouse_qty, 0) * COALESCE(i.cost_price, 0))::numeric(14,2) AS stock_value,
+             (COALESCE(st.store_qty, 0) * COALESCE(i.cost_price, 0))::numeric(14,2) AS stock_value,
              GREATEST(COALESCE(NULLIF(${alertExpr}, 0), 5), 1)::numeric(14,3) AS min_stock_threshold,
-             (COALESCE(wt.warehouse_qty, 0) <= GREATEST(COALESCE(NULLIF(${alertExpr}, 0), 5), 1)) AS low_stock,
+             (COALESCE(st.store_qty, 0) <= GREATEST(COALESCE(NULLIF(${alertExpr}, 0), 5), 1)) AS low_stock,
              FALSE AS qty_mismatch,
-             COALESCE(wt.warehouse_breakdown, '[]'::json) AS warehouse_breakdown
+             COALESCE(st.store_breakdown, '[]'::json) AS warehouse_breakdown
         FROM ims.items i
         JOIN ims.branches b ON b.branch_id = i.branch_id
-         LEFT JOIN warehouse_totals wt
-          ON wt.item_id = i.item_id
-         AND wt.branch_id = i.branch_id
+         LEFT JOIN store_totals st
+          ON st.item_id = i.item_id
+         AND st.branch_id = i.branch_id
        WHERE ${where.join(' AND ')}
        ORDER BY i.name, b.branch_name
        LIMIT $${params.length - 1} OFFSET $${params.length}`,

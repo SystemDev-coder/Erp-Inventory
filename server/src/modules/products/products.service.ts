@@ -248,7 +248,7 @@ const getProductSql = (stockAlertExpr: string, storeIdExpr = 'NULL::bigint') => 
   FROM ims.items i
   LEFT JOIN ims.stores s ON s.store_id = i.store_id
   LEFT JOIN LATERAL (
-    SELECT si.quantity::numeric(14,3) AS qty
+    SELECT COALESCE(SUM(si.quantity), 0)::numeric(14,3) AS qty
       FROM ims.store_items si
      WHERE si.product_id = i.item_id
        AND si.store_id = COALESCE(
@@ -262,7 +262,6 @@ const getProductSql = (stockAlertExpr: string, storeIdExpr = 'NULL::bigint') => 
             LIMIT 1
          )
        )
-     LIMIT 1
   ) sq ON TRUE
 `;
 

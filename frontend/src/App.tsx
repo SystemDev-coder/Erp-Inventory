@@ -55,6 +55,7 @@ function AppRoutes() {
           <Route index path="/" element={<ProtectedRoute permission="dashboard.view"><Home /></ProtectedRoute>} />
           <Route path="/stock-management" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
           <Route path="/stock-management/items" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
+          <Route path="/inventory/stock" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
           <Route path="/stock-management/adjust-items" element={<ProtectedRoute><StockAdjustmentsPage /></ProtectedRoute>} />
           <Route path="/return" element={<ProtectedRoute><Returns /></ProtectedRoute>} />
           <Route path="/items" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />

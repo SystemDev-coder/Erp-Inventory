@@ -82,7 +82,7 @@ export const syncLowStockNotifications = async (
            $3,
            $4,
            'inventory',
-           '/stock',
+           '/stock-management/items',
            jsonb_build_object(
              'type', 'low_stock',
              'product_id', $5::bigint,

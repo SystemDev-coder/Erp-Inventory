@@ -46,35 +46,33 @@ export interface PurchaseItemView extends PurchaseItem {
 }
 
 const normalizeItemName = (value: string) => value.trim().replace(/\s+/g, ' ');
+const AUTO_PURCHASE_NOTE_PREFIX = '[AUTO-PURCHASE]';
+type PurchaseStatus = 'received' | 'partial' | 'unpaid' | 'void';
 
-const resolvePurchasePayment = (params: {
-  total: number;
-  status: string;
-  payFromAccId?: number;
-  paidAmount?: number;
-}) => {
-  const total = Number(params.total || 0);
-  let paidAmount = Number(params.paidAmount ?? 0);
-  const status = params.status || 'received';
+interface PreparedPurchaseItem {
+  productId: number;
+  quantity: number;
+  unitCost: number;
+  salePrice: number | null;
+  discount: number;
+  batchNo: string | null;
+  expiryDate: string | null;
+  description: string | null;
+  lineTotal: number;
+}
 
-  if (status === 'void' || status === 'unpaid') {
-    paidAmount = 0;
-  } else if (status === 'received') {
-    paidAmount = paidAmount > 0 ? paidAmount : total;
-  } else if (status === 'partial' && paidAmount <= 0) {
-    throw ApiError.badRequest('Paid amount is required for partial purchases');
-  }
+interface PurchaseStockLine {
+  itemId: number;
+  quantity: number;
+  unitCost: number;
+}
 
-  paidAmount = Math.min(Math.max(paidAmount, 0), total);
-  if (paidAmount > 0 && !params.payFromAccId) {
-    throw ApiError.badRequest('Select account for paid amount');
-  }
+interface SupplierBalanceColumns {
+  hasOpenBalance: boolean;
+  hasRemainingBalance: boolean;
+}
 
-  return {
-    payFromAccId: params.payFromAccId ?? null,
-    paidAmount,
-  };
-};
+let cachedSupplierBalanceColumns: SupplierBalanceColumns | null = null;
 
 const resolveProductForPurchaseItem = async (
   client: PoolClient,
@@ -182,6 +180,377 @@ const resolveProductForPurchaseItem = async (
   }
 
   return newProductId;
+};
+
+const getSupplierBalanceColumns = async (client: PoolClient): Promise<SupplierBalanceColumns> => {
+  if (cachedSupplierBalanceColumns) return cachedSupplierBalanceColumns;
+  const result = await client.query<{ column_name: string }>(
+    `SELECT column_name
+       FROM information_schema.columns
+      WHERE table_schema = 'ims'
+        AND table_name = 'suppliers'`
+  );
+  const names = new Set(result.rows.map((row) => row.column_name));
+  cachedSupplierBalanceColumns = {
+    hasOpenBalance: names.has('open_balance'),
+    hasRemainingBalance: names.has('remaining_balance'),
+  };
+  return cachedSupplierBalanceColumns;
+};
+
+const adjustSupplierBalance = async (
+  client: PoolClient,
+  params: { branchId: number; supplierId?: number | null; delta: number }
+) => {
+  if (!params.supplierId || !params.delta) return;
+
+  const cols = await getSupplierBalanceColumns(client);
+  const updates: string[] = [];
+  if (cols.hasOpenBalance) {
+    updates.push(`open_balance = GREATEST(open_balance + $1, 0)`);
+  }
+  if (cols.hasRemainingBalance) {
+    updates.push(`remaining_balance = GREATEST(remaining_balance + $1, 0)`);
+  }
+  if (!updates.length) return;
+
+  await client.query(
+    `UPDATE ims.suppliers
+        SET ${updates.join(', ')}
+      WHERE supplier_id = $2
+        AND branch_id = $3`,
+    [params.delta, params.supplierId, params.branchId]
+  );
+};
+
+const ensurePaymentAccount = async (
+  client: PoolClient,
+  params: { branchId: number; accId?: number | null }
+) => {
+  if (!params.accId) return;
+  const account = await client.query(
+    `SELECT acc_id
+       FROM ims.accounts
+      WHERE acc_id = $1
+        AND branch_id = $2
+        AND is_active = TRUE`,
+    [params.accId, params.branchId]
+  );
+  if (!account.rows[0]) {
+    throw ApiError.badRequest('Selected account is not available in this branch');
+  }
+};
+
+const getOrCreateDefaultStoreId = async (client: PoolClient, branchId: number): Promise<number> => {
+  const existing = await client.query<{ store_id: number }>(
+    `SELECT store_id
+       FROM ims.stores
+      WHERE branch_id = $1
+      ORDER BY store_id
+      LIMIT 1`,
+    [branchId]
+  );
+  const storeId = Number(existing.rows[0]?.store_id || 0);
+  if (storeId > 0) return storeId;
+
+  const created = await client.query<{ store_id: number }>(
+    `INSERT INTO ims.stores (branch_id, store_name, store_code, is_active)
+     VALUES ($1, 'Main Store', 'MAIN-' || LPAD($1::text, 3, '0'), TRUE)
+     ON CONFLICT (branch_id, store_name)
+     DO UPDATE SET is_active = TRUE
+     RETURNING store_id`,
+    [branchId]
+  );
+  return Number(created.rows[0]?.store_id || 0);
+};
+
+const resolvePurchaseStoreId = async (
+  client: PoolClient,
+  params: { branchId: number; storeId?: number | null }
+): Promise<number> => {
+  if (params.storeId && Number(params.storeId) > 0) {
+    const scoped = await client.query<{ store_id: number }>(
+      `SELECT store_id
+         FROM ims.stores
+        WHERE store_id = $1
+          AND branch_id = $2
+        LIMIT 1`,
+      [params.storeId, params.branchId]
+    );
+    if (!scoped.rows[0]) {
+      throw ApiError.badRequest('Selected store is not available in this branch');
+    }
+    return Number(scoped.rows[0].store_id);
+  }
+  return getOrCreateDefaultStoreId(client, params.branchId);
+};
+
+const getStoreForItem = async (
+  client: PoolClient,
+  params: { branchId: number; itemId: number; fallbackStoreId?: number | null }
+): Promise<number> => {
+  const item = await client.query<{ store_id: number | null }>(
+    `SELECT store_id
+       FROM ims.items
+      WHERE item_id = $1
+        AND branch_id = $2
+      LIMIT 1`,
+    [params.itemId, params.branchId]
+  );
+  const itemStoreId = Number(item.rows[0]?.store_id || 0);
+  if (itemStoreId > 0) return itemStoreId;
+  if (params.fallbackStoreId && Number(params.fallbackStoreId) > 0) return Number(params.fallbackStoreId);
+  return getOrCreateDefaultStoreId(client, params.branchId);
+};
+
+const applyStoreItemDelta = async (
+  client: PoolClient,
+  params: { storeId: number; itemId: number; delta: number }
+) => {
+  if (!params.delta) return;
+  const existing = await client.query<{ quantity: string }>(
+    `SELECT quantity::text AS quantity
+       FROM ims.store_items
+      WHERE store_id = $1
+        AND product_id = $2
+      FOR UPDATE`,
+    [params.storeId, params.itemId]
+  );
+  const currentQty = Number(existing.rows[0]?.quantity || 0);
+  const nextQty = currentQty + params.delta;
+  if (nextQty < 0) {
+    throw ApiError.badRequest(`Insufficient stock for item ${params.itemId}`);
+  }
+  await client.query(
+    `INSERT INTO ims.store_items (store_id, product_id, quantity)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (store_id, product_id)
+     DO UPDATE
+           SET quantity = EXCLUDED.quantity,
+               updated_at = NOW()`,
+    [params.storeId, params.itemId, nextQty]
+  );
+};
+
+const applyPurchaseStockEffects = async (
+  client: PoolClient,
+  params: {
+    branchId: number;
+    purchaseId: number;
+    lines: PurchaseStockLine[];
+    direction: 'in' | 'out';
+    moveType: 'purchase' | 'purchase_return';
+    storeId?: number | null;
+    note?: string | null;
+  }
+) => {
+  if (!params.lines.length) return;
+
+  for (const line of params.lines) {
+    const qty = Number(line.quantity || 0);
+    if (!qty) continue;
+    const delta = params.direction === 'in' ? qty : -qty;
+    const storeId = await getStoreForItem(client, {
+      branchId: params.branchId,
+      itemId: Number(line.itemId),
+      fallbackStoreId: params.storeId ?? null,
+    });
+
+    await applyStoreItemDelta(client, {
+      storeId,
+      itemId: Number(line.itemId),
+      delta,
+    });
+
+    const qtyIn = params.direction === 'in' ? qty : 0;
+    const qtyOut = params.direction === 'out' ? qty : 0;
+    await client.query(
+      `INSERT INTO ims.inventory_movements (
+         branch_id, wh_id, item_id, move_type, ref_table, ref_id, qty_in, qty_out, unit_cost, note
+       )
+       VALUES ($1, NULL, $2, $3::ims.movement_type_enum, 'purchases', $4, $5, $6, $7, $8)`,
+      [
+        params.branchId,
+        Number(line.itemId),
+        params.moveType,
+        params.purchaseId,
+        qtyIn,
+        qtyOut,
+        Number(line.unitCost || 0),
+        params.note || (params.direction === 'in' ? 'Purchase receive' : 'Purchase rollback'),
+      ]
+    );
+  }
+};
+
+const preparePurchaseItems = async (
+  client: PoolClient,
+  params: {
+    branchId: number;
+    supplierId: number | null;
+    items: PurchaseItemInput[];
+  }
+): Promise<PreparedPurchaseItem[]> => {
+  const prepared: PreparedPurchaseItem[] = [];
+  for (const item of params.items) {
+    const quantity = Number(item.quantity || 0);
+    const unitCost = Number(item.unitCost || 0);
+    const discount = Number(item.discount || 0);
+    if (quantity <= 0) throw ApiError.badRequest('Quantity must be greater than zero');
+    if (unitCost < 0) throw ApiError.badRequest('Unit cost cannot be negative');
+    if (discount < 0) throw ApiError.badRequest('Line discount cannot be negative');
+
+    const productId = await resolveProductForPurchaseItem(
+      client,
+      item,
+      params.branchId,
+      params.supplierId
+    );
+    const lineTotal = quantity * unitCost - discount;
+    if (lineTotal < 0) {
+      throw ApiError.badRequest('Line total cannot be negative');
+    }
+
+    prepared.push({
+      productId,
+      quantity,
+      unitCost,
+      salePrice: item.salePrice !== undefined ? Number(item.salePrice) : null,
+      discount,
+      batchNo: item.batchNo || null,
+      expiryDate: item.expiryDate || null,
+      description: item.description || null,
+      lineTotal,
+    });
+  }
+  return prepared;
+};
+
+const insertPurchaseItems = async (
+  client: PoolClient,
+  params: { branchId: number; purchaseId: number; items: PreparedPurchaseItem[] }
+) => {
+  for (const item of params.items) {
+    await client.query(
+      `INSERT INTO ims.purchase_items
+         (branch_id, purchase_id, item_id, quantity, unit_cost, sale_price, line_total, batch_no, expiry_date, description, discount)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [
+        params.branchId,
+        params.purchaseId,
+        item.productId,
+        item.quantity,
+        item.unitCost,
+        item.salePrice,
+        item.lineTotal,
+        item.batchNo,
+        item.expiryDate,
+        item.description,
+        item.discount,
+      ]
+    );
+  }
+};
+
+const insertPurchaseBillLedger = async (
+  client: PoolClient,
+  params: {
+    branchId: number;
+    purchaseId: number;
+    supplierId?: number | null;
+    total: number;
+    note?: string | null;
+  }
+) => {
+  if (!params.supplierId || params.total <= 0) return;
+  await client.query(
+    `INSERT INTO ims.supplier_ledger
+       (branch_id, supplier_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
+     VALUES ($1, $2, 'purchase', 'purchases', $3, NULL, 0, $4, $5)`,
+    [
+      params.branchId,
+      params.supplierId,
+      params.purchaseId,
+      params.total,
+      `${AUTO_PURCHASE_NOTE_PREFIX} Purchase bill${params.note ? ` - ${params.note}` : ''}`,
+    ]
+  );
+};
+
+const applyPurchasePayment = async (
+  client: PoolClient,
+  params: {
+    branchId: number;
+    purchaseId: number;
+    userId: number;
+    supplierId?: number | null;
+    accId: number;
+    amount: number;
+    note?: string | null;
+  }
+) => {
+  if (params.amount <= 0) return;
+  await ensurePaymentAccount(client, { branchId: params.branchId, accId: params.accId });
+
+  const accountResult = await client.query(
+    `UPDATE ims.accounts
+        SET balance = balance - $1
+      WHERE acc_id = $2
+        AND branch_id = $3`,
+    [params.amount, params.accId, params.branchId]
+  );
+  if ((accountResult.rowCount ?? 0) === 0) {
+    throw ApiError.badRequest('Payment account is not allowed for this branch');
+  }
+
+  await client.query(
+    `INSERT INTO ims.supplier_payments
+       (branch_id, purchase_id, user_id, acc_id, pay_date, amount_paid, reference_no, note)
+     VALUES ($1, $2, $3, $4, NOW(), $5, $6, $7)`,
+    [
+      params.branchId,
+      params.purchaseId,
+      params.userId,
+      params.accId,
+      params.amount,
+      null,
+      `${AUTO_PURCHASE_NOTE_PREFIX} Supplier payment${params.note ? ` - ${params.note}` : ''}`,
+    ]
+  );
+
+  await client.query(
+    `INSERT INTO ims.account_transactions
+       (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, note)
+     VALUES ($1, $2, 'supplier_payment', 'purchases', $3, $4, 0, $5)`,
+    [
+      params.branchId,
+      params.accId,
+      params.purchaseId,
+      params.amount,
+      `${AUTO_PURCHASE_NOTE_PREFIX} Supplier payment`,
+    ]
+  );
+
+  if (params.supplierId) {
+    await client.query(
+      `INSERT INTO ims.supplier_ledger
+         (branch_id, supplier_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
+       VALUES ($1, $2, 'payment', 'purchases', $3, $4, $5, 0, $6)`,
+      [
+        params.branchId,
+        params.supplierId,
+        params.purchaseId,
+        params.accId,
+        params.amount,
+        `${AUTO_PURCHASE_NOTE_PREFIX} Supplier payment`,
+      ]
+    );
+    await adjustSupplierBalance(client, {
+      branchId: params.branchId,
+      supplierId: params.supplierId,
+      delta: -params.amount,
+    });
+  }
 };
 
 export const purchasesService = {
@@ -314,49 +683,41 @@ export const purchasesService = {
     try {
       await client.query('BEGIN');
 
-      const items: PurchaseItemInput[] = input.items || [];
-      const subtotalFromItems = items.reduce(
-        (sum, item) => sum + Number(item.quantity) * Number(item.unitCost),
-        0
-      );
-      const subtotal = items.length > 0 ? subtotalFromItems : input.subtotal ?? 0;
-      const discount = input.discount ?? 0;
-      const total = input.total ?? subtotal - discount;
-      const purchaseStatus = input.status || 'received';
-      const payment = resolvePurchasePayment({
-        total,
-        status: purchaseStatus,
-        payFromAccId: input.payFromAccId,
-        paidAmount: input.paidAmount,
-      });
-
-      if (payment.payFromAccId) {
-        const account = await client.query(
-          `SELECT acc_id
-             FROM ims.accounts
-            WHERE acc_id = $1
-              AND branch_id = $2
-              AND is_active = TRUE`,
-          [payment.payFromAccId, context.branchId]
-        );
-        if (!account.rows[0]) {
-          throw ApiError.badRequest('Selected account is not available in this branch');
-        }
-      }
-
       const effectiveSupplierId = input.supplierId ?? (await client.query<{ fn_get_or_create_walking_supplier: number }>(
         `SELECT ims.fn_get_or_create_walking_supplier($1) AS fn_get_or_create_walking_supplier`,
         [context.branchId]
       )).rows[0]?.fn_get_or_create_walking_supplier ?? null;
+      const items: PurchaseItemInput[] = input.items || [];
+      const preparedItems = await preparePurchaseItems(client, {
+        branchId: context.branchId,
+        supplierId: effectiveSupplierId,
+        items,
+      });
+
+      const subtotalFromItems = preparedItems.reduce((sum, item) => sum + item.lineTotal, 0);
+      const subtotal = preparedItems.length > 0
+        ? subtotalFromItems
+        : Number(input.subtotal ?? 0);
+      const discount = Number(input.discount ?? 0);
+      const total = input.total !== undefined ? Number(input.total) : subtotal - discount;
+      if (subtotal < 0 || discount < 0 || total < 0) {
+        throw ApiError.badRequest('Purchase amounts cannot be negative');
+      }
+      const status: PurchaseStatus = (input.status || 'received') as PurchaseStatus;
+      const storeId = await resolvePurchaseStoreId(client, {
+        branchId: context.branchId,
+        storeId: input.storeId ?? null,
+      });
 
       const purchaseResult = await client.query<Purchase>(
       `INSERT INTO ims.purchases (
-         branch_id, user_id, supplier_id, fx_rate,
+         branch_id, store_id, user_id, supplier_id, fx_rate,
          purchase_date, subtotal, discount, total, status, note
-       ) VALUES ($1, $2, $3, $4, COALESCE($5, NOW()), $6, $7, $8, $9, $10)
+       ) VALUES ($1, $2, $3, $4, $5, COALESCE($6, NOW()), $7, $8, $9, $10, $11)
        RETURNING *`,
       [
         context.branchId,
+        storeId,
         context.userId,
         effectiveSupplierId,
         input.fxRate || 1,
@@ -364,78 +725,67 @@ export const purchasesService = {
         subtotal,
         discount,
         total,
-        purchaseStatus,
+        status,
         input.note || null,
       ]
       );
 
       const purchase = purchaseResult.rows[0] as Purchase;
-      const affectedProductIds = new Set<number>();
+      const affectedProductIds = new Set<number>(preparedItems.map((item) => item.productId));
 
-      if (items.length > 0) {
-        for (const item of items) {
-          const productId = await resolveProductForPurchaseItem(
-            client,
-            item,
-            context.branchId,
-            effectiveSupplierId
-          );
-          affectedProductIds.add(productId);
-          const lineTotal = Number(item.quantity) * Number(item.unitCost) - Number(item.discount || 0);
-          await client.query(
-            `INSERT INTO ims.purchase_items
-               (branch_id, purchase_id, item_id, quantity, unit_cost, sale_price, line_total, batch_no, expiry_date, description, discount)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-            [
-              context.branchId,
-              purchase.purchase_id,
-              productId,
-              item.quantity,
-              item.unitCost,
-              item.salePrice ?? null,
-              lineTotal,
-              item.batchNo || null,
-              item.expiryDate || null,
-              item.description || null,
-              item.discount || 0,
-            ]
-          );
-        }
+      if (preparedItems.length > 0) {
+        await insertPurchaseItems(client, {
+          branchId: context.branchId,
+          purchaseId: purchase.purchase_id,
+          items: preparedItems,
+        });
       }
 
-      // ---- Financial side effects: supplier remaining balance & account balance ----
-      // 1) Always increase supplier remaining_balance by the full purchase total (if not void and supplier exists)
-      if (total > 0 && purchaseStatus !== 'void' && effectiveSupplierId) {
-        await client.query(
-          `UPDATE ims.suppliers
-             SET remaining_balance = remaining_balance + $1
-           WHERE supplier_id = $2`,
-          [total, effectiveSupplierId]
-        );
+      if (status !== 'void' && preparedItems.length > 0) {
+        await applyPurchaseStockEffects(client, {
+          branchId: context.branchId,
+          purchaseId: purchase.purchase_id,
+          lines: preparedItems.map((item) => ({
+            itemId: item.productId,
+            quantity: item.quantity,
+            unitCost: item.unitCost,
+          })),
+          direction: 'in',
+          moveType: 'purchase',
+          storeId,
+          note: `${AUTO_PURCHASE_NOTE_PREFIX} Purchase receive`,
+        });
       }
 
-      // 2) If there is an inline payment, reduce account balance and supplier remaining_balance
-      if (payment.payFromAccId && payment.paidAmount > 0 && purchaseStatus !== 'void') {
-        // Subtract from cash/bank account
-        const accountResult = await client.query(
-          `UPDATE ims.accounts
-             SET balance = balance - $1
-           WHERE acc_id = $2
-             AND branch_id = $3`,
-          [payment.paidAmount, payment.payFromAccId, context.branchId]
-        );
-        if ((accountResult.rowCount ?? 0) === 0) {
-          throw ApiError.badRequest('Payment account is not allowed for this branch');
-        }
+      if (status !== 'void' && total > 0 && effectiveSupplierId) {
+        await adjustSupplierBalance(client, {
+          branchId: context.branchId,
+          supplierId: effectiveSupplierId,
+          delta: total,
+        });
+        await insertPurchaseBillLedger(client, {
+          branchId: context.branchId,
+          purchaseId: purchase.purchase_id,
+          supplierId: effectiveSupplierId,
+          total,
+          note: input.note || null,
+        });
+      }
 
-        // Reduce supplier remaining balance
-        if (effectiveSupplierId) {
-          await client.query(
-            `UPDATE ims.suppliers
-               SET remaining_balance = remaining_balance - $1
-             WHERE supplier_id = $2`,
-            [payment.paidAmount, effectiveSupplierId]
-          );
+      const paidAmountRaw = Number(input.paidAmount || 0);
+      const payFromAccId = input.payFromAccId;
+      if (payFromAccId && paidAmountRaw > 0 && status !== 'void') {
+        const paidAmount = Math.min(paidAmountRaw, total);
+        if (paidAmount > 0) {
+          await applyPurchasePayment(client, {
+            branchId: context.branchId,
+            purchaseId: purchase.purchase_id,
+            userId: context.userId,
+            supplierId: effectiveSupplierId,
+            accId: payFromAccId,
+            amount: paidAmount,
+            note: input.note || null,
+          });
         }
       }
 
@@ -464,121 +814,240 @@ export const purchasesService = {
     try {
       await client.query('BEGIN');
 
-      const currentPurchase = await client.query<{ branch_id: number; supplier_id: number }>(
-        `SELECT branch_id, supplier_id FROM ims.purchases WHERE purchase_id = $1`,
+      const currentPurchase = await client.query<{
+        purchase_id: number;
+        branch_id: number;
+        user_id: number;
+        store_id: number | null;
+        supplier_id: number | null;
+        purchase_date: string;
+        subtotal: string;
+        discount: string;
+        total: string;
+        status: PurchaseStatus;
+        fx_rate: string;
+        note: string | null;
+      }>(
+        `SELECT purchase_id, branch_id, user_id, store_id, supplier_id, purchase_date, subtotal, discount, total, status, fx_rate, note
+           FROM ims.purchases
+          WHERE purchase_id = $1
+          FOR UPDATE`,
         [id]
       );
-      if (!currentPurchase.rows[0]) {
+      const current = currentPurchase.rows[0];
+      if (!current) {
         await client.query('ROLLBACK');
         return null;
       }
-      const currentBranchId = Number(currentPurchase.rows[0].branch_id);
+      const currentBranchId = Number(current.branch_id);
       if (!scope.isAdmin && !scope.branchIds.includes(currentBranchId)) {
         throw ApiError.forbidden('You can only update purchases in your branch');
       }
 
-      const updates: string[] = [];
-      const values: any[] = [];
-      let p = 1;
+      const oldItemsResult = await client.query<{
+        item_id: number;
+        quantity: string;
+        unit_cost: string;
+      }>(
+        `SELECT item_id, quantity::text AS quantity, unit_cost::text AS unit_cost
+           FROM ims.purchase_items
+          WHERE purchase_id = $1`,
+        [id]
+      );
+      const oldItems = oldItemsResult.rows.map((row) => ({
+        itemId: Number(row.item_id),
+        quantity: Number(row.quantity || 0),
+        unitCost: Number(row.unit_cost || 0),
+      }));
 
+      const hasPaymentsResult = await client.query<{ payment_count: string }>(
+        `SELECT COUNT(*)::text AS payment_count
+           FROM ims.supplier_payments
+          WHERE purchase_id = $1`,
+        [id]
+      );
+      const hasPayments = Number(hasPaymentsResult.rows[0]?.payment_count || 0) > 0;
+
+      let nextSupplierId = current.supplier_id ? Number(current.supplier_id) : null;
       if (input.supplierId !== undefined) {
-        const effSupplier = input.supplierId ?? (await client.query<{ fn_get_or_create_walking_supplier: number }>(
+        nextSupplierId = input.supplierId ?? (await client.query<{ fn_get_or_create_walking_supplier: number }>(
           `SELECT ims.fn_get_or_create_walking_supplier($1) AS fn_get_or_create_walking_supplier`,
           [currentBranchId]
         )).rows[0]?.fn_get_or_create_walking_supplier ?? null;
-        updates.push(`supplier_id = $${p++}`);
-        values.push(effSupplier);
-      }
-      if (input.purchaseDate !== undefined) {
-        updates.push(`purchase_date = $${p++}`);
-        values.push(input.purchaseDate);
-      }
-      if (input.subtotal !== undefined) {
-        updates.push(`subtotal = $${p++}`);
-        values.push(input.subtotal);
-      }
-      if (input.discount !== undefined) {
-        updates.push(`discount = $${p++}`);
-        values.push(input.discount);
-      }
-      if (input.total !== undefined) {
-        updates.push(`total = $${p++}`);
-        values.push(input.total);
-      }
-      if (input.status !== undefined) {
-        updates.push(`status = $${p++}`);
-        values.push(input.status);
-      }
-      if (input.fxRate !== undefined) {
-        updates.push(`fx_rate = $${p++}`);
-        values.push(input.fxRate);
-      }
-      if (input.note !== undefined) {
-        updates.push(`note = $${p++}`);
-        values.push(input.note);
+
+        const currentSupplierId = current.supplier_id ? Number(current.supplier_id) : null;
+        if (
+          hasPayments &&
+          currentSupplierId &&
+          nextSupplierId &&
+          currentSupplierId !== nextSupplierId
+        ) {
+          throw ApiError.badRequest('Cannot change supplier after payments are recorded for this purchase');
+        }
       }
 
-      if (updates.length > 0) {
-        values.push(id);
-        // Only set purchase_date if it wasn't explicitly provided
-        const hasPurchaseDate = input.purchaseDate !== undefined;
-        const purchaseDateClause = hasPurchaseDate ? '' : ', purchase_date = COALESCE(purchase_date, NOW())';
-        await client.query(
-          `UPDATE ims.purchases
-              SET ${updates.join(', ')}${purchaseDateClause}
-            WHERE purchase_id = $${p}
-            RETURNING *`,
-          values
-        );
+      const preparedItems = input.items
+        ? await preparePurchaseItems(client, {
+            branchId: currentBranchId,
+            supplierId: nextSupplierId,
+            items: input.items,
+          })
+        : null;
+
+      const nextStatus: PurchaseStatus = (input.status ?? current.status ?? 'received') as PurchaseStatus;
+      const oldStockApplied = current.status !== 'void';
+      const newStockApplied = nextStatus !== 'void';
+      let storeId = current.store_id ? Number(current.store_id) : null;
+      if (input.storeId !== undefined) {
+        storeId = await resolvePurchaseStoreId(client, {
+          branchId: currentBranchId,
+          storeId: input.storeId ?? null,
+        });
+      }
+      if (!storeId && (oldItems.length > 0 || (preparedItems && preparedItems.length > 0))) {
+        storeId = await getOrCreateDefaultStoreId(client, currentBranchId);
       }
 
-      if (input.items) {
+      if (preparedItems) {
+        if (oldStockApplied && oldItems.length > 0) {
+          await applyPurchaseStockEffects(client, {
+            branchId: currentBranchId,
+            purchaseId: id,
+            lines: oldItems,
+            direction: 'out',
+            moveType: 'purchase_return',
+            storeId,
+            note: `${AUTO_PURCHASE_NOTE_PREFIX} Purchase update rollback`,
+          });
+        }
+
         await client.query(`DELETE FROM ims.purchase_items WHERE purchase_id = $1`, [id]);
-        let supplierIdForItems: number | null = input.supplierId ?? currentPurchase.rows[0].supplier_id ?? null;
-        if (supplierIdForItems == null) {
-          supplierIdForItems = (await client.query<{ fn_get_or_create_walking_supplier: number }>(
-            `SELECT ims.fn_get_or_create_walking_supplier($1) AS fn_get_or_create_walking_supplier`,
-            [currentBranchId]
-          )).rows[0]?.fn_get_or_create_walking_supplier ?? null;
+        await insertPurchaseItems(client, {
+          branchId: currentBranchId,
+          purchaseId: id,
+          items: preparedItems,
+        });
+
+        if (newStockApplied && preparedItems.length > 0) {
+          await applyPurchaseStockEffects(client, {
+            branchId: currentBranchId,
+            purchaseId: id,
+            lines: preparedItems.map((item) => ({
+              itemId: item.productId,
+              quantity: item.quantity,
+              unitCost: item.unitCost,
+            })),
+            direction: 'in',
+            moveType: 'purchase',
+            storeId,
+            note: `${AUTO_PURCHASE_NOTE_PREFIX} Purchase update apply`,
+          });
         }
-        for (const item of input.items) {
-          const productId = await resolveProductForPurchaseItem(
-            client,
-            item,
-            currentBranchId,
-            supplierIdForItems
-          );
-          const lineTotal = Number(item.quantity) * Number(item.unitCost) - Number(item.discount || 0);
-          await client.query(
-            `INSERT INTO ims.purchase_items
-               (branch_id, purchase_id, item_id, quantity, unit_cost, sale_price, line_total, batch_no, expiry_date, description, discount)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-            [
-              currentBranchId,
-              id,
-              productId,
-              item.quantity,
-              item.unitCost,
-              item.salePrice ?? null,
-              lineTotal,
-              item.batchNo || null,
-              item.expiryDate || null,
-              item.description || null,
-              item.discount || 0,
-            ]
-          );
-        }
-        const newSubtotal = input.items.reduce(
-          (sum, it) => sum + Number(it.quantity) * Number(it.unitCost) - Number(it.discount || 0),
-          0
-        );
-        const discount = input.discount ?? 0;
-        const total = input.total ?? newSubtotal - discount;
-        await client.query(
-          `UPDATE ims.purchases SET subtotal = $1, total = $2 WHERE purchase_id = $3`,
-          [newSubtotal, total, id]
-        );
+      } else if (oldStockApplied !== newStockApplied && oldItems.length > 0) {
+        await applyPurchaseStockEffects(client, {
+          branchId: currentBranchId,
+          purchaseId: id,
+          lines: oldItems,
+          direction: newStockApplied ? 'in' : 'out',
+          moveType: newStockApplied ? 'purchase' : 'purchase_return',
+          storeId,
+          note: `${AUTO_PURCHASE_NOTE_PREFIX} Purchase status change`,
+        });
       }
+
+      const computedSubtotal = preparedItems
+        ? preparedItems.reduce((sum, item) => sum + item.lineTotal, 0)
+        : (input.subtotal !== undefined ? Number(input.subtotal) : Number(current.subtotal || 0));
+      const nextDiscount = input.discount !== undefined
+        ? Number(input.discount)
+        : Number(current.discount || 0);
+      const nextTotal = input.total !== undefined
+        ? Number(input.total)
+        : (preparedItems || input.subtotal !== undefined || input.discount !== undefined
+            ? computedSubtotal - nextDiscount
+            : Number(current.total || 0));
+      if (computedSubtotal < 0 || nextDiscount < 0 || nextTotal < 0) {
+        throw ApiError.badRequest('Purchase amounts cannot be negative');
+      }
+
+      const previousSupplierId = current.supplier_id ? Number(current.supplier_id) : null;
+      const previousBillAmount = current.status !== 'void' ? Number(current.total || 0) : 0;
+      const nextBillAmount = nextStatus !== 'void' ? nextTotal : 0;
+
+      if (previousSupplierId && previousBillAmount > 0) {
+        await adjustSupplierBalance(client, {
+          branchId: currentBranchId,
+          supplierId: previousSupplierId,
+          delta: -previousBillAmount,
+        });
+      }
+      if (nextSupplierId && nextBillAmount > 0) {
+        await adjustSupplierBalance(client, {
+          branchId: currentBranchId,
+          supplierId: nextSupplierId,
+          delta: nextBillAmount,
+        });
+      }
+
+      await client.query(
+        `DELETE FROM ims.supplier_ledger
+          WHERE branch_id = $1
+            AND ref_table = 'purchases'
+            AND ref_id = $2
+            AND entry_type = 'purchase'`,
+        [currentBranchId, id]
+      );
+      if (nextSupplierId && nextBillAmount > 0) {
+        await insertPurchaseBillLedger(client, {
+          branchId: currentBranchId,
+          purchaseId: id,
+          supplierId: nextSupplierId,
+          total: nextBillAmount,
+          note: input.note ?? current.note ?? null,
+        });
+      }
+
+      const paidAmountRaw = Number(input.paidAmount || 0);
+      if (input.payFromAccId && paidAmountRaw > 0 && nextStatus !== 'void') {
+        const paidAmount = Math.min(paidAmountRaw, nextTotal);
+        if (paidAmount > 0) {
+          await applyPurchasePayment(client, {
+            branchId: currentBranchId,
+            purchaseId: id,
+            userId: Number(current.user_id || 1),
+            supplierId: nextSupplierId,
+            accId: input.payFromAccId,
+            amount: paidAmount,
+            note: input.note ?? current.note ?? null,
+          });
+        }
+      }
+
+      await client.query(
+        `UPDATE ims.purchases
+            SET supplier_id = $2,
+                purchase_date = COALESCE($3::timestamptz, purchase_date),
+                subtotal = $4,
+                discount = $5,
+                total = $6,
+                status = $7,
+                fx_rate = $8,
+                note = $9,
+                store_id = COALESCE($10, store_id)
+          WHERE purchase_id = $1`,
+        [
+          id,
+          nextSupplierId,
+          input.purchaseDate || null,
+          computedSubtotal,
+          nextDiscount,
+          nextTotal,
+          nextStatus,
+          input.fxRate !== undefined ? Number(input.fxRate) : Number(current.fx_rate || 1),
+          input.note !== undefined ? input.note : current.note,
+          storeId,
+        ]
+      );
 
       const updated = await client.query<Purchase>(
         `SELECT p.*, s.name AS supplier_name
@@ -587,6 +1056,14 @@ export const purchasesService = {
           WHERE p.purchase_id = $1`,
         [id]
       );
+
+      const affectedProductIds = new Set<number>(oldItems.map((row) => Number(row.itemId)));
+      (preparedItems || []).forEach((item) => affectedProductIds.add(Number(item.productId)));
+      await syncLowStockNotifications(client, {
+        branchId: currentBranchId,
+        productIds: Array.from(affectedProductIds),
+        actorUserId: Number(current.user_id || 1),
+      });
 
       await client.query('COMMIT');
       return updated.rows[0] || null;
@@ -599,22 +1076,125 @@ export const purchasesService = {
   },
 
   async deletePurchase(id: number, scope: BranchScope): Promise<void> {
-    if (scope.isAdmin) {
-      await queryOne(`DELETE FROM ims.purchase_items WHERE purchase_id = $1`, [id]);
-      await queryOne(`DELETE FROM ims.purchases WHERE purchase_id = $1`, [id]);
-      return;
-    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    const purchase = await queryOne<{ branch_id: number }>(
-      `SELECT branch_id FROM ims.purchases WHERE purchase_id = $1`,
-      [id]
-    );
-    if (!purchase) return;
-    if (!scope.branchIds.includes(Number(purchase.branch_id))) {
-      throw ApiError.forbidden('You can only delete purchases in your branch');
-    }
+      const purchase = await client.query<{
+        purchase_id: number;
+        branch_id: number;
+        store_id: number | null;
+        supplier_id: number | null;
+        total: string;
+        status: PurchaseStatus;
+      }>(
+        `SELECT purchase_id, branch_id, store_id, supplier_id, total, status
+           FROM ims.purchases
+          WHERE purchase_id = $1
+          FOR UPDATE`,
+        [id]
+      );
+      const current = purchase.rows[0];
+      if (!current) {
+        await client.query('ROLLBACK');
+        return;
+      }
+      const branchId = Number(current.branch_id);
+      if (!scope.isAdmin && !scope.branchIds.includes(branchId)) {
+        throw ApiError.forbidden('You can only delete purchases in your branch');
+      }
 
-    await queryOne(`DELETE FROM ims.purchase_items WHERE purchase_id = $1`, [id]);
-    await queryOne(`DELETE FROM ims.purchases WHERE purchase_id = $1`, [id]);
+      const itemsResult = await client.query<{
+        item_id: number;
+        quantity: string;
+        unit_cost: string;
+      }>(
+        `SELECT item_id, quantity::text AS quantity, unit_cost::text AS unit_cost
+           FROM ims.purchase_items
+          WHERE purchase_id = $1`,
+        [id]
+      );
+      const stockLines = itemsResult.rows.map((row) => ({
+        itemId: Number(row.item_id),
+        quantity: Number(row.quantity || 0),
+        unitCost: Number(row.unit_cost || 0),
+      }));
+
+      if (current.status !== 'void' && stockLines.length > 0) {
+        await applyPurchaseStockEffects(client, {
+          branchId,
+          purchaseId: id,
+          lines: stockLines,
+          direction: 'out',
+          moveType: 'purchase_return',
+          storeId: current.store_id ? Number(current.store_id) : null,
+          note: `${AUTO_PURCHASE_NOTE_PREFIX} Purchase delete rollback`,
+        });
+      }
+
+      const payments = await client.query<{ acc_id: number; amount_paid: string }>(
+        `SELECT acc_id, amount_paid::text AS amount_paid
+           FROM ims.supplier_payments
+          WHERE purchase_id = $1
+          FOR UPDATE`,
+        [id]
+      );
+      for (const payment of payments.rows) {
+        const amount = Number(payment.amount_paid || 0);
+        if (!amount) continue;
+        await client.query(
+          `UPDATE ims.accounts
+              SET balance = balance + $1
+            WHERE branch_id = $2
+              AND acc_id = $3`,
+          [amount, branchId, payment.acc_id]
+        );
+        await adjustSupplierBalance(client, {
+          branchId,
+          supplierId: current.supplier_id ? Number(current.supplier_id) : null,
+          delta: amount,
+        });
+      }
+
+      if (current.status !== 'void' && current.supplier_id && Number(current.total || 0) > 0) {
+        await adjustSupplierBalance(client, {
+          branchId,
+          supplierId: Number(current.supplier_id),
+          delta: -Number(current.total || 0),
+        });
+      }
+
+      await client.query(
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'purchases'
+            AND ref_id = $2
+            AND txn_type = 'supplier_payment'`,
+        [branchId, id]
+      );
+      await client.query(
+        `DELETE FROM ims.supplier_ledger
+          WHERE branch_id = $1
+            AND ref_table = 'purchases'
+            AND ref_id = $2`,
+        [branchId, id]
+      );
+      await client.query(`DELETE FROM ims.supplier_payments WHERE purchase_id = $1`, [id]);
+      await client.query(`DELETE FROM ims.purchase_items WHERE purchase_id = $1`, [id]);
+      await client.query(`DELETE FROM ims.purchases WHERE purchase_id = $1`, [id]);
+
+      await syncLowStockNotifications(client, {
+        branchId,
+        productIds: stockLines.map((line) => Number(line.itemId)),
+        actorUserId: 1,
+      });
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   },
 };
