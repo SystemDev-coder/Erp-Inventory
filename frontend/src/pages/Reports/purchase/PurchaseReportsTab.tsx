@@ -3,7 +3,7 @@ import { ChevronDown, Loader2 } from 'lucide-react';
 import type { ReportColumn } from '../../../components/reports/ReportModal';
 import { purchaseReportsService } from '../../../services/reports/purchaseReports.service';
 import type { DateRange, ModalReportState } from '../types';
-import { formatCurrency, formatDateOnly, formatDateTime, formatQuantity, toRecordRows, todayDate } from '../reportUtils';
+import { formatCurrency, formatDateOnly, formatDateTime, formatQuantity, toRecordRows, todayDate, defaultReportRange } from '../reportUtils';
 
 type PurchaseCardId =
   | 'orders-summary'
@@ -131,12 +131,12 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
   const [selectedSupplierLedgerId, setSelectedSupplierLedgerId] = useState('');
   const [selectedVarianceProductId, setSelectedVarianceProductId] = useState('');
 
-  const [ordersRange, setOrdersRange] = useState<DateRange>({ fromDate: todayDate(), toDate: todayDate() });
-  const [returnsRange, setReturnsRange] = useState<DateRange>({ fromDate: todayDate(), toDate: todayDate() });
-  const [paymentRange, setPaymentRange] = useState<DateRange>({ fromDate: todayDate(), toDate: todayDate() });
-  const [byDateRange, setByDateRange] = useState<DateRange>({ fromDate: todayDate(), toDate: todayDate() });
-  const [bestSuppliersRange, setBestSuppliersRange] = useState<DateRange>({ fromDate: todayDate(), toDate: todayDate() });
-  const [priceVarianceRange, setPriceVarianceRange] = useState<DateRange>({ fromDate: todayDate(), toDate: todayDate() });
+  const [ordersRange, setOrdersRange] = useState<DateRange>(defaultReportRange());
+  const [returnsRange, setReturnsRange] = useState<DateRange>(defaultReportRange());
+  const [paymentRange, setPaymentRange] = useState<DateRange>(defaultReportRange());
+  const [byDateRange, setByDateRange] = useState<DateRange>(defaultReportRange());
+  const [bestSuppliersRange, setBestSuppliersRange] = useState<DateRange>(defaultReportRange());
+  const [priceVarianceRange, setPriceVarianceRange] = useState<DateRange>(defaultReportRange());
 
   const [optionsLoading, setOptionsLoading] = useState(false);
   const [optionsError, setOptionsError] = useState('');
@@ -202,18 +202,30 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
     if (range.fromDate > range.toDate) throw new Error(`${label}: start date cannot be after end date`);
   };
 
+  const sumNumericField = (rows: Record<string, unknown>[], field: string) =>
+    rows.reduce((sum, row) => sum + Number(row[field] || 0), 0);
+
   const handleOrdersSummary = () =>
     runCardAction('orders-summary', async () => {
       ensureRangeValid(ordersRange, 'Purchase Orders Summary');
       const response = await purchaseReportsService.getPurchaseOrdersSummary(ordersRange);
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load purchase orders');
+      const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
         title: 'Purchase Orders Summary',
         subtitle: `${formatDateOnly(ordersRange.fromDate)} - ${formatDateOnly(ordersRange.toDate)}`,
         fileName: 'purchase-orders-summary',
-        data: toRecordRows(response.data.rows || []),
+        data: rows,
         columns: ordersSummaryColumns,
         filters: { 'From Date': ordersRange.fromDate, 'To Date': ordersRange.toDate },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            total: formatCurrency(sumNumericField(rows, 'total')),
+            paid_amount: formatCurrency(sumNumericField(rows, 'paid_amount')),
+            outstanding_amount: formatCurrency(sumNumericField(rows, 'outstanding_amount')),
+          },
+        },
       });
     });
 
@@ -223,15 +235,24 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
       if (mode === 'show' && !supplierId) throw new Error('Select a supplier first');
       const response = await purchaseReportsService.getSupplierWisePurchases({ mode, supplierId });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load supplier purchases');
+      const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
         title: 'Supplier Wise Purchases',
         subtitle: mode === 'show' ? selectedSupplierWiseLabel || 'Selected Supplier' : 'All Suppliers',
         fileName: 'supplier-wise-purchases',
-        data: toRecordRows(response.data.rows || []),
+        data: rows,
         columns: supplierWiseColumns,
         filters: {
           Mode: mode === 'show' ? 'Show' : 'All',
           Supplier: mode === 'show' ? selectedSupplierWiseLabel || 'Selected Supplier' : 'All Suppliers',
+        },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            subtotal: formatCurrency(sumNumericField(rows, 'subtotal')),
+            discount: formatCurrency(sumNumericField(rows, 'discount')),
+            total: formatCurrency(sumNumericField(rows, 'total')),
+          },
         },
       });
     });
@@ -241,13 +262,21 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
       ensureRangeValid(returnsRange, 'Purchase Returns');
       const response = await purchaseReportsService.getPurchaseReturns(returnsRange);
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load purchase returns');
+      const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
         title: 'Purchase Returns',
         subtitle: `${formatDateOnly(returnsRange.fromDate)} - ${formatDateOnly(returnsRange.toDate)}`,
         fileName: 'purchase-returns',
-        data: toRecordRows(response.data.rows || []),
+        data: rows,
         columns: purchaseReturnsColumns,
         filters: { 'From Date': returnsRange.fromDate, 'To Date': returnsRange.toDate },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            subtotal: formatCurrency(sumNumericField(rows, 'subtotal')),
+            total: formatCurrency(sumNumericField(rows, 'total')),
+          },
+        },
       });
     });
 
@@ -256,13 +285,22 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
       ensureRangeValid(paymentRange, 'Purchase Payment Status');
       const response = await purchaseReportsService.getPurchasePaymentStatus(paymentRange);
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load payment status');
+      const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
         title: 'Purchase Payment Status',
         subtitle: `${formatDateOnly(paymentRange.fromDate)} - ${formatDateOnly(paymentRange.toDate)}`,
         fileName: 'purchase-payment-status',
-        data: toRecordRows(response.data.rows || []),
+        data: rows,
         columns: paymentStatusColumns,
         filters: { 'From Date': paymentRange.fromDate, 'To Date': paymentRange.toDate },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            total: formatCurrency(sumNumericField(rows, 'total')),
+            paid_amount: formatCurrency(sumNumericField(rows, 'paid_amount')),
+            outstanding_amount: formatCurrency(sumNumericField(rows, 'outstanding_amount')),
+          },
+        },
       });
     });
 
@@ -272,15 +310,25 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
       if (mode === 'show' && !supplierId) throw new Error('Select a supplier first');
       const response = await purchaseReportsService.getSupplierLedger({ mode, supplierId });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load supplier ledger');
+      const rows = toRecordRows(response.data.rows || []);
+      const closingBalance = rows.length > 0 ? Number(rows[rows.length - 1].running_balance || 0) : 0;
       onOpenModal({
         title: 'Supplier Ledger',
         subtitle: mode === 'show' ? selectedSupplierLedgerLabel || 'Selected Supplier' : 'All Suppliers',
         fileName: 'supplier-ledger',
-        data: toRecordRows(response.data.rows || []),
+        data: rows,
         columns: supplierLedgerColumns,
         filters: {
           Mode: mode === 'show' ? 'Show' : 'All',
           Supplier: mode === 'show' ? selectedSupplierLedgerLabel || 'Selected Supplier' : 'All Suppliers',
+        },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            debit: formatCurrency(sumNumericField(rows, 'debit')),
+            credit: formatCurrency(sumNumericField(rows, 'credit')),
+            running_balance: formatCurrency(closingBalance),
+          },
         },
       });
     });
@@ -290,13 +338,24 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
       ensureRangeValid(byDateRange, 'Purchase by Date Range');
       const response = await purchaseReportsService.getPurchaseByDateRange(byDateRange);
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load purchases by date');
+      const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
         title: 'Purchase by Date Range',
         subtitle: `${formatDateOnly(byDateRange.fromDate)} - ${formatDateOnly(byDateRange.toDate)}`,
         fileName: 'purchase-by-date-range',
-        data: toRecordRows(response.data.rows || []),
+        data: rows,
         columns: byDateRangeColumns,
         filters: { 'From Date': byDateRange.fromDate, 'To Date': byDateRange.toDate },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            item_lines: sumNumericField(rows, 'item_lines').toLocaleString(),
+            total_quantity: formatQuantity(sumNumericField(rows, 'total_quantity')),
+            subtotal: formatCurrency(sumNumericField(rows, 'subtotal')),
+            discount: formatCurrency(sumNumericField(rows, 'discount')),
+            total: formatCurrency(sumNumericField(rows, 'total')),
+          },
+        },
       });
     });
 
@@ -305,13 +364,23 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
       ensureRangeValid(bestSuppliersRange, 'Best Suppliers');
       const response = await purchaseReportsService.getBestSuppliers(bestSuppliersRange);
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load best suppliers');
+      const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
         title: 'Best Suppliers',
         subtitle: `${formatDateOnly(bestSuppliersRange.fromDate)} - ${formatDateOnly(bestSuppliersRange.toDate)}`,
         fileName: 'best-suppliers',
-        data: toRecordRows(response.data.rows || []),
+        data: rows,
         columns: bestSuppliersColumns,
         filters: { 'From Date': bestSuppliersRange.fromDate, 'To Date': bestSuppliersRange.toDate },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            purchases_count: sumNumericField(rows, 'purchases_count').toLocaleString(),
+            total_amount: formatCurrency(sumNumericField(rows, 'total_amount')),
+            total_paid: formatCurrency(sumNumericField(rows, 'total_paid')),
+            outstanding_amount: formatCurrency(sumNumericField(rows, 'outstanding_amount')),
+          },
+        },
       });
     });
 
@@ -327,17 +396,25 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
         productId,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load price variance');
+      const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
         title: 'Purchase Price Variance',
         subtitle: `${formatDateOnly(priceVarianceRange.fromDate)} - ${formatDateOnly(priceVarianceRange.toDate)}`,
         fileName: 'purchase-price-variance',
-        data: toRecordRows(response.data.rows || []),
+        data: rows,
         columns: priceVarianceColumns,
         filters: {
           'From Date': priceVarianceRange.fromDate,
           'To Date': priceVarianceRange.toDate,
           Mode: mode === 'show' ? 'Show' : 'All',
           Product: mode === 'show' ? selectedVarianceProductLabel || 'Selected Product' : 'All Products',
+        },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            variance_amount: formatCurrency(sumNumericField(rows, 'variance_amount')),
+            purchase_lines: sumNumericField(rows, 'purchase_lines').toLocaleString(),
+          },
         },
       });
     });
@@ -395,3 +472,4 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
     </div>
   );
 }
+

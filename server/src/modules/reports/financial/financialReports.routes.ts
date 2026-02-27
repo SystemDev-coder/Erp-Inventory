@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import {
+  getAccountStatementReport,
   getAccountBalancesReport,
   getAccountTransactionsReport,
   getBalanceSheetReport,
@@ -9,6 +10,7 @@ import {
   getFinancialReportOptions,
   getIncomeStatementReport,
   getSupplierPaymentsReport,
+  getTrialBalanceReport,
 } from './financialReports.controller';
 
 const router = Router();
@@ -22,5 +24,7 @@ router.get('/expense-summary', getExpenseSummaryReport);
 router.get('/customer-receipts', getCustomerReceiptsReport);
 router.get('/supplier-payments', getSupplierPaymentsReport);
 router.get('/account-transactions', getAccountTransactionsReport);
+router.get('/account-statement', getAccountStatementReport);
+router.get('/trial-balance', getTrialBalanceReport);
 
 export default router;

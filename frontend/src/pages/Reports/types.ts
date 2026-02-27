@@ -1,4 +1,4 @@
-import type { ReportColumn, ReportTotalItem } from '../../components/reports/ReportModal';
+import type { ReportColumn, ReportTableTotals, ReportTotalItem } from '../../components/reports/ReportModal';
 
 export type TabId = 'sales' | 'inventory' | 'purchase' | 'financial' | 'hr' | 'customer';
 
@@ -10,7 +10,8 @@ export type ModalReportState = {
   columns: ReportColumn<Record<string, unknown>>[];
   filters: Record<string, string | number>;
   totals?: ReportTotalItem[];
-  variant?: 'default' | 'income-statement' | 'balance-sheet';
+  tableTotals?: ReportTableTotals;
+  variant?: 'default' | 'income-statement' | 'balance-sheet' | 'cash-flow-statement';
 };
 
 export type DateRange = {

@@ -149,6 +149,8 @@ export const API = {
     FINANCIAL_CUSTOMER_RECEIPTS: '/api/reports/financial/customer-receipts',
     FINANCIAL_SUPPLIER_PAYMENTS: '/api/reports/financial/supplier-payments',
     FINANCIAL_ACCOUNT_TRANSACTIONS: '/api/reports/financial/account-transactions',
+    FINANCIAL_ACCOUNT_STATEMENT: '/api/reports/financial/account-statement',
+    FINANCIAL_TRIAL_BALANCE: '/api/reports/financial/trial-balance',
     HR_OPTIONS: '/api/reports/hr/options',
     HR_EMPLOYEE_LIST: '/api/reports/hr/employee-list',
     HR_PAYROLL_SUMMARY: '/api/reports/hr/payroll-summary',

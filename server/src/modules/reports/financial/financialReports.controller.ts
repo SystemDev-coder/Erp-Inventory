@@ -132,3 +132,33 @@ export const getAccountTransactionsReport = asyncHandler(async (req: AuthRequest
     rows,
   });
 });
+
+export const getAccountStatementReport = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const branchId = await resolveBranchIdForReports(req);
+  const { fromDate, toDate } = parseDateRange(req);
+  const mode = parseSelectionMode(req.query.mode);
+  const accountId = mode === 'show' ? parseNumericId(req.query.accountId, 'accountId') : undefined;
+  const rows = await financialReportsService.getAccountStatement(branchId, fromDate, toDate, accountId);
+  return ApiResponse.success(res, {
+    branchId,
+    reportKey: 'account-statement',
+    fromDate,
+    toDate,
+    mode,
+    accountId: accountId ?? null,
+    rows,
+  });
+});
+
+export const getTrialBalanceReport = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const branchId = await resolveBranchIdForReports(req);
+  const { fromDate, toDate } = parseDateRange(req);
+  const rows = await financialReportsService.getTrialBalance(branchId, fromDate, toDate);
+  return ApiResponse.success(res, {
+    branchId,
+    reportKey: 'trial-balance',
+    fromDate,
+    toDate,
+    rows,
+  });
+});

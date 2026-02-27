@@ -78,6 +78,31 @@ export interface AccountTransactionRow {
   note: string;
 }
 
+export interface AccountStatementRow {
+  txn_id: number;
+  txn_date: string;
+  account_id: number;
+  account_name: string;
+  txn_type: string;
+  ref_table: string;
+  ref_id: number | null;
+  debit: number;
+  credit: number;
+  running_balance: number;
+  note: string;
+}
+
+export interface TrialBalanceRow {
+  account_id: number;
+  account_name: string;
+  opening_debit: number;
+  opening_credit: number;
+  period_debit: number;
+  period_credit: number;
+  closing_debit: number;
+  closing_credit: number;
+}
+
 interface FinancialOptionsResponse {
   branchId: number;
   accounts: ReportOption[];
@@ -188,6 +213,32 @@ export const financialReportsService = {
       accountId: input.mode === 'show' ? input.accountId : undefined,
     });
     return apiClient.get<RowsResponse<AccountTransactionRow>>(`${API.REPORTS.FINANCIAL_ACCOUNT_TRANSACTIONS}${query}`);
+  },
+
+  async getAccountStatement(input: {
+    fromDate: string;
+    toDate: string;
+    mode: ReportSelectionMode;
+    accountId?: number;
+    branchId?: number;
+  }) {
+    const query = toQuery({
+      branchId: input.branchId,
+      fromDate: input.fromDate,
+      toDate: input.toDate,
+      mode: input.mode,
+      accountId: input.mode === 'show' ? input.accountId : undefined,
+    });
+    return apiClient.get<RowsResponse<AccountStatementRow>>(`${API.REPORTS.FINANCIAL_ACCOUNT_STATEMENT}${query}`);
+  },
+
+  async getTrialBalance(input: { fromDate: string; toDate: string; branchId?: number }) {
+    const query = toQuery({
+      branchId: input.branchId,
+      fromDate: input.fromDate,
+      toDate: input.toDate,
+    });
+    return apiClient.get<RowsResponse<TrialBalanceRow>>(`${API.REPORTS.FINANCIAL_TRIAL_BALANCE}${query}`);
   },
 };
 

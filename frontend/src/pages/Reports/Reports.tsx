@@ -117,6 +117,7 @@ export default function Reports() {
         columns={modalReport?.columns || []}
         filters={modalReport?.filters || {}}
         totals={modalReport?.totals || []}
+        tableTotals={modalReport?.tableTotals}
         variant={modalReport?.variant || 'default'}
         fileName={modalReport?.fileName || 'report'}
       />

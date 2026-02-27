@@ -6,6 +6,7 @@ import { PageHeader } from '../../components/ui/layout';
 import { DataTable } from '../../components/ui/table/DataTable';
 import { useToast } from '../../components/ui/toast/Toast';
 import { Modal } from '../../components/ui/modal/Modal';
+import DeleteConfirmModal from '../../components/ui/modal/DeleteConfirmModal';
 import { accountService, Account } from '../../services/account.service';
 import { customerService, Customer } from '../../services/customer.service';
 import { supplierService, Supplier } from '../../services/supplier.service';
@@ -29,6 +30,12 @@ interface ReceiptFormState {
     reference_no?: string;
     note?: string;
 }
+
+type DeleteReceiptTarget = {
+    type: 'customer' | 'supplier';
+    id: number;
+    label: string;
+};
 
 const fmt = (n: number | null | undefined) => `$${Number(n ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtDate = (d: string) => new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: '2-digit' });
@@ -89,6 +96,8 @@ const Receipts = () => {
     const [editingReceiptId, setEditingReceiptId] = useState<number | null>(null);
     const [receiptForm, setReceiptForm] = useState<ReceiptFormState>({});
     const [submitting, setSubmitting] = useState(false);
+    const [deleteTarget, setDeleteTarget] = useState<DeleteReceiptTarget | null>(null);
+    const [deletingReceipt, setDeletingReceipt] = useState(false);
 
     // ─── Data Loading ──────────────────────────────────────────────────────────
     const loadAll = async () => {
@@ -317,11 +326,10 @@ const Receipts = () => {
     };
 
     const deleteCustReceipt = async (id: number) => {
-        if (!confirm('Delete this customer receipt?')) return;
         const res = await financeService.deleteCustomerReceipt(id);
         if (res.success) {
             showToast('success', 'Receipts', 'Receipt deleted');
-            loadAll();
+            await loadAll();
         } else {
             showToast('error', 'Receipts', res.error || 'Delete failed');
         }
@@ -369,13 +377,43 @@ const Receipts = () => {
     };
 
     const deleteSupReceipt = async (id: number) => {
-        if (!confirm('Delete this supplier receipt?')) return;
         const res = await financeService.deleteSupplierReceipt(id);
         if (res.success) {
             showToast('success', 'Receipts', 'Receipt deleted');
-            loadAll();
+            await loadAll();
         } else {
             showToast('error', 'Receipts', res.error || 'Delete failed');
+        }
+    };
+
+    const requestDeleteCustReceipt = (row: Receipt) => {
+        setDeleteTarget({
+            type: 'customer',
+            id: row.receipt_id,
+            label: `${row.customer_name || 'Customer'} - ${fmt(row.amount)}`,
+        });
+    };
+
+    const requestDeleteSupReceipt = (row: Receipt) => {
+        setDeleteTarget({
+            type: 'supplier',
+            id: row.receipt_id,
+            label: `${row.supplier_name || 'Supplier'} - ${fmt(row.amount)}`,
+        });
+    };
+
+    const confirmDeleteReceipt = async () => {
+        if (!deleteTarget) return;
+        setDeletingReceipt(true);
+        try {
+            if (deleteTarget.type === 'customer') {
+                await deleteCustReceipt(deleteTarget.id);
+            } else {
+                await deleteSupReceipt(deleteTarget.id);
+            }
+        } finally {
+            setDeletingReceipt(false);
+            setDeleteTarget(null);
         }
     };
 
@@ -456,7 +494,7 @@ const Receipts = () => {
                             isLoading={loading}
                             searchPlaceholder="Search by customer, reference..."
                             onEdit={(row) => openCustModal(row as Receipt)}
-                            onDelete={(row) => deleteCustReceipt((row as Receipt).receipt_id)}
+                            onDelete={(row) => requestDeleteCustReceipt(row as Receipt)}
                         />
                     </div>
                 </div>
@@ -553,7 +591,7 @@ const Receipts = () => {
                             isLoading={loading}
                             searchPlaceholder="Search by supplier, reference..."
                             onEdit={(row) => openSupModal(row as Receipt)}
-                            onDelete={(row) => deleteSupReceipt((row as Receipt).receipt_id)}
+                            onDelete={(row) => requestDeleteSupReceipt(row as Receipt)}
                         />
                     </div>
                 </div>
@@ -861,6 +899,20 @@ const Receipts = () => {
                     </div>
                 </div>
             </Modal>
+
+            <DeleteConfirmModal
+                isOpen={!!deleteTarget}
+                onClose={() => { if (!deletingReceipt) setDeleteTarget(null); }}
+                onConfirm={confirmDeleteReceipt}
+                title={deleteTarget?.type === 'supplier' ? 'Delete Supplier Payment?' : 'Delete Customer Receipt?'}
+                message={
+                    deleteTarget?.type === 'supplier'
+                        ? 'This supplier payment will be removed. Account and payable balances will be recalculated.'
+                        : 'This customer receipt will be removed. Account and receivable balances will be recalculated.'
+                }
+                itemName={deleteTarget?.label}
+                isDeleting={deletingReceipt}
+            />
         </div>
     );
 };

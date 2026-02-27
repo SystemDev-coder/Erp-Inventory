@@ -3,7 +3,7 @@ import { ChevronDown, Loader2 } from 'lucide-react';
 import type { ReportColumn, ReportTotalItem } from '../../../components/reports/ReportModal';
 import { inventoryReportsService } from '../../../services/reports/inventoryReports.service';
 import type { DateRange, ModalReportState } from '../types';
-import { formatCurrency, formatDateOnly, formatDateTime, formatQuantity, toRecordRows, todayDate } from '../reportUtils';
+import { formatCurrency, formatDateOnly, formatDateTime, formatQuantity, toRecordRows, todayDate, defaultReportRange } from '../reportUtils';
 
 type InventoryCardId =
   | 'current-stock'
@@ -135,8 +135,8 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
   const [selectedStoreSummaryId, setSelectedStoreSummaryId] = useState('');
   const [selectedStoreDetailsId, setSelectedStoreDetailsId] = useState('');
 
-  const [movementRange, setMovementRange] = useState<DateRange>({ fromDate: todayDate(), toDate: todayDate() });
-  const [adjustmentRange, setAdjustmentRange] = useState<DateRange>({ fromDate: todayDate(), toDate: todayDate() });
+  const [movementRange, setMovementRange] = useState<DateRange>(defaultReportRange());
+  const [adjustmentRange, setAdjustmentRange] = useState<DateRange>(defaultReportRange());
 
   const [optionsLoading, setOptionsLoading] = useState(false);
   const [optionsError, setOptionsError] = useState('');
@@ -214,6 +214,14 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
         data: rows,
         columns: currentStockColumns,
         filters: { Action: 'All Current Stock' },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            total_qty: formatQuantity(totalQty),
+            min_stock_threshold: formatQuantity(sumByKey(rows, 'min_stock_threshold')),
+            stock_value: formatCurrency(totalCostValue),
+          },
+        },
         totals: [
           countTotal('Items', rows.length),
           quantityTotal('Total Qty', totalQty),
@@ -236,6 +244,14 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
         data: rows,
         columns: lowStockColumns,
         filters: { Scope: 'Low Stock Only' },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            total_qty: formatQuantity(sumByKey(rows, 'total_qty')),
+            min_stock_threshold: formatQuantity(sumByKey(rows, 'min_stock_threshold')),
+            stock_value: formatCurrency(sumByKey(rows, 'stock_value')),
+          },
+        },
         totals: [
           countTotal('Items', rows.length),
           quantityTotal('Current Qty', sumByKey(rows, 'total_qty')),
@@ -266,6 +282,13 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
         data: rows,
         columns: movementColumns,
         filters: { 'From Date': movementRange.fromDate, 'To Date': movementRange.toDate },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            quantity: formatQuantity(sumByKey(rows, 'quantity')),
+            total_cost: formatCurrency(sumByKey(rows, 'total_cost')),
+          },
+        },
         totals: [
           countTotal('Transactions', rows.length),
           quantityTotal('Inbound Qty', inboundQty),
@@ -288,6 +311,14 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
         data: rows,
         columns: valuationColumns,
         filters: { Action: 'Show Valuation' },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            total_qty: formatQuantity(sumByKey(rows, 'total_qty')),
+            cost_value: formatCurrency(sumByKey(rows, 'cost_value')),
+            retail_value: formatCurrency(sumByKey(rows, 'retail_value')),
+          },
+        },
         totals: [
           countTotal('Items', rows.length),
           quantityTotal('Total Qty', sumByKey(rows, 'total_qty')),
@@ -320,6 +351,15 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
         data: rows,
         columns: reorderPlanColumns,
         filters: { Scope: 'Low Stock Items' },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            total_qty: formatQuantity(sumByKey(rows, 'total_qty')),
+            min_stock_threshold: formatQuantity(sumByKey(rows, 'min_stock_threshold')),
+            reorder_qty: formatQuantity(sumByKey(rows, 'reorder_qty')),
+            reorder_cost: formatCurrency(sumByKey(rows, 'reorder_cost')),
+          },
+        },
         totals: [
           countTotal('Items', rows.length),
           quantityTotal('Current Qty', sumByKey(rows, 'total_qty')),
@@ -350,6 +390,12 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
         data: rows,
         columns: adjustmentColumns,
         filters: { 'From Date': adjustmentRange.fromDate, 'To Date': adjustmentRange.toDate },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            quantity: formatQuantity(sumByKey(rows, 'quantity')),
+          },
+        },
         totals: [
           countTotal('Adjustments', rows.length),
           quantityTotal('Added Qty', addQty),
@@ -373,6 +419,14 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
         data: rows,
         columns: storeStockColumns,
         filters: { Mode: mode === 'show' ? 'Show' : 'All', Store: mode === 'show' ? selectedStoreSummaryLabel || 'Selected Store' : 'All Stores' },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            item_count: sumByKey(rows, 'item_count').toLocaleString(),
+            total_qty: formatQuantity(sumByKey(rows, 'total_qty')),
+            stock_value: formatCurrency(sumByKey(rows, 'stock_value')),
+          },
+        },
         totals: [
           countTotal('Stores', rows.length),
           countTotal('Items', sumByKey(rows, 'item_count')),
@@ -397,6 +451,13 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
         data: rows,
         columns: storeWiseColumns,
         filters: { Mode: mode === 'show' ? 'Show' : 'All', Store: mode === 'show' ? selectedStoreDetailsLabel || 'Selected Store' : 'All Stores' },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            quantity: formatQuantity(sumByKey(rows, 'quantity')),
+            stock_value: formatCurrency(sumByKey(rows, 'stock_value')),
+          },
+        },
         totals: [
           countTotal('Rows', rows.length),
           countTotal('Unique Items', uniqueItems),
@@ -484,3 +545,4 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
     </div>
   );
 }
+

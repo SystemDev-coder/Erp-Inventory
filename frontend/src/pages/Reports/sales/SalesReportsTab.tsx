@@ -3,7 +3,7 @@ import { ChevronDown, Loader2 } from 'lucide-react';
 import type { ReportColumn } from '../../../components/reports/ReportModal';
 import { salesReportsService } from '../../../services/reports/salesReports.service';
 import type { DateRange, ModalReportState } from '../types';
-import { formatCurrency, formatDateOnly, formatDateTime, formatQuantity, toRecordRows, todayDate } from '../reportUtils';
+import { formatCurrency, formatDateOnly, formatDateTime, formatQuantity, toRecordRows, todayDate, defaultReportRange } from '../reportUtils';
 
 type SalesCardId =
   | 'daily-sales'
@@ -90,9 +90,9 @@ export function SalesReportsTab({ onOpenModal }: Props) {
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [selectedProductId, setSelectedProductId] = useState('');
 
-  const [topSellingRange, setTopSellingRange] = useState<DateRange>({ fromDate: todayDate(), toDate: todayDate() });
-  const [returnsRange, setReturnsRange] = useState<DateRange>({ fromDate: todayDate(), toDate: todayDate() });
-  const [cashierRange, setCashierRange] = useState<DateRange>({ fromDate: todayDate(), toDate: todayDate() });
+  const [topSellingRange, setTopSellingRange] = useState<DateRange>(defaultReportRange());
+  const [returnsRange, setReturnsRange] = useState<DateRange>(defaultReportRange());
+  const [cashierRange, setCashierRange] = useState<DateRange>(defaultReportRange());
 
   const [optionsLoading, setOptionsLoading] = useState(false);
   const [optionsError, setOptionsError] = useState('');
@@ -165,17 +165,27 @@ export function SalesReportsTab({ onOpenModal }: Props) {
     }
   };
 
+  const sumNumericField = (rows: Record<string, unknown>[], field: string) =>
+    rows.reduce((sum, row) => sum + Number(row[field] || 0), 0);
+
   const handleDailySales = () =>
     runCardAction('daily-sales', async () => {
       const response = await salesReportsService.getDailySales();
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load daily sales');
+      const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
         title: 'Daily Sales Report',
         subtitle: 'All Daily Sale',
         fileName: 'daily-sales-report',
-        data: toRecordRows(response.data.rows || []),
+        data: rows,
         columns: dailySalesColumns,
         filters: { Date: new Date().toLocaleDateString(), Action: 'All Daily Sale' },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            total: formatCurrency(sumNumericField(rows, 'total')),
+          },
+        },
       });
     });
 
@@ -185,13 +195,20 @@ export function SalesReportsTab({ onOpenModal }: Props) {
       if (mode === 'show' && !customerId) throw new Error('Select a customer first');
       const response = await salesReportsService.getSalesByCustomer({ mode, customerId });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load customer sales');
+      const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
         title: 'Sales by Customer',
         subtitle: mode === 'show' ? selectedCustomerLabel || 'Selected Customer' : 'All Customers',
         fileName: 'sales-by-customer',
-        data: toRecordRows(response.data.rows || []),
+        data: rows,
         columns: salesByCustomerColumns,
         filters: { Mode: mode === 'show' ? 'Show' : 'All', Customer: mode === 'show' ? selectedCustomerLabel || 'Selected customer' : 'All Customers' },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            total: formatCurrency(sumNumericField(rows, 'total')),
+          },
+        },
       });
     });
 
@@ -201,13 +218,21 @@ export function SalesReportsTab({ onOpenModal }: Props) {
       if (mode === 'show' && !productId) throw new Error('Select a product first');
       const response = await salesReportsService.getSalesByProduct({ mode, productId });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load product sales');
+      const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
         title: 'Sales by Product',
         subtitle: mode === 'show' ? selectedProductLabel || 'Selected Product' : 'All Products',
         fileName: 'sales-by-product',
-        data: toRecordRows(response.data.rows || []),
+        data: rows,
         columns: salesByProductColumns,
         filters: { Mode: mode === 'show' ? 'Show' : 'All', Product: mode === 'show' ? selectedProductLabel || 'Selected product' : 'All Products' },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            quantity: formatQuantity(sumNumericField(rows, 'quantity')),
+            line_total: formatCurrency(sumNumericField(rows, 'line_total')),
+          },
+        },
       });
     });
 
@@ -216,13 +241,22 @@ export function SalesReportsTab({ onOpenModal }: Props) {
       ensureRangeValid(topSellingRange, 'Top Selling Items');
       const response = await salesReportsService.getTopSellingItems(topSellingRange);
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load top selling items');
+      const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
         title: 'Top Selling Items',
         subtitle: `${formatDateOnly(topSellingRange.fromDate)} - ${formatDateOnly(topSellingRange.toDate)}`,
         fileName: 'top-selling-items',
-        data: toRecordRows(response.data.rows || []),
+        data: rows,
         columns: topSellingColumns,
         filters: { 'From Date': topSellingRange.fromDate, 'To Date': topSellingRange.toDate },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            quantity_sold: formatQuantity(sumNumericField(rows, 'quantity_sold')),
+            sales_count: sumNumericField(rows, 'sales_count').toLocaleString(),
+            sales_amount: formatCurrency(sumNumericField(rows, 'sales_amount')),
+          },
+        },
       });
     });
 
@@ -231,13 +265,21 @@ export function SalesReportsTab({ onOpenModal }: Props) {
       ensureRangeValid(returnsRange, 'Sales Returns');
       const response = await salesReportsService.getSalesReturns(returnsRange);
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load sales returns');
+      const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
         title: 'Sales Returns Report',
         subtitle: `${formatDateOnly(returnsRange.fromDate)} - ${formatDateOnly(returnsRange.toDate)}`,
         fileName: 'sales-returns-report',
-        data: toRecordRows(response.data.rows || []),
+        data: rows,
         columns: salesReturnsColumns,
         filters: { 'From Date': returnsRange.fromDate, 'To Date': returnsRange.toDate },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            subtotal: formatCurrency(sumNumericField(rows, 'subtotal')),
+            total: formatCurrency(sumNumericField(rows, 'total')),
+          },
+        },
       });
     });
 
@@ -246,13 +288,24 @@ export function SalesReportsTab({ onOpenModal }: Props) {
       ensureRangeValid(cashierRange, 'Cashier Performance');
       const response = await salesReportsService.getCashierPerformance(cashierRange);
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load cashier performance');
+      const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
         title: 'Cashier Performance',
         subtitle: `${formatDateOnly(cashierRange.fromDate)} - ${formatDateOnly(cashierRange.toDate)}`,
         fileName: 'cashier-performance',
-        data: toRecordRows(response.data.rows || []),
+        data: rows,
         columns: cashierPerformanceColumns,
         filters: { 'From Date': cashierRange.fromDate, 'To Date': cashierRange.toDate },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            sales_count: sumNumericField(rows, 'sales_count').toLocaleString(),
+            gross_sales: formatCurrency(sumNumericField(rows, 'gross_sales')),
+            returns_count: sumNumericField(rows, 'returns_count').toLocaleString(),
+            returns_total: formatCurrency(sumNumericField(rows, 'returns_total')),
+            net_sales: formatCurrency(sumNumericField(rows, 'net_sales')),
+          },
+        },
       });
     });
 
@@ -346,3 +399,4 @@ export function SalesReportsTab({ onOpenModal }: Props) {
     </div>
   );
 }
+

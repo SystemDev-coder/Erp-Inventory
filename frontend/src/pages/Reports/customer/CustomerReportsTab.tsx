@@ -3,7 +3,7 @@ import { ChevronDown, Loader2 } from 'lucide-react';
 import type { ReportColumn, ReportTotalItem } from '../../../components/reports/ReportModal';
 import { customerReportsService } from '../../../services/reports/customerReports.service';
 import type { DateRange, ModalReportState } from '../types';
-import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, todayDate } from '../reportUtils';
+import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, todayDate, defaultReportRange } from '../reportUtils';
 
 type CustomerCardId =
   | 'customer-list'
@@ -138,11 +138,11 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
   const [selectedCreditCustomerId, setSelectedCreditCustomerId] = useState('');
   const [selectedActivityCustomerId, setSelectedActivityCustomerId] = useState('');
 
-  const [ledgerRange, setLedgerRange] = useState<DateRange>({ fromDate: todayDate(), toDate: todayDate() });
-  const [topCustomersRange, setTopCustomersRange] = useState<DateRange>({ fromDate: todayDate(), toDate: todayDate() });
-  const [paymentHistoryRange, setPaymentHistoryRange] = useState<DateRange>({ fromDate: todayDate(), toDate: todayDate() });
-  const [newCustomersRange, setNewCustomersRange] = useState<DateRange>({ fromDate: todayDate(), toDate: todayDate() });
-  const [activityRange, setActivityRange] = useState<DateRange>({ fromDate: todayDate(), toDate: todayDate() });
+  const [ledgerRange, setLedgerRange] = useState<DateRange>(defaultReportRange());
+  const [topCustomersRange, setTopCustomersRange] = useState<DateRange>(defaultReportRange());
+  const [paymentHistoryRange, setPaymentHistoryRange] = useState<DateRange>(defaultReportRange());
+  const [newCustomersRange, setNewCustomersRange] = useState<DateRange>(defaultReportRange());
+  const [activityRange, setActivityRange] = useState<DateRange>(defaultReportRange());
 
   useEffect(() => {
     let alive = true;
@@ -211,6 +211,12 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
           Mode: mode === 'show' ? 'Show' : 'All',
           Customer: mode === 'show' ? customerNameById.get(selectedListCustomerId) || 'Selected Customer' : 'All Customers',
         },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            balance: formatCurrency(sumByKey(rows, 'balance')),
+          },
+        },
         totals: [moneyTotal('Total Balance', sumByKey(rows, 'balance'))],
       });
     });
@@ -230,6 +236,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
       const rows = toRecordRows(response.data.rows || []);
       const dr = sumByKey(rows, 'debit');
       const cr = sumByKey(rows, 'credit');
+      const closingBalance = rows.length > 0 ? Number(rows[rows.length - 1].running_balance || 0) : 0;
       onOpenModal({
         title: 'Customer Ledger',
         subtitle: `${formatDateOnly(ledgerRange.fromDate)} - ${formatDateOnly(ledgerRange.toDate)}`,
@@ -241,6 +248,14 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
           'To Date': ledgerRange.toDate,
           Mode: mode === 'show' ? 'Show' : 'All',
           Customer: mode === 'show' ? customerNameById.get(selectedLedgerCustomerId) || 'Selected Customer' : 'All Customers',
+        },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            debit: formatCurrency(dr),
+            credit: formatCurrency(cr),
+            running_balance: formatCurrency(closingBalance),
+          },
         },
         totals: [moneyTotal('DR', dr), moneyTotal('CR', cr), moneyTotal('Total', dr - cr)],
       });
@@ -266,6 +281,14 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
           Mode: mode === 'show' ? 'Show' : 'All',
           Customer: mode === 'show' ? customerNameById.get(selectedOutstandingCustomerId) || 'Selected Customer' : 'All Customers',
         },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            total_debit: formatCurrency(dr),
+            total_credit: formatCurrency(cr),
+            outstanding_balance: formatCurrency(total),
+          },
+        },
         totals: [moneyTotal('DR', dr), moneyTotal('CR', cr), moneyTotal('Total', total)],
       });
     });
@@ -285,6 +308,15 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
         filters: {
           'From Date': topCustomersRange.fromDate,
           'To Date': topCustomersRange.toDate,
+        },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            sales_count: sumByKey(rows, 'sales_count').toLocaleString(),
+            net_sales: formatCurrency(sumByKey(rows, 'net_sales')),
+            total_receipts: formatCurrency(sumByKey(rows, 'total_receipts')),
+            outstanding_balance: formatCurrency(sumByKey(rows, 'outstanding_balance')),
+          },
         },
         totals: [
           moneyTotal('Net Sales', sumByKey(rows, 'net_sales')),
@@ -320,6 +352,12 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
           Mode: mode === 'show' ? 'Show' : 'All',
           Customer: mode === 'show' ? customerNameById.get(selectedPaymentCustomerId) || 'Selected Customer' : 'All Customers',
         },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            amount: formatCurrency(totalReceived),
+          },
+        },
         totals: [moneyTotal('CR', totalReceived), moneyTotal('Total', totalReceived)],
       });
     });
@@ -341,6 +379,12 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
           Mode: mode === 'show' ? 'Show' : 'All',
           Customer: mode === 'show' ? customerNameById.get(selectedCreditCustomerId) || 'Selected Customer' : 'All Customers',
         },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            current_credit: formatCurrency(sumByKey(rows, 'current_credit')),
+          },
+        },
         totals: [moneyTotal('Total Credit', sumByKey(rows, 'current_credit'))],
       });
     });
@@ -360,6 +404,13 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
         filters: {
           'From Date': newCustomersRange.fromDate,
           'To Date': newCustomersRange.toDate,
+        },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            opening_balance: formatCurrency(sumByKey(rows, 'opening_balance')),
+            current_balance: formatCurrency(sumByKey(rows, 'current_balance')),
+          },
         },
         totals: [
           moneyTotal('Opening Balance', sumByKey(rows, 'opening_balance')),
@@ -392,6 +443,18 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
           'To Date': activityRange.toDate,
           Mode: mode === 'show' ? 'Show' : 'All',
           Customer: mode === 'show' ? customerNameById.get(selectedActivityCustomerId) || 'Selected Customer' : 'All Customers',
+        },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            sales_count: sumByKey(rows, 'sales_count').toLocaleString(),
+            returns_count: sumByKey(rows, 'returns_count').toLocaleString(),
+            receipts_count: sumByKey(rows, 'receipts_count').toLocaleString(),
+            gross_sales: formatCurrency(sumByKey(rows, 'gross_sales')),
+            sales_returns: formatCurrency(sumByKey(rows, 'sales_returns')),
+            total_receipts: formatCurrency(sumByKey(rows, 'total_receipts')),
+            net_exposure: formatCurrency(sumByKey(rows, 'net_exposure')),
+          },
         },
         totals: [
           moneyTotal('Gross Sales', sumByKey(rows, 'gross_sales')),
@@ -585,3 +648,4 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
     </div>
   );
 }
+

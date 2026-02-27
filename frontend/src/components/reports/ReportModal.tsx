@@ -18,6 +18,12 @@ export type ReportTotalItem = {
   value: string | number;
 };
 
+export type ReportTableTotals = {
+  label?: string;
+  labelColumnKey?: string;
+  values: Record<string, string | number>;
+};
+
 type ReportModalProps<T> = {
   isOpen: boolean;
   onClose: () => void;
@@ -33,7 +39,8 @@ type ReportModalProps<T> = {
   columns: ReportColumn<T>[];
   filters?: Record<string, string | number>;
   totals?: ReportTotalItem[];
-  variant?: "default" | "income-statement" | "balance-sheet";
+  tableTotals?: ReportTableTotals;
+  variant?: "default" | "income-statement" | "balance-sheet" | "cash-flow-statement";
   generatedAt?: string;
   fileName?: string;
   enablePdf?: boolean;
@@ -68,6 +75,14 @@ const formatStatementAmount = (value: number) => {
   return value < 0 ? `(${absolute})` : absolute;
 };
 
+const formatStatementCurrency = (value: number) => {
+  const absolute = Math.abs(value).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return value < 0 ? `($${absolute})` : `$${absolute}`;
+};
+
 export function ReportModal<T extends Record<string, any>>({
   isOpen,
   onClose,
@@ -78,6 +93,7 @@ export function ReportModal<T extends Record<string, any>>({
   columns,
   filters,
   totals = [],
+  tableTotals,
   variant = "default",
   generatedAt,
   fileName,
@@ -95,6 +111,7 @@ export function ReportModal<T extends Record<string, any>>({
       .replace(/(^-|-$)/g, "");
   const isIncomeStatement = variant === "income-statement";
   const isBalanceSheet = variant === "balance-sheet";
+  const isCashFlowStatement = variant === "cash-flow-statement";
 
   const statementData = useMemo(() => {
     if (!isIncomeStatement) return null;
@@ -147,22 +164,30 @@ export function ReportModal<T extends Record<string, any>>({
       rowType: String((row as Record<string, unknown>).row_type || ""),
     }));
 
-    const assets = rows.filter(
-      (row) => row.section.startsWith("assets") && !row.lineItem.toLowerCase().includes("total assets")
-    );
+    const assets = rows.filter((row) => row.section.startsWith("assets") && row.rowType === "detail");
     const liabilities = rows.filter(
       (row) =>
         row.section.startsWith("liabilities") &&
         !row.section.includes("+") &&
-        !row.lineItem.toLowerCase().includes("total liabilities")
+        row.rowType === "detail"
     );
     const equity = rows.filter(
       (row) =>
         row.section.startsWith("equity") &&
-        !row.lineItem.toLowerCase().includes("total equity")
+        row.rowType === "detail" &&
+        !/(net profit|net loss|net income)/i.test(row.lineItem)
     );
 
-    const totalAssetsRow = rows.find((row) => row.lineItem.toLowerCase().includes("total assets"));
+    const currentAssetsTotalRow = rows.find((row) => row.lineItem.toLowerCase().includes("total current assets"));
+    const currentLiabilitiesTotalRow = rows.find((row) =>
+      row.lineItem.toLowerCase().includes("total current liabilities")
+    );
+
+    const totalAssetsRow = rows.find(
+      (row) =>
+        row.lineItem.toLowerCase().includes("total assets") &&
+        !row.lineItem.toLowerCase().includes("current")
+    );
     const totalLiabilitiesRow = rows.find(
       (row) =>
         row.lineItem.toLowerCase().includes("total liabilities") &&
@@ -173,6 +198,7 @@ export function ReportModal<T extends Record<string, any>>({
         row.lineItem.toLowerCase().includes("retained equity") ||
         row.lineItem.toLowerCase().includes("total equity")
     );
+    const retainedEarningsRow = rows.find((row) => row.lineItem.toLowerCase().includes("retained earnings"));
     const netResultRow = rows.find((row) =>
       /(net profit|net loss|net income)/i.test(row.lineItem)
     );
@@ -180,24 +206,29 @@ export function ReportModal<T extends Record<string, any>>({
       row.lineItem.toLowerCase().includes("total liabilities + equity")
     );
 
-    const totalAssets = totalAssetsRow?.amount ?? assets.reduce((sum, row) => sum + row.amount, 0);
-    const totalLiabilities = totalLiabilitiesRow?.amount ?? liabilities.reduce((sum, row) => sum + row.amount, 0);
+    const currentAssetsTotal =
+      currentAssetsTotalRow?.amount ?? assets.reduce((sum, row) => sum + row.amount, 0);
+    const currentLiabilitiesTotal =
+      currentLiabilitiesTotalRow?.amount ?? liabilities.reduce((sum, row) => sum + row.amount, 0);
+    const totalAssets = totalAssetsRow?.amount ?? currentAssetsTotal;
+    const totalLiabilities = totalLiabilitiesRow?.amount ?? currentLiabilitiesTotal;
     const totalEquity = totalEquityRow?.amount ?? totalAssets - totalLiabilities;
     const totalLiabilitiesEquity = totalLiabilitiesEquityRow?.amount ?? totalLiabilities + totalEquity;
     const netResultAmount = netResultRow?.amount ?? totalEquity;
-    const netResultLabel = netResultRow?.lineItem || (netResultAmount >= 0 ? "Net Profit" : "Net Loss");
+    const retainedEarnings = retainedEarningsRow?.amount ?? netResultAmount;
     const balanceDelta = totalAssets - totalLiabilitiesEquity;
 
     return {
       assets,
       liabilities,
       equity,
+      currentAssetsTotal,
+      currentLiabilitiesTotal,
       totalAssets,
       totalLiabilities,
       totalEquity,
       totalLiabilitiesEquity,
-      netResultLabel,
-      netResultAmount,
+      retainedEarnings,
       balanceDelta,
     };
   }, [isBalanceSheet, data]);
@@ -216,6 +247,57 @@ export function ReportModal<T extends Record<string, any>>({
     }
     return subtitle || "";
   }, [filters, subtitle]);
+
+  const cashFlowData = useMemo(() => {
+    if (!isCashFlowStatement) return null;
+
+    const rows = data.map((row) => ({
+      section: String((row as Record<string, unknown>).section || "").trim() || "Cash Flow",
+      lineItem: String((row as Record<string, unknown>).line_item || ""),
+      amount: Number((row as Record<string, unknown>).amount || 0),
+      rowType: String((row as Record<string, unknown>).row_type || "detail"),
+    }));
+
+    const sectionMap = new Map<string, typeof rows>();
+    const sectionOrder: string[] = [];
+
+    rows.forEach((row) => {
+      if (!sectionMap.has(row.section)) {
+        sectionMap.set(row.section, []);
+        sectionOrder.push(row.section);
+      }
+      sectionMap.get(row.section)!.push(row);
+    });
+
+    const summaryRows: typeof rows = [];
+    const sections = sectionOrder
+      .filter((section) => {
+        const lower = section.toLowerCase();
+        return lower !== "summary";
+      })
+      .map((section) => ({
+        section,
+        rows: sectionMap.get(section) || [],
+      }));
+
+    (sectionMap.get("Summary") || []).forEach((row) => summaryRows.push(row));
+
+    return { sections, summaryRows };
+  }, [data, isCashFlowStatement]);
+
+  const cashFlowPeriodLabel = useMemo(() => {
+    const fromDate = filters?.["From Date"];
+    const toDate = filters?.["To Date"];
+    if (!fromDate || !toDate) return subtitle || "";
+    return `For the period ended ${formatStatementDate(toDate)}`;
+  }, [filters, subtitle]);
+
+  const balanceSheetShortDate = useMemo(() => {
+    const asOf = filters?.["As Of Date"];
+    const source = asOf ? new Date(String(asOf)) : new Date();
+    if (Number.isNaN(source.getTime())) return "";
+    return source.toLocaleDateString(undefined, { month: "numeric", day: "numeric", year: "2-digit" });
+  }, [filters]);
 
   const handlePrint = () => {
     const contentNode = printRef.current;
@@ -354,150 +436,233 @@ export function ReportModal<T extends Record<string, any>>({
           ref={printRef}
           id="report-print-area"
           className={`mx-auto bg-white text-slate-900 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.35)] border border-slate-300 rounded-lg ${
-            isIncomeStatement || isBalanceSheet ? "max-w-3xl" : "max-w-5xl"
+            isIncomeStatement || isBalanceSheet || isCashFlowStatement ? "max-w-3xl" : "max-w-5xl"
           }`}
           style={{ pageBreakInside: "avoid" }}
         >
           {isIncomeStatement && statementData ? (
             <div
-              className="px-10 py-10 text-slate-900"
-              style={{ fontFamily: "Cambria, 'Times New Roman', Georgia, serif" }}
+              className="px-10 py-9 text-slate-900"
+              style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}
             >
-              <div className="text-right text-xs text-slate-500">{reportDate}</div>
-
-              <div className="text-center">
-                <h1 className="text-[30px] font-semibold leading-tight">{companyInfo?.name || "Business Name"}</h1>
-                {companyInfo?.manager && <p className="text-[13px] italic leading-tight">{companyInfo.manager}</p>}
-                {companyInfo?.phone && <p className="text-[13px] italic leading-tight">{companyInfo.phone}</p>}
+              <div className="text-center leading-tight">
+                <h1 className="text-[30px] font-semibold">{companyInfo?.name || "Business Name"}</h1>
+                {companyInfo?.manager && <p className="text-[12px] italic text-slate-500">{companyInfo.manager}</p>}
+                {companyInfo?.phone && <p className="text-[12px] italic text-slate-500">{companyInfo.phone}</p>}
+                <h2 className="mt-6 text-[38px] font-semibold">Profit &amp; Loss Statement</h2>
+                {periodLabel && <p className="text-[13px] italic text-slate-600">{periodLabel}</p>}
               </div>
 
-              <div className="mt-8 text-center">
-                <h2 className="text-[27px] font-semibold leading-tight">Profit &amp; Loss Statement</h2>
-                {periodLabel && <p className="text-[13px] italic">{periodLabel}</p>}
-              </div>
-
-              <div className="mx-auto mt-10 max-w-2xl space-y-10">
+              <div className="mx-auto mt-9 max-w-2xl space-y-8 text-[14px]">
                 <section>
-                  <h3 className="mb-2 inline-block border-b border-slate-700 pb-0.5 text-[20px] font-semibold">Income</h3>
-                  <div className="space-y-1 text-[14px] leading-tight">
+                  <h3 className="mb-3 inline-block border-b border-slate-700 pb-0.5 text-[34px] font-semibold leading-none">
+                    Income
+                  </h3>
+                  <div className="space-y-1.5">
                     {statementData.incomeLines.map((row, index) => (
-                      <div key={`${row.lineItem}-${index}`} className="flex justify-between gap-4">
+                      <div key={`${row.lineItem}-${index}`} className="flex items-start justify-between gap-4">
                         <span>{row.lineItem}</span>
-                        <span className="tabular-nums">{formatStatementAmount(row.amount)}</span>
+                        <span className="tabular-nums">{formatStatementCurrency(row.amount)}</span>
                       </div>
                     ))}
+                    {statementData.incomeLines.length === 0 && (
+                      <div className="flex items-start justify-between gap-4 text-slate-500">
+                        <span>No income lines</span>
+                        <span className="tabular-nums">$0.00</span>
+                      </div>
+                    )}
                   </div>
-                  <div className="mt-3 flex justify-between border-t border-slate-800 pt-2 text-[15px] font-medium">
+                  <div className="mt-3 flex justify-between border-b border-t border-slate-300 py-1.5 text-[16px] font-semibold">
                     <span>Total Income</span>
-                    <span className="tabular-nums border-b border-slate-700">{formatStatementAmount(statementData.incomeTotal)}</span>
+                    <span className="tabular-nums">{formatStatementCurrency(statementData.incomeTotal)}</span>
                   </div>
                 </section>
 
                 <section>
-                  <h3 className="mb-2 inline-block border-b border-slate-700 pb-0.5 text-[20px] font-semibold">Expenses</h3>
-                  <div className="space-y-1 text-[14px] leading-tight">
+                  <h3 className="mb-3 inline-block border-b border-slate-700 pb-0.5 text-[34px] font-semibold leading-none">
+                    Expenses
+                  </h3>
+                  <div className="space-y-1.5">
                     {statementData.expenseLines.map((row, index) => (
-                      <div key={`${row.lineItem}-${index}`} className="flex justify-between gap-4">
+                      <div key={`${row.lineItem}-${index}`} className="flex items-start justify-between gap-4">
                         <span>{row.lineItem}</span>
-                        <span className="tabular-nums">{formatStatementAmount(Math.abs(row.amount))}</span>
+                        <span className="tabular-nums">{formatStatementCurrency(Math.abs(row.amount))}</span>
                       </div>
                     ))}
+                    {statementData.expenseLines.length === 0 && (
+                      <div className="flex items-start justify-between gap-4 text-slate-500">
+                        <span>No expense lines</span>
+                        <span className="tabular-nums">$0.00</span>
+                      </div>
+                    )}
                   </div>
-                  <div className="mt-3 flex justify-between border-t border-slate-800 pt-2 text-[15px] font-medium">
+                  <div className="mt-3 flex justify-between border-b border-t border-slate-300 py-1.5 text-[16px] font-semibold">
                     <span>Total Expenses</span>
-                    <span className="tabular-nums border-b border-slate-700">{formatStatementAmount(statementData.expensesTotal)}</span>
+                    <span className="tabular-nums">{formatStatementCurrency(statementData.expensesTotal)}</span>
                   </div>
                 </section>
 
-                <section className="pt-2">
-                  <div className="flex justify-between border-t-2 border-slate-900 pt-3 text-[20px] font-semibold leading-tight">
+                <section className="pt-1">
+                  <div className="flex justify-between border-t-2 border-slate-900 pt-2 text-[28px] font-semibold leading-tight">
                     <span>Profit / (Loss)</span>
-                    <span className="tabular-nums border-b-2 border-slate-900">{formatStatementAmount(statementData.netProfit)}</span>
+                    <span className="tabular-nums border-b-2 border-slate-900">
+                      {formatStatementCurrency(statementData.netProfit)}
+                    </span>
                   </div>
                 </section>
               </div>
             </div>
           ) : isBalanceSheet && balanceSheetData ? (
             <div
-              className="px-10 py-10 text-slate-900"
-              style={{ fontFamily: "Cambria, 'Times New Roman', Georgia, serif" }}
+              className="px-10 py-9 text-slate-900"
+              style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}
             >
-              <div className="text-right text-xs text-slate-500">{reportDate}</div>
-
-              <div className="text-center">
-                <h1 className="text-[30px] font-semibold leading-tight">{companyInfo?.name || "Business Name"}</h1>
-                {companyInfo?.manager && <p className="text-[13px] italic leading-tight">{companyInfo.manager}</p>}
-                {companyInfo?.phone && <p className="text-[13px] italic leading-tight">{companyInfo.phone}</p>}
+              <div className="space-y-0.5">
+                <h2 className="text-[40px] font-semibold leading-none text-[#1f7bb8]">Balance Sheet</h2>
+                <p className="text-[14px] text-slate-500">{companyInfo?.name || "Business Name"}</p>
+                <p className="text-[14px] text-slate-500">{balanceSheetDateLabel || `As of ${reportDate}`}</p>
               </div>
 
-              <div className="mt-8 text-center">
-                <h2 className="text-[27px] font-semibold leading-tight">Balance Sheet</h2>
-                {balanceSheetDateLabel && <p className="text-[13px] italic">{balanceSheetDateLabel}</p>}
-              </div>
-
-              <div className="mx-auto mt-10 max-w-2xl space-y-8 text-[14px] leading-tight">
+              <div className="mx-auto mt-9 max-w-2xl space-y-8 text-[15px]">
                 <section>
-                  <h3 className="mb-2 inline-block border-b border-slate-700 pb-0.5 text-[20px] font-semibold">Assets</h3>
-                  <div className="space-y-1">
+                  <div className="mb-2 flex items-end justify-between border-b-2 border-[#2f9ad4] pb-1 text-[#1f7bb8]">
+                    <h3 className="text-[31px] font-semibold leading-none">Assets</h3>
+                    <span className="text-[13px] font-semibold">{balanceSheetShortDate}</span>
+                  </div>
+                  <div className="mb-1 text-[16px] font-semibold text-slate-700">Current Assets</div>
+                  <div className="space-y-0.5">
                     {balanceSheetData.assets.map((row, index) => (
-                      <div key={`${row.lineItem}-${index}`} className="flex justify-between gap-4">
+                      <div key={`${row.lineItem}-${index}`} className="flex justify-between gap-4 border-b border-slate-200 py-1.5">
                         <span>{row.lineItem}</span>
-                        <span className="tabular-nums">{formatStatementAmount(row.amount)}</span>
+                        <span className="tabular-nums">{formatStatementCurrency(row.amount)}</span>
                       </div>
                     ))}
                   </div>
-                  <div className="mt-3 flex justify-between border-t border-slate-800 pt-2 text-[15px] font-medium">
+                  <div className="mt-2 flex justify-between border-b border-slate-200 py-1.5 text-[16px] font-semibold">
+                    <span>Total Current Assets</span>
+                    <span className="tabular-nums">{formatStatementCurrency(balanceSheetData.currentAssetsTotal)}</span>
+                  </div>
+                  <div className="mt-5 flex justify-between border-t border-slate-300 pt-2 text-[18px] font-semibold">
                     <span>Total Assets</span>
-                    <span className="tabular-nums border-b border-slate-700">{formatStatementAmount(balanceSheetData.totalAssets)}</span>
+                    <span className="tabular-nums">{formatStatementCurrency(balanceSheetData.totalAssets)}</span>
                   </div>
                 </section>
 
                 <section>
-                  <h3 className="mb-2 inline-block border-b border-slate-700 pb-0.5 text-[20px] font-semibold">Liabilities</h3>
-                  <div className="space-y-1">
+                  <div className="mb-2 flex items-end justify-between border-b-2 border-[#2f9ad4] pb-1 text-[#1f7bb8]">
+                    <h3 className="text-[31px] font-semibold leading-none">Liabilities + Equity</h3>
+                    <span className="text-[13px] font-semibold">{balanceSheetShortDate}</span>
+                  </div>
+                  <div className="mb-1 text-[16px] font-semibold text-slate-700">Current Liabilities</div>
+                  <div className="space-y-0.5">
                     {balanceSheetData.liabilities.map((row, index) => (
-                      <div key={`${row.lineItem}-${index}`} className="flex justify-between gap-4">
+                      <div key={`${row.lineItem}-${index}`} className="flex justify-between gap-4 border-b border-slate-200 py-1.5">
                         <span>{row.lineItem}</span>
-                        <span className="tabular-nums">{formatStatementAmount(row.amount)}</span>
+                        <span className="tabular-nums">{formatStatementCurrency(row.amount)}</span>
                       </div>
                     ))}
                   </div>
-                  <div className="mt-3 flex justify-between border-t border-slate-800 pt-2 text-[15px] font-medium">
-                    <span>Total Liabilities</span>
-                    <span className="tabular-nums border-b border-slate-700">{formatStatementAmount(balanceSheetData.totalLiabilities)}</span>
+                  <div className="mt-2 flex justify-between border-b border-slate-200 py-1.5 text-[16px] font-semibold">
+                    <span>Total Current Liabilities</span>
+                    <span className="tabular-nums">{formatStatementCurrency(balanceSheetData.currentLiabilitiesTotal)}</span>
                   </div>
                 </section>
 
                 <section>
-                  <h3 className="mb-2 inline-block border-b border-slate-700 pb-0.5 text-[20px] font-semibold">Equity</h3>
-                  <div className="space-y-1">
-                    {balanceSheetData.equity.map((row, index) => (
-                      <div key={`${row.lineItem}-${index}`} className="flex justify-between gap-4">
+                  <div className="mb-1 text-[16px] font-semibold text-slate-700">Equity</div>
+                  <div className="space-y-0.5">
+                    {(balanceSheetData.equity.length
+                      ? balanceSheetData.equity
+                      : [{ lineItem: "Retained Earnings", amount: balanceSheetData.retainedEarnings }]
+                    ).map((row, index) => (
+                      <div key={`${row.lineItem}-${index}`} className="flex justify-between gap-4 border-b border-slate-200 py-1.5">
                         <span>{row.lineItem}</span>
-                        <span className="tabular-nums">{formatStatementAmount(row.amount)}</span>
+                        <span className="tabular-nums">{formatStatementCurrency(row.amount)}</span>
                       </div>
                     ))}
                   </div>
-                  <div className="mt-3 flex justify-between border-t border-slate-800 pt-2 text-[15px] font-medium">
-                    <span>{balanceSheetData.netResultLabel}</span>
-                    <span className="tabular-nums border-b border-slate-700">{formatStatementAmount(balanceSheetData.netResultAmount)}</span>
-                  </div>
-                  <div className="mt-2 flex justify-between text-[15px] font-medium">
+                  <div className="mt-2 flex justify-between border-b border-slate-200 py-1.5 text-[16px] font-semibold">
                     <span>Total Equity</span>
-                    <span className="tabular-nums border-b border-slate-700">{formatStatementAmount(balanceSheetData.totalEquity)}</span>
+                    <span className="tabular-nums">{formatStatementCurrency(balanceSheetData.totalEquity)}</span>
                   </div>
                 </section>
 
-                <section className="pt-2">
-                  <div className="flex justify-between border-t-2 border-slate-900 pt-3 text-[20px] font-semibold leading-tight">
+                <section className="pt-1">
+                  <div className="flex justify-between border-t border-slate-300 pt-3 text-[18px] font-semibold leading-tight">
                     <span>Total Liabilities + Equity</span>
-                    <span className="tabular-nums border-b-2 border-slate-900">{formatStatementAmount(balanceSheetData.totalLiabilitiesEquity)}</span>
+                    <span className="tabular-nums">{formatStatementCurrency(balanceSheetData.totalLiabilitiesEquity)}</span>
                   </div>
-                  <div className="mt-2 flex justify-between text-[14px]">
-                    <span>Balance Check (Assets - Liabilities &amp; Equity)</span>
-                    <span className="tabular-nums">{formatStatementAmount(balanceSheetData.balanceDelta)}</span>
+                  <div
+                    className={`mt-2 flex justify-between text-[14px] ${
+                      Math.abs(balanceSheetData.balanceDelta) <= 0.01 ? "text-emerald-700" : "text-rose-700"
+                    }`}
+                  >
+                    <span>Balance Check</span>
+                    <span className="tabular-nums">{formatStatementCurrency(balanceSheetData.balanceDelta)}</span>
                   </div>
                 </section>
+              </div>
+            </div>
+          ) : isCashFlowStatement && cashFlowData ? (
+            <div
+              className="overflow-hidden rounded-[24px] border border-[#35528f] bg-white text-slate-900"
+              style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}
+            >
+              <div className="bg-[#4467ad] px-8 py-6 text-center text-white">
+                <h2 className="text-[47px] font-semibold leading-tight">Cash Flow Statement</h2>
+                {cashFlowPeriodLabel && <p className="mt-1 text-[16px]">{cashFlowPeriodLabel}</p>}
+              </div>
+              <div className="h-2 bg-[#d6e6f7]" />
+
+              <div className="bg-white px-0 py-0">
+                {cashFlowData.sections.map((section) => (
+                  <section key={section.section} className="border-b border-slate-200">
+                    <div className="bg-[#a9cae9] px-6 py-2 text-[16px] font-semibold text-[#315a9f]">{section.section}</div>
+                    <table className="w-full border-collapse">
+                      <tbody>
+                        {section.rows.map((row, index) => (
+                          <tr key={`${section.section}-${row.lineItem}-${index}`}>
+                            <td
+                              className={`border-b border-slate-100 px-6 py-2 text-[15px] ${
+                                row.rowType === "total" ? "bg-[#edf4fd] font-semibold" : "bg-white"
+                              }`}
+                            >
+                              {row.lineItem}
+                            </td>
+                            <td
+                              className={`w-44 border-b border-slate-100 px-6 py-2 text-right text-[15px] tabular-nums ${
+                                row.rowType === "total" ? "bg-[#edf4fd] font-semibold" : "bg-white"
+                              }`}
+                            >
+                              {formatStatementAmount(row.amount)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </section>
+                ))}
+
+                {cashFlowData.summaryRows.length > 0 && (
+                  <div className="space-y-2 px-6 py-4">
+                    {cashFlowData.summaryRows.map((row, index) => {
+                      const isMainTotal = /net increase in cash/i.test(row.lineItem);
+                      return (
+                        <div
+                          key={`summary-${row.lineItem}-${index}`}
+                          className={`flex items-center justify-between rounded-sm px-4 py-2 text-[15px] ${
+                            isMainTotal
+                              ? "bg-[#4467ad] font-semibold text-white"
+                              : "bg-[#edf4fd] font-semibold text-slate-900"
+                          }`}
+                        >
+                          <span>{row.lineItem}</span>
+                          <span className="tabular-nums">{formatStatementAmount(row.amount)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           ) : (
@@ -574,7 +739,33 @@ export function ReportModal<T extends Record<string, any>>({
                           ))}
                         </tr>
                       ))}
-                      {data.length === 0 && (
+                      {tableTotals && (
+                        <tr>
+                          {columns.map((col, index) => {
+                            const columnKey = String(col.key);
+                            const isFirstColumn = index === 0;
+                            const value = isFirstColumn ? tableTotals.label || "Total" : tableTotals.values[columnKey] ?? "";
+                            return (
+                              <td
+                                key={`total-${col.header}`}
+                                style={{
+                                  border: `1px solid ${BORDER_COLOR}`,
+                                  padding: "9px 6px",
+                                  textAlign: isFirstColumn ? "left" : col.align ?? "left",
+                                  fontSize: "12px",
+                                  lineHeight: 1.4,
+                                  background: "#0b3f70",
+                                  color: "#ffffff",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {String(value)}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      )}
+                      {data.length === 0 && !tableTotals && (
                         <tr>
                           <td
                             colSpan={columns.length}

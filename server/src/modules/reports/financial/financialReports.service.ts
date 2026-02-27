@@ -83,6 +83,31 @@ export interface AccountTransactionRow {
   note: string;
 }
 
+export interface AccountStatementRow {
+  txn_id: number;
+  txn_date: string;
+  account_id: number;
+  account_name: string;
+  txn_type: string;
+  ref_table: string;
+  ref_id: number | null;
+  debit: number;
+  credit: number;
+  running_balance: number;
+  note: string;
+}
+
+export interface TrialBalanceRow {
+  account_id: number;
+  account_name: string;
+  opening_debit: number;
+  opening_credit: number;
+  period_debit: number;
+  period_credit: number;
+  closing_debit: number;
+  closing_credit: number;
+}
+
 type BalanceTable = 'customers' | 'suppliers';
 type BalanceColumn = 'open_balance' | 'remaining_balance';
 
@@ -110,6 +135,12 @@ const toMoney = (value: unknown) => Number(value || 0);
 const queryAmount = async (sql: string, params: Array<string | number>): Promise<number> => {
   const rows = await queryMany<{ amount: number }>(sql, params);
   return toMoney(rows[0]?.amount);
+};
+
+const isMissingBalanceSheetProcedureError = (error: unknown) => {
+  if (!error || typeof error !== 'object') return false;
+  const code = String((error as { code?: string }).code || '');
+  return code === '42883' || code === '42P01' || code === '42703';
 };
 
 export const financialReportsService = {
@@ -288,6 +319,25 @@ export const financialReportsService = {
   },
 
   async getBalanceSheet(branchId: number, asOfDate: string): Promise<BalanceSheetRow[]> {
+    try {
+      const procedureRows = await queryMany<BalanceSheetRow>(
+        `SELECT
+           section,
+           line_item,
+           COALESCE(amount, 0)::double precision AS amount,
+           row_type::text AS row_type
+         FROM ims.rpt_balance_sheet_lines($1, $2::date)`,
+        [branchId, asOfDate]
+      );
+      if (procedureRows.length > 0) {
+        return procedureRows;
+      }
+    } catch (error) {
+      if (!isMissingBalanceSheetProcedureError(error)) {
+        throw error;
+      }
+    }
+
     const [customerBalanceColumn, supplierBalanceColumn] = await Promise.all([
       resolveBalanceColumn('customers'),
       resolveBalanceColumn('suppliers'),
@@ -591,6 +641,25 @@ export const financialReportsService = {
   },
 
   async getCashFlowStatement(branchId: number, fromDate: string, toDate: string): Promise<CashFlowRow[]> {
+    try {
+      const procedureRows = await queryMany<CashFlowRow>(
+        `SELECT
+           section,
+           line_item,
+           COALESCE(amount, 0)::double precision AS amount,
+           row_type::text AS row_type
+         FROM ims.rpt_cash_flow_lines($1, $2::date, $3::date)`,
+        [branchId, fromDate, toDate]
+      );
+      if (procedureRows.length > 0) {
+        return procedureRows;
+      }
+    } catch (error) {
+      if (!isMissingBalanceSheetProcedureError(error)) {
+        throw error;
+      }
+    }
+
     const params: Array<number | string> = [branchId, fromDate, toDate];
     const [
       customerReceipts,
@@ -665,53 +734,247 @@ export const financialReportsService = {
     const salesCollections = customerReceipts + salePayments;
     const totalInflows = salesCollections + supplierRefunds + loanRepayments;
     const totalOutflows = supplierPayments + expensePayments + payrollPayments + employeeLoanDisbursements;
-    const netCashFlow = totalInflows - totalOutflows;
+
+    const netOperations = salesCollections - supplierPayments - expensePayments - payrollPayments;
+    const netInvesting = supplierRefunds - employeeLoanDisbursements;
+    const netFinancing = loanRepayments;
+    const netIncreaseInCash = netOperations + netInvesting + netFinancing;
 
     return [
       {
-        section: 'Operating Activities',
-        line_item: 'Cash Collected From Customers',
+        section: 'Cash Flow from Operations',
+        line_item: 'Cash receipts from customers',
         amount: salesCollections,
         row_type: 'detail',
       },
       {
-        section: 'Operating Activities',
-        line_item: 'Supplier Refunds Received',
-        amount: supplierRefunds,
-        row_type: 'detail',
-      },
-      {
-        section: 'Operating Activities',
-        line_item: 'Cash Paid To Suppliers',
+        section: 'Cash Flow from Operations',
+        line_item: 'Cash paid for inventory',
         amount: -supplierPayments,
         row_type: 'detail',
       },
       {
-        section: 'Operating Activities',
-        line_item: 'Cash Paid For Expenses',
+        section: 'Cash Flow from Operations',
+        line_item: 'Cash paid for operating expenses',
         amount: -expensePayments,
         row_type: 'detail',
       },
       {
-        section: 'Operating Activities',
-        line_item: 'Cash Paid For Payroll',
+        section: 'Cash Flow from Operations',
+        line_item: 'Cash paid for wages',
         amount: -payrollPayments,
         row_type: 'detail',
       },
       {
-        section: 'Financing Activities',
-        line_item: 'Employee Loan Disbursements',
+        section: 'Cash Flow from Operations',
+        line_item: 'Net Cash Flow from Operations',
+        amount: netOperations,
+        row_type: 'total',
+      },
+      {
+        section: 'Cash Flow from Investing',
+        line_item: 'Cash receipts from supplier refunds',
+        amount: supplierRefunds,
+        row_type: 'detail',
+      },
+      {
+        section: 'Cash Flow from Investing',
+        line_item: 'Cash paid for employee loans',
         amount: -employeeLoanDisbursements,
         row_type: 'detail',
       },
       {
-        section: 'Financing Activities',
-        line_item: 'Employee Loan Repayments',
+        section: 'Cash Flow from Investing',
+        line_item: 'Net Cash Flow from Investing',
+        amount: netInvesting,
+        row_type: 'total',
+      },
+      {
+        section: 'Cash Flow from Financing',
+        line_item: 'Loan repayments received',
         amount: loanRepayments,
         row_type: 'detail',
       },
-      { section: 'Summary', line_item: 'Net Cash Flow', amount: netCashFlow, row_type: 'total' },
+      {
+        section: 'Cash Flow from Financing',
+        line_item: 'Net Cash Flow from Financing',
+        amount: netFinancing,
+        row_type: 'total',
+      },
+      { section: 'Summary', line_item: 'Net Increase in Cash', amount: netIncreaseInCash, row_type: 'total' },
     ];
+  },
+
+  async getAccountStatement(
+    branchId: number,
+    fromDate: string,
+    toDate: string,
+    accountId?: number
+  ): Promise<AccountStatementRow[]> {
+    const params: Array<number | string | null> = [branchId, fromDate, toDate, accountId ?? null];
+
+    try {
+      const procedureRows = await queryMany<AccountStatementRow>(
+        `SELECT
+           txn_id,
+           txn_date::text AS txn_date,
+           account_id,
+           account_name,
+           txn_type::text AS txn_type,
+           COALESCE(ref_table, '') AS ref_table,
+           ref_id,
+           COALESCE(debit, 0)::double precision AS debit,
+           COALESCE(credit, 0)::double precision AS credit,
+           COALESCE(running_balance, 0)::double precision AS running_balance,
+           COALESCE(note, '') AS note
+         FROM ims.rpt_account_statement($1, $2::date, $3::date, $4::bigint)`,
+        params
+      );
+      return procedureRows;
+    } catch (error) {
+      if (!isMissingBalanceSheetProcedureError(error)) {
+        throw error;
+      }
+    }
+
+    const accountFilter = accountId ? 'AND at.acc_id = $4' : '';
+
+    return queryMany<AccountStatementRow>(
+      `WITH filtered AS (
+         SELECT
+           at.txn_id,
+           at.txn_date,
+           at.acc_id AS account_id,
+           COALESCE(a.name, 'N/A') AS account_name,
+           at.txn_type::text AS txn_type,
+           COALESCE(at.ref_table, '') AS ref_table,
+           at.ref_id,
+           COALESCE(at.debit, 0)::double precision AS debit,
+           COALESCE(at.credit, 0)::double precision AS credit,
+           COALESCE(at.note, '') AS note
+         FROM ims.account_transactions at
+         LEFT JOIN ims.accounts a ON a.acc_id = at.acc_id
+         WHERE at.branch_id = $1
+           AND at.txn_date::date BETWEEN $2::date AND $3::date
+           ${accountFilter}
+      ),
+      running AS (
+        SELECT
+          f.*,
+          SUM(f.credit - f.debit)
+            OVER (PARTITION BY f.account_id ORDER BY f.txn_date, f.txn_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+            ::double precision AS running_balance
+        FROM filtered f
+      )
+      SELECT
+        txn_id,
+        txn_date::text AS txn_date,
+        account_id,
+        account_name,
+        txn_type,
+        ref_table,
+        ref_id,
+        debit,
+        credit,
+        running_balance,
+        note
+      FROM running
+      ORDER BY txn_date ASC, txn_id ASC
+      LIMIT 5000`,
+      params
+    );
+  },
+
+  async getTrialBalance(branchId: number, fromDate: string, toDate: string): Promise<TrialBalanceRow[]> {
+    const params: Array<number | string> = [branchId, fromDate, toDate];
+
+    try {
+      const procedureRows = await queryMany<TrialBalanceRow>(
+        `SELECT
+           account_id,
+           account_name,
+           COALESCE(opening_debit, 0)::double precision AS opening_debit,
+           COALESCE(opening_credit, 0)::double precision AS opening_credit,
+           COALESCE(period_debit, 0)::double precision AS period_debit,
+           COALESCE(period_credit, 0)::double precision AS period_credit,
+           COALESCE(closing_debit, 0)::double precision AS closing_debit,
+           COALESCE(closing_credit, 0)::double precision AS closing_credit
+         FROM ims.rpt_trial_balance($1, $2::date, $3::date)`,
+        params
+      );
+      return procedureRows;
+    } catch (error) {
+      if (!isMissingBalanceSheetProcedureError(error)) {
+        throw error;
+      }
+    }
+
+    return queryMany<TrialBalanceRow>(
+      `WITH acc AS (
+         SELECT a.acc_id, a.name
+         FROM ims.accounts a
+         WHERE a.branch_id = $1
+           AND a.is_active = TRUE
+      ),
+      opening AS (
+        SELECT
+          at.acc_id,
+          COALESCE(SUM(at.credit - at.debit), 0)::double precision AS opening_net
+        FROM ims.account_transactions at
+        WHERE at.branch_id = $1
+          AND at.txn_date::date < $2::date
+        GROUP BY at.acc_id
+      ),
+      period AS (
+        SELECT
+          at.acc_id,
+          COALESCE(SUM(at.debit), 0)::double precision AS period_debit,
+          COALESCE(SUM(at.credit), 0)::double precision AS period_credit
+        FROM ims.account_transactions at
+        WHERE at.branch_id = $1
+          AND at.txn_date::date BETWEEN $2::date AND $3::date
+        GROUP BY at.acc_id
+      ),
+      merged AS (
+        SELECT
+          acc.acc_id AS account_id,
+          acc.name AS account_name,
+          COALESCE(opening.opening_net, 0)::double precision AS opening_net,
+          COALESCE(period.period_debit, 0)::double precision AS period_debit,
+          COALESCE(period.period_credit, 0)::double precision AS period_credit
+        FROM acc
+        LEFT JOIN opening ON opening.acc_id = acc.acc_id
+        LEFT JOIN period ON period.acc_id = acc.acc_id
+      ),
+      calc AS (
+        SELECT
+          account_id,
+          account_name,
+          CASE WHEN opening_net < 0 THEN ABS(opening_net) ELSE 0 END::double precision AS opening_debit,
+          CASE WHEN opening_net > 0 THEN opening_net ELSE 0 END::double precision AS opening_credit,
+          period_debit,
+          period_credit,
+          (opening_net + period_credit - period_debit)::double precision AS closing_net
+        FROM merged
+      )
+      SELECT
+        account_id,
+        account_name,
+        opening_debit,
+        opening_credit,
+        period_debit,
+        period_credit,
+        CASE WHEN closing_net < 0 THEN ABS(closing_net) ELSE 0 END::double precision AS closing_debit,
+        CASE WHEN closing_net > 0 THEN closing_net ELSE 0 END::double precision AS closing_credit
+      FROM calc
+      WHERE opening_debit <> 0
+         OR opening_credit <> 0
+         OR period_debit <> 0
+         OR period_credit <> 0
+         OR closing_net <> 0
+      ORDER BY account_name`,
+      params
+    );
   },
 
   async getAccountBalances(branchId: number, accountId?: number): Promise<AccountBalanceRow[]> {

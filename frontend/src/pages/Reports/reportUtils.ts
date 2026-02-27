@@ -1,4 +1,20 @@
-export const todayDate = () => new Date().toISOString().slice(0, 10);
+const toLocalIsoDate = (date: Date) => {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 10);
+};
+
+export const todayDate = () => toLocalIsoDate(new Date());
+
+export const startOfMonthDate = () => {
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  return toLocalIsoDate(monthStart);
+};
+
+export const defaultReportRange = () => ({
+  fromDate: startOfMonthDate(),
+  toDate: todayDate(),
+});
 
 export const formatCurrency = (value: unknown) => {
   const amount = Number(value || 0);

@@ -2465,6 +2465,302 @@ COALESCE((SELECT SUM(total) FROM ims.sales WHERE branch_id=p_branch_id AND sale_
 COALESCE((SELECT SUM(amount) FROM ims.expense_charges WHERE branch_id=p_branch_id AND charge_date::date BETWEEN p_date_from AND p_date_to),0) AS gross_profit;
 $$;
 
+CREATE OR REPLACE FUNCTION ims.rpt_balance_sheet_lines(
+p_branch_id BIGINT,
+p_as_of DATE
+) RETURNS TABLE(
+section VARCHAR,
+line_item VARCHAR,
+amount NUMERIC,
+row_type VARCHAR
+)
+LANGUAGE sql
+AS $$
+WITH
+cash AS (
+  SELECT COALESCE(SUM(a.balance), 0)::NUMERIC AS v
+  FROM ims.accounts a
+  WHERE a.branch_id = p_branch_id
+    AND a.is_active = TRUE
+),
+customer_ledger_bal AS (
+  SELECT
+    l.customer_id,
+    COALESCE(SUM(l.debit - l.credit), 0)::NUMERIC AS bal
+  FROM ims.customer_ledger l
+  WHERE l.branch_id = p_branch_id
+    AND l.entry_date::date <= p_as_of
+  GROUP BY l.customer_id
+),
+customer_ar_ledger AS (
+  SELECT COALESCE(SUM(GREATEST(bal, 0)), 0)::NUMERIC AS v
+  FROM customer_ledger_bal
+),
+customer_advances AS (
+  SELECT COALESCE(SUM(GREATEST(-bal, 0)), 0)::NUMERIC AS v
+  FROM customer_ledger_bal
+),
+customer_ar_fallback AS (
+  SELECT COALESCE(
+    SUM(GREATEST(COALESCE(NULLIF(to_jsonb(c) ->> 'remaining_balance', '')::NUMERIC, c.open_balance, 0), 0)),
+    0
+  )::NUMERIC AS v
+  FROM ims.customers c
+  WHERE c.branch_id = p_branch_id
+    AND c.is_active = TRUE
+),
+accounts_receivable AS (
+  SELECT CASE WHEN l.v > 0 THEN l.v ELSE f.v END::NUMERIC AS v
+  FROM customer_ar_ledger l, customer_ar_fallback f
+),
+inventory_value AS (
+  SELECT COALESCE(SUM(si.quantity * COALESCE(i.cost_price, 0)), 0)::NUMERIC AS v
+  FROM ims.store_items si
+  JOIN ims.stores st ON st.store_id = si.store_id
+  JOIN ims.items i ON i.item_id = si.product_id
+  WHERE st.branch_id = p_branch_id
+),
+supplier_ledger_bal AS (
+  SELECT
+    l.supplier_id,
+    COALESCE(SUM(l.credit - l.debit), 0)::NUMERIC AS bal
+  FROM ims.supplier_ledger l
+  WHERE l.branch_id = p_branch_id
+    AND l.entry_date::date <= p_as_of
+  GROUP BY l.supplier_id
+),
+supplier_ap_ledger AS (
+  SELECT COALESCE(SUM(GREATEST(bal, 0)), 0)::NUMERIC AS v
+  FROM supplier_ledger_bal
+),
+supplier_ap_fallback AS (
+  SELECT COALESCE(
+    SUM(GREATEST(COALESCE(NULLIF(to_jsonb(s) ->> 'remaining_balance', '')::NUMERIC, s.open_balance, 0), 0)),
+    0
+  )::NUMERIC AS v
+  FROM ims.suppliers s
+  WHERE s.branch_id = p_branch_id
+    AND s.is_active = TRUE
+),
+accounts_payable AS (
+  SELECT CASE WHEN l.v > 0 THEN l.v ELSE f.v END::NUMERIC AS v
+  FROM supplier_ap_ledger l, supplier_ap_fallback f
+),
+expense_payable AS (
+  WITH charges AS (
+    SELECT COALESCE(SUM(ec.amount), 0)::NUMERIC AS v
+    FROM ims.expense_charges ec
+    WHERE ec.branch_id = p_branch_id
+      AND ec.charge_date::date <= p_as_of
+  ),
+  payments AS (
+    SELECT COALESCE(SUM(ep.amount_paid), 0)::NUMERIC AS v
+    FROM ims.expense_payments ep
+    WHERE ep.branch_id = p_branch_id
+      AND ep.pay_date::date <= p_as_of
+  )
+  SELECT GREATEST(charges.v - payments.v, 0)::NUMERIC AS v
+  FROM charges, payments
+),
+payroll_payable AS (
+  WITH due_amt AS (
+    SELECT COALESCE(SUM(pl.net_salary), 0)::NUMERIC AS v
+    FROM ims.payroll_lines pl
+    JOIN ims.payroll_runs pr
+      ON pr.payroll_id = pl.payroll_id
+     AND pr.branch_id = pl.branch_id
+    WHERE pl.branch_id = p_branch_id
+      AND COALESCE(pr.status::text, 'draft') = 'posted'
+      AND pr.period_to <= p_as_of
+  ),
+  paid_amt AS (
+    SELECT COALESCE(SUM(ep.amount_paid), 0)::NUMERIC AS v
+    FROM ims.employee_payments ep
+    WHERE ep.branch_id = p_branch_id
+      AND ep.pay_date::date <= p_as_of
+  )
+  SELECT GREATEST(due_amt.v - paid_amt.v, 0)::NUMERIC AS v
+  FROM due_amt, paid_amt
+),
+employee_loan_receivable AS (
+  WITH loan_amt AS (
+    SELECT COALESCE(SUM(el.amount), 0)::NUMERIC AS v
+    FROM ims.employee_loans el
+    WHERE el.branch_id = p_branch_id
+      AND el.loan_date <= p_as_of
+  ),
+  repay_amt AS (
+    SELECT COALESCE(SUM(lp.amount_paid), 0)::NUMERIC AS v
+    FROM ims.loan_payments lp
+    WHERE lp.branch_id = p_branch_id
+      AND lp.pay_date::date <= p_as_of
+  )
+  SELECT GREATEST(loan_amt.v - repay_amt.v, 0)::NUMERIC AS v
+  FROM loan_amt, repay_amt
+),
+net_sales_to_date AS (
+  WITH gross_sales AS (
+    SELECT COALESCE(SUM(s.total), 0)::NUMERIC AS v
+    FROM ims.sales s
+    WHERE s.branch_id = p_branch_id
+      AND s.sale_date::date <= p_as_of
+      AND LOWER(COALESCE(s.status::text, '')) <> 'void'
+      AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
+  ),
+  sales_returns AS (
+    SELECT COALESCE(SUM(sr.total), 0)::NUMERIC AS v
+    FROM ims.sales_returns sr
+    WHERE sr.branch_id = p_branch_id
+      AND sr.return_date::date <= p_as_of
+  )
+  SELECT (gross_sales.v - sales_returns.v)::NUMERIC AS v
+  FROM gross_sales, sales_returns
+),
+net_purchase_to_date AS (
+  WITH purchase_total AS (
+    SELECT COALESCE(SUM(p.total), 0)::NUMERIC AS v
+    FROM ims.purchases p
+    WHERE p.branch_id = p_branch_id
+      AND p.purchase_date::date <= p_as_of
+      AND LOWER(COALESCE(p.status::text, '')) <> 'void'
+  ),
+  purchase_returns AS (
+    SELECT COALESCE(SUM(pr.total), 0)::NUMERIC AS v
+    FROM ims.purchase_returns pr
+    WHERE pr.branch_id = p_branch_id
+      AND pr.return_date::date <= p_as_of
+  )
+  SELECT GREATEST(purchase_total.v - purchase_returns.v, 0)::NUMERIC AS v
+  FROM purchase_total, purchase_returns
+),
+cogs_to_date AS (
+  WITH sales_cost AS (
+    SELECT COALESCE(SUM(m.qty_out * m.unit_cost), 0)::NUMERIC AS v
+    FROM ims.inventory_movements m
+    WHERE m.branch_id = p_branch_id
+      AND m.move_type = 'sale'
+      AND m.move_date::date <= p_as_of
+  ),
+  sales_return_cost AS (
+    SELECT COALESCE(SUM(m.qty_in * m.unit_cost), 0)::NUMERIC AS v
+    FROM ims.inventory_movements m
+    WHERE m.branch_id = p_branch_id
+      AND m.move_type = 'sales_return'
+      AND m.move_date::date <= p_as_of
+  )
+  SELECT GREATEST(sales_cost.v - sales_return_cost.v, 0)::NUMERIC AS v
+  FROM sales_cost, sales_return_cost
+),
+operating_expense_to_date AS (
+  SELECT COALESCE(SUM(ec.amount), 0)::NUMERIC AS v
+  FROM ims.expense_charges ec
+  WHERE ec.branch_id = p_branch_id
+    AND ec.charge_date::date <= p_as_of
+),
+payroll_expense_to_date AS (
+  SELECT COALESCE(SUM(pl.net_salary), 0)::NUMERIC AS v
+  FROM ims.payroll_lines pl
+  JOIN ims.payroll_runs pr
+    ON pr.payroll_id = pl.payroll_id
+   AND pr.branch_id = pl.branch_id
+  WHERE pl.branch_id = p_branch_id
+    AND COALESCE(pr.status::text, 'draft') = 'posted'
+    AND pr.period_to <= p_as_of
+),
+other_income_to_date AS (
+  SELECT COALESCE(SUM(GREATEST(at.credit - at.debit, 0)), 0)::NUMERIC AS v
+  FROM ims.account_transactions at
+  WHERE at.branch_id = p_branch_id
+    AND at.txn_date::date <= p_as_of
+    AND at.txn_type = 'other'
+),
+supplier_refunds_to_date AS (
+  SELECT COALESCE(SUM(sr.amount), 0)::NUMERIC AS v
+  FROM ims.supplier_receipts sr
+  WHERE sr.branch_id = p_branch_id
+    AND sr.receipt_date::date <= p_as_of
+),
+net_profit_to_date AS (
+  SELECT (
+    net_sales_to_date.v
+    + other_income_to_date.v
+    + supplier_refunds_to_date.v
+    - CASE WHEN cogs_to_date.v > 0 THEN cogs_to_date.v ELSE net_purchase_to_date.v END
+    - operating_expense_to_date.v
+    - payroll_expense_to_date.v
+  )::NUMERIC AS v
+  FROM net_sales_to_date,
+       other_income_to_date,
+       supplier_refunds_to_date,
+       cogs_to_date,
+       net_purchase_to_date,
+       operating_expense_to_date,
+       payroll_expense_to_date
+),
+assets_total AS (
+  SELECT (
+    cash.v
+    + accounts_receivable.v
+    + inventory_value.v
+    + employee_loan_receivable.v
+  )::NUMERIC AS v
+  FROM cash, accounts_receivable, inventory_value, employee_loan_receivable
+),
+liabilities_total AS (
+  SELECT (
+    accounts_payable.v
+    + customer_advances.v
+    + expense_payable.v
+    + payroll_payable.v
+  )::NUMERIC AS v
+  FROM accounts_payable, customer_advances, expense_payable, payroll_payable
+),
+opening_equity AS (
+  SELECT (assets_total.v - liabilities_total.v - net_profit_to_date.v)::NUMERIC AS v
+  FROM assets_total, liabilities_total, net_profit_to_date
+),
+total_equity AS (
+  SELECT (opening_equity.v + net_profit_to_date.v)::NUMERIC AS v
+  FROM opening_equity, net_profit_to_date
+),
+liabilities_equity_total AS (
+  SELECT (liabilities_total.v + total_equity.v)::NUMERIC AS v
+  FROM liabilities_total, total_equity
+),
+rows AS (
+  SELECT 10 AS sort_no, 'Assets'::VARCHAR AS section, 'Cash & Bank Accounts'::VARCHAR AS line_item, cash.v AS amount, 'detail'::VARCHAR AS row_type FROM cash
+  UNION ALL
+  SELECT 20, 'Assets', 'Accounts Receivable', accounts_receivable.v, 'detail' FROM accounts_receivable
+  UNION ALL
+  SELECT 30, 'Assets', 'Inventory Value', inventory_value.v, 'detail' FROM inventory_value
+  UNION ALL
+  SELECT 40, 'Assets', 'Employee Loan Receivable', employee_loan_receivable.v, 'detail' FROM employee_loan_receivable
+  UNION ALL
+  SELECT 50, 'Assets', 'Total Assets', assets_total.v, 'total' FROM assets_total
+  UNION ALL
+  SELECT 60, 'Liabilities', 'Accounts Payable', accounts_payable.v, 'detail' FROM accounts_payable
+  UNION ALL
+  SELECT 70, 'Liabilities', 'Customer Advances', customer_advances.v, 'detail' FROM customer_advances
+  UNION ALL
+  SELECT 80, 'Liabilities', 'Expense Payable', expense_payable.v, 'detail' FROM expense_payable
+  UNION ALL
+  SELECT 90, 'Liabilities', 'Payroll Payable', payroll_payable.v, 'detail' FROM payroll_payable
+  UNION ALL
+  SELECT 100, 'Liabilities', 'Total Liabilities', liabilities_total.v, 'total' FROM liabilities_total
+  UNION ALL
+  SELECT 110, 'Equity', 'Opening / Owner Equity', opening_equity.v, 'detail' FROM opening_equity
+  UNION ALL
+  SELECT 120, 'Equity', CASE WHEN net_profit_to_date.v >= 0 THEN 'Net Profit' ELSE 'Net Loss' END, net_profit_to_date.v, 'detail' FROM net_profit_to_date
+  UNION ALL
+  SELECT 130, 'Equity', 'Total Equity', total_equity.v, 'total' FROM total_equity
+  UNION ALL
+  SELECT 140, 'Liabilities + Equity', 'Total Liabilities + Equity', liabilities_equity_total.v, 'total' FROM liabilities_equity_total
+)
+SELECT section, line_item, ROUND(amount, 2) AS amount, row_type
+FROM rows
+ORDER BY sort_no;
+$$;
+
 CREATE OR REPLACE FUNCTION ims.rpt_balance_sheet(
 p_branch_id BIGINT,
 p_as_of DATE
@@ -2476,24 +2772,142 @@ net_position NUMERIC
 )
 LANGUAGE sql
 AS $$
-WITH
-cash AS (
-SELECT COALESCE(SUM(balance),0) AS v
-FROM ims.accounts
-WHERE branch_id=p_branch_id AND is_active=TRUE
-),
-ar AS (
-SELECT COALESCE(SUM(debit - credit),0) AS v
-FROM ims.customer_ledger
-WHERE branch_id=p_branch_id AND entry_date::date <= p_as_of
-),
-ap AS (
-SELECT COALESCE(SUM(credit - debit),0) AS v
-FROM ims.supplier_ledger
-WHERE branch_id=p_branch_id AND entry_date::date <= p_as_of
+WITH src AS (
+  SELECT line_item, amount
+  FROM ims.rpt_balance_sheet_lines(p_branch_id, p_as_of)
 )
-SELECT cash.v, ar.v, ap.v, (cash.v + ar.v - ap.v) AS net_position
-FROM cash, ar, ap;
+SELECT
+  COALESCE((SELECT amount FROM src WHERE line_item = 'Cash & Bank Accounts' LIMIT 1), 0) AS cash_and_bank,
+  COALESCE((SELECT amount FROM src WHERE line_item = 'Accounts Receivable' LIMIT 1), 0) AS accounts_receivable,
+  COALESCE((SELECT amount FROM src WHERE line_item = 'Accounts Payable' LIMIT 1), 0) AS accounts_payable,
+  (
+    COALESCE((SELECT amount FROM src WHERE line_item = 'Total Assets' LIMIT 1), 0)
+    - COALESCE((SELECT amount FROM src WHERE line_item = 'Total Liabilities' LIMIT 1), 0)
+  ) AS net_position;
+$$;
+
+CREATE OR REPLACE FUNCTION ims.rpt_cash_flow_lines(
+p_branch_id BIGINT,
+p_date_from DATE,
+p_date_to DATE
+) RETURNS TABLE(
+section VARCHAR,
+line_item VARCHAR,
+amount NUMERIC,
+row_type VARCHAR
+)
+LANGUAGE sql
+AS $$
+WITH
+customer_receipts AS (
+  SELECT COALESCE(SUM(cr.amount), 0)::NUMERIC AS v
+  FROM ims.customer_receipts cr
+  WHERE cr.branch_id = p_branch_id
+    AND cr.receipt_date::date BETWEEN p_date_from AND p_date_to
+),
+sale_payments AS (
+  SELECT COALESCE(SUM(sp.amount_paid), 0)::NUMERIC AS v
+  FROM ims.sale_payments sp
+  WHERE sp.branch_id = p_branch_id
+    AND sp.pay_date::date BETWEEN p_date_from AND p_date_to
+),
+supplier_payments AS (
+  SELECT COALESCE(SUM(sp.amount_paid), 0)::NUMERIC AS v
+  FROM ims.supplier_payments sp
+  JOIN ims.purchases p ON p.purchase_id = sp.purchase_id
+  WHERE sp.branch_id = p_branch_id
+    AND sp.pay_date::date BETWEEN p_date_from AND p_date_to
+    AND LOWER(COALESCE(p.status::text, '')) <> 'void'
+),
+expense_payments AS (
+  SELECT COALESCE(SUM(ep.amount_paid), 0)::NUMERIC AS v
+  FROM ims.expense_payments ep
+  WHERE ep.branch_id = p_branch_id
+    AND ep.pay_date::date BETWEEN p_date_from AND p_date_to
+),
+wages_paid AS (
+  SELECT COALESCE(SUM(ep.amount_paid), 0)::NUMERIC AS v
+  FROM ims.employee_payments ep
+  WHERE ep.branch_id = p_branch_id
+    AND ep.pay_date::date BETWEEN p_date_from AND p_date_to
+),
+supplier_refunds AS (
+  SELECT COALESCE(SUM(sr.amount), 0)::NUMERIC AS v
+  FROM ims.supplier_receipts sr
+  WHERE sr.branch_id = p_branch_id
+    AND sr.receipt_date::date BETWEEN p_date_from AND p_date_to
+),
+loan_disbursements AS (
+  SELECT COALESCE(SUM(el.amount), 0)::NUMERIC AS v
+  FROM ims.employee_loans el
+  WHERE el.branch_id = p_branch_id
+    AND el.loan_date BETWEEN p_date_from AND p_date_to
+),
+loan_repayments AS (
+  SELECT COALESCE(SUM(lp.amount_paid), 0)::NUMERIC AS v
+  FROM ims.loan_payments lp
+  WHERE lp.branch_id = p_branch_id
+    AND lp.pay_date::date BETWEEN p_date_from AND p_date_to
+),
+net_operations AS (
+  SELECT (
+    customer_receipts.v
+    + sale_payments.v
+    - supplier_payments.v
+    - expense_payments.v
+    - wages_paid.v
+  )::NUMERIC AS v
+  FROM customer_receipts, sale_payments, supplier_payments, expense_payments, wages_paid
+),
+net_investing AS (
+  SELECT (supplier_refunds.v - loan_disbursements.v)::NUMERIC AS v
+  FROM supplier_refunds, loan_disbursements
+),
+net_financing AS (
+  SELECT loan_repayments.v::NUMERIC AS v
+  FROM loan_repayments
+),
+net_cash AS (
+  SELECT (net_operations.v + net_investing.v + net_financing.v)::NUMERIC AS v
+  FROM net_operations, net_investing, net_financing
+),
+rows AS (
+  SELECT 10 AS sort_no, 'Cash Flow from Operations'::VARCHAR AS section, 'Cash receipts from customers'::VARCHAR AS line_item, (customer_receipts.v + sale_payments.v)::NUMERIC AS amount, 'detail'::VARCHAR AS row_type
+  FROM customer_receipts, sale_payments
+  UNION ALL
+  SELECT 20, 'Cash Flow from Operations', 'Cash paid for inventory', -supplier_payments.v, 'detail'
+  FROM supplier_payments
+  UNION ALL
+  SELECT 30, 'Cash Flow from Operations', 'Cash paid for operating expenses', -expense_payments.v, 'detail'
+  FROM expense_payments
+  UNION ALL
+  SELECT 40, 'Cash Flow from Operations', 'Cash paid for wages', -wages_paid.v, 'detail'
+  FROM wages_paid
+  UNION ALL
+  SELECT 50, 'Cash Flow from Operations', 'Net Cash Flow from Operations', net_operations.v, 'total'
+  FROM net_operations
+  UNION ALL
+  SELECT 60, 'Cash Flow from Investing', 'Cash receipts from supplier refunds', supplier_refunds.v, 'detail'
+  FROM supplier_refunds
+  UNION ALL
+  SELECT 70, 'Cash Flow from Investing', 'Cash paid for employee loans', -loan_disbursements.v, 'detail'
+  FROM loan_disbursements
+  UNION ALL
+  SELECT 80, 'Cash Flow from Investing', 'Net Cash Flow from Investing', net_investing.v, 'total'
+  FROM net_investing
+  UNION ALL
+  SELECT 90, 'Cash Flow from Financing', 'Loan repayments received', loan_repayments.v, 'detail'
+  FROM loan_repayments
+  UNION ALL
+  SELECT 100, 'Cash Flow from Financing', 'Net Cash Flow from Financing', net_financing.v, 'total'
+  FROM net_financing
+  UNION ALL
+  SELECT 110, 'Summary', 'Net Increase in Cash', net_cash.v, 'total'
+  FROM net_cash
+)
+SELECT section, line_item, ROUND(amount, 2) AS amount, row_type
+FROM rows
+ORDER BY sort_no;
 $$;
 
 CREATE OR REPLACE FUNCTION ims.rpt_cash_flow(
@@ -2507,13 +2921,155 @@ net_cash_flow NUMERIC
 )
 LANGUAGE sql
 AS $$
+WITH lines AS (
+  SELECT line_item, amount, row_type
+  FROM ims.rpt_cash_flow_lines(p_branch_id, p_date_from, p_date_to)
+)
 SELECT
-COALESCE(SUM(credit),0) AS cash_in,
-COALESCE(SUM(debit),0) AS cash_out,
-COALESCE(SUM(credit),0) - COALESCE(SUM(debit),0) AS net_cash_flow
-FROM ims.account_transactions
-WHERE branch_id=p_branch_id
-AND txn_date::date BETWEEN p_date_from AND p_date_to;
+  COALESCE((SELECT SUM(CASE WHEN row_type = 'detail' AND amount > 0 THEN amount ELSE 0 END) FROM lines), 0) AS cash_in,
+  COALESCE((SELECT SUM(CASE WHEN row_type = 'detail' AND amount < 0 THEN ABS(amount) ELSE 0 END) FROM lines), 0) AS cash_out,
+  COALESCE((SELECT amount FROM lines WHERE line_item = 'Net Increase in Cash' LIMIT 1), 0) AS net_cash_flow;
+$$;
+
+CREATE OR REPLACE FUNCTION ims.rpt_account_statement(
+p_branch_id BIGINT,
+p_date_from DATE,
+p_date_to DATE,
+p_acc_id BIGINT DEFAULT NULL
+) RETURNS TABLE(
+txn_id BIGINT,
+txn_date TIMESTAMPTZ,
+account_id BIGINT,
+account_name VARCHAR,
+txn_type VARCHAR,
+ref_table VARCHAR,
+ref_id BIGINT,
+debit NUMERIC,
+credit NUMERIC,
+running_balance NUMERIC,
+note TEXT
+) LANGUAGE sql
+AS $$
+WITH filtered AS (
+  SELECT
+    at.txn_id,
+    at.txn_date,
+    at.acc_id AS account_id,
+    COALESCE(a.name, 'N/A') AS account_name,
+    at.txn_type::text AS txn_type,
+    COALESCE(at.ref_table, '') AS ref_table,
+    at.ref_id,
+    COALESCE(at.debit, 0)::NUMERIC AS debit,
+    COALESCE(at.credit, 0)::NUMERIC AS credit,
+    COALESCE(at.note, '') AS note
+  FROM ims.account_transactions at
+  LEFT JOIN ims.accounts a ON a.acc_id = at.acc_id
+  WHERE at.branch_id = p_branch_id
+    AND at.txn_date::date BETWEEN p_date_from AND p_date_to
+    AND (p_acc_id IS NULL OR at.acc_id = p_acc_id)
+),
+running AS (
+  SELECT
+    f.*,
+    SUM(f.credit - f.debit)
+      OVER (PARTITION BY f.account_id ORDER BY f.txn_date, f.txn_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+      ::NUMERIC AS running_balance
+  FROM filtered f
+)
+SELECT
+  txn_id,
+  txn_date,
+  account_id,
+  account_name,
+  txn_type,
+  ref_table,
+  ref_id,
+  ROUND(debit, 2) AS debit,
+  ROUND(credit, 2) AS credit,
+  ROUND(running_balance, 2) AS running_balance,
+  note
+FROM running
+ORDER BY txn_date ASC, txn_id ASC;
+$$;
+
+CREATE OR REPLACE FUNCTION ims.rpt_trial_balance(
+p_branch_id BIGINT,
+p_date_from DATE,
+p_date_to DATE
+) RETURNS TABLE(
+account_id BIGINT,
+account_name VARCHAR,
+opening_debit NUMERIC,
+opening_credit NUMERIC,
+period_debit NUMERIC,
+period_credit NUMERIC,
+closing_debit NUMERIC,
+closing_credit NUMERIC
+) LANGUAGE sql
+AS $$
+WITH acc AS (
+  SELECT a.acc_id, a.name
+  FROM ims.accounts a
+  WHERE a.branch_id = p_branch_id
+    AND a.is_active = TRUE
+),
+opening AS (
+  SELECT
+    at.acc_id,
+    COALESCE(SUM(at.credit - at.debit), 0)::NUMERIC AS opening_net
+  FROM ims.account_transactions at
+  WHERE at.branch_id = p_branch_id
+    AND at.txn_date::date < p_date_from
+  GROUP BY at.acc_id
+),
+period AS (
+  SELECT
+    at.acc_id,
+    COALESCE(SUM(at.debit), 0)::NUMERIC AS period_debit,
+    COALESCE(SUM(at.credit), 0)::NUMERIC AS period_credit
+  FROM ims.account_transactions at
+  WHERE at.branch_id = p_branch_id
+    AND at.txn_date::date BETWEEN p_date_from AND p_date_to
+  GROUP BY at.acc_id
+),
+merged AS (
+  SELECT
+    acc.acc_id AS account_id,
+    acc.name AS account_name,
+    COALESCE(opening.opening_net, 0)::NUMERIC AS opening_net,
+    COALESCE(period.period_debit, 0)::NUMERIC AS period_debit,
+    COALESCE(period.period_credit, 0)::NUMERIC AS period_credit
+  FROM acc
+  LEFT JOIN opening ON opening.acc_id = acc.acc_id
+  LEFT JOIN period ON period.acc_id = acc.acc_id
+),
+calc AS (
+  SELECT
+    account_id,
+    account_name,
+    CASE WHEN opening_net < 0 THEN ABS(opening_net) ELSE 0 END::NUMERIC AS opening_debit,
+    CASE WHEN opening_net > 0 THEN opening_net ELSE 0 END::NUMERIC AS opening_credit,
+    period_debit,
+    period_credit,
+    (opening_net + period_credit - period_debit)::NUMERIC AS closing_net
+  FROM merged
+)
+SELECT
+  account_id,
+  account_name,
+  ROUND(opening_debit, 2) AS opening_debit,
+  ROUND(opening_credit, 2) AS opening_credit,
+  ROUND(period_debit, 2) AS period_debit,
+  ROUND(period_credit, 2) AS period_credit,
+  ROUND(CASE WHEN closing_net < 0 THEN ABS(closing_net) ELSE 0 END, 2) AS closing_debit,
+  ROUND(CASE WHEN closing_net > 0 THEN closing_net ELSE 0 END, 2) AS closing_credit
+FROM calc
+WHERE opening_debit <> 0
+   OR opening_credit <> 0
+   OR period_debit <> 0
+   OR period_credit <> 0
+   OR closing_net <> 0
+ORDER BY account_name;
 $$;
 
 CREATE OR REPLACE FUNCTION ims.rpt_customers_all(p_branch_id BIGINT)
