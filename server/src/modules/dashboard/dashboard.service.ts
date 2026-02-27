@@ -2,6 +2,7 @@ import { queryMany, queryOne } from '../../db/query';
 import {
   DashboardCard,
   DashboardChart,
+  DashboardLowStockItem,
   DashboardRecentRow,
   DashboardWidget,
 } from './dashboard.types';
@@ -50,11 +51,14 @@ export class DashboardService {
                  ON si.product_id = i.item_id
                LEFT JOIN ims.stores st
                  ON st.store_id = si.store_id
-              WHERE i.branch_id = $1
                 AND st.branch_id = i.branch_id
+              WHERE i.branch_id = $1
                 AND i.is_active = TRUE
               GROUP BY i.item_id, i.stock_alert
-             HAVING COALESCE(SUM(si.quantity), 0) <= COALESCE(i.stock_alert, 0)
+             HAVING COALESCE(
+                      SUM(CASE WHEN st.store_id IS NOT NULL THEN si.quantity ELSE 0 END),
+                      0
+                    ) <= COALESCE(i.stock_alert, 0)
            ) AS x`,
         [branchId]
       );
@@ -226,6 +230,64 @@ export class DashboardService {
         format: 'currency',
       },
     ];
+  }
+
+  async getLowStockItems(
+    branchId: number,
+    permissions: string[]
+  ): Promise<DashboardLowStockItem[]> {
+    if (!permissions.includes('stock.view')) {
+      return [];
+    }
+
+    const rows = await queryMany<{
+      item_id: number;
+      item_name: string;
+      quantity: string;
+      stock_alert: string;
+    }>(
+      `SELECT
+          i.item_id,
+          i.name AS item_name,
+          COALESCE(
+            SUM(CASE WHEN st.store_id IS NOT NULL THEN si.quantity ELSE 0 END),
+            0
+          )::text AS quantity,
+          COALESCE(i.stock_alert, 0)::text AS stock_alert
+         FROM ims.items i
+         LEFT JOIN ims.store_items si
+           ON si.product_id = i.item_id
+         LEFT JOIN ims.stores st
+           ON st.store_id = si.store_id
+          AND st.branch_id = i.branch_id
+        WHERE i.branch_id = $1
+          AND i.is_active = TRUE
+        GROUP BY i.item_id, i.name, i.stock_alert
+       HAVING COALESCE(
+                SUM(CASE WHEN st.store_id IS NOT NULL THEN si.quantity ELSE 0 END),
+                0
+              ) <= COALESCE(i.stock_alert, 0)
+        ORDER BY
+          (COALESCE(i.stock_alert, 0) - COALESCE(
+            SUM(CASE WHEN st.store_id IS NOT NULL THEN si.quantity ELSE 0 END),
+            0
+          )) DESC,
+          i.name ASC
+        LIMIT 12`,
+      [branchId]
+    );
+
+    return rows.map((row) => {
+      const quantity = Number(row.quantity || 0);
+      const stockAlert = Number(row.stock_alert || 0);
+      return {
+        item_id: Number(row.item_id),
+        item_name: row.item_name,
+        quantity,
+        stock_alert: stockAlert,
+        shortage: Math.max(stockAlert - quantity, 0),
+      };
+    });
   }
 
   async getDashboardCharts(

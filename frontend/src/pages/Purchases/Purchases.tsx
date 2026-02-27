@@ -11,6 +11,7 @@ import Badge from '../../components/ui/badge/Badge';
 import { useToast } from '../../components/ui/toast/Toast';
 import { purchaseService, Purchase, PurchaseItemView } from '../../services/purchase.service';
 import { supplierService, Supplier } from '../../services/supplier.service';
+import ImportUploadModal from '../../components/import/ImportUploadModal';
 
 type PurchaseForm = {
   purchase_id?: number;
@@ -32,7 +33,7 @@ const Purchases = () => {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [items, setItems] = useState<PurchaseItemView[]>([]);
   const [loading, setLoading] = useState(false);
-  const [search, setSearch] = useState('');
+  const [search] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | PurchaseForm['status']>('all');
 
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -40,6 +41,7 @@ const Purchases = () => {
   const [supplierDeleteOpen, setSupplierDeleteOpen] = useState(false);
   const [supplierToDelete, setSupplierToDelete] = useState<Supplier | null>(null);
   const [supplierModalOpen, setSupplierModalOpen] = useState(false);
+  const [supplierImportOpen, setSupplierImportOpen] = useState(false);
   const [supplierForm, setSupplierForm] = useState<Supplier>({
     supplier_id: 0,
     supplier_name: '',
@@ -273,8 +275,8 @@ const Purchases = () => {
                 setSupplierModalOpen(true);
               },
             }}
-            onDisplay={() => loadSuppliers(search)}
-            onSearch={(value: string) => { setSearch(value); }}
+            secondaryAction={{ label: 'Upload Data', onClick: () => setSupplierImportOpen(true) }}
+            onDisplay={() => loadSuppliers()}
           />
           <DataTable
             data={suppliers}
@@ -320,7 +322,6 @@ const Purchases = () => {
             title="Purchase Orders"
             primaryAction={{ label: 'New Purchase', onClick: () => navigate('/purchases/new') }}
             onDisplay={() => loadPurchases(search, statusFilter)}
-            onSearch={(value: string) => { setSearch(value); }}
             onExport={() => showToast('info', 'Export', 'Export coming soon')}
           />
           <div className="flex flex-wrap gap-2 px-1">
@@ -513,6 +514,35 @@ const Purchases = () => {
           </div>
         </form>
       </Modal>
+
+      <ImportUploadModal
+        isOpen={supplierImportOpen}
+        onClose={() => setSupplierImportOpen(false)}
+        importType="suppliers"
+        title="Upload Suppliers"
+        columns={[
+          'supplier_name',
+          'company_name',
+          'contact_person',
+          'contact_phone',
+          'phone',
+          'location',
+          'remaining_balance',
+          'is_active',
+        ]}
+        templateHeaders={[
+          'supplier_name',
+          'company_name',
+          'contact_person',
+          'contact_phone',
+          'phone',
+          'location',
+          'remaining_balance',
+        ]}
+        onImported={async () => {
+          await loadSuppliers();
+        }}
+      />
 
     </div>
   );

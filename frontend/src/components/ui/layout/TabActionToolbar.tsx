@@ -14,6 +14,10 @@ interface TabActionToolbarProps {
         label: string;
         onClick: () => void;
     };
+    secondaryAction?: {
+        label: string;
+        onClick: () => void;
+    };
     quickAddItems?: QuickAddItem[];
     onExport?: () => void;
     onPrint?: () => void;
@@ -29,6 +33,7 @@ interface TabActionToolbarProps {
 export const TabActionToolbar: React.FC<TabActionToolbarProps> = ({
     title,
     primaryAction,
+    secondaryAction,
     quickAddItems = [],
     onExport,
     onPrint,
@@ -57,6 +62,14 @@ export const TabActionToolbar: React.FC<TabActionToolbarProps> = ({
                             className="pl-9 pr-4 py-2 w-64 text-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 transition-all"
                         />
                     </div>
+                )}
+                {secondaryAction && (
+                    <button
+                        onClick={secondaryAction.onClick}
+                        className="px-3 py-2 text-sm font-medium rounded-xl border border-primary-300 text-primary-700 hover:bg-primary-50 dark:border-primary-500/40 dark:text-primary-300 dark:hover:bg-primary-500/10 transition-all"
+                    >
+                        {secondaryAction.label}
+                    </button>
                 )}
                 {onDisplay && (
                     <button

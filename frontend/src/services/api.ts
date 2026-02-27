@@ -31,13 +31,17 @@ class ApiClient {
   /**
    * Build headers including Authorization when we have a token
    */
-  private buildHeaders(overrides: HeadersInit = {}): Record<string, string> {
+  private buildHeaders(
+    overrides: HeadersInit = {},
+    options?: { includeJsonContentType?: boolean }
+  ): Record<string, string> {
     const token = getAccessToken();
+    const includeJsonContentType = options?.includeJsonContentType ?? true;
     const headers: Record<string, string> = {
       ...(overrides as Record<string, string>),
     };
-    // Only set Content-Type if not explicitly overridden (e.g., for FormData)
-    if (!headers['Content-Type']) {
+    // Only set JSON content type for non-FormData requests.
+    if (includeJsonContentType && !headers['Content-Type']) {
       headers['Content-Type'] = 'application/json';
     }
     if (token) {
@@ -79,16 +83,11 @@ class ApiClient {
   ): Promise<ApiResponse<T>> {
     const url = `${this.baseURL}${endpoint}`;
 
-    // Don't set Content-Type header if body is FormData (browser sets it automatically with boundary)
+    // Don't set Content-Type for FormData (browser sets multipart boundary automatically).
     const isFormData = options.body instanceof FormData;
-    const headers = isFormData 
-      ? this.buildHeaders({ ...(options.headers as Record<string, string>), 'Content-Type': '' })
-      : this.buildHeaders(options.headers as Record<string, string>);
-    
-    // Remove empty Content-Type
-    if (isFormData && headers['Content-Type'] === '') {
-      delete headers['Content-Type'];
-    }
+    const headers = this.buildHeaders(options.headers as Record<string, string>, {
+      includeJsonContentType: !isFormData,
+    });
 
     const config: RequestInit = {
       ...options,

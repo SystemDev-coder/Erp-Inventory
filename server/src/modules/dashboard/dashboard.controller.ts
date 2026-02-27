@@ -34,14 +34,18 @@ export class DashboardController {
     }
 
     const widgets = dashboardService.getDashboardWidgets(permissions);
-    const cards = await dashboardService.getDashboardCards(req.user.branchId, permissions);
-    const charts = await dashboardService.getDashboardCharts(req.user.branchId, permissions);
-    const recent = await dashboardService.getRecentActivity(req.user.branchId, permissions);
+    const [cards, charts, lowStockItems, recent] = await Promise.all([
+      dashboardService.getDashboardCards(req.user.branchId, permissions),
+      dashboardService.getDashboardCharts(req.user.branchId, permissions),
+      dashboardService.getLowStockItems(req.user.branchId, permissions),
+      dashboardService.getRecentActivity(req.user.branchId, permissions),
+    ]);
 
     return ApiResponse.success(res, {
       widgets,
       cards,
       charts,
+      low_stock_items: lowStockItems,
       recent,
       summary: {
         modules: cards.length,

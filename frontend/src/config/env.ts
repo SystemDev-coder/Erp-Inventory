@@ -204,6 +204,12 @@ export const API = {
     REMOVE_ITEM: (storeId: number, itemId: number) => `/api/stores/${storeId}/items/${itemId}`,
   },
 
+  IMPORT: {
+    CUSTOMERS: '/api/import/customers',
+    SUPPLIERS: '/api/import/suppliers',
+    ITEMS: '/api/import/items',
+  },
+
   // Health check
   HEALTH: '/api/health',
 } as const;

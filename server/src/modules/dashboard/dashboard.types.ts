@@ -43,10 +43,19 @@ export type DashboardRecentRow = {
   status: string;
 };
 
+export type DashboardLowStockItem = {
+  item_id: number;
+  item_name: string;
+  quantity: number;
+  stock_alert: number;
+  shortage: number;
+};
+
 export type DashboardResponse = {
   widgets: DashboardWidget[];
   cards: DashboardCard[];
   charts: DashboardChart[];
+  low_stock_items: DashboardLowStockItem[];
   recent: DashboardRecentRow[];
   summary: {
     modules: number;

@@ -44,9 +44,18 @@ type DashboardRecentRow = {
   status: string;
 };
 
+type DashboardLowStockItem = {
+  item_id: number;
+  item_name: string;
+  quantity: number;
+  stock_alert: number;
+  shortage: number;
+};
+
 type DashboardResponse = {
   cards: DashboardCard[];
   charts: DashboardChart[];
+  low_stock_items: DashboardLowStockItem[];
   recent: DashboardRecentRow[];
   summary: {
     modules: number;
@@ -284,6 +293,8 @@ const Dashboard = () => {
   const bottomCharts = orderedCharts.filter((chart) => chart.id !== 'income-trend-12m');
   const hasRenderableCharts = orderedCharts.some((chart) => !!chartOptions[chart.id] && chartHasData(chart));
 
+  const lowStockItems = data?.low_stock_items || [];
+
   return (
     <div className="space-y-7">
       <section className="relative overflow-hidden rounded-3xl border border-[#b7cde0] bg-gradient-to-r from-[#f8fbff] via-[#eef5fb] to-[#e5eff8] p-6 shadow-sm dark:border-[#1f4a67] dark:bg-gradient-to-r dark:from-[#113751] dark:via-[#0f334b] dark:to-[#0b2739]">
@@ -415,36 +426,112 @@ const Dashboard = () => {
               </article>
             )}
 
-            {bottomCharts.length > 0 && (
-              <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-                {bottomCharts.map((chart) => {
-                  const options = chartOptions[chart.id];
-                  if (!options || !chartHasData(chart)) return null;
+            {(() => {
+              const salesBottomChart = bottomCharts.find((chart) => chart.id === 'sales-6m');
+              const remainingBottomCharts = bottomCharts.filter((chart) => chart.id !== 'sales-6m');
 
-                  return (
-                    <article
-                      key={chart.id}
-                      className="rounded-2xl border border-[#b7cde0] bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-[#1f4a67] dark:bg-[#0f334b]/88"
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div>
-                          <h3 className="text-base font-semibold text-[#123f5c] dark:text-[#e9f5ff]">{chart.name}</h3>
-                          <p className="text-xs text-[#335973] dark:text-[#c4def0]">{getChartSubtitle(chart.id)}</p>
+              return (
+                <>
+                  {salesBottomChart && chartOptions[salesBottomChart.id] && chartHasData(salesBottomChart) && (
+                    <section className="grid grid-cols-1 gap-5 xl:grid-cols-3">
+                      <article className="xl:col-span-2 rounded-2xl border border-[#b7cde0] bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-[#1f4a67] dark:bg-[#0f334b]/88">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <h3 className="text-base font-semibold text-[#123f5c] dark:text-[#e9f5ff]">
+                              {salesBottomChart.name}
+                            </h3>
+                            <p className="text-xs text-[#335973] dark:text-[#c4def0]">
+                              {getChartSubtitle(salesBottomChart.id)}
+                            </p>
+                          </div>
                         </div>
-                      </div>
-                      <div className="mt-4">
-                        <Chart
-                          options={options}
-                          series={chart.series}
-                          type={chart.type === 'bar' ? 'bar' : 'line'}
-                          height={300}
-                        />
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
+                        <div className="mt-4">
+                          <Chart
+                            options={chartOptions[salesBottomChart.id]}
+                            series={salesBottomChart.series}
+                            type={salesBottomChart.type === 'bar' ? 'bar' : 'line'}
+                            height={300}
+                          />
+                        </div>
+                      </article>
+
+                      <article className="rounded-2xl border border-[#b7cde0] bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-[#1f4a67] dark:bg-[#0f334b]/88">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <h3 className="text-base font-semibold text-[#123f5c] dark:text-[#e9f5ff]">
+                              Low Stock Alert Items
+                            </h3>
+                            <p className="text-xs text-[#335973] dark:text-[#c4def0]">
+                              Items at or below reorder level
+                            </p>
+                          </div>
+                          <span className="rounded-full border border-[#c7dced] bg-[#edf5fb] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#0f4f76] dark:border-[#2f6385] dark:bg-[#123b56] dark:text-[#9bcde8]">
+                            {lowStockItems.length} items
+                          </span>
+                        </div>
+                        <div className="mt-4 space-y-2">
+                          {lowStockItems.length === 0 ? (
+                            <p className="text-sm text-[#5d7c93] dark:text-[#b5cee0]">
+                              No low stock alerts right now.
+                            </p>
+                          ) : (
+                            lowStockItems.slice(0, 8).map((item) => (
+                              <div
+                                key={item.item_id}
+                                className="flex items-center justify-between rounded-lg border border-[#d8e5ef] px-3 py-2 dark:border-[#23506d]"
+                              >
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-semibold text-[#123f5c] dark:text-[#ecf7ff]">
+                                    {item.item_name}
+                                  </p>
+                                  <p className="text-xs text-[#5f7f96] dark:text-[#b0cce0]">
+                                    Stock: {item.quantity} / Alert: {item.stock_alert}
+                                  </p>
+                                </div>
+                                <span className="ml-3 rounded-full border border-[#f0d6be] bg-[#fff6eb] px-2 py-0.5 text-[11px] font-semibold text-[#b8681f] dark:border-[#7c5b33] dark:bg-[#3d2d18] dark:text-[#ffc98d]">
+                                  Need {item.shortage}
+                                </span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </article>
+                    </section>
+                  )}
+
+                  {remainingBottomCharts.length > 0 && (
+                    <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+                      {remainingBottomCharts.map((chart) => {
+                        const options = chartOptions[chart.id];
+                        if (!options || !chartHasData(chart)) return null;
+
+                        return (
+                          <article
+                            key={chart.id}
+                            className="rounded-2xl border border-[#b7cde0] bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-[#1f4a67] dark:bg-[#0f334b]/88"
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div>
+                                <h3 className="text-base font-semibold text-[#123f5c] dark:text-[#e9f5ff]">{chart.name}</h3>
+                                <p className="text-xs text-[#335973] dark:text-[#c4def0]">{getChartSubtitle(chart.id)}</p>
+                              </div>
+                            </div>
+                            <div className="mt-4">
+                              <Chart
+                                options={options}
+                                series={chart.series}
+                                type={chart.type === 'bar' ? 'bar' : 'line'}
+                                height={300}
+                              />
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
 
             {!hasRenderableCharts && (
               <article className="rounded-2xl border border-dashed border-[#b7cde0] bg-white/90 p-8 text-center text-[#5d7890] dark:border-[#2f6385] dark:bg-[#0f334b]/78 dark:text-[#b4cfe1]">

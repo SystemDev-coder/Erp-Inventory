@@ -12,6 +12,7 @@ import { Product, productService } from '../../services/product.service';
 import { InventoryTransactionRow, inventoryService } from '../../services/inventory.service';
 import { storeService, Store as StoreType } from '../../services/store.service';
 import StoresPage from '../Stock/StoresPage';
+import ImportUploadModal from '../../components/import/ImportUploadModal';
 
 type ProductForm = Partial<Product>;
 type TxCategory = 'adjustment' | 'paid' | 'sales' | 'damage';
@@ -46,6 +47,7 @@ const Products = () => {
 
   const [itemModalOpen, setItemModalOpen] = useState(false);
   const [stateModalOpen, setStateModalOpen] = useState(false);
+  const [itemImportOpen, setItemImportOpen] = useState(false);
 
   const [itemForm, setItemForm] = useState<ProductForm>(defaultProductForm);
   const [selectedStoreId, setSelectedStoreId] = useState<number | ''>('');
@@ -222,6 +224,13 @@ const Products = () => {
             <button type="button" onClick={loadProducts} className="rounded-lg border px-3 py-2 text-sm">Display</button>
             <button
               type="button"
+              onClick={() => setItemImportOpen(true)}
+              className="rounded-lg border border-primary-300 px-3 py-2 text-sm font-medium text-primary-700 hover:bg-primary-50 dark:border-primary-500/40 dark:text-primary-300 dark:hover:bg-primary-500/10"
+            >
+              Upload Data
+            </button>
+            <button
+              type="button"
               onClick={async () => {
                 setItemForm(defaultProductForm);
                 const storeRes = await storeService.list();
@@ -346,6 +355,18 @@ const Products = () => {
       </Modal>
 
       <ConfirmDialog isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={removeItem} title="Delete Item" message={`Delete "${itemToDelete?.name || ''}"?`} confirmText="Delete" variant="danger" isLoading={loading} />
+
+      <ImportUploadModal
+        isOpen={itemImportOpen}
+        onClose={() => setItemImportOpen(false)}
+        importType="items"
+        title="Upload Items"
+        columns={['store_id', 'name', 'barcode', 'stock_alert', 'opening_balance', 'cost_price', 'sell_price']}
+        templateHeaders={['store_id', 'name', 'barcode', 'stock_alert', 'opening_balance', 'cost_price', 'sell_price']}
+        onImported={async () => {
+          await loadProducts();
+        }}
+      />
     </div>
   );
 };

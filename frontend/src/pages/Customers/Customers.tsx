@@ -10,6 +10,7 @@ import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { useToast } from '../../components/ui/toast/Toast';
 import Badge from '../../components/ui/badge/Badge';
 import { customerService, Customer } from '../../services/customer.service';
+import ImportUploadModal from '../../components/import/ImportUploadModal';
 
 type CustomerForm = {
     customer_id?: number;
@@ -39,14 +40,14 @@ const Customers = () => {
     const [customers, setCustomers] = useState<Customer[]>([]);
     const [hasDisplayed, setHasDisplayed] = useState(false);
     const [loading, setLoading] = useState(false);
-    const [search, setSearch] = useState('');
     const [form, setForm] = useState<CustomerForm>(emptyForm);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null);
+    const [importModalOpen, setImportModalOpen] = useState(false);
 
-    const fetchCustomers = async (term?: string) => {
+    const fetchCustomers = async () => {
         setLoading(true);
-        const res = await customerService.list(term);
+        const res = await customerService.list();
         if (res.success && res.data?.customers) {
             setCustomers(res.data.customers);
         } else {
@@ -57,13 +58,7 @@ const Customers = () => {
 
     const handleDisplay = async () => {
         setHasDisplayed(true);
-        await fetchCustomers(search);
-    };
-
-    const handleSearch = async (value: string) => {
-        setSearch(value);
-        if (!hasDisplayed) return;
-        await fetchCustomers(value);
+        await fetchCustomers();
     };
 
     const columns: ColumnDef<Customer>[] = useMemo(() => [
@@ -157,7 +152,7 @@ const Customers = () => {
         const res = await customerService.remove(customerToDelete.customer_id);
         if (res.success) {
             showToast('success', 'Deleted', `"${customerToDelete.full_name}" removed`);
-            fetchCustomers(search);
+            fetchCustomers();
         } else {
             showToast('error', 'Delete failed', res.error || 'Could not delete customer');
         }
@@ -176,8 +171,8 @@ const Customers = () => {
                         <TabActionToolbar
                         title="Customer Directory"
                         primaryAction={{ label: 'New Customer', onClick: () => { setForm(emptyForm); setIsAddOpen(true); } }}
+                        secondaryAction={{ label: 'Upload Data', onClick: () => setImportModalOpen(true) }}
                         onDisplay={handleDisplay}
-                        onSearch={handleSearch}
                         onExport={() => showToast('info', 'Export', 'Customer export coming soon')}
                     />
                     <DataTable
@@ -200,8 +195,8 @@ const Customers = () => {
                         <TabActionToolbar
                         title="Regular Customers"
                         primaryAction={{ label: 'New Customer', onClick: () => { setForm(emptyForm); setIsAddOpen(true); } }}
+                        secondaryAction={{ label: 'Upload Data', onClick: () => setImportModalOpen(true) }}
                         onDisplay={handleDisplay}
-                        onSearch={handleSearch}
                     />
                     <DataTable
                         data={visibleCustomers.filter(c => c.customer_type !== 'one-time')}
@@ -222,8 +217,8 @@ const Customers = () => {
                         <TabActionToolbar
                         title="Walking Customers"
                         primaryAction={{ label: 'New Customer', onClick: () => { setForm(emptyForm); setIsAddOpen(true); } }}
+                        secondaryAction={{ label: 'Upload Data', onClick: () => setImportModalOpen(true) }}
                         onDisplay={handleDisplay}
-                        onSearch={handleSearch}
                     />
                     <DataTable
                         data={visibleCustomers.filter(c => c.customer_type === 'one-time')}
@@ -349,6 +344,20 @@ const Customers = () => {
                 cancelText="Cancel"
                 variant="danger"
                 isLoading={loading}
+            />
+
+            <ImportUploadModal
+                isOpen={importModalOpen}
+                onClose={() => setImportModalOpen(false)}
+                importType="customers"
+                title="Upload Customers"
+                columns={['full_name', 'phone', 'customer_type', 'gender', 'address', 'remaining_balance', 'is_active']}
+                templateHeaders={['full_name', 'phone', 'customer_type', 'gender', 'address', 'remaining_balance', 'is_active']}
+                onImported={async () => {
+                    if (hasDisplayed) {
+                        await fetchCustomers();
+                    }
+                }}
             />
         </div>
     );
