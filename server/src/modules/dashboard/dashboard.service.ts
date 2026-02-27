@@ -19,6 +19,20 @@ const ALL_WIDGETS: DashboardWidget[] = [
 
 const hasPermission = (permissions: string[], key: string) => {
   if (permissions.includes(key)) return true;
+  if (key === 'stock.view') {
+    return (
+      permissions.includes('warehouse_stock.view') ||
+      permissions.includes('inventory.view') ||
+      permissions.includes('items.view') ||
+      permissions.includes('products.view')
+    );
+  }
+  if (key === 'inventory.view') {
+    return permissions.includes('stock.view') || permissions.includes('warehouse_stock.view');
+  }
+  if (key === 'warehouse_stock.view') {
+    return permissions.includes('stock.view') || permissions.includes('inventory.view');
+  }
   if (key.startsWith('items.')) {
     return permissions.includes(key.replace('items.', 'products.'));
   }
@@ -26,6 +40,32 @@ const hasPermission = (permissions: string[], key: string) => {
     return permissions.includes(key.replace('products.', 'items.'));
   }
   return false;
+};
+
+let cachedItemAlertExpression: string | null = null;
+
+const getItemAlertExpression = async (): Promise<string> => {
+  if (cachedItemAlertExpression) return cachedItemAlertExpression;
+
+  const columns = await queryMany<{ column_name: string }>(
+    `SELECT column_name
+       FROM information_schema.columns
+      WHERE table_schema = 'ims'
+        AND table_name = 'items'`
+  );
+  const names = new Set(columns.map((row) => row.column_name));
+
+  if (names.has('stock_alert')) {
+    cachedItemAlertExpression = 'i.stock_alert';
+    return cachedItemAlertExpression;
+  }
+  if (names.has('reorder_level')) {
+    cachedItemAlertExpression = 'i.reorder_level';
+    return cachedItemAlertExpression;
+  }
+
+  cachedItemAlertExpression = 'NULL::numeric';
+  return cachedItemAlertExpression;
 };
 
 export class DashboardService {
@@ -42,6 +82,8 @@ export class DashboardService {
     }
 
     const runLowStockCount = async (): Promise<{ count: string } | null> => {
+      const alertExpr = await getItemAlertExpression();
+      const thresholdExpr = `GREATEST(COALESCE(NULLIF(${alertExpr}, 0), 5), 1)`;
       return queryOne<{ count: string }>(
         `SELECT COUNT(*)::text AS count
            FROM (
@@ -54,11 +96,11 @@ export class DashboardService {
                 AND st.branch_id = i.branch_id
               WHERE i.branch_id = $1
                 AND i.is_active = TRUE
-              GROUP BY i.item_id, i.stock_alert
+              GROUP BY i.item_id, ${alertExpr}
              HAVING COALESCE(
                       SUM(CASE WHEN st.store_id IS NOT NULL THEN si.quantity ELSE 0 END),
                       0
-                    ) <= COALESCE(i.stock_alert, 0)
+                    ) <= ${thresholdExpr}
            ) AS x`,
         [branchId]
       );
@@ -236,9 +278,12 @@ export class DashboardService {
     branchId: number,
     permissions: string[]
   ): Promise<DashboardLowStockItem[]> {
-    if (!permissions.includes('stock.view')) {
+    if (!hasPermission(permissions, 'stock.view')) {
       return [];
     }
+
+    const alertExpr = await getItemAlertExpression();
+    const thresholdExpr = `GREATEST(COALESCE(NULLIF(${alertExpr}, 0), 5), 1)`;
 
     const rows = await queryMany<{
       item_id: number;
@@ -253,7 +298,7 @@ export class DashboardService {
             SUM(CASE WHEN st.store_id IS NOT NULL THEN si.quantity ELSE 0 END),
             0
           )::text AS quantity,
-          COALESCE(i.stock_alert, 0)::text AS stock_alert
+          ${thresholdExpr}::text AS stock_alert
          FROM ims.items i
          LEFT JOIN ims.store_items si
            ON si.product_id = i.item_id
@@ -262,13 +307,13 @@ export class DashboardService {
           AND st.branch_id = i.branch_id
         WHERE i.branch_id = $1
           AND i.is_active = TRUE
-        GROUP BY i.item_id, i.name, i.stock_alert
+        GROUP BY i.item_id, i.name, ${alertExpr}
        HAVING COALESCE(
                 SUM(CASE WHEN st.store_id IS NOT NULL THEN si.quantity ELSE 0 END),
                 0
-              ) <= COALESCE(i.stock_alert, 0)
+              ) <= ${thresholdExpr}
         ORDER BY
-          (COALESCE(i.stock_alert, 0) - COALESCE(
+          (${thresholdExpr} - COALESCE(
             SUM(CASE WHEN st.store_id IS NOT NULL THEN si.quantity ELSE 0 END),
             0
           )) DESC,
@@ -368,7 +413,7 @@ export class DashboardService {
       });
     }
 
-    if (permissions.includes('stock.view')) {
+    if (hasPermission(permissions, 'stock.view')) {
       const rows = await queryMany<{ label: string; qty: string }>(
         `WITH days AS (
            SELECT generate_series(

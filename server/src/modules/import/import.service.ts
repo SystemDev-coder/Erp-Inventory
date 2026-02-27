@@ -357,8 +357,6 @@ const parseCustomerRow = (raw: Record<string, unknown>): ParseResult<CustomerImp
       normalizedType === 'one time'
     ) {
       customerType = 'one-time';
-    } else {
-      errors.push('customer_type must be either regular or One-time visitor');
     }
   }
 
