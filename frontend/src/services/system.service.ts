@@ -166,8 +166,21 @@ export const systemService = {
     return apiClient.delete(API.SYSTEM.PERMISSION(id));
   },
 
-  async getLogs(page = 1, limit = 20): Promise<ApiResponse<{ logs: SystemAuditLog[]; total: number; page: number; limit: number }>> {
-    return apiClient.get(`${API.SYSTEM.LOGS}?page=${page}&limit=${limit}`);
+  async getLogs(
+    page = 1,
+    limit = 20,
+    startDate?: string,
+    endDate?: string
+  ): Promise<ApiResponse<{ logs: SystemAuditLog[]; total: number; page: number; limit: number }>> {
+    const params = new URLSearchParams({
+      page: String(page),
+      limit: String(limit),
+    });
+    if (startDate && endDate) {
+      params.set('startDate', startDate);
+      params.set('endDate', endDate);
+    }
+    return apiClient.get(`${API.SYSTEM.LOGS}?${params.toString()}`);
   },
 
   async deleteLog(id: number): Promise<ApiResponse> {

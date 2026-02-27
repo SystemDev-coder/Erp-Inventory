@@ -167,6 +167,9 @@ const Settings = () => {
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditPage, setAuditPage] = useState(1);
   const [auditTotal, setAuditTotal] = useState(0);
+  const [auditStartDate, setAuditStartDate] = useState('');
+  const [auditEndDate, setAuditEndDate] = useState('');
+  const [auditDisplayed, setAuditDisplayed] = useState(false);
   const auditLimit = 20;
 
   const loadCompany = async () => {
@@ -239,8 +242,17 @@ const Settings = () => {
   };
 
   const loadAudit = async (page = 1) => {
+    if (!auditStartDate || !auditEndDate) {
+      showToast('error', 'Audit History', 'Select start and end date first');
+      return;
+    }
+    if (auditStartDate > auditEndDate) {
+      showToast('error', 'Audit History', 'End date must be after start date');
+      return;
+    }
+
     setAuditLoading(true);
-    const res = await settingsService.listAudit(page, auditLimit);
+    const res = await settingsService.listAudit(page, auditLimit, auditStartDate, auditEndDate);
     setAuditLoading(false);
     if (!res.success || !res.data?.logs) {
       showToast('error', 'Audit History', res.error || 'Failed to load audit history');
@@ -249,6 +261,7 @@ const Settings = () => {
     setAuditLogs(res.data.logs);
     setAuditPage(res.data.page || page);
     setAuditTotal(res.data.total || 0);
+    setAuditDisplayed(true);
   };
 
   const handleCompanySave = async () => {
@@ -441,21 +454,57 @@ const Settings = () => {
 
   const auditContent = (
     <div className="bg-white p-6 rounded-2xl border border-slate-200 dark:bg-slate-900 dark:border-slate-800">
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">Audit History</h3>
-        <button
-          onClick={() => loadAudit(1)}
-          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 text-slate-700 text-sm hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-          disabled={auditLoading}
-        >
-          Display
-        </button>
+      <div className="mb-4 space-y-3">
+        <div className="flex justify-between items-center">
+          <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">Audit History</h3>
+        </div>
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="flex flex-col gap-1 text-xs font-medium text-slate-600 dark:text-slate-300">
+            Start Date
+            <input
+              type="date"
+              value={auditStartDate}
+              onChange={(e) => {
+                setAuditStartDate(e.target.value);
+                setAuditDisplayed(false);
+                setAuditLogs([]);
+                setAuditPage(1);
+                setAuditTotal(0);
+              }}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-medium text-slate-600 dark:text-slate-300">
+            End Date
+            <input
+              type="date"
+              value={auditEndDate}
+              onChange={(e) => {
+                setAuditEndDate(e.target.value);
+                setAuditDisplayed(false);
+                setAuditLogs([]);
+                setAuditPage(1);
+                setAuditTotal(0);
+              }}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+            />
+          </label>
+          <button
+            onClick={() => loadAudit(1)}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 text-slate-700 text-sm hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+            disabled={auditLoading}
+          >
+            {auditLoading ? 'Loading...' : 'Display'}
+          </button>
+        </div>
       </div>
 
-      {auditLoading ? (
+      {!auditDisplayed ? (
+        <p className="text-sm text-slate-500">Select start and end date, then click Display.</p>
+      ) : auditLoading ? (
         <p className="text-sm text-slate-500">Loading...</p>
       ) : auditLogs.length === 0 ? (
-        <p className="text-sm text-slate-500">No audit logs.</p>
+        <p className="text-sm text-slate-500">No audit logs for selected date range.</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
@@ -502,14 +551,14 @@ const Settings = () => {
           <button
             className="px-3 py-1 rounded border border-slate-200 disabled:opacity-50"
             onClick={() => loadAudit(Math.max(1, auditPage - 1))}
-            disabled={auditPage <= 1}
+            disabled={!auditDisplayed || auditPage <= 1 || auditLoading}
           >
             Prev
           </button>
           <button
             className="px-3 py-1 rounded border border-slate-200 disabled:opacity-50"
             onClick={() => loadAudit(auditPage + 1)}
-            disabled={auditPage * auditLimit >= auditTotal}
+            disabled={!auditDisplayed || auditPage * auditLimit >= auditTotal || auditLoading}
           >
             Next
           </button>

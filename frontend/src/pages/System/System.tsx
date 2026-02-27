@@ -15,6 +15,7 @@ import {
 } from '../../services/system.service';
 
 const LOGS_LIMIT = 20;
+const SHOW_PERMISSION_TAB = false;
 type ConfirmTarget =
   | { type: 'user'; payload: SystemUser }
   | { type: 'role'; payload: SystemRole }
@@ -29,6 +30,10 @@ const System = () => {
   const [permissions, setPermissions] = useState<SystemPermission[]>([]);
   const [branches, setBranches] = useState<SystemBranch[]>([]);
   const [logs, setLogs] = useState<SystemAuditLog[]>([]);
+  const [logsStartDate, setLogsStartDate] = useState('');
+  const [logsEndDate, setLogsEndDate] = useState('');
+  const [logsDisplayed, setLogsDisplayed] = useState(false);
+  const [logsLoading, setLogsLoading] = useState(false);
   const [usersDisplayed, setUsersDisplayed] = useState(false);
   const [rolesDisplayed, setRolesDisplayed] = useState(false);
   const [permissionsDisplayed, setPermissionsDisplayed] = useState(false);
@@ -132,20 +137,31 @@ const System = () => {
   }, [showToast]);
 
   const loadLogs = useCallback(async (page = 1) => {
-    const res = await systemService.getLogs(page, LOGS_LIMIT);
+    if (!logsStartDate || !logsEndDate) {
+      showToast('error', 'Activity Logs', 'Select start and end date first');
+      return;
+    }
+    if (logsStartDate > logsEndDate) {
+      showToast('error', 'Activity Logs', 'End date must be after start date');
+      return;
+    }
+
+    setLogsLoading(true);
+    const res = await systemService.getLogs(page, LOGS_LIMIT, logsStartDate, logsEndDate);
+    setLogsLoading(false);
     if (res.success && res.data?.logs) {
       setLogs(res.data.logs);
       setLogsPage(res.data.page || page);
       setLogsTotal(res.data.total || 0);
+      setLogsDisplayed(true);
       return;
     }
     showToast('error', 'Activity Logs', res.error || 'Failed to load logs');
-  }, [showToast]);
+  }, [logsEndDate, logsStartDate, showToast]);
 
   useEffect(() => {
     void loadBranches();
-    void loadLogs(1);
-  }, [loadBranches, loadLogs]);
+  }, [loadBranches]);
 
   const openCreateUser = async () => {
     const roleList = roles.length ? roles : await loadRoles();
@@ -367,7 +383,7 @@ const System = () => {
         showToast('error', 'Activity Logs', res.error || 'Delete failed');
       } else {
         showToast('success', 'Activity Logs', 'Log deleted');
-        await loadLogs(logsPage);
+        if (logsDisplayed) await loadLogs(logsPage);
       }
     } else {
       const res = await systemService.clearLogs();
@@ -375,7 +391,7 @@ const System = () => {
         showToast('error', 'Activity Logs', res.error || 'Clear failed');
       } else {
         showToast('success', 'Activity Logs', 'Logs cleared');
-        await loadLogs(1);
+        if (logsDisplayed) await loadLogs(1);
       }
     }
     setConfirmLoading(false);
@@ -418,7 +434,7 @@ const System = () => {
         <div className="space-y-3">
           <div className="flex flex-wrap justify-end gap-2">
             <button onClick={displayUsers} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm hover:bg-slate-50 dark:hover:bg-slate-800" disabled={loadingUsers}>
-              {loadingUsers ? 'Loading...' : usersDisplayed ? 'Refresh Users' : 'Display Users'}
+              {loadingUsers ? 'Loading...' : 'Display Users'}
             </button>
             <button onClick={openCreateUser} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white text-sm"><Plus className="w-4 h-4" /> Add User</button>
           </div>
@@ -445,7 +461,7 @@ const System = () => {
         <div className="space-y-3">
           <div className="flex flex-wrap justify-end gap-2">
             <button onClick={displayRoles} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm hover:bg-slate-50 dark:hover:bg-slate-800" disabled={loadingRoles}>
-              {loadingRoles ? 'Loading...' : rolesDisplayed ? 'Refresh Roles' : 'Display Roles'}
+              {loadingRoles ? 'Loading...' : 'Display Roles'}
             </button>
             <button onClick={openCreateRole} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white text-sm"><Plus className="w-4 h-4" /> Add Role</button>
           </div>
@@ -463,33 +479,37 @@ const System = () => {
         </div>
       ),
     },
-    {
-      id: 'permissions',
-      label: 'Permissions',
-      icon: Lock,
-      badge: permissions.length,
-      content: (
-        <div className="space-y-3">
-          <div className="flex flex-wrap justify-end gap-2">
-            <button onClick={displayPermissions} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm hover:bg-slate-50 dark:hover:bg-slate-800" disabled={loadingPermissions}>
-              {loadingPermissions ? 'Loading...' : permissionsDisplayed ? 'Refresh Permissions' : 'Display Permissions'}
-            </button>
-            <button onClick={openCreatePermission} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white text-sm"><Plus className="w-4 h-4" /> Add Permission</button>
-          </div>
-          {permissionsDisplayed ? (
-            <div className="overflow-x-auto bg-white rounded-xl border border-slate-200 p-4 dark:bg-slate-900 dark:border-slate-800">
-              <table className="min-w-full text-sm"><thead><tr className="text-left text-slate-500 dark:text-slate-300"><th>Key</th><th>Name</th><th>Module</th><th>Action</th><th>Actions</th></tr></thead><tbody>
-                {permissions.map((p) => <tr key={p.perm_id} className="border-t border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200"><td className="font-mono text-xs">{p.perm_key}</td><td>{p.perm_name}</td><td>{p.module}{p.sub_module ? ` / ${p.sub_module}` : ''}</td><td>{p.action_type || '-'}</td><td className="space-x-2 py-2"><button onClick={() => openEditPermission(p)} className="px-2 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"><Pencil className="w-3 h-3 inline" /></button><button onClick={() => requestDeletePermission(p)} className="px-2 py-1 border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-300 rounded hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="w-3 h-3 inline" /></button></td></tr>)}
-              </tbody></table>
-            </div>
-          ) : (
-            <div className="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-              Click <span className="font-semibold">Display Permissions</span> to load permissions data.
-            </div>
-          )}
-        </div>
-      ),
-    },
+    ...(SHOW_PERMISSION_TAB
+      ? [
+          {
+            id: 'permissions',
+            label: 'Permissions',
+            icon: Lock,
+            badge: permissions.length,
+            content: (
+              <div className="space-y-3">
+                <div className="flex flex-wrap justify-end gap-2">
+                  <button onClick={displayPermissions} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm hover:bg-slate-50 dark:hover:bg-slate-800" disabled={loadingPermissions}>
+                    {loadingPermissions ? 'Loading...' : 'Display Permissions'}
+                  </button>
+                  <button onClick={openCreatePermission} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white text-sm"><Plus className="w-4 h-4" /> Add Permission</button>
+                </div>
+                {permissionsDisplayed ? (
+                  <div className="overflow-x-auto bg-white rounded-xl border border-slate-200 p-4 dark:bg-slate-900 dark:border-slate-800">
+                    <table className="min-w-full text-sm"><thead><tr className="text-left text-slate-500 dark:text-slate-300"><th>Key</th><th>Name</th><th>Module</th><th>Action</th><th>Actions</th></tr></thead><tbody>
+                      {permissions.map((p) => <tr key={p.perm_id} className="border-t border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200"><td className="font-mono text-xs">{p.perm_key}</td><td>{p.perm_name}</td><td>{p.module}{p.sub_module ? ` / ${p.sub_module}` : ''}</td><td>{p.action_type || '-'}</td><td className="space-x-2 py-2"><button onClick={() => openEditPermission(p)} className="px-2 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"><Pencil className="w-3 h-3 inline" /></button><button onClick={() => requestDeletePermission(p)} className="px-2 py-1 border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-300 rounded hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="w-3 h-3 inline" /></button></td></tr>)}
+                    </tbody></table>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+                    Click <span className="font-semibold">Display Permissions</span> to load permissions data.
+                  </div>
+                )}
+              </div>
+            ),
+          },
+        ]
+      : []),
     {
       id: 'logs',
       label: 'Activity Logs',
@@ -497,20 +517,76 @@ const System = () => {
       badge: logsTotal,
       content: (
         <div className="space-y-3">
-          <div className="flex flex-wrap justify-end gap-2">
-            <button onClick={() => loadLogs(1)} className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm hover:bg-slate-50 dark:hover:bg-slate-800">Refresh</button>
-            <button onClick={requestClearLogs} className="px-3 py-2 rounded-lg border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-300 text-sm hover:bg-rose-50 dark:hover:bg-rose-500/10">Clear All</button>
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="flex flex-col gap-1 text-xs font-medium text-slate-600 dark:text-slate-300">
+                Start Date
+                <input
+                  type="date"
+                  value={logsStartDate}
+                  onChange={(e) => {
+                    setLogsStartDate(e.target.value);
+                    setLogsDisplayed(false);
+                    setLogs([]);
+                    setLogsPage(1);
+                    setLogsTotal(0);
+                  }}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-medium text-slate-600 dark:text-slate-300">
+                End Date
+                <input
+                  type="date"
+                  value={logsEndDate}
+                  onChange={(e) => {
+                    setLogsEndDate(e.target.value);
+                    setLogsDisplayed(false);
+                    setLogs([]);
+                    setLogsPage(1);
+                    setLogsTotal(0);
+                  }}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                />
+              </label>
+              <button
+                onClick={() => loadLogs(1)}
+                className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
+                disabled={logsLoading}
+              >
+                {logsLoading ? 'Loading...' : 'Display'}
+              </button>
+            </div>
+            <button
+              onClick={requestClearLogs}
+              className="px-3 py-2 rounded-lg border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-300 text-sm hover:bg-rose-50 dark:hover:bg-rose-500/10 disabled:opacity-50"
+              disabled={!logsDisplayed || logsLoading || logsTotal === 0}
+            >
+              Clear All
+            </button>
           </div>
-          <div className="overflow-x-auto bg-white rounded-xl border border-slate-200 p-4 dark:bg-slate-900 dark:border-slate-800">
-            <table className="min-w-full text-sm"><thead><tr className="text-left text-slate-500 dark:text-slate-300"><th>Action</th><th>Entity</th><th>User</th><th>Date</th><th>Actions</th></tr></thead><tbody>
-              {logs.map((l) => <tr key={l.audit_id} className="border-t border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200"><td>{l.action}</td><td>{l.entity || '-'}</td><td>{l.username || l.user_id || '-'}</td><td>{new Date(l.created_at).toLocaleString()}</td><td className="py-2"><button onClick={() => requestDeleteLog(l)} className="px-2 py-1 border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-300 rounded hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="w-3 h-3 inline" /></button></td></tr>)}
-            </tbody></table>
-          </div>
+
+          {!logsDisplayed ? (
+            <div className="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+              Choose <span className="font-semibold">Start Date</span> and <span className="font-semibold">End Date</span>, then click <span className="font-semibold">Display</span>.
+            </div>
+          ) : logs.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+              No activity logs found for selected date range.
+            </div>
+          ) : (
+            <div className="overflow-x-auto bg-white rounded-xl border border-slate-200 p-4 dark:bg-slate-900 dark:border-slate-800">
+              <table className="min-w-full text-sm"><thead><tr className="text-left text-slate-500 dark:text-slate-300"><th>Action</th><th>Entity</th><th>User</th><th>Date</th><th>Actions</th></tr></thead><tbody>
+                {logs.map((l) => <tr key={l.audit_id} className="border-t border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200"><td>{l.action}</td><td>{l.entity || '-'}</td><td>{l.username || l.user_id || '-'}</td><td>{new Date(l.created_at).toLocaleString()}</td><td className="py-2"><button onClick={() => requestDeleteLog(l)} className="px-2 py-1 border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-300 rounded hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="w-3 h-3 inline" /></button></td></tr>)}
+              </tbody></table>
+            </div>
+          )}
+
           <div className="flex justify-between text-sm text-slate-600 dark:text-slate-300">
             <span>Page {logsPage} of {Math.max(1, Math.ceil(logsTotal / LOGS_LIMIT))}</span>
             <div className="space-x-2">
-              <button onClick={() => loadLogs(Math.max(1, logsPage - 1))} disabled={logsPage <= 1} className="px-3 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50">Prev</button>
-              <button onClick={() => loadLogs(logsPage + 1)} disabled={logsPage * LOGS_LIMIT >= logsTotal} className="px-3 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50">Next</button>
+              <button onClick={() => loadLogs(Math.max(1, logsPage - 1))} disabled={!logsDisplayed || logsLoading || logsPage <= 1} className="px-3 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50">Prev</button>
+              <button onClick={() => loadLogs(logsPage + 1)} disabled={!logsDisplayed || logsLoading || logsPage * LOGS_LIMIT >= logsTotal} className="px-3 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50">Next</button>
             </div>
           </div>
         </div>
@@ -520,7 +596,7 @@ const System = () => {
 
   return (
     <div>
-      <PageHeader title="System & Security" description="CRUD for users, roles, permissions, and logs." />
+      <PageHeader title="System & Security" description="CRUD for users, roles, and logs." />
       <Tabs tabs={tabs} defaultTab="users" />
 
       <Modal

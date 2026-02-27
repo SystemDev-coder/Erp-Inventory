@@ -269,10 +269,24 @@ export const settingsService = {
 
   async listAuditLogs(
     page = 1,
-    limit = 50
+    limit = 50,
+    startDate?: string,
+    endDate?: string
   ): Promise<{ rows: AuditLog[]; total: number }> {
     const offset = (page - 1) * limit;
     const columns = await detectAuditLogColumns();
+    const where: string[] = [];
+    const filterValues: unknown[] = [];
+    let param = 1;
+
+    if (startDate && endDate) {
+      where.push(`al.created_at::date BETWEEN $${param++}::date AND $${param++}::date`);
+      filterValues.push(startDate, endDate);
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const limitParam = param++;
+    const offsetParam = param;
     const rows = await queryMany<AuditLog>(
       `SELECT
           al.${columns.idColumn} AS audit_id,
@@ -289,13 +303,17 @@ export const settingsService = {
           al.created_at::text AS created_at
        FROM ims.audit_logs al
        LEFT JOIN ims.users u ON u.user_id = al.user_id
+       ${whereSql}
        ORDER BY al.created_at DESC
-       LIMIT $1 OFFSET $2`,
-      [limit, offset]
+       LIMIT $${limitParam} OFFSET $${offsetParam}`,
+      [...filterValues, limit, offset]
     );
 
     const totalRow = await queryOne<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM ims.audit_logs`
+      `SELECT COUNT(*)::text AS count
+         FROM ims.audit_logs al
+         ${whereSql}`,
+      filterValues
     );
 
     return {

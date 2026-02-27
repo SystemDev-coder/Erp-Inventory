@@ -27,30 +27,30 @@ export default function UserDropdown() {
   }
 
   const displayName = user?.name ?? "User";
-  const displaySub = user?.username || user?.phone || user?.role_name || "—";
+  const displaySub = user?.username || user?.phone || user?.role_name || "-";
 
   return (
     <div className="relative">
       <button
         onClick={toggleDropdown}
-        className="flex items-center dropdown-toggle text-slate-700 dark:text-slate-200 hover:opacity-90"
+        className="dropdown-toggle flex items-center text-[#e7f2fb] hover:opacity-90"
         aria-expanded={isOpen}
         aria-haspopup="true"
       >
-        <span className="mr-3 overflow-hidden rounded-full h-11 w-11 bg-slate-200 dark:bg-slate-700 flex items-center justify-center shrink-0">
+        <span className="mr-3 flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#4b7ea2] bg-[#0f4f76]">
           {user?.name ? (
-            <span className="text-sm font-semibold text-slate-600 dark:text-slate-300">
+            <span className="text-sm font-semibold text-[#dbeaf6]">
               {user.name.charAt(0).toUpperCase()}
             </span>
           ) : (
-            <User className="w-5 h-5 text-slate-500 dark:text-slate-400" />
+            <User className="h-5 w-5 text-[#dbeaf6]" />
           )}
         </span>
-        <span className="block mr-1 font-medium text-theme-sm text-slate-800 dark:text-slate-100 truncate max-w-[120px]">
+        <span className="mr-1 block max-w-[120px] truncate text-theme-sm font-medium text-[#e7f2fb]">
           {displayName.split(" ")[0] || "User"}
         </span>
         <svg
-          className={`shrink-0 text-slate-500 dark:text-slate-400 transition-transform duration-200 ${
+          className={`shrink-0 text-[#dbeaf6] transition-transform duration-200 ${
             isOpen ? "rotate-180" : ""
           }`}
           width="18"
@@ -72,23 +72,23 @@ export default function UserDropdown() {
       <Dropdown
         isOpen={isOpen}
         onClose={closeDropdown}
-        className="absolute right-0 mt-[17px] flex w-[260px] flex-col rounded-2xl border border-slate-200 bg-white p-3 shadow-theme-lg dark:border-slate-700 dark:bg-slate-800"
+        className="absolute right-0 mt-[17px] flex w-[260px] flex-col rounded-2xl border border-[#b7cde0] bg-[#f8fbfe] p-3 shadow-theme-lg dark:border-[#2c6287] dark:bg-[#12344c]"
       >
-        <div className="pb-3 border-b border-slate-200 dark:border-slate-700">
-          <span className="block font-medium text-theme-sm text-slate-800 dark:text-slate-100">
+        <div className="border-b border-[#d0dfeb] pb-3 dark:border-[#2c6287]">
+          <span className="block text-theme-sm font-medium text-[#123f5c] dark:text-[#e7f2fb]">
             {displayName}
           </span>
-          <span className="mt-0.5 block text-theme-xs text-slate-500 dark:text-slate-400">
+          <span className="mt-0.5 block text-theme-xs text-[#57748c] dark:text-[#9fc3da]">
             {displaySub}
           </span>
           {user?.role_name && (
-            <span className="mt-1 inline-block text-theme-xs px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+            <span className="mt-1 inline-block rounded-md bg-[#e6f0f8] px-2 py-0.5 text-theme-xs text-[#0f4f76] dark:bg-[#1b5a80]/35 dark:text-[#9fc3da]">
               {user.role_name}
             </span>
           )}
         </div>
 
-        <ul className="flex flex-col gap-1 pt-4 pb-3 border-b border-slate-200 dark:border-slate-700">
+        <ul className="flex flex-col gap-1 border-b border-[#d0dfeb] pb-3 pt-4 dark:border-[#2c6287]">
           <li>
             <DropdownItem
               onItemClick={() => {
@@ -96,23 +96,23 @@ export default function UserDropdown() {
                 setProfileOpen(true);
               }}
               tag="button"
-              className="flex items-center gap-3 px-3 py-2 font-medium rounded-lg group text-theme-sm text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700"
+              className="group flex items-center gap-3 rounded-lg px-3 py-2 text-theme-sm font-medium text-[#2b4558] hover:bg-[#edf5fb] dark:text-[#cfe3f1] dark:hover:bg-[#1b5a80]/35"
             >
-              <User className="w-5 h-5 text-slate-500 dark:text-slate-400 group-hover:text-slate-700 dark:group-hover:text-slate-200" />
+              <User className="h-5 w-5 text-[#57748c] group-hover:text-[#123f5c] dark:text-[#9fc3da] dark:group-hover:text-[#e7f2fb]" />
               Edit profile
             </DropdownItem>
           </li>
           <li>
-            {user?.role_name === 'Admin' && (
+            {user?.role_name === "Admin" && (
               <DropdownItem
                 onItemClick={() => {
                   closeDropdown();
                   navigate("/settings");
                 }}
                 tag="button"
-                className="flex items-center gap-3 px-3 py-2 font-medium rounded-lg group text-theme-sm text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700"
+                className="group flex items-center gap-3 rounded-lg px-3 py-2 text-theme-sm font-medium text-[#2b4558] hover:bg-[#edf5fb] dark:text-[#cfe3f1] dark:hover:bg-[#1b5a80]/35"
               >
-                <Settings className="w-5 h-5 text-slate-500 dark:text-slate-400 group-hover:text-slate-700 dark:group-hover:text-slate-200" />
+                <Settings className="h-5 w-5 text-[#57748c] group-hover:text-[#123f5c] dark:text-[#9fc3da] dark:group-hover:text-[#e7f2fb]" />
                 Account settings
               </DropdownItem>
             )}
@@ -124,9 +124,9 @@ export default function UserDropdown() {
                 navigate("/support");
               }}
               tag="button"
-              className="flex items-center gap-3 px-3 py-2 font-medium rounded-lg group text-theme-sm text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700"
+              className="group flex items-center gap-3 rounded-lg px-3 py-2 text-theme-sm font-medium text-[#2b4558] hover:bg-[#edf5fb] dark:text-[#cfe3f1] dark:hover:bg-[#1b5a80]/35"
             >
-              <HelpCircle className="w-5 h-5 text-slate-500 dark:text-slate-400 group-hover:text-slate-700 dark:group-hover:text-slate-200" />
+              <HelpCircle className="h-5 w-5 text-[#57748c] group-hover:text-[#123f5c] dark:text-[#9fc3da] dark:group-hover:text-[#e7f2fb]" />
               Support
             </DropdownItem>
           </li>
@@ -134,9 +134,9 @@ export default function UserDropdown() {
         <button
           type="button"
           onClick={handleSignOut}
-          className="flex items-center gap-3 px-3 py-2 mt-3 font-medium rounded-lg group text-theme-sm w-full text-left text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700"
+          className="group mt-3 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-theme-sm font-medium text-[#2b4558] hover:bg-[#edf5fb] dark:text-[#cfe3f1] dark:hover:bg-[#1b5a80]/35"
         >
-          <LogOut className="w-5 h-5 text-slate-500 dark:text-slate-400 group-hover:text-slate-700 dark:group-hover:text-slate-200" />
+          <LogOut className="h-5 w-5 text-[#57748c] group-hover:text-[#123f5c] dark:text-[#9fc3da] dark:group-hover:text-[#e7f2fb]" />
           Sign out
         </button>
       </Dropdown>

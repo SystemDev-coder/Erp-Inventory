@@ -79,7 +79,7 @@ export function DataTable<TData>({
                         {onView && (
                             <button
                                 onClick={() => onView(row.original)}
-                                className="rounded-lg p-2 text-slate-600 transition-colors hover:bg-primary-50 hover:text-primary-600 dark:text-slate-300 dark:hover:bg-primary-500/20 dark:hover:text-primary-300"
+                                className="rounded-lg p-2 text-[#57748c] transition-colors hover:bg-[#eaf5fb] hover:text-[#0f4f76] dark:text-[#cfe3f1] dark:hover:bg-[#1b5a80]/35 dark:hover:text-[#e7f2fb]"
                                 title="View"
                             >
                                 <Eye className="w-4 h-4" />
@@ -91,7 +91,7 @@ export function DataTable<TData>({
                                     console.log('Edit clicked:', row.original);
                                     onEdit(row.original);
                                 }}
-                                className="rounded-lg p-2 text-slate-600 transition-colors hover:bg-blue-50 hover:text-blue-600 dark:text-slate-300 dark:hover:bg-blue-500/20 dark:hover:text-blue-300"
+                                className="rounded-lg p-2 text-[#57748c] transition-colors hover:bg-[#eaf5fb] hover:text-[#0f4f76] dark:text-[#cfe3f1] dark:hover:bg-[#1b5a80]/35 dark:hover:text-[#e7f2fb]"
                                 title="Edit"
                             >
                                 <Edit className="w-4 h-4" />
@@ -103,7 +103,7 @@ export function DataTable<TData>({
                                     console.log('Delete clicked:', row.original);
                                     onDelete(row.original);
                                 }}
-                                className="rounded-lg p-2 text-slate-600 transition-colors hover:bg-red-50 hover:text-red-600 dark:text-slate-300 dark:hover:bg-red-500/20 dark:hover:text-red-300"
+                                className="rounded-lg p-2 text-[#57748c] transition-colors hover:bg-[#feecee] hover:text-[#dc2626] dark:text-[#cfe3f1] dark:hover:bg-[#7f1d1d]/35 dark:hover:text-[#fecaca]"
                                 title="Delete"
                             >
                                 <Trash2 className="w-4 h-4" />
@@ -147,13 +147,13 @@ export function DataTable<TData>({
             <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
                 {/* Search */}
                 <div className="relative w-full sm:max-w-sm">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500" />
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#7f9fb8] dark:text-[#9fc3da]" />
                     <input
                         type="text"
                         placeholder={searchPlaceholder}
                         value={globalFilter ?? ''}
                         onChange={(e) => setGlobalFilter(e.target.value)}
-                        className="w-full rounded-xl border border-slate-300 bg-white py-2.5 pl-10 pr-4 text-sm text-slate-700 shadow-sm transition-all hover:border-slate-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-600 dark:placeholder:text-slate-400"
+                        className="w-full rounded-xl border border-[#b7cde0] bg-white py-2.5 pl-10 pr-4 text-sm text-[#12344c] shadow-sm transition-all hover:border-[#9ec5df] focus:border-[#0f4f76] focus:outline-none focus:ring-2 focus:ring-[#0f4f76]/25 dark:border-[#2c6287] dark:bg-[#12344c] dark:text-[#e7f2fb] dark:hover:border-[#4b7ea2] dark:placeholder:text-[#9fc3da]"
                     />
                 </div>
 
@@ -162,7 +162,7 @@ export function DataTable<TData>({
                     <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
                         <ActionDropdown
                             trigger={
-                                <button className="rounded-xl border border-slate-300 bg-white p-2 text-slate-600 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">
+                                <button className="rounded-xl border border-[#b7cde0] bg-white p-2 text-[#57748c] transition-colors hover:bg-[#edf5fb] hover:text-[#123f5c] dark:border-[#2c6287] dark:bg-[#12344c] dark:text-[#cfe3f1] dark:hover:bg-[#1b5a80]/35">
                                     <Settings2 className="w-4 h-4" />
                                 </button>
                             }
@@ -179,17 +179,17 @@ export function DataTable<TData>({
 
             {/* Bulk Actions Bar */}
             {selectedRowsCount > 0 && (
-                <div className="flex items-center justify-between rounded-lg border border-primary-200 bg-primary-50 px-4 py-3 dark:border-primary-500/40 dark:bg-primary-500/15">
-                    <span className="text-sm font-medium text-primary-900 dark:text-primary-200">
+                <div className="flex items-center justify-between rounded-lg border border-[#b7cde0] bg-[#eaf5fb] px-4 py-3 dark:border-[#2c6287] dark:bg-[#1b5a80]/30">
+                    <span className="text-sm font-medium text-[#123f5c] dark:text-[#e7f2fb]">
                         {selectedRowsCount} row(s) selected
                     </span>
                     <div className="flex items-center gap-2">
-                        <button className="rounded-lg px-3 py-1.5 text-sm font-medium text-primary-700 transition-colors hover:bg-primary-100 dark:text-primary-200 dark:hover:bg-primary-500/20">
+                        <button className="rounded-lg px-3 py-1.5 text-sm font-medium text-[#0f4f76] transition-colors hover:bg-[#d6eaf6] dark:text-[#e7f2fb] dark:hover:bg-[#1b5a80]/40">
                             Bulk Action
                         </button>
                         <button
                             onClick={() => setRowSelection({})}
-                            className="rounded-lg p-1.5 text-primary-600 transition-colors hover:bg-primary-100 dark:text-primary-200 dark:hover:bg-primary-500/20"
+                            className="rounded-lg p-1.5 text-[#0f4f76] transition-colors hover:bg-[#d6eaf6] dark:text-[#e7f2fb] dark:hover:bg-[#1b5a80]/40"
                         >
                             <X className="w-4 h-4" />
                         </button>
@@ -200,19 +200,19 @@ export function DataTable<TData>({
             {/* Table */}
             <div
                 className={clsx(
-                    'overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900',
+                    'overflow-hidden rounded-2xl border border-[#b7cde0] bg-white shadow-sm dark:border-[#2c6287] dark:bg-[#12344c]',
                     className
                 )}
             >
                 <div className="overflow-x-auto custom-scrollbar">
                     <table className="w-full text-left border-separate border-spacing-0">
-                        <thead className={clsx('bg-slate-50 text-slate-700 dark:bg-slate-800 dark:text-slate-200', headerClassName)}>
+                        <thead className={clsx('bg-[#edf5fb] text-[#123f5c] dark:bg-[#0f4f76]/40 dark:text-[#e7f2fb]', headerClassName)}>
                             {table.getHeaderGroups().map((headerGroup) => (
                                 <tr key={headerGroup.id}>
                                     {headerGroup.headers.map((header) => (
                                         <th
                                             key={header.id}
-                                            className="border-b border-slate-200 px-6 py-4 text-xs font-bold uppercase tracking-wider first:rounded-tl-2xl last:rounded-tr-2xl dark:border-slate-700"
+                                            className="border-b border-[#d0dfeb] px-6 py-4 text-xs font-bold uppercase tracking-wider first:rounded-tl-2xl last:rounded-tr-2xl dark:border-[#2c6287]"
                                         >
                                             {header.isPlaceholder ? null : (
                                                 <div
@@ -225,7 +225,7 @@ export function DataTable<TData>({
                                                         header.getContext()
                                                     )}
                                                     {header.column.getCanSort() && (
-                                                        <span className="text-slate-400 transition-colors group-hover:text-slate-600 dark:text-slate-500 dark:group-hover:text-slate-300">
+                                                        <span className="text-[#7f9fb8] transition-colors group-hover:text-[#123f5c] dark:text-[#9fc3da] dark:group-hover:text-[#e7f2fb]">
                                                             {header.column.getIsSorted() === 'asc' ? (
                                                                 <ChevronUp className="w-3 h-3" />
                                                             ) : header.column.getIsSorted() === 'desc' ? (
@@ -242,13 +242,13 @@ export function DataTable<TData>({
                                 </tr>
                             ))}
                         </thead>
-                        <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                        <tbody className="divide-y divide-[#dce8f2] dark:divide-[#2c6287]">
                             {isLoading ? (
                                 Array.from({ length: 5 }).map((_, i) => (
                                     <tr key={i} className="animate-pulse">
                                         {columnsWithActions.map((_, j) => (
                                             <td key={j} className="px-6 py-4">
-                                                <div className="h-4 w-3/4 rounded-md bg-slate-200 dark:bg-slate-700" />
+                                                <div className="h-4 w-3/4 rounded-md bg-[#d6e6f2] dark:bg-[#1b5a80]" />
                                             </td>
                                         ))}
                                     </tr>
@@ -271,9 +271,9 @@ export function DataTable<TData>({
                                         colSpan={columnsWithActions.length}
                                         className="px-6 py-20 text-center"
                                     >
-                                        <div className="flex flex-col items-center justify-center text-slate-500 dark:text-slate-400">
+                                        <div className="flex flex-col items-center justify-center text-[#57748c] dark:text-[#9fc3da]">
                                             <Search className="w-10 h-10 mb-3 opacity-20" />
-                                            <p className="text-sm font-bold italic text-slate-500 dark:text-slate-400">No records found matching your search.</p>
+                                            <p className="text-sm font-bold italic text-[#57748c] dark:text-[#9fc3da]">No records found matching your search.</p>
                                         </div>
                                     </td>
                                 </tr>
@@ -282,14 +282,14 @@ export function DataTable<TData>({
                                     <tr
                                         key={row.id}
                                             className={clsx(
-                                            'transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/70',
+                                            'transition-colors hover:bg-[#edf5fb] dark:hover:bg-[#1b5a80]/30',
                                             rowHoverClassName
                                         )}
                                     >
                                         {row.getVisibleCells().map((cell) => (
                                             <td
                                                 key={cell.id}
-                                                className="px-6 py-4 text-sm text-slate-700 dark:text-slate-200"
+                                                className="px-6 py-4 text-sm text-[#12344c] dark:text-[#e7f2fb]"
                                             >
                                                 {flexRender(cell.column.columnDef.cell, cell.getContext())}
                                             </td>
@@ -305,13 +305,13 @@ export function DataTable<TData>({
             {/* Pagination */}
             <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">
                 <div className="flex items-center gap-3">
-                    <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
+                    <span className="text-sm font-medium text-[#57748c] dark:text-[#9fc3da]">
                         Show
                     </span>
                     <select
                         value={table.getState().pagination.pageSize}
                         onChange={(e) => table.setPageSize(Number(e.target.value))}
-                        className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                        className="rounded-lg border border-[#b7cde0] bg-white px-2 py-1.5 text-sm font-bold text-[#123f5c] focus:outline-none focus:ring-2 focus:ring-[#0f4f76]/30 dark:border-[#2c6287] dark:bg-[#12344c] dark:text-[#e7f2fb]"
                     >
                         {[10, 25, 50, 100].map((pageSize) => (
                             <option key={pageSize} value={pageSize}>
@@ -319,28 +319,28 @@ export function DataTable<TData>({
                             </option>
                         ))}
                     </select>
-                    <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
+                    <span className="text-sm font-medium text-[#57748c] dark:text-[#9fc3da]">
                         records
                     </span>
                 </div>
 
                 <div className="flex items-center gap-6">
-                    <span className="text-sm font-bold text-slate-600 dark:text-slate-300">
-                        Page <span className="text-slate-900 dark:text-white">{table.getState().pagination.pageIndex + 1}</span> of{' '}
-                        <span className="text-slate-900 dark:text-white">{table.getPageCount()}</span>
+                    <span className="text-sm font-bold text-[#57748c] dark:text-[#9fc3da]">
+                        Page <span className="text-[#123f5c] dark:text-[#e7f2fb]">{table.getState().pagination.pageIndex + 1}</span> of{' '}
+                        <span className="text-[#123f5c] dark:text-[#e7f2fb]">{table.getPageCount()}</span>
                     </span>
                     <div className="flex gap-2">
                         <button
                             onClick={() => table.previousPage()}
                             disabled={!table.getCanPreviousPage()}
-                            className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-700 transition-all hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-30 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-[#b7cde0] bg-white text-[#123f5c] transition-all hover:bg-[#edf5fb] disabled:cursor-not-allowed disabled:opacity-30 dark:border-[#2c6287] dark:bg-[#12344c] dark:text-[#e7f2fb] dark:hover:bg-[#1b5a80]/35"
                         >
                             <ChevronLeft className="w-5 h-5" />
                         </button>
                         <button
                             onClick={() => table.nextPage()}
                             disabled={!table.getCanNextPage()}
-                            className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-700 transition-all hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-30 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-[#b7cde0] bg-white text-[#123f5c] transition-all hover:bg-[#edf5fb] disabled:cursor-not-allowed disabled:opacity-30 dark:border-[#2c6287] dark:bg-[#12344c] dark:text-[#e7f2fb] dark:hover:bg-[#1b5a80]/35"
                         >
                             <ChevronRight className="w-5 h-5" />
                         </button>

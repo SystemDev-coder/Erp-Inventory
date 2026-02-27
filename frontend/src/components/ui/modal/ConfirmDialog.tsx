@@ -87,14 +87,14 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
         <div className="fixed inset-0 z-[9999] overflow-y-auto" style={{ zIndex: 2147483647 }}>
             {/* Backdrop */}
             <div
-                className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity animate-[fadeIn_200ms_ease-out]"
+                className="fixed inset-0 bg-[#0c2235]/70 backdrop-blur-sm transition-opacity animate-[fadeIn_200ms_ease-out]"
                 onClick={onClose}
             />
 
             {/* Dialog */}
             <div className="flex min-h-full items-center justify-center p-4">
                 <div
-                    className="relative w-full max-w-sm bg-white dark:bg-slate-900 rounded-xl shadow-2xl transform transition-all animate-[scaleIn_200ms_ease-out]"
+                    className="relative w-full max-w-sm rounded-xl border border-[#9ec5df] bg-[#f8fbfe] shadow-2xl transform transition-all animate-[scaleIn_200ms_ease-out] dark:border-[#2c6287] dark:bg-[#12344c]"
                     onClick={(e) => e.stopPropagation()}
                 >
                     {/* Icon */}
@@ -108,15 +108,15 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
 
                     {/* Content */}
                     <div className="px-6 pb-4 text-center">
-                        <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100 mb-2">
+                        <h3 className="mb-2 text-lg font-bold text-[#123f5c] dark:text-[#e7f2fb]">
                             {title}
                         </h3>
                         {highlightedName && (
-                            <p className="text-lg font-extrabold text-slate-900 dark:text-slate-100 mb-2">
+                            <p className="mb-2 text-lg font-extrabold text-[#123f5c] dark:text-[#e7f2fb]">
                                 {highlightedName}
                             </p>
                         )}
-                        <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                        <p className="text-xs leading-relaxed text-[#57748c] dark:text-[#9fc3da]">
                             {message}
                         </p>
                     </div>
@@ -127,7 +127,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
                             <button
                                 onClick={onClose}
                                 disabled={isLoading}
-                                className="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-medium hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                className="flex-1 rounded-lg border border-[#b7cde0] px-3 py-2 text-sm font-medium text-[#123f5c] transition-colors hover:bg-[#edf5fb] disabled:cursor-not-allowed disabled:opacity-50 dark:border-[#2c6287] dark:text-[#e7f2fb] dark:hover:bg-[#1b5a80]/35"
                             >
                                 {cancelText}
                             </button>

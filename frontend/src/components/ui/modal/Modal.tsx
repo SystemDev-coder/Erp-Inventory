@@ -56,25 +56,25 @@ export const Modal: React.FC<ModalProps> = ({
         <div className="fixed inset-0 z-[9999] overflow-y-auto" style={{ zIndex: 2147483647 }}>
             {/* Backdrop */}
             <div
-                className="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity"
+                className="fixed inset-0 bg-[#0c2235]/65 backdrop-blur-sm transition-opacity"
                 onClick={onClose}
             />
 
             {/* Modal */}
             <div className="flex min-h-screen items-center justify-center p-4 sm:p-6">
                 <div
-                    className={`relative w-full ${sizeClasses[size]} max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-3rem)] bg-white dark:bg-slate-900 rounded-xl shadow-2xl transform transition-all flex flex-col ${resizable ? 'resize overflow-auto min-w-[320px] min-h-[240px]' : 'overflow-hidden'}`}
+                    className={`relative w-full ${sizeClasses[size]} max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-3rem)] rounded-xl border border-[#9ec5df] bg-[#f8fbfe] shadow-2xl transform transition-all flex flex-col dark:border-[#2c6287] dark:bg-[#12344c] ${resizable ? 'resize overflow-auto min-w-[320px] min-h-[240px]' : 'overflow-hidden'}`}
                     onClick={(e) => e.stopPropagation()}
                 >
                     {/* Header */}
-                    <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700">
-                        <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+                    <div className="flex items-center justify-between border-b border-[#2c6287] bg-gradient-to-r from-[#123f5c] to-[#1b5a80] px-6 py-4">
+                        <h3 className="text-lg font-semibold text-white">
                             {title}
                         </h3>
                         {showCloseButton && (
                             <button
                                 onClick={onClose}
-                                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                                className="rounded-md p-1 text-[#cfe3f1] transition-colors hover:bg-[#0f4f76] hover:text-white"
                             >
                                 <X className="w-5 h-5" />
                             </button>
@@ -82,7 +82,7 @@ export const Modal: React.FC<ModalProps> = ({
                     </div>
 
                     {/* Content */}
-                    <div className="px-4 py-4 sm:px-6 overflow-y-auto">{children}</div>
+                    <div className="overflow-y-auto bg-[#f8fbfe] px-4 py-4 text-[#12344c] dark:bg-[#12344c] dark:text-[#e7f2fb] sm:px-6">{children}</div>
                 </div>
             </div>
         </div>,

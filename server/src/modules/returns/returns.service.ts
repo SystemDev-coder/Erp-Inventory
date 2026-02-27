@@ -16,6 +16,9 @@ export interface SalesReturn {
     return_date: string;
     subtotal: number;
     total: number;
+    reference_no?: string | null;
+    status?: string | null;
+    created_at?: string | null;
     note: string | null;
 }
 
@@ -41,6 +44,9 @@ export interface PurchaseReturn {
     return_date: string;
     subtotal: number;
     total: number;
+    reference_no?: string | null;
+    status?: string | null;
+    created_at?: string | null;
     note: string | null;
 }
 
@@ -203,6 +209,9 @@ export const returnsService = {
         return queryMany<SalesReturn>(
             `SELECT
           sr.*,
+          ('SR-' || LPAD(sr.sr_id::text, 5, '0')) AS reference_no,
+          'POSTED'::text AS status,
+          sr.return_date AS created_at,
           b.branch_name,
           u.name AS created_by_name,
           c.full_name AS customer_name
@@ -469,6 +478,9 @@ export const returnsService = {
         return queryMany<PurchaseReturn>(
             `SELECT
           pr.*,
+          ('PR-' || LPAD(pr.pr_id::text, 5, '0')) AS reference_no,
+          'POSTED'::text AS status,
+          pr.return_date AS created_at,
           b.branch_name,
           u.name AS created_by_name,
           s.${supplierNameColumn} AS supplier_name

@@ -317,9 +317,9 @@ export const deletePermission = asyncHandler(async (req: AuthRequest, res: Respo
 });
 
 export const listLogs = asyncHandler(async (req: AuthRequest, res: Response) => {
-  const { page, limit } = listLogsQuerySchema.parse(req.query);
-  const { rows, total } = await systemService.listLogs(page, limit);
-  return ApiResponse.success(res, { logs: rows, total, page, limit });
+  const { page, limit, startDate, endDate } = listLogsQuerySchema.parse(req.query);
+  const { rows, total } = await systemService.listLogs(page, limit, startDate, endDate);
+  return ApiResponse.success(res, { logs: rows, total, page, limit, startDate: startDate || null, endDate: endDate || null });
 });
 
 export const deleteLog = asyncHandler(async (req: AuthRequest, res: Response) => {

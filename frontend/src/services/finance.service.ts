@@ -53,6 +53,7 @@ export interface UnpaidSupplier {
 
 export interface SupplierOutstandingPurchase {
   purchase_id: number;
+  supplier_id: number | null;
   purchase_date: string;
   total: number;
   paid: number;

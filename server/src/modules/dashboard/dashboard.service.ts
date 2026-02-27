@@ -235,39 +235,99 @@ export class DashboardService {
     const charts: DashboardChart[] = [];
 
     if (permissions.includes('sales.view')) {
-      const rows = await queryMany<{ label: string; total: string }>(
-        `SELECT to_char(date_trunc('month', sale_date), 'YYYY-MM') AS label,
-                COALESCE(SUM(total), 0)::text AS total
-           FROM ims.sales
-          WHERE branch_id = $1
-            AND status <> 'void'
-            AND sale_date >= date_trunc('month', CURRENT_DATE) - INTERVAL '5 months'
-          GROUP BY date_trunc('month', sale_date)
-          ORDER BY date_trunc('month', sale_date)`,
+      const rows6m = await queryMany<{ label: string; total: string }>(
+        `WITH months AS (
+           SELECT generate_series(
+             date_trunc('month', CURRENT_DATE) - INTERVAL '5 months',
+             date_trunc('month', CURRENT_DATE),
+             INTERVAL '1 month'
+           ) AS month_start
+         ),
+         sales AS (
+           SELECT date_trunc('month', sale_date) AS month_start,
+                  COALESCE(SUM(total), 0) AS total
+             FROM ims.sales
+            WHERE branch_id = $1
+              AND status <> 'void'
+            GROUP BY date_trunc('month', sale_date)
+         )
+         SELECT to_char(m.month_start, 'YYYY-MM') AS label,
+                COALESCE(s.total, 0)::text AS total
+           FROM months m
+           LEFT JOIN sales s ON s.month_start = m.month_start
+          ORDER BY m.month_start`,
         [branchId]
       );
 
-      const labels = rows.map((row) => row.label);
-      const data = rows.map((row) => Number(row.total || 0));
+      const labels6m = rows6m.map((row) => row.label);
+      const data6m = rows6m.map((row) => Number(row.total || 0));
 
       charts.push({
         id: 'sales-6m',
         name: 'Sales (Last 6 Months)',
         type: 'bar',
-        labels,
-        series: [{ name: 'Sales', data }],
+        labels: labels6m,
+        series: [{ name: 'Sales', data: data6m }],
+      });
+
+      const rows12m = await queryMany<{ label: string; income: string }>(
+        `WITH months AS (
+           SELECT generate_series(
+             date_trunc('month', CURRENT_DATE) - INTERVAL '11 months',
+             date_trunc('month', CURRENT_DATE),
+             INTERVAL '1 month'
+           ) AS month_start
+         ),
+         sales AS (
+           SELECT date_trunc('month', sale_date) AS month_start,
+                  COALESCE(SUM(total), 0) AS income
+             FROM ims.sales
+            WHERE branch_id = $1
+              AND status <> 'void'
+            GROUP BY date_trunc('month', sale_date)
+         )
+         SELECT to_char(m.month_start, 'YYYY-MM') AS label,
+                COALESCE(s.income, 0)::text AS income
+           FROM months m
+           LEFT JOIN sales s ON s.month_start = m.month_start
+          ORDER BY m.month_start`,
+        [branchId]
+      );
+
+      const labels12m = rows12m.map((row) => row.label);
+      const income12m = rows12m.map((row) => Number(row.income || 0));
+
+      charts.push({
+        id: 'income-trend-12m',
+        name: 'Income Trend (12 Months)',
+        type: 'line',
+        labels: labels12m,
+        series: [{ name: 'Income', data: income12m }],
       });
     }
 
     if (permissions.includes('stock.view')) {
       const rows = await queryMany<{ label: string; qty: string }>(
-        `SELECT to_char(date_trunc('day', move_date), 'YYYY-MM-DD') AS label,
-                COALESCE(SUM(qty_in - qty_out), 0)::text AS qty
-           FROM ims.inventory_movements
-          WHERE branch_id = $1
-            AND move_date >= CURRENT_DATE - INTERVAL '13 days'
-          GROUP BY date_trunc('day', move_date)
-          ORDER BY date_trunc('day', move_date)`,
+        `WITH days AS (
+           SELECT generate_series(
+             CURRENT_DATE - INTERVAL '13 days',
+             CURRENT_DATE,
+             INTERVAL '1 day'
+           )::date AS day
+         ),
+         moves AS (
+           SELECT date_trunc('day', move_date)::date AS day,
+                  COALESCE(SUM(qty_in - qty_out), 0) AS qty
+             FROM ims.inventory_movements
+            WHERE branch_id = $1
+              AND move_date >= CURRENT_DATE - INTERVAL '13 days'
+            GROUP BY date_trunc('day', move_date)::date
+         )
+         SELECT to_char(d.day, 'YYYY-MM-DD') AS label,
+                COALESCE(m.qty, 0)::text AS qty
+           FROM days d
+           LEFT JOIN moves m ON m.day = d.day
+          ORDER BY d.day`,
         [branchId]
       );
 

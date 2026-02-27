@@ -330,7 +330,6 @@ export function SalesReportsTab({ onOpenModal }: Props) {
               <button onClick={() => { setCardErrors((prev) => ({ ...prev, [card.id]: '' })); setExpandedCardId((prev) => (prev === card.id ? null : card.id)); }} className="flex w-full items-center justify-between bg-[#0f4f76] px-5 py-4 text-left text-white">
                 <div>
                   <p className="text-xl font-semibold leading-tight">{card.title}</p>
-                  <p className="mt-1 text-xs font-medium uppercase tracking-wider text-[#b7d2e8]">{card.hint}</p>
                 </div>
                 <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
               </button>

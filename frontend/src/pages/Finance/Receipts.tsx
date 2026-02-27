@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
 import { Plus, RefreshCw, AlertCircle, DollarSign, Wallet, TrendingDown } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
@@ -123,7 +123,9 @@ const Receipts = () => {
         }
     };
 
-    useEffect(() => { loadAll(); }, []);
+    const displayReceiptsData = async () => {
+        await loadAll();
+    };
 
     // ─── Computed Summaries ────────────────────────────────────────────────────
     const custTotalReceived = customerReceipts.reduce((s, r) => s + Number(r.amount ?? 0), 0);
@@ -326,6 +328,9 @@ const Receipts = () => {
     };
 
     const submitSupReceipt = async () => {
+        if (!receiptForm.supplier_id && !receiptForm.purchase_id) {
+            return showToast('error', 'Receipts', 'Supplier or linked purchase is required');
+        }
         if (!receiptForm.acc_id || !receiptForm.amount) return showToast('error', 'Receipts', 'Account and amount are required');
         if (Number(receiptForm.amount) <= 0) return showToast('error', 'Receipts', 'Amount must be greater than 0');
         setSubmitting(true);
@@ -376,11 +381,10 @@ const Receipts = () => {
 
     // ─── Selected customer/supplier for balance preview ────────────────────────
     const selectedCustomer = customers.find(c => c.customer_id === receiptForm.customer_id);
-    const selectedSupplier = suppliers.find(s => s.supplier_id === receiptForm.supplier_id);
     const selectedUnpaidCust = unpaidCustomers.find(u => u.customer_id === receiptForm.customer_id);
     const selectedUnpaidSup = unpaidSuppliers.find(u => u.supplier_id === receiptForm.supplier_id);
     const filteredOutstandingBySupplier = outstandingPurchases.filter(
-        p => !receiptForm.supplier_id || p.supplier_name === selectedSupplier?.supplier_name
+        p => !receiptForm.supplier_id || p.supplier_id === receiptForm.supplier_id
     );
 
     // ─── Tabs ──────────────────────────────────────────────────────────────────
@@ -399,8 +403,8 @@ const Receipts = () => {
 
                     {/* Toolbar */}
                     <div className="flex flex-wrap items-center gap-2">
-                        <button onClick={loadAll} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50">
-                            <RefreshCw className="h-4 w-4" /> Refresh
+                        <button onClick={() => void displayReceiptsData()} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50">
+                            <RefreshCw className="h-4 w-4" /> Display
                         </button>
                         <button
                             onClick={() => openCustModal()}
@@ -472,8 +476,8 @@ const Receipts = () => {
 
                     {/* Toolbar */}
                     <div className="flex flex-wrap items-center gap-2">
-                        <button onClick={loadAll} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50">
-                            <RefreshCw className="h-4 w-4" /> Refresh
+                        <button onClick={() => void displayReceiptsData()} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50">
+                            <RefreshCw className="h-4 w-4" /> Display
                         </button>
                         <button
                             onClick={() => openSupModal()}
@@ -507,9 +511,9 @@ const Receipts = () => {
                                 onEdit={(row) => {
                                     const p = row as SupplierOutstandingPurchase;
                                     // Pre-fill the supplier receipt form with the outstanding amount
-                                    const sup = suppliers.find(s => s.supplier_name === p.supplier_name);
+                                    const sup = suppliers.find(s => s.supplier_id === p.supplier_id);
                                     setReceiptForm({
-                                        supplier_id: sup?.supplier_id,
+                                        supplier_id: p.supplier_id ?? sup?.supplier_id,
                                         purchase_id: p.purchase_id,
                                         amount: Number(p.outstanding),
                                     });
@@ -520,7 +524,7 @@ const Receipts = () => {
                             {/* Outstanding by supplier summary */}
                             {unpaidSuppliers.length > 0 && (
                                 <div className="mt-3 border-t border-red-200 pt-3">
-                                    <div className="mb-2 text-xs font-semibold text-red-700">By Supplier (from ledger)</div>
+                                    <div className="mb-2 text-xs font-semibold text-red-700">By Supplier (net payable)</div>
                                     <DataTable
                                         data={unpaidSuppliers}
                                         columns={unpaidSupColumns}
@@ -717,13 +721,13 @@ const Receipts = () => {
                 <div className="space-y-4">
                     {/* Supplier selector */}
                     <label className="block text-sm">
-                        <span className="mb-1 block font-medium text-slate-700">Supplier</span>
+                        <span className="mb-1 block font-medium text-slate-700">Supplier <span className="text-red-500">*</span></span>
                         <select
                             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                             value={receiptForm.supplier_id ?? ''}
                             onChange={(e) => setReceiptForm(f => ({ ...f, supplier_id: e.target.value ? Number(e.target.value) : undefined, purchase_id: undefined }))}
                         >
-                            <option value="">— Select Supplier (optional) —</option>
+                            <option value="">— Select Supplier —</option>
                             {suppliers.map(s => (
                                 <option key={s.supplier_id} value={s.supplier_id}>
                                     {s.supplier_name}
@@ -757,6 +761,7 @@ const Receipts = () => {
                                     const purch = outstandingPurchases.find(p => p.purchase_id === purchId);
                                     setReceiptForm(f => ({
                                         ...f,
+                                        supplier_id: purch?.supplier_id ?? f.supplier_id,
                                         purchase_id: purchId,
                                         amount: purch ? Number(purch.outstanding) : f.amount,
                                     }));

@@ -168,7 +168,7 @@ export const deleteBranch = asyncHandler(async (req: AuthRequest, res: Response)
 });
 
 export const listAudit = asyncHandler(async (req: AuthRequest, res: Response) => {
-  const { page, limit } = auditQuerySchema.parse(req.query);
-  const { rows, total } = await settingsService.listAuditLogs(page, limit);
-  return ApiResponse.success(res, { logs: rows, total, page, limit });
+  const { page, limit, startDate, endDate } = auditQuerySchema.parse(req.query);
+  const { rows, total } = await settingsService.listAuditLogs(page, limit, startDate, endDate);
+  return ApiResponse.success(res, { logs: rows, total, page, limit, startDate: startDate || null, endDate: endDate || null });
 });

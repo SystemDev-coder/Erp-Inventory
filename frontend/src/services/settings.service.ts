@@ -71,7 +71,20 @@ export const settingsService = {
     return apiClient.delete(`/api/settings/branches/${id}`);
   },
 
-  async listAudit(page = 1, limit = 50): Promise<ApiResponse<{ logs: AuditLog[]; total: number; page: number; limit: number }>> {
-    return apiClient.get(`/api/settings/audit?page=${page}&limit=${limit}`);
+  async listAudit(
+    page = 1,
+    limit = 50,
+    startDate?: string,
+    endDate?: string
+  ): Promise<ApiResponse<{ logs: AuditLog[]; total: number; page: number; limit: number }>> {
+    const params = new URLSearchParams({
+      page: String(page),
+      limit: String(limit),
+    });
+    if (startDate && endDate) {
+      params.set('startDate', startDate);
+      params.set('endDate', endDate);
+    }
+    return apiClient.get(`/api/settings/audit?${params.toString()}`);
   },
 };

@@ -34,4 +34,12 @@ export const branchUpdateSchema = branchCreateSchema.partial();
 export const auditQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional().default(1),
   limit: z.coerce.number().int().positive().max(200).optional().default(50),
-});
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+}).refine(
+  (value) => (value.startDate && value.endDate) || (!value.startDate && !value.endDate),
+  { message: 'Both startDate and endDate are required together', path: ['startDate'] }
+).refine(
+  (value) => !value.startDate || !value.endDate || value.startDate <= value.endDate,
+  { message: 'startDate must be before or equal to endDate', path: ['endDate'] }
+);

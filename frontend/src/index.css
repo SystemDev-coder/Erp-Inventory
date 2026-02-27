@@ -41,19 +41,19 @@ layer(base);
   --color-white: #ffffff;
   --color-black: #0b0f1f;
 
-  /* ERP Premium palette */
+  /* ERP report/sidebar palette */
   --color-primary-25: #f5fbff;
-  --color-primary-50: #e8f4fb;
-  --color-primary-100: #d7eaf5;
-  --color-primary-200: #bbe0ef; /* light accent */
-  --color-primary-300: #8bb6d1;
-  --color-primary-400: #5f90b1;
-  --color-primary-500: #355872; /* core brand */
-  --color-primary-600: #2d4c63;
-  --color-primary-700: #223b4e;
-  --color-primary-800: #1b2f3f;
-  --color-primary-900: #15173d; /* deep background */
-  --color-primary-950: #0f122d;
+  --color-primary-50: #eaf5fb;
+  --color-primary-100: #d6eaf6;
+  --color-primary-200: #b8d7ea;
+  --color-primary-300: #88bad7;
+  --color-primary-400: #4f8fb5;
+  --color-primary-500: #0f4f76; /* report accent */
+  --color-primary-600: #1b5a80;
+  --color-primary-700: #123f5c; /* sidebar/header base */
+  --color-primary-800: #0f334b;
+  --color-primary-900: #0b2739;
+  --color-primary-950: #081b29;
 
   /* Brand - mirrors primary */
   --color-brand-25: var(--color-primary-25);
@@ -69,19 +69,19 @@ layer(base);
   --color-brand-900: var(--color-primary-900);
   --color-brand-950: var(--color-primary-950);
 
-  /* Secondary - Slate */
-  --color-slate-25: #fcfcfd;
-  --color-slate-50: #f8fafc;
-  --color-slate-100: #f1f5f9;
-  --color-slate-200: #e2e8f0;
-  --color-slate-300: #cbd5e1;
-  --color-slate-400: #94a3b8;
-  --color-slate-500: #64748b;
-  --color-slate-600: #475569;
-  --color-slate-700: #334155;
-  --color-slate-800: #1a2133;
-  --color-slate-900: #15173d;
-  --color-slate-950: #0c1029;
+  /* Secondary - blue slate (aligned with report palette) */
+  --color-slate-25: #fbfdff;
+  --color-slate-50: #f3f8fc;
+  --color-slate-100: #e4edf5;
+  --color-slate-200: #cedce8;
+  --color-slate-300: #aec3d4;
+  --color-slate-400: #7f9fb8;
+  --color-slate-500: #5b7890;
+  --color-slate-600: #3f5d73;
+  --color-slate-700: #2b4558;
+  --color-slate-800: #1a3448;
+  --color-slate-900: #11283a;
+  --color-slate-950: #081a27;
 
   /* Success - Emerald */
   --color-success-25: #f0fdf4;
@@ -156,13 +156,13 @@ layer(base);
 
 /* Light & Dark base surfaces */
 body {
-  background: #f7f9fc;
-  color: #0f172a;
+  background: #edf5fb;
+  color: #12344c;
 }
 
 .dark body {
-  background: #0b1220;
-  color: #e2e8f0;
+  background: #0b2739;
+  color: #e7f2fb;
 }
 
 *::-webkit-scrollbar {
@@ -171,12 +171,12 @@ body {
 }
 
 *::-webkit-scrollbar-thumb {
-  background: #193fba;
+  background: #1b5a80;
   border-radius: 999px;
 }
 
 *::-webkit-scrollbar-track {
-  background: #0b1220;
+  background: #c8dae8;
 }
 
 @layer base {
@@ -203,6 +203,18 @@ body {
 
   body {
     @apply relative font-normal font-inter z-1 bg-slate-100 text-slate-900 dark:bg-slate-900 dark:text-slate-100;
+  }
+}
+
+@layer components {
+  .erp-main-shell {
+    background: linear-gradient(180deg, #edf5fb 0%, #e9f2f8 45%, #e4edf6 100%);
+    color: #12344c;
+  }
+
+  .dark .erp-main-shell {
+    background: linear-gradient(180deg, #0f334b 0%, #0d2f45 45%, #0b2739 100%);
+    color: #e7f2fb;
   }
 }
 

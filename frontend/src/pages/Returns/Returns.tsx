@@ -18,6 +18,7 @@ const fmtDate = (d: string) => {
   try { return new Date(d).toLocaleDateString(); } catch { return d; }
 };
 const fmtCurrency = (n: number) => `$${Number(n || 0).toFixed(2)}`;
+const resolveStatus = (value?: string | null) => (value && value.trim() ? value.toUpperCase() : 'POSTED');
 
 const Returns = () => {
   const { showToast } = useToast();
@@ -211,6 +212,7 @@ const Returns = () => {
       id: 'sales-return',
       label: 'Sales Return',
       icon: RotateCcw,
+      badge: salesRows.length,
       content: (
         <div className="space-y-4">
           <div className="flex items-center justify-end gap-2">
@@ -235,7 +237,7 @@ const Returns = () => {
             {loading ? (
               <div className="flex justify-center py-12"><div className="h-8 w-8 animate-spin rounded-full border-2 border-primary-600 border-t-transparent" /></div>
             ) : salesRows.length === 0 ? (
-              <div className="py-12 text-center text-slate-500 text-sm">No sales returns yet. Click Display to load.</div>
+              <div className="py-12 text-center text-slate-500 text-sm">No sales returns found.</div>
             ) : (
               <table className="min-w-full">
                 <thead className="bg-slate-50 dark:bg-slate-800">
@@ -259,7 +261,15 @@ const Returns = () => {
                       <td className={tableCellCls}>{row.customer_name || '-'}</td>
                       <td className={tableCellCls}>{fmtCurrency(row.total)}</td>
                       <td className={tableCellCls}>
-                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${row.status === 'POSTED' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{row.status}</span>
+                        {(() => {
+                          const status = resolveStatus((row as any).status);
+                          const isPosted = status === 'POSTED';
+                          return (
+                            <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${isPosted ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                              {status}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className={tableCellCls}>{row.note || '-'}</td>
                       <td className={tableCellCls}>
@@ -279,8 +289,9 @@ const Returns = () => {
     },
     {
       id: 'purchase-return',
-      label: 'Supplier/Purchase Return',
+      label: 'Supplier Return',
       icon: ShoppingBag,
+      badge: purchaseRows.length,
       content: (
         <div className="space-y-4">
           <div className="flex items-center justify-end gap-2">
@@ -305,7 +316,7 @@ const Returns = () => {
             {loading ? (
               <div className="flex justify-center py-12"><div className="h-8 w-8 animate-spin rounded-full border-2 border-primary-600 border-t-transparent" /></div>
             ) : purchaseRows.length === 0 ? (
-              <div className="py-12 text-center text-slate-500 text-sm">No purchase returns yet. Click Display to load.</div>
+              <div className="py-12 text-center text-slate-500 text-sm">No supplier returns found.</div>
             ) : (
               <table className="min-w-full">
                 <thead className="bg-slate-50 dark:bg-slate-800">
@@ -329,7 +340,15 @@ const Returns = () => {
                       <td className={tableCellCls}>{row.supplier_name || '-'}</td>
                       <td className={tableCellCls}>{fmtCurrency(row.total)}</td>
                       <td className={tableCellCls}>
-                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${row.status === 'POSTED' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{row.status}</span>
+                        {(() => {
+                          const status = resolveStatus((row as any).status);
+                          const isPosted = status === 'POSTED';
+                          return (
+                            <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${isPosted ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                              {status}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className={tableCellCls}>{row.note || '-'}</td>
                       <td className={tableCellCls}>

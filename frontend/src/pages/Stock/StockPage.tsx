@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
 import { AlertTriangle, Filter, RefreshCw, ArrowLeftRight, Plus, Building2, Warehouse, History } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
@@ -35,6 +35,7 @@ const StockPage = () => {
   const [loadingMove, setLoadingMove] = useState(false);
   const [loadingLocations, setLoadingLocations] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [stockDisplayed, setStockDisplayed] = useState(false);
   const [filters, setFilters] = useState({ branchId: '', whId: '', productId: '', search: '' });
   const [showAdjust, setShowAdjust] = useState(false);
   const [showTransfer, setShowTransfer] = useState(false);
@@ -278,20 +279,8 @@ const StockPage = () => {
     setLoadingLocations(false);
   };
 
-  useEffect(() => {
-    void Promise.all([loadStock(), loadMovements(), loadLocations()]);
-  }, []);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        void Promise.all([loadStock(), loadMovements()]);
-      }
-    }, 15000);
-    return () => clearInterval(timer);
-  }, [filters.branchId, filters.productId, filters.search, filters.whId]);
-
   const refreshAll = async () => {
+    setStockDisplayed(true);
     setRefreshing(true);
     await Promise.all([loadStock(), loadMovements(), loadLocations()]);
     setRefreshing(false);
@@ -533,8 +522,14 @@ const StockPage = () => {
       <PageHeader
         title="Stock"
         description="Monitor stock by branch and warehouse."
-        actions={<div className="flex flex-wrap gap-2"><button onClick={() => void refreshAll()} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"><RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />Refresh</button><button onClick={() => setShowAdjust(true)} className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-white"><Plus className="h-4 w-4" />Stock Adjustment</button><button onClick={() => setShowTransfer(true)} className="inline-flex items-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium text-white"><ArrowLeftRight className="h-4 w-4" />Transfer</button></div>}
+        actions={<div className="flex flex-wrap gap-2"><button onClick={() => void refreshAll()} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"><RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />Display</button><button onClick={() => setShowAdjust(true)} className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-white"><Plus className="h-4 w-4" />Stock Adjustment</button><button onClick={() => setShowTransfer(true)} className="inline-flex items-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium text-white"><ArrowLeftRight className="h-4 w-4" />Transfer</button></div>}
       />
+
+      {!stockDisplayed && (
+        <div className="mb-4 rounded-xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+          Click <span className="font-semibold">Display</span> to load stock levels and movement data.
+        </div>
+      )}
 
       <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-3">
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900"><p className="text-xs uppercase text-slate-500">Total Qty</p><p className="text-2xl font-semibold">{stockSummary.totalQty.toFixed(3)}</p></div>
@@ -549,7 +544,7 @@ const StockPage = () => {
           <div><label className={labelClass}>Warehouse</label><select className={inputClass} value={filters.whId} onChange={(e) => setFilters({ ...filters, whId: e.target.value })}><option value="">All warehouses</option>{filterWarehouses.map((w) => <option key={w.wh_id} value={w.wh_id}>{w.wh_name}</option>)}</select></div>
           <div><label className={labelClass}>Purchased Item</label><select className={inputClass} value={filters.productId} onChange={(e) => setFilters({ ...filters, productId: e.target.value })}><option value="">All purchased items</option>{filterItems.map((item) => <option key={item.item_id} value={item.item_id}>{item.item_name}</option>)}</select></div>
         </div>
-        <div className="mt-3 flex justify-end"><button onClick={() => { void Promise.all([loadStock(), loadMovements()]); }} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"><Filter className="h-4 w-4" />Display</button></div>
+        <div className="mt-3 flex justify-end"><button onClick={() => { setStockDisplayed(true); void Promise.all([loadStock(), loadMovements()]); }} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"><Filter className="h-4 w-4" />Display</button></div>
       </div>
 
       <Tabs tabs={tabs} defaultTab="levels" />

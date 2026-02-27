@@ -3,6 +3,9 @@ import { Boxes, LineChart, ShoppingBag, UserCheck, UserSquare, Wallet } from 'lu
 import type { LucideIcon } from 'lucide-react';
 import { ReportModal } from '../../components/reports/ReportModal';
 import { settingsService } from '../../services/settings.service';
+import { CustomerReportsTab } from './customer/CustomerReportsTab';
+import { FinancialReportsTab } from './financial/FinancialReportsTab';
+import { HrReportsTab } from './hr/HrReportsTab';
 import { InventoryReportsTab } from './inventory/InventoryReportsTab';
 import { PurchaseReportsTab } from './purchase/PurchaseReportsTab';
 import { SalesReportsTab } from './sales/SalesReportsTab';
@@ -53,7 +56,7 @@ export default function Reports() {
           <div>
             <p className="text-[11px] uppercase tracking-[0.35em] opacity-80">Inventory ERP</p>
             <h1 className="text-3xl font-bold leading-tight">Reports Control Center</h1>
-            <p className="mt-1 text-sm opacity-90">Reports are organized by tab modules: Sales, Inventory, Purchase, and upcoming tabs.</p>
+            <p className="mt-1 text-sm opacity-90">Reports are organized by module tabs. Open any card to preview, print, or export.</p>
           </div>
           <div className="rounded-xl bg-white/15 px-4 py-3">
             <div className="text-xs uppercase tracking-wide opacity-80">Categories</div>
@@ -87,8 +90,16 @@ export default function Reports() {
         {activeTab === 'sales' && <SalesReportsTab onOpenModal={handleOpenModal} />}
         {activeTab === 'inventory' && <InventoryReportsTab onOpenModal={handleOpenModal} />}
         {activeTab === 'purchase' && <PurchaseReportsTab onOpenModal={handleOpenModal} />}
+        {activeTab === 'financial' && <FinancialReportsTab onOpenModal={handleOpenModal} />}
+        {activeTab === 'hr' && <HrReportsTab onOpenModal={handleOpenModal} />}
+        {activeTab === 'customer' && <CustomerReportsTab onOpenModal={handleOpenModal} />}
 
-        {activeTab !== 'sales' && activeTab !== 'inventory' && activeTab !== 'purchase' && (
+        {activeTab !== 'sales' &&
+          activeTab !== 'inventory' &&
+          activeTab !== 'purchase' &&
+          activeTab !== 'financial' &&
+          activeTab !== 'hr' &&
+          activeTab !== 'customer' && (
           <div className="rounded-lg border border-dashed border-[#b4c3d1] bg-white px-4 py-8 text-center text-[#3f5a72]">
             <p className="text-lg font-semibold">{reportTabs.find((tab) => tab.id === activeTab)?.title} reports tab</p>
             <p className="mt-1 text-sm">This tab is ready for modular implementation in its own report subfolder.</p>
@@ -105,6 +116,8 @@ export default function Reports() {
         data={modalReport?.data || []}
         columns={modalReport?.columns || []}
         filters={modalReport?.filters || {}}
+        totals={modalReport?.totals || []}
+        variant={modalReport?.variant || 'default'}
         fileName={modalReport?.fileName || 'report'}
       />
     </div>

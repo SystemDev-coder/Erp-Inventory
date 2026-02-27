@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router';
 import { ColumnDef } from '@tanstack/react-table';
 import { Plus, RefreshCw, SquarePen, Trash, History, CalendarClock } from 'lucide-react';
@@ -33,6 +33,7 @@ const Finance = () => {
   };
 
   const [loading, setLoading] = useState(false);
+  const [financeDisplayed, setFinanceDisplayed] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [transfers, setTransfers] = useState<AccountTransfer[]>([]);
   const [customerReceipts, setCustomerReceipts] = useState<Receipt[]>([]);
@@ -468,6 +469,17 @@ const [pendingPayrollLineId, setPendingPayrollLineId] = useState<number | null>(
     // derive paid charge set
   };
 
+  const displayFinanceData = async () => {
+    setFinanceDisplayed(true);
+    await loadAll();
+  };
+
+  const reloadIfDisplayed = () => {
+    if (financeDisplayed) {
+      void loadAll();
+    }
+  };
+
   const openTransferModal = (row?: AccountTransfer) => {
     if (row) {
       setEditingTransferId(row.acc_transfer_id);
@@ -484,10 +496,6 @@ const [pendingPayrollLineId, setPendingPayrollLineId] = useState<number | null>(
     }
     setIsTransferModalOpen(true);
   };
-
-  useEffect(() => {
-    loadAll();
-  }, []);
 
   const quickError = (msg: string) => showToast('error', 'Finance', msg);
 
@@ -828,10 +836,10 @@ const submitBudgetCharge = async () => {
             <span className="text-sm text-slate-600">Manage cash/bank accounts.</span>
             <div className="flex items-center gap-2">
               <button
-                onClick={loadAll}
+                onClick={() => void displayFinanceData()}
                 className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"
               >
-                <RefreshCw className="h-4 w-4" /> Refresh
+                <RefreshCw className="h-4 w-4" /> Display
               </button>
               <button
                 onClick={() => openAccountModal()}
@@ -858,10 +866,10 @@ const submitBudgetCharge = async () => {
         <div className="space-y-3">
           <div className="flex items-center justify-between gap-3">
             <button
-              onClick={loadAll}
+              onClick={() => void displayFinanceData()}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"
             >
-              <RefreshCw className="h-4 w-4" /> Refresh
+              <RefreshCw className="h-4 w-4" /> Display
             </button>
             <button
               onClick={() => openTransferModal()}
@@ -891,10 +899,10 @@ const submitBudgetCharge = async () => {
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-sm">
               <button
-                onClick={loadAll}
+                onClick={() => void displayFinanceData()}
                 className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-4 py-2 text-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
               >
-                <RefreshCw className="h-4 w-4" /> Refresh
+                <RefreshCw className="h-4 w-4" /> Display
               </button>
               <button
                 onClick={() => {
@@ -914,7 +922,7 @@ const submitBudgetCharge = async () => {
               <button
                 onClick={() => {
                   setCustMonthOnly((v) => !v);
-                  setTimeout(loadAll, 0);
+                  setTimeout(reloadIfDisplayed, 0);
                 }}
                 className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition-all ${
                   custMonthOnly ? 'bg-primary-600 text-white hover:bg-primary-500' : 'border border-slate-300 text-slate-700 hover:-translate-y-0.5 hover:shadow-md'
@@ -962,10 +970,10 @@ const submitBudgetCharge = async () => {
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-sm">
               <button
-                onClick={loadAll}
+                onClick={() => void displayFinanceData()}
                 className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-4 py-2 text-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
               >
-                <RefreshCw className="h-4 w-4" /> Refresh
+                <RefreshCw className="h-4 w-4" /> Display
               </button>
               <button
                 onClick={() => {
@@ -985,7 +993,7 @@ const submitBudgetCharge = async () => {
               <button
                 onClick={() => {
                   setSupMonthOnly((v) => !v);
-                  setTimeout(loadAll, 0);
+                  setTimeout(reloadIfDisplayed, 0);
                 }}
                 className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition-all ${
                   supMonthOnly ? 'bg-primary-600 text-white hover:bg-primary-500' : 'border border-slate-300 text-slate-700 hover:-translate-y-0.5 hover:shadow-md'
@@ -1068,10 +1076,10 @@ const submitBudgetCharge = async () => {
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-sm">
               <button
-                onClick={loadAll}
+                onClick={() => void displayFinanceData()}
                 className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-3 py-2 text-sm"
               >
-                <RefreshCw className="h-4 w-4" /> Refresh
+                <RefreshCw className="h-4 w-4" /> Display
               </button>
               <button
                 onClick={() => {
@@ -1105,10 +1113,10 @@ const submitBudgetCharge = async () => {
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-sm">
               <button
-                onClick={loadAll}
+                onClick={() => void displayFinanceData()}
                 className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-3 py-2 text-sm"
               >
-                <RefreshCw className="h-4 w-4" /> Refresh
+                <RefreshCw className="h-4 w-4" /> Display
               </button>
               <button
                 onClick={() => {
@@ -1147,10 +1155,10 @@ const submitBudgetCharge = async () => {
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-sm">
               <button
-                onClick={loadAll}
+                onClick={() => void displayFinanceData()}
                 className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-3 py-2 text-sm"
               >
-                <RefreshCw className="h-4 w-4" /> Refresh
+                <RefreshCw className="h-4 w-4" /> Display
               </button>
               <button
                 onClick={() => {
@@ -1202,10 +1210,10 @@ const submitBudgetCharge = async () => {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-sm">
             <button
-              onClick={loadAll}
+              onClick={() => void displayFinanceData()}
               className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-3 py-2 text-sm"
             >
-              <RefreshCw className="h-4 w-4" /> Refresh
+              <RefreshCw className="h-4 w-4" /> Display
             </button>
             <button
               onClick={() => {
@@ -1227,7 +1235,7 @@ const submitBudgetCharge = async () => {
                 value={payrollPeriod}
                 onChange={(e) => {
                   setPayrollPeriod(e.target.value);
-                  setTimeout(loadAll, 0);
+                  setTimeout(reloadIfDisplayed, 0);
                 }}
               />
             </label>
