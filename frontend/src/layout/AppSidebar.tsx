@@ -127,6 +127,7 @@ const AppSidebar: React.FC = () => {
               { id: 'finance-receipts', label: 'Receipts', to: '/finance/receipts', exact: true, permissionAny: ['accounts.view', 'sales.view', 'purchases.view'] },
               { id: 'finance-expenses', label: 'Expenses', to: '/finance/expense', exact: true, permissionAny: ['expenses.view'] },
               { id: 'finance-payroll', label: 'Payroll', to: '/finance/payroll', exact: true, permissionAny: ['payroll_lines.view', 'payroll_runs.view'] },
+              { id: 'finance-assets', label: 'Assets', to: '/assets', exact: true, permissionAny: ['accounts.view'] },
             ],
           },
         ],

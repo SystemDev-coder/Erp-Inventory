@@ -517,30 +517,50 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
     );
   };
 
+  const renderCard = (card: { id: InventoryCardId; title: string; hint: string }) => {
+    const isOpen = expandedCardId === card.id;
+    return (
+      <div key={card.id} className="self-start overflow-hidden rounded-2xl border border-[#bfd0df] bg-white shadow-[0_8px_18px_rgba(15,79,118,0.08)]">
+        <button
+          onClick={() => {
+            setCardErrors((prev) => ({ ...prev, [card.id]: '' }));
+            setExpandedCardId((prev) => (prev === card.id ? null : card.id));
+          }}
+          className="flex w-full items-center justify-between border-b border-[#d8e4ee] bg-gradient-to-r from-[#0f4f76] to-[#1f6f9f] px-5 py-4 text-left text-white"
+        >
+          <div>
+            <p className="text-xl font-semibold leading-tight">{card.title}</p>
+            <p className="mt-1 text-xs font-medium text-white/85">{card.hint}</p>
+          </div>
+          <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        </button>
+        {isOpen && (
+          <div className="space-y-3 bg-[#f8fbff] px-5 py-4">
+            {renderCardBody(card.id)}
+            {cardErrors[card.id] && <p className="text-sm font-semibold text-red-600">{cardErrors[card.id]}</p>}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const leftColumnCards = inventoryCards.filter((_, index) => index % 2 === 0);
+  const rightColumnCards = inventoryCards.filter((_, index) => index % 2 === 1);
+
   return (
     <div className="space-y-3">
       {optionsError && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{optionsError}</div>}
       {optionsLoading && <div className="inline-flex items-center gap-2 rounded-md border border-[#b8c8d7] bg-white px-3 py-2 text-sm text-[#38556d]"><Loader2 className="h-4 w-4 animate-spin" />Loading store options...</div>}
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        {inventoryCards.map((card) => {
-          const isOpen = expandedCardId === card.id;
-          return (
-            <div key={card.id} className="overflow-hidden rounded-md border border-[#aebfd0] bg-white shadow-sm">
-              <button onClick={() => { setCardErrors((prev) => ({ ...prev, [card.id]: '' })); setExpandedCardId((prev) => (prev === card.id ? null : card.id)); }} className="flex w-full items-center justify-between bg-[#0f4f76] px-5 py-4 text-left text-white">
-                <div>
-                  <p className="text-xl font-semibold leading-tight">{card.title}</p>
-                </div>
-                <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-              </button>
-              {isOpen && (
-                <div className="space-y-3 border-t border-[#bfd0df] bg-[#f8fafc] px-5 py-4">
-                  {renderCardBody(card.id)}
-                  {cardErrors[card.id] && <p className="text-sm font-semibold text-red-600">{cardErrors[card.id]}</p>}
-                </div>
-              )}
-            </div>
-          );
-        })}
+      <div className="space-y-3 lg:hidden">
+        {inventoryCards.map(renderCard)}
+      </div>
+      <div className="hidden items-start gap-3 lg:grid lg:grid-cols-2">
+        <div className="space-y-3">
+          {leftColumnCards.map(renderCard)}
+        </div>
+        <div className="space-y-3">
+          {rightColumnCards.map(renderCard)}
+        </div>
       </div>
     </div>
   );

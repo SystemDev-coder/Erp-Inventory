@@ -27,16 +27,27 @@ export const syncLowStockNotifications = async (
       `SELECT
           i.item_id AS product_id,
           i.name AS item_name,
-          COALESCE(SUM(ws.quantity), 0)::text AS qty,
+          CASE
+            WHEN COALESCE(st.row_count, 0) = 0 THEN COALESCE(i.opening_balance, 0)
+            ELSE COALESCE(st.qty, 0)
+          END::text AS qty,
           GREATEST(COALESCE(NULLIF(i.stock_alert, 0), 5), 1)::text AS threshold
        FROM ims.items i
-       LEFT JOIN ims.warehouse_stock ws ON ws.item_id = i.item_id
-       LEFT JOIN ims.warehouses w ON w.wh_id = ws.wh_id
+       LEFT JOIN (
+         SELECT
+           s.branch_id,
+           si.product_id AS item_id,
+           COALESCE(SUM(si.quantity), 0)::numeric(14,3) AS qty,
+           COUNT(*)::int AS row_count
+         FROM ims.store_items si
+         JOIN ims.stores s ON s.store_id = si.store_id
+         GROUP BY s.branch_id, si.product_id
+       ) st
+         ON st.item_id = i.item_id
+        AND st.branch_id = i.branch_id
       WHERE i.item_id = $2
         AND i.branch_id = $1
         AND i.is_active = TRUE
-        AND (w.wh_id IS NULL OR w.branch_id = $1)
-      GROUP BY i.item_id, i.name, i.stock_alert
       LIMIT 1`,
       [branchId, productId]
     );

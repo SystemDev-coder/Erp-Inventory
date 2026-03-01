@@ -42,6 +42,14 @@ export interface UnpaidCustomer {
   balance: number;
 }
 
+export interface CustomerCombinedBalance {
+  customer_id: number;
+  customer_name: string;
+  opening_balance: number;
+  credit_balance: number;
+  total_balance: number;
+}
+
 export interface UnpaidSupplier {
   branch_id: number;
   supplier_id: number;
@@ -49,6 +57,14 @@ export interface UnpaidSupplier {
   total: number;
   paid: number;
   balance: number;
+}
+
+export interface SupplierCombinedBalance {
+  supplier_id: number;
+  supplier_name: string;
+  opening_balance: number;
+  credit_balance: number;
+  total_balance: number;
 }
 
 export interface SupplierOutstandingPurchase {
@@ -186,6 +202,10 @@ export const financeService = {
   async deleteCustomerReceipt(id: number) {
     return apiClient.delete<{ message: string }>(`${API.FINANCE.CUSTOMER_RECEIPTS}/${id}`);
   },
+  async getCustomerCombinedBalance(customerId: number, branchId?: number) {
+    const qs = branchId ? `?branchId=${branchId}` : '';
+    return apiClient.get<{ balance: CustomerCombinedBalance }>(`${API.FINANCE.CUSTOMER_BALANCE(customerId)}${qs}`);
+  },
 
   async listSupplierReceipts(branchId?: number) {
     const qs = branchId ? `?branchId=${branchId}` : '';
@@ -201,6 +221,10 @@ export const financeService = {
   async listSupplierOutstandingPurchases(supplierId?: number) {
     const qs = supplierId ? `?supplierId=${supplierId}` : '';
     return apiClient.get<{ purchases: SupplierOutstandingPurchase[] }>(`${API.FINANCE.SUPPLIER_OUTSTANDING}${qs}`);
+  },
+  async getSupplierCombinedBalance(supplierId: number, branchId?: number) {
+    const qs = branchId ? `?branchId=${branchId}` : '';
+    return apiClient.get<{ balance: SupplierCombinedBalance }>(`${API.FINANCE.SUPPLIER_BALANCE(supplierId)}${qs}`);
   },
   async createSupplierReceipt(payload: { branch_id?: number; supplier_id?: number; purchase_id?: number; acc_id: number; amount: number; payment_method?: string; reference_no?: string; note?: string }) {
     return apiClient.post<{ receipt: Receipt }>(API.FINANCE.SUPPLIER_RECEIPTS, {

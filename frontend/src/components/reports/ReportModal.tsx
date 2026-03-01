@@ -2,7 +2,7 @@
 import { FileSpreadsheet, Printer } from "lucide-react";
 import { Modal } from "../ui/modal/Modal";
 
-const BORDER_COLOR = "#0b6d7a";
+const BORDER_COLOR = "#111111";
 
 // Column and props definitions
 export type ReportColumn<T> = {
@@ -401,30 +401,30 @@ export function ReportModal<T extends Record<string, any>>({
     <Modal isOpen={isOpen} onClose={onClose} title="Report Preview" size="2xl" resizable>
       <div className="space-y-4">
         {/* Screen controls (hidden on print) */}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-2xl bg-gradient-to-r from-primary-700 via-primary-600 to-primary-500 px-6 py-5 text-white shadow-lg print:hidden">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-2xl border border-zinc-300 bg-white px-6 py-5 text-black shadow-sm print:hidden">
           <div className="space-y-1">
-            <p className="text-xs uppercase tracking-[0.25em] opacity-80">Report</p>
+            <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">Report</p>
             <h2 className="text-2xl font-semibold">{title}</h2>
-            {subtitle && <p className="text-sm opacity-80">{subtitle}</p>}
+            {subtitle && <p className="text-sm text-zinc-700">{subtitle}</p>}
           </div>
           <div className="flex flex-wrap gap-2 sm:gap-3">
             {enablePdf && (
               <button
                 onClick={handlePrint}
-                className="inline-flex items-center gap-2 rounded-xl bg-white text-primary-700 px-4 py-2 text-sm font-semibold shadow-sm hover:bg-slate-50 transition"
+                className="inline-flex items-center gap-2 rounded-xl border border-black bg-white px-4 py-2 text-sm font-semibold text-black transition"
               >
                 <Printer className="h-4 w-4" /> Export PDF
               </button>
             )}
             <button
               onClick={handlePrint}
-              className="inline-flex items-center gap-2 rounded-xl bg-white/10 px-4 py-2 text-sm font-semibold backdrop-blur hover:bg-white/20 transition"
+              className="inline-flex items-center gap-2 rounded-xl border border-black bg-black px-4 py-2 text-sm font-semibold text-white transition"
             >
               <Printer className="h-4 w-4" /> Print
             </button>
             <button
               onClick={handleExportExcel}
-              className="inline-flex items-center gap-2 rounded-xl bg-white text-primary-700 px-4 py-2 text-sm font-semibold shadow-sm hover:bg-slate-50 transition"
+              className="inline-flex items-center gap-2 rounded-xl border border-black bg-white px-4 py-2 text-sm font-semibold text-black transition"
             >
               <FileSpreadsheet className="h-4 w-4" /> Export Excel
             </button>
@@ -435,7 +435,7 @@ export function ReportModal<T extends Record<string, any>>({
         <div
           ref={printRef}
           id="report-print-area"
-          className={`mx-auto bg-white text-slate-900 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.35)] border border-slate-300 rounded-lg ${
+          className={`mx-auto rounded-lg border border-zinc-300 bg-white text-black shadow-sm ${
             isIncomeStatement || isBalanceSheet || isCashFlowStatement ? "max-w-3xl" : "max-w-5xl"
           }`}
           style={{ pageBreakInside: "avoid" }}
@@ -518,14 +518,14 @@ export function ReportModal<T extends Record<string, any>>({
               style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}
             >
               <div className="space-y-0.5">
-                <h2 className="text-[40px] font-semibold leading-none text-[#1f7bb8]">Balance Sheet</h2>
+                <h2 className="text-[40px] font-semibold leading-none text-black">Balance Sheet</h2>
                 <p className="text-[14px] text-slate-500">{companyInfo?.name || "Business Name"}</p>
                 <p className="text-[14px] text-slate-500">{balanceSheetDateLabel || `As of ${reportDate}`}</p>
               </div>
 
               <div className="mx-auto mt-9 max-w-2xl space-y-8 text-[15px]">
                 <section>
-                  <div className="mb-2 flex items-end justify-between border-b-2 border-[#2f9ad4] pb-1 text-[#1f7bb8]">
+                  <div className="mb-2 flex items-end justify-between border-b-2 border-zinc-300 pb-1 text-black">
                     <h3 className="text-[31px] font-semibold leading-none">Assets</h3>
                     <span className="text-[13px] font-semibold">{balanceSheetShortDate}</span>
                   </div>
@@ -549,7 +549,7 @@ export function ReportModal<T extends Record<string, any>>({
                 </section>
 
                 <section>
-                  <div className="mb-2 flex items-end justify-between border-b-2 border-[#2f9ad4] pb-1 text-[#1f7bb8]">
+                  <div className="mb-2 flex items-end justify-between border-b-2 border-zinc-300 pb-1 text-black">
                     <h3 className="text-[31px] font-semibold leading-none">Liabilities + Equity</h3>
                     <span className="text-[13px] font-semibold">{balanceSheetShortDate}</span>
                   </div>
@@ -592,11 +592,7 @@ export function ReportModal<T extends Record<string, any>>({
                     <span>Total Liabilities + Equity</span>
                     <span className="tabular-nums">{formatStatementCurrency(balanceSheetData.totalLiabilitiesEquity)}</span>
                   </div>
-                  <div
-                    className={`mt-2 flex justify-between text-[14px] ${
-                      Math.abs(balanceSheetData.balanceDelta) <= 0.01 ? "text-emerald-700" : "text-rose-700"
-                    }`}
-                  >
+                  <div className="mt-2 flex justify-between text-[14px] text-black">
                     <span>Balance Check</span>
                     <span className="tabular-nums">{formatStatementCurrency(balanceSheetData.balanceDelta)}</span>
                   </div>
@@ -605,33 +601,33 @@ export function ReportModal<T extends Record<string, any>>({
             </div>
           ) : isCashFlowStatement && cashFlowData ? (
             <div
-              className="overflow-hidden rounded-[24px] border border-[#35528f] bg-white text-slate-900"
+              className="overflow-hidden rounded-[24px] border border-zinc-300 bg-white text-slate-900"
               style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}
             >
-              <div className="bg-[#4467ad] px-8 py-6 text-center text-white">
+              <div className="bg-black px-8 py-6 text-center text-white">
                 <h2 className="text-[47px] font-semibold leading-tight">Cash Flow Statement</h2>
                 {cashFlowPeriodLabel && <p className="mt-1 text-[16px]">{cashFlowPeriodLabel}</p>}
               </div>
-              <div className="h-2 bg-[#d6e6f7]" />
+              <div className="h-2 bg-zinc-200" />
 
               <div className="bg-white px-0 py-0">
                 {cashFlowData.sections.map((section) => (
                   <section key={section.section} className="border-b border-slate-200">
-                    <div className="bg-[#a9cae9] px-6 py-2 text-[16px] font-semibold text-[#315a9f]">{section.section}</div>
+                    <div className="bg-zinc-100 px-6 py-2 text-[16px] font-semibold text-black">{section.section}</div>
                     <table className="w-full border-collapse">
                       <tbody>
                         {section.rows.map((row, index) => (
                           <tr key={`${section.section}-${row.lineItem}-${index}`}>
                             <td
                               className={`border-b border-slate-100 px-6 py-2 text-[15px] ${
-                                row.rowType === "total" ? "bg-[#edf4fd] font-semibold" : "bg-white"
+                                row.rowType === "total" ? "bg-zinc-100 font-semibold" : "bg-white"
                               }`}
                             >
                               {row.lineItem}
                             </td>
                             <td
                               className={`w-44 border-b border-slate-100 px-6 py-2 text-right text-[15px] tabular-nums ${
-                                row.rowType === "total" ? "bg-[#edf4fd] font-semibold" : "bg-white"
+                                row.rowType === "total" ? "bg-zinc-100 font-semibold" : "bg-white"
                               }`}
                             >
                               {formatStatementAmount(row.amount)}
@@ -652,8 +648,8 @@ export function ReportModal<T extends Record<string, any>>({
                           key={`summary-${row.lineItem}-${index}`}
                           className={`flex items-center justify-between rounded-sm px-4 py-2 text-[15px] ${
                             isMainTotal
-                              ? "bg-[#4467ad] font-semibold text-white"
-                              : "bg-[#edf4fd] font-semibold text-slate-900"
+                              ? "bg-black font-semibold text-white"
+                              : "bg-zinc-100 font-semibold text-slate-900"
                           }`}
                         >
                           <span>{row.lineItem}</span>
@@ -708,8 +704,8 @@ export function ReportModal<T extends Record<string, any>>({
                               border: `1px solid ${BORDER_COLOR}`,
                               padding: "10px 8px",
                               textAlign: col.align ?? "left",
-                              background: "#f5fbff",
-                              color: "#0b3050",
+                              background: "#ffffff",
+                              color: "#000000",
                               fontWeight: 700,
                               fontSize: "12px",
                               width: col.width,
@@ -754,7 +750,7 @@ export function ReportModal<T extends Record<string, any>>({
                                   textAlign: isFirstColumn ? "left" : col.align ?? "left",
                                   fontSize: "12px",
                                   lineHeight: 1.4,
-                                  background: "#0b3f70",
+                                  background: "#111111",
                                   color: "#ffffff",
                                   fontWeight: 700,
                                 }}
@@ -780,19 +776,19 @@ export function ReportModal<T extends Record<string, any>>({
                 </div>
 
                 {totals.length > 0 && (
-                  <div className="mt-4 rounded-md border border-[#97bdd7] bg-[#f0f7fc] p-3">
-                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-[#bfd6e7] pb-2">
-                      <div className="text-xs font-bold uppercase tracking-[0.2em] text-[#0f4f76]">Totals Summary</div>
-                      <div className="text-xs font-semibold text-[#3a5d78]">Records: {data.length.toLocaleString()}</div>
+                  <div className="mt-4 rounded-md border border-zinc-300 bg-white p-3">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-300 pb-2">
+                      <div className="text-xs font-bold uppercase tracking-[0.2em] text-black">Totals Summary</div>
+                      <div className="text-xs font-semibold text-zinc-700">Records: {data.length.toLocaleString()}</div>
                     </div>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
                       {totals.map((item) => (
                         <div
                           key={item.label}
-                          className="rounded border border-[#bad3e6] bg-white px-3 py-2 text-sm"
+                          className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm"
                         >
-                          <div className="text-[11px] font-semibold uppercase tracking-wide text-[#4b6f89]">{item.label}</div>
-                          <div className="text-base font-bold text-[#0f3550]">{item.value}</div>
+                          <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-700">{item.label}</div>
+                          <div className="text-base font-bold text-black">{item.value}</div>
                         </div>
                       ))}
                     </div>

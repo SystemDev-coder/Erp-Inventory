@@ -28,6 +28,7 @@ import returnsRoutes from './modules/returns/returns.routes';
 import systemRoutes from './modules/system/system.routes';
 import reportsRoutes from './modules/reports/reports.routes';
 import importRoutes from './modules/import/import.routes';
+import assetsRoutes from './modules/assets/assets.routes';
 // import scheduleRoutes from './modules/schedules/schedules.routes'; // TEMP: Disabled - has import errors
 import { config } from './config/env';
 
@@ -80,6 +81,7 @@ app.use('/api/returns', returnsRoutes);
 app.use('/api/system', systemRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/import', importRoutes);
+app.use('/api/assets', assetsRoutes);
 // app.use('/api/schedules', scheduleRoutes); // TEMP: Disabled - has import errors
 
 // 404 handler

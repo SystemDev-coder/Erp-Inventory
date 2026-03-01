@@ -519,8 +519,9 @@ const SaleCreate = () => {
                   <option value="">Select item</option>
                   {itemOptions.map((item) => (
                     <option key={item.item_id} value={item.item_id}>
-                      {item.item_name}
-                      {item.available_qty !== undefined ? ` (Qty: ${item.available_qty})` : ''}
+                      {`${item.item_name} - Stock: ${
+                        item.available_qty !== undefined ? Number(item.available_qty).toFixed(3) : 'N/A'
+                      } - Price: $${Number(item.unit_price || 0).toFixed(2)}`}
                     </option>
                   ))}
                 </select>

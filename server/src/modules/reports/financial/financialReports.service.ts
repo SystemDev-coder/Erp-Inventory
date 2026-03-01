@@ -108,6 +108,28 @@ export interface TrialBalanceRow {
   closing_credit: number;
 }
 
+export interface AccountsReceivableRow {
+  customer_name: string;
+  invoice_no: number;
+  invoice_date: string;
+  due_date: string;
+  amount: number;
+  paid: number;
+  balance: number;
+  status: string;
+}
+
+export interface AccountsPayableRow {
+  supplier_name: string;
+  bill_no: number;
+  bill_date: string;
+  due_date: string;
+  amount: number;
+  paid: number;
+  balance: number;
+  status: string;
+}
+
 type BalanceTable = 'customers' | 'suppliers';
 type BalanceColumn = 'open_balance' | 'remaining_balance';
 
@@ -184,16 +206,13 @@ export const financialReportsService = {
     const [
       grossSales,
       salesReturns,
-      stockPurchases,
-      purchaseReturns,
       movementCostSales,
       movementCostSalesReturns,
-      operatingExpensesCharged,
-      operatingExpensesPaid,
+      stockPurchases,
+      purchaseReturns,
+      operatingExpenses,
       payrollExpenseAccrued,
-      payrollExpensePaid,
       otherIncome,
-      supplierRefunds,
     ] = await Promise.all([
       queryAmount(
         `SELECT COALESCE(SUM(s.total), 0)::double precision AS amount
@@ -209,21 +228,6 @@ export const financialReportsService = {
            FROM ims.sales_returns sr
           WHERE sr.branch_id = $1
             AND sr.return_date::date BETWEEN $2::date AND $3::date`,
-        params
-      ),
-      queryAmount(
-        `SELECT COALESCE(SUM(p.total), 0)::double precision AS amount
-           FROM ims.purchases p
-          WHERE p.branch_id = $1
-            AND p.purchase_date::date BETWEEN $2::date AND $3::date
-            AND LOWER(COALESCE(p.status::text, '')) <> 'void'`,
-        params
-      ),
-      queryAmount(
-        `SELECT COALESCE(SUM(pr.total), 0)::double precision AS amount
-           FROM ims.purchase_returns pr
-          WHERE pr.branch_id = $1
-            AND pr.return_date::date BETWEEN $2::date AND $3::date`,
         params
       ),
       queryAmount(
@@ -243,17 +247,25 @@ export const financialReportsService = {
         params
       ),
       queryAmount(
+        `SELECT COALESCE(SUM(p.total), 0)::double precision AS amount
+           FROM ims.purchases p
+          WHERE p.branch_id = $1
+            AND p.purchase_date::date BETWEEN $2::date AND $3::date
+            AND LOWER(COALESCE(p.status::text, '')) <> 'void'`,
+        params
+      ),
+      queryAmount(
+        `SELECT COALESCE(SUM(pr.total), 0)::double precision AS amount
+           FROM ims.purchase_returns pr
+          WHERE pr.branch_id = $1
+            AND pr.return_date::date BETWEEN $2::date AND $3::date`,
+        params
+      ),
+      queryAmount(
         `SELECT COALESCE(SUM(ec.amount), 0)::double precision AS amount
            FROM ims.expense_charges ec
           WHERE ec.branch_id = $1
             AND ec.charge_date::date BETWEEN $2::date AND $3::date`,
-        params
-      ),
-      queryAmount(
-        `SELECT COALESCE(SUM(ep.amount_paid), 0)::double precision AS amount
-           FROM ims.expense_payments ep
-          WHERE ep.branch_id = $1
-            AND ep.pay_date::date BETWEEN $2::date AND $3::date`,
         params
       ),
       queryAmount(
@@ -269,13 +281,6 @@ export const financialReportsService = {
         params
       ),
       queryAmount(
-        `SELECT COALESCE(SUM(ep.amount_paid), 0)::double precision AS amount
-           FROM ims.employee_payments ep
-          WHERE ep.branch_id = $1
-            AND ep.pay_date::date BETWEEN $2::date AND $3::date`,
-        params
-      ),
-      queryAmount(
         `SELECT COALESCE(SUM(GREATEST(at.credit - at.debit, 0)), 0)::double precision AS amount
            FROM ims.account_transactions at
           WHERE at.branch_id = $1
@@ -283,61 +288,37 @@ export const financialReportsService = {
             AND at.txn_type IN ('other', 'return_refund')`,
         params
       ),
-      queryAmount(
-        `SELECT COALESCE(SUM(sr.amount), 0)::double precision AS amount
-           FROM ims.supplier_receipts sr
-          WHERE sr.branch_id = $1
-            AND sr.receipt_date::date BETWEEN $2::date AND $3::date`,
-        params
-      ),
     ]);
 
-    const netSales = grossSales - salesReturns;
-    const purchaseIncome = purchaseReturns + supplierRefunds;
-    const netPurchases = Math.max(stockPurchases - purchaseReturns, 0);
+    const revenue = grossSales - salesReturns;
     const movementCost = Math.max(movementCostSales - movementCostSalesReturns, 0);
-    const costOfSales = movementCost > 0 ? movementCost : netPurchases;
-    const operatingExpenses = operatingExpensesCharged > 0 ? operatingExpensesCharged : operatingExpensesPaid;
-    const payrollExpense = payrollExpenseAccrued > 0 ? payrollExpenseAccrued : payrollExpensePaid;
-    const totalIncome = netSales + purchaseIncome + otherIncome;
-    const totalExpenses = costOfSales + operatingExpenses + payrollExpense;
-    const netIncome = totalIncome - totalExpenses;
-    const netIncomeLabel = netIncome >= 0 ? 'Net Profit' : 'Net Loss';
+    const purchaseCostFallback = Math.max(stockPurchases - purchaseReturns, 0);
+    const costOfGoodsSold = movementCost > 0 ? movementCost : purchaseCostFallback;
+    const grossProfit = revenue - costOfGoodsSold;
+    const totalOperatingExpenses = operatingExpenses + payrollExpenseAccrued;
+    const netIncome = grossProfit - totalOperatingExpenses + otherIncome;
 
     return [
-      { section: 'Revenue', line_item: 'Gross Sales', amount: grossSales, row_type: 'detail' },
+      { section: 'Revenue', line_item: 'Sales Revenue', amount: grossSales, row_type: 'detail' },
       { section: 'Revenue', line_item: 'Sales Returns', amount: -salesReturns, row_type: 'detail' },
-      { section: 'Revenue', line_item: 'Purchase Income', amount: purchaseIncome, row_type: 'detail' },
-      { section: 'Revenue', line_item: 'Other Income', amount: otherIncome, row_type: 'detail' },
-      { section: 'Revenue', line_item: 'Total Income', amount: totalIncome, row_type: 'total' },
-      { section: 'Cost of Sales', line_item: 'Cost of Goods Sold', amount: -costOfSales, row_type: 'detail' },
-      { section: 'Expenses', line_item: 'Operating Expenses', amount: -operatingExpenses, row_type: 'detail' },
-      { section: 'Expenses', line_item: 'Payroll Expense', amount: -payrollExpense, row_type: 'detail' },
-      { section: 'Expenses', line_item: 'Total Expenses', amount: -totalExpenses, row_type: 'total' },
-      { section: 'Profit', line_item: netIncomeLabel, amount: netIncome, row_type: 'total' },
+      { section: 'Revenue', line_item: 'Total Revenue', amount: revenue, row_type: 'total' },
+      { section: 'Cost of Goods Sold', line_item: 'Cost of Goods Sold', amount: -costOfGoodsSold, row_type: 'detail' },
+      { section: 'Cost of Goods Sold', line_item: 'Total Cost of Goods Sold', amount: -costOfGoodsSold, row_type: 'total' },
+      { section: 'Gross Profit', line_item: 'Gross Profit', amount: grossProfit, row_type: 'total' },
+      { section: 'Operating Expenses', line_item: 'Operating Expenses', amount: -operatingExpenses, row_type: 'detail' },
+      { section: 'Operating Expenses', line_item: 'Payroll Expense', amount: -payrollExpenseAccrued, row_type: 'detail' },
+      {
+        section: 'Operating Expenses',
+        line_item: 'Total Operating Expenses',
+        amount: -totalOperatingExpenses,
+        row_type: 'total',
+      },
+      { section: 'Net Income', line_item: 'Other Income', amount: otherIncome, row_type: 'detail' },
+      { section: 'Net Income', line_item: 'Net Income', amount: netIncome, row_type: 'total' },
     ];
   },
 
   async getBalanceSheet(branchId: number, asOfDate: string): Promise<BalanceSheetRow[]> {
-    try {
-      const procedureRows = await queryMany<BalanceSheetRow>(
-        `SELECT
-           section,
-           line_item,
-           COALESCE(amount, 0)::double precision AS amount,
-           row_type::text AS row_type
-         FROM ims.rpt_balance_sheet_lines($1, $2::date)`,
-        [branchId, asOfDate]
-      );
-      if (procedureRows.length > 0) {
-        return procedureRows;
-      }
-    } catch (error) {
-      if (!isMissingBalanceSheetProcedureError(error)) {
-        throw error;
-      }
-    }
-
     const [customerBalanceColumn, supplierBalanceColumn] = await Promise.all([
       resolveBalanceColumn('customers'),
       resolveBalanceColumn('suppliers'),
@@ -366,7 +347,20 @@ export const financialReportsService = {
         `WITH txn AS (
            SELECT
              COUNT(*)::int AS txn_count,
-             COALESCE(SUM(at.credit - at.debit), 0)::double precision AS txn_balance
+             COALESCE(
+               SUM(
+                 CASE
+                   -- Legacy customer-receipt rows were posted with reversed sign (debit instead of credit).
+                   WHEN COALESCE(at.txn_type::text, '') = 'sale_payment'
+                     AND COALESCE(at.ref_table, '') = 'customer_receipts'
+                     AND COALESCE(at.credit, 0) = 0
+                     AND COALESCE(at.debit, 0) > 0
+                     THEN COALESCE(at.debit, 0)
+                   ELSE COALESCE(at.credit, 0) - COALESCE(at.debit, 0)
+                 END
+               ),
+               0
+             )::double precision AS txn_balance
            FROM ims.account_transactions at
           WHERE at.branch_id = $1
             AND at.txn_date::date <= $2::date
@@ -383,53 +377,129 @@ export const financialReportsService = {
         params
       ),
       queryAmount(
-        `WITH customer_ledger AS (
-           SELECT
-             l.customer_id,
-             COALESCE(SUM(l.debit - l.credit), 0)::double precision AS balance
-           FROM ims.customer_ledger l
-          WHERE l.branch_id = $1
-            AND l.entry_date::date <= $2::date
-          GROUP BY l.customer_id
-         )
-         SELECT COALESCE(SUM(GREATEST(cl.balance, 0)), 0)::double precision AS amount
-           FROM customer_ledger cl`,
-        params
-      ),
-      queryAmount(
-        `WITH customer_ledger AS (
-           SELECT
-             l.customer_id,
-             COALESCE(SUM(l.debit - l.credit), 0)::double precision AS balance
-           FROM ims.customer_ledger l
-          WHERE l.branch_id = $1
-            AND l.entry_date::date <= $2::date
-          GROUP BY l.customer_id
-         )
-         SELECT COALESCE(SUM(GREATEST(-cl.balance, 0)), 0)::double precision AS amount
-           FROM customer_ledger cl`,
-        params
-      ),
-      queryAmount(
-        `SELECT COALESCE(SUM(si.quantity * COALESCE(i.cost_price, 0)), 0)::double precision AS amount
-           FROM ims.store_items si
-           JOIN ims.stores st ON st.store_id = si.store_id
-           JOIN ims.items i ON i.item_id = si.product_id
-          WHERE st.branch_id = $1`,
+        `SELECT COALESCE(SUM(GREATEST(COALESCE(c.${customerBalanceColumn}, 0), 0)), 0)::double precision AS amount
+           FROM ims.customers c
+          WHERE c.branch_id = $1
+            AND c.is_active = TRUE`,
         [branchId]
       ),
       queryAmount(
-        `WITH supplier_ledger AS (
+        `SELECT COALESCE(SUM(GREATEST(-COALESCE(c.${customerBalanceColumn}, 0), 0)), 0)::double precision AS amount
+           FROM ims.customers c
+          WHERE c.branch_id = $1
+            AND c.is_active = TRUE`,
+        [branchId]
+      ),
+      queryAmount(
+        `WITH item_stock AS (
            SELECT
-             l.supplier_id,
-             COALESCE(SUM(l.credit - l.debit), 0)::double precision AS balance
-           FROM ims.supplier_ledger l
-          WHERE l.branch_id = $1
-            AND l.entry_date::date <= $2::date
-          GROUP BY l.supplier_id
+             i.item_id,
+             CASE
+               WHEN COALESCE(st.row_count, 0) = 0 THEN COALESCE(i.opening_balance, 0)
+               ELSE COALESCE(st.total_qty, 0)
+             END::numeric(14,3) AS total_qty,
+             COALESCE(i.cost_price, 0)::numeric(14,2) AS cost_price
+           FROM ims.items i
+           LEFT JOIN (
+             SELECT
+               s.branch_id,
+               si.product_id AS item_id,
+               COALESCE(SUM(si.quantity), 0)::numeric(14,3) AS total_qty,
+               COUNT(*)::int AS row_count
+             FROM ims.store_items si
+             JOIN ims.stores s ON s.store_id = si.store_id
+             GROUP BY s.branch_id, si.product_id
+           ) st
+             ON st.item_id = i.item_id
+            AND st.branch_id = i.branch_id
+          WHERE i.branch_id = $1
+        )
+        SELECT COALESCE(SUM(item_stock.total_qty * item_stock.cost_price), 0)::double precision AS amount
+          FROM item_stock`,
+        [branchId]
+      ),
+      queryAmount(
+        `WITH scoped_purchases AS (
+           SELECT
+             p.purchase_id,
+             p.branch_id,
+             p.supplier_id,
+             COALESCE(p.total, 0)::double precision AS total
+           FROM ims.purchases p
+          WHERE p.branch_id = $1
+            AND p.supplier_id IS NOT NULL
+            AND p.purchase_date::date <= $2::date
+            AND LOWER(COALESCE(p.status::text, '')) <> 'void'
+         ),
+         purchase_payments AS (
+           SELECT
+             x.purchase_id,
+             COALESCE(SUM(x.amount), 0)::double precision AS paid_amount
+           FROM (
+             SELECT
+               sp.purchase_id,
+               COALESCE(sp.amount_paid, 0)::double precision AS amount
+             FROM ims.supplier_payments sp
+            WHERE sp.branch_id = $1
+              AND sp.pay_date::date <= $2::date
+              AND sp.purchase_id IS NOT NULL
+             UNION ALL
+             SELECT
+               sr.purchase_id,
+               COALESCE(sr.amount, 0)::double precision AS amount
+             FROM ims.supplier_receipts sr
+            WHERE sr.branch_id = $1
+              AND sr.receipt_date::date <= $2::date
+              AND sr.purchase_id IS NOT NULL
+           ) x
+           GROUP BY x.purchase_id
+         ),
+         purchase_rollup AS (
+           SELECT
+             sp.branch_id,
+             sp.supplier_id,
+             COALESCE(SUM(sp.total), 0)::double precision AS total_purchase,
+             COALESCE(SUM(COALESCE(pp.paid_amount, 0)), 0)::double precision AS paid_against_purchase
+           FROM scoped_purchases sp
+           LEFT JOIN purchase_payments pp ON pp.purchase_id = sp.purchase_id
+           GROUP BY sp.branch_id, sp.supplier_id
+         ),
+         supplier_unallocated_payments AS (
+           SELECT
+             sr.branch_id,
+             sr.supplier_id,
+             COALESCE(SUM(sr.amount), 0)::double precision AS unallocated_paid
+           FROM ims.supplier_receipts sr
+          WHERE sr.branch_id = $1
+            AND sr.receipt_date::date <= $2::date
+            AND sr.purchase_id IS NULL
+            AND sr.supplier_id IS NOT NULL
+          GROUP BY sr.branch_id, sr.supplier_id
          )
-         SELECT COALESCE(SUM(GREATEST(sl.balance, 0)), 0)::double precision AS amount
-           FROM supplier_ledger sl`,
+         SELECT COALESCE(
+                  SUM(
+                    GREATEST(
+                      COALESCE(s.${supplierBalanceColumn}, 0)
+                      + GREATEST(
+                          COALESCE(pr.total_purchase, 0)
+                          - COALESCE(pr.paid_against_purchase, 0)
+                          - COALESCE(up.unallocated_paid, 0),
+                          0
+                        ),
+                      0
+                    )
+                  ),
+                  0
+                )::double precision AS amount
+           FROM ims.suppliers s
+           LEFT JOIN purchase_rollup pr
+             ON pr.branch_id = s.branch_id
+            AND pr.supplier_id = s.supplier_id
+           LEFT JOIN supplier_unallocated_payments up
+             ON up.branch_id = s.branch_id
+            AND up.supplier_id = s.supplier_id
+          WHERE s.branch_id = $1
+            AND s.is_active = TRUE`,
         params
       ),
       queryAmount(
@@ -575,6 +645,22 @@ export const financialReportsService = {
       ),
     ]);
 
+    let fixedAssetsAmount = 0;
+    try {
+      fixedAssetsAmount = await queryAmount(
+        `SELECT COALESCE(SUM(fa.cost), 0)::double precision AS amount
+           FROM ims.fixed_assets fa
+          WHERE fa.branch_id = $1
+            AND fa.purchase_date <= $2::date
+            AND LOWER(COALESCE(fa.status, 'active')) <> 'disposed'`,
+        params
+      );
+    } catch (error) {
+      if (!isMissingBalanceSheetProcedureError(error)) {
+        throw error;
+      }
+    }
+
     const fallbackCustomerReceivable = await queryAmount(
       `SELECT COALESCE(SUM(c.${customerBalanceColumn}), 0)::double precision AS amount
          FROM ims.customers c
@@ -583,7 +669,7 @@ export const financialReportsService = {
       [branchId]
     );
     const fallbackSupplierPayable = await queryAmount(
-      `SELECT COALESCE(SUM(s.${supplierBalanceColumn}), 0)::double precision AS amount
+      `SELECT COALESCE(SUM(GREATEST(COALESCE(s.${supplierBalanceColumn}, 0), 0)), 0)::double precision AS amount
          FROM ims.suppliers s
         WHERE s.branch_id = $1
           AND s.is_active = TRUE`,
@@ -591,7 +677,7 @@ export const financialReportsService = {
     );
 
     const accountsReceivable = receivableAmount > 0 ? receivableAmount : Math.max(fallbackCustomerReceivable, 0);
-    const accountsPayable = supplierPayableAmount > 0 ? supplierPayableAmount : Math.max(fallbackSupplierPayable, 0);
+    const accountsPayable = Math.max(supplierPayableAmount, fallbackSupplierPayable, 0);
 
     const netPurchasesToDate = Math.max(purchasesToDate - purchaseReturnsToDate, 0);
     const costOfSalesToDate = cogsByMovementToDate > 0 ? cogsByMovementToDate : netPurchasesToDate;
@@ -599,45 +685,180 @@ export const financialReportsService = {
       netSalesToDate + otherIncomeToDate + supplierRefundsToDate - costOfSalesToDate - operatingExpensesToDate - payrollExpenseToDate;
     const netResultLabel = netProfitToDate >= 0 ? 'Net Profit' : 'Net Loss';
 
-    const totalAssets = cashAmount + accountsReceivable + inventoryAmount + employeeLoanReceivableAmount;
-    const totalLiabilities = accountsPayable + customerAdvanceAmount + expensePayableAmount + payrollPayableAmount;
+    const totalCurrentAssets = cashAmount + accountsReceivable + inventoryAmount;
+    const totalNonCurrentAssets = employeeLoanReceivableAmount + fixedAssetsAmount;
+    const totalAssets = totalCurrentAssets + totalNonCurrentAssets;
+
+    const totalCurrentLiabilities = accountsPayable + customerAdvanceAmount + expensePayableAmount + payrollPayableAmount;
+    const totalNonCurrentLiabilities = 0;
+    const totalLiabilities = totalCurrentLiabilities + totalNonCurrentLiabilities;
     const openingEquity = totalAssets - totalLiabilities - netProfitToDate;
     const totalEquity = openingEquity + netProfitToDate;
     const totalLiabilitiesEquity = totalLiabilities + totalEquity;
-
-    const suffix = `As of ${asOfDate}`;
+    const balanceDifference = totalAssets - totalLiabilitiesEquity;
 
     return [
-      { section: `Assets (${suffix})`, line_item: 'Cash & Bank Accounts', amount: cashAmount, row_type: 'detail' },
-      { section: `Assets (${suffix})`, line_item: 'Accounts Receivable', amount: accountsReceivable, row_type: 'detail' },
-      { section: `Assets (${suffix})`, line_item: 'Inventory Value', amount: inventoryAmount, row_type: 'detail' },
+      { section: 'Current Assets', line_item: 'Cash & Bank Accounts', amount: cashAmount, row_type: 'detail' },
+      { section: 'Current Assets', line_item: 'Accounts Receivable', amount: accountsReceivable, row_type: 'detail' },
+      { section: 'Current Assets', line_item: 'Inventory Value', amount: inventoryAmount, row_type: 'detail' },
+      { section: 'Current Assets', line_item: 'Total Current Assets', amount: totalCurrentAssets, row_type: 'total' },
       {
-        section: `Assets (${suffix})`,
+        section: 'Non-Current Assets',
+        line_item: 'Fixed Assets',
+        amount: fixedAssetsAmount,
+        row_type: 'detail',
+      },
+      {
+        section: 'Non-Current Assets',
         line_item: 'Employee Loan Receivable',
         amount: employeeLoanReceivableAmount,
         row_type: 'detail',
       },
-      { section: `Assets (${suffix})`, line_item: 'Total Assets', amount: totalAssets, row_type: 'total' },
-      { section: `Liabilities (${suffix})`, line_item: 'Accounts Payable', amount: accountsPayable, row_type: 'detail' },
       {
-        section: `Liabilities (${suffix})`,
+        section: 'Non-Current Assets',
+        line_item: 'Total Non-Current Assets',
+        amount: totalNonCurrentAssets,
+        row_type: 'total',
+      },
+      { section: 'Current Liabilities', line_item: 'Accounts Payable', amount: accountsPayable, row_type: 'detail' },
+      {
+        section: 'Current Liabilities',
         line_item: 'Customer Advances',
         amount: customerAdvanceAmount,
         row_type: 'detail',
       },
-      { section: `Liabilities (${suffix})`, line_item: 'Expense Payable', amount: expensePayableAmount, row_type: 'detail' },
-      { section: `Liabilities (${suffix})`, line_item: 'Payroll Payable', amount: payrollPayableAmount, row_type: 'detail' },
-      { section: `Liabilities (${suffix})`, line_item: 'Total Liabilities', amount: totalLiabilities, row_type: 'total' },
-      { section: `Equity (${suffix})`, line_item: 'Opening / Owner Equity', amount: openingEquity, row_type: 'detail' },
-      { section: `Equity (${suffix})`, line_item: netResultLabel, amount: netProfitToDate, row_type: 'detail' },
-      { section: `Equity (${suffix})`, line_item: 'Total Equity', amount: totalEquity, row_type: 'total' },
+      { section: 'Current Liabilities', line_item: 'Expense Payable', amount: expensePayableAmount, row_type: 'detail' },
+      { section: 'Current Liabilities', line_item: 'Payroll Payable', amount: payrollPayableAmount, row_type: 'detail' },
       {
-        section: `Liabilities + Equity (${suffix})`,
-        line_item: 'Total Liabilities + Equity',
-        amount: totalLiabilitiesEquity,
+        section: 'Current Liabilities',
+        line_item: 'Total Current Liabilities',
+        amount: totalCurrentLiabilities,
         row_type: 'total',
       },
+      { section: 'Non-Current Liabilities', line_item: 'Long-Term Liabilities', amount: 0, row_type: 'detail' },
+      {
+        section: 'Non-Current Liabilities',
+        line_item: 'Total Non-Current Liabilities',
+        amount: totalNonCurrentLiabilities,
+        row_type: 'total',
+      },
+      { section: 'Equity', line_item: 'Opening / Owner Equity', amount: openingEquity, row_type: 'detail' },
+      { section: 'Equity', line_item: netResultLabel, amount: netProfitToDate, row_type: 'detail' },
+      { section: 'Equity', line_item: 'Total Equity', amount: totalEquity, row_type: 'total' },
+      { section: 'Summary', line_item: 'Total Assets', amount: totalAssets, row_type: 'total' },
+      { section: 'Summary', line_item: 'Total Liabilities', amount: totalLiabilities, row_type: 'total' },
+      { section: 'Summary', line_item: 'Total Liabilities + Equity', amount: totalLiabilitiesEquity, row_type: 'total' },
+      { section: 'Summary', line_item: 'Balance Difference', amount: balanceDifference, row_type: 'detail' },
     ];
+  },
+
+  async getAccountsReceivable(branchId: number, fromDate: string, toDate: string): Promise<AccountsReceivableRow[]> {
+    return queryMany<AccountsReceivableRow>(
+      `WITH sales_scope AS (
+         SELECT
+           s.sale_id::bigint AS invoice_no,
+           COALESCE(c.full_name, 'Walk-in') AS customer_name,
+           s.sale_date::date AS invoice_date,
+           COALESCE(NULLIF(to_jsonb(s) ->> 'due_date', '')::date, s.sale_date::date) AS due_date,
+           COALESCE(s.total, 0)::double precision AS amount
+         FROM ims.sales s
+         LEFT JOIN ims.customers c ON c.customer_id = s.customer_id
+         WHERE s.branch_id = $1
+           AND s.sale_date::date BETWEEN $2::date AND $3::date
+           AND LOWER(COALESCE(s.status::text, '')) <> 'void'
+           AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
+       ),
+       sale_payments AS (
+         SELECT
+           sp.sale_id::bigint AS invoice_no,
+           COALESCE(SUM(sp.amount_paid), 0)::double precision AS paid
+         FROM ims.sale_payments sp
+         WHERE sp.branch_id = $1
+         GROUP BY sp.sale_id
+       ),
+       receipt_payments AS (
+         SELECT
+           cr.sale_id::bigint AS invoice_no,
+           COALESCE(SUM(cr.amount), 0)::double precision AS paid
+         FROM ims.customer_receipts cr
+         WHERE cr.branch_id = $1
+           AND cr.sale_id IS NOT NULL
+         GROUP BY cr.sale_id
+       )
+       SELECT
+         ss.customer_name,
+         ss.invoice_no,
+         ss.invoice_date::text AS invoice_date,
+         ss.due_date::text AS due_date,
+         ss.amount,
+         LEAST(ss.amount, COALESCE(sp.paid, 0) + COALESCE(rp.paid, 0))::double precision AS paid,
+         GREATEST(ss.amount - (COALESCE(sp.paid, 0) + COALESCE(rp.paid, 0)), 0)::double precision AS balance,
+         CASE
+           WHEN GREATEST(ss.amount - (COALESCE(sp.paid, 0) + COALESCE(rp.paid, 0)), 0) <= 0.009 THEN 'Paid'
+           WHEN ss.due_date < CURRENT_DATE THEN 'Overdue'
+           ELSE 'Open'
+         END AS status
+       FROM sales_scope ss
+       LEFT JOIN sale_payments sp ON sp.invoice_no = ss.invoice_no
+       LEFT JOIN receipt_payments rp ON rp.invoice_no = ss.invoice_no
+       ORDER BY ss.invoice_date DESC, ss.invoice_no DESC
+       LIMIT 5000`,
+      [branchId, fromDate, toDate]
+    );
+  },
+
+  async getAccountsPayable(branchId: number, fromDate: string, toDate: string): Promise<AccountsPayableRow[]> {
+    return queryMany<AccountsPayableRow>(
+      `WITH purchases_scope AS (
+         SELECT
+           p.purchase_id::bigint AS bill_no,
+           COALESCE(s.name, 'Unknown Supplier') AS supplier_name,
+           p.purchase_date::date AS bill_date,
+           COALESCE(NULLIF(to_jsonb(p) ->> 'due_date', '')::date, p.purchase_date::date) AS due_date,
+           COALESCE(p.total, 0)::double precision AS amount
+         FROM ims.purchases p
+         LEFT JOIN ims.suppliers s ON s.supplier_id = p.supplier_id
+         WHERE p.branch_id = $1
+           AND p.purchase_date::date BETWEEN $2::date AND $3::date
+           AND LOWER(COALESCE(p.status::text, '')) <> 'void'
+       ),
+       purchase_payments AS (
+         SELECT
+           sp.purchase_id::bigint AS bill_no,
+           COALESCE(SUM(sp.amount_paid), 0)::double precision AS paid
+         FROM ims.supplier_payments sp
+         WHERE sp.branch_id = $1
+         GROUP BY sp.purchase_id
+       ),
+       receipt_payments AS (
+         SELECT
+           sr.purchase_id::bigint AS bill_no,
+           COALESCE(SUM(sr.amount), 0)::double precision AS paid
+         FROM ims.supplier_receipts sr
+         WHERE sr.branch_id = $1
+           AND sr.purchase_id IS NOT NULL
+         GROUP BY sr.purchase_id
+       )
+       SELECT
+         ps.supplier_name,
+         ps.bill_no,
+         ps.bill_date::text AS bill_date,
+         ps.due_date::text AS due_date,
+         ps.amount,
+         LEAST(ps.amount, COALESCE(pp.paid, 0) + COALESCE(rp.paid, 0))::double precision AS paid,
+         GREATEST(ps.amount - (COALESCE(pp.paid, 0) + COALESCE(rp.paid, 0)), 0)::double precision AS balance,
+         CASE
+           WHEN GREATEST(ps.amount - (COALESCE(pp.paid, 0) + COALESCE(rp.paid, 0)), 0) <= 0.009 THEN 'Settled'
+           WHEN ps.due_date < CURRENT_DATE THEN 'Overdue'
+           ELSE 'Open'
+         END AS status
+       FROM purchases_scope ps
+       LEFT JOIN purchase_payments pp ON pp.bill_no = ps.bill_no
+       LEFT JOIN receipt_payments rp ON rp.bill_no = ps.bill_no
+       ORDER BY ps.bill_date DESC, ps.bill_no DESC
+       LIMIT 5000`,
+      [branchId, fromDate, toDate]
+    );
   },
 
   async getCashFlowStatement(branchId: number, fromDate: string, toDate: string): Promise<CashFlowRow[]> {
@@ -732,9 +953,6 @@ export const financialReportsService = {
     ]);
 
     const salesCollections = customerReceipts + salePayments;
-    const totalInflows = salesCollections + supplierRefunds + loanRepayments;
-    const totalOutflows = supplierPayments + expensePayments + payrollPayments + employeeLoanDisbursements;
-
     const netOperations = salesCollections - supplierPayments - expensePayments - payrollPayments;
     const netInvesting = supplierRefunds - employeeLoanDisbursements;
     const netFinancing = loanRepayments;

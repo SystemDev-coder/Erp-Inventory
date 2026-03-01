@@ -92,12 +92,25 @@ export interface StoreWiseStockRow {
 const stockTotalsCte = `
   WITH stock_totals AS (
     SELECT
-      s.branch_id,
-      si.product_id AS item_id,
-      COALESCE(SUM(si.quantity), 0)::numeric(14,3) AS total_qty
-    FROM ims.store_items si
-    JOIN ims.stores s ON s.store_id = si.store_id
-    GROUP BY s.branch_id, si.product_id
+      i.branch_id,
+      i.item_id,
+      CASE
+        WHEN COALESCE(st.row_count, 0) = 0 THEN COALESCE(i.opening_balance, 0)
+        ELSE COALESCE(st.store_qty, 0)
+      END::numeric(14,3) AS total_qty
+    FROM ims.items i
+    LEFT JOIN (
+      SELECT
+        s.branch_id,
+        si.product_id AS item_id,
+        COALESCE(SUM(si.quantity), 0)::numeric(14,3) AS store_qty,
+        COUNT(*)::int AS row_count
+      FROM ims.store_items si
+      JOIN ims.stores s ON s.store_id = si.store_id
+      GROUP BY s.branch_id, si.product_id
+    ) st
+      ON st.item_id = i.item_id
+     AND st.branch_id = i.branch_id
   )
 `;
 

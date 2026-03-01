@@ -351,8 +351,8 @@ const Customers = () => {
                 onClose={() => setImportModalOpen(false)}
                 importType="customers"
                 title="Upload Customers"
-                columns={['full_name', 'phone', 'customer_type', 'gender', 'address', 'remaining_balance', 'is_active']}
-                templateHeaders={['full_name', 'phone', 'gender', 'address', 'remaining_balance', 'is_active']}
+                columns={['full_name', 'phone', 'customer_type', 'gender', 'address', 'remaining_balance']}
+                templateHeaders={['full_name', 'phone', 'gender', 'address', 'remaining_balance']}
                 onImported={async () => {
                     if (hasDisplayed) {
                         await fetchCustomers();

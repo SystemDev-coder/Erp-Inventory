@@ -85,33 +85,63 @@ export class DashboardService {
       const alertExpr = await getItemAlertExpression();
       const thresholdExpr = `GREATEST(COALESCE(NULLIF(${alertExpr}, 0), 5), 1)`;
       return queryOne<{ count: string }>(
-        `SELECT COUNT(*)::text AS count
-           FROM (
-             SELECT i.item_id
-               FROM ims.items i
-               LEFT JOIN ims.store_items si
-                 ON si.product_id = i.item_id
-               LEFT JOIN ims.stores st
-                 ON st.store_id = si.store_id
-                AND st.branch_id = i.branch_id
-              WHERE i.branch_id = $1
-                AND i.is_active = TRUE
-              GROUP BY i.item_id, ${alertExpr}
-             HAVING COALESCE(
-                      SUM(CASE WHEN st.store_id IS NOT NULL THEN si.quantity ELSE 0 END),
-                      0
-                    ) <= ${thresholdExpr}
-           ) AS x`,
+        `WITH item_stock AS (
+           SELECT
+             i.item_id,
+             ${thresholdExpr}::numeric(14,3) AS stock_alert,
+             CASE
+               WHEN COALESCE(st.row_count, 0) = 0 THEN COALESCE(i.opening_balance, 0)
+               ELSE COALESCE(st.store_qty, 0)
+             END::numeric(14,3) AS quantity
+           FROM ims.items i
+           LEFT JOIN (
+             SELECT
+               s.branch_id,
+               si.product_id AS item_id,
+               COALESCE(SUM(si.quantity), 0)::numeric(14,3) AS store_qty,
+               COUNT(*)::int AS row_count
+             FROM ims.store_items si
+             JOIN ims.stores s ON s.store_id = si.store_id
+             GROUP BY s.branch_id, si.product_id
+           ) st
+             ON st.item_id = i.item_id
+            AND st.branch_id = i.branch_id
+          WHERE i.branch_id = $1
+            AND i.is_active = TRUE
+         )
+         SELECT COUNT(*)::text AS count
+           FROM item_stock
+          WHERE quantity <= stock_alert`,
         [branchId]
       );
     };
 
     const runInventoryStock = async (): Promise<{ total: string } | null> => {
       return queryOne<{ total: string }>(
-        `SELECT COALESCE(SUM(si.quantity), 0)::text AS total
-           FROM ims.store_items si
-           JOIN ims.stores st ON st.store_id = si.store_id
-          WHERE st.branch_id = $1`,
+        `WITH item_stock AS (
+           SELECT
+             CASE
+               WHEN COALESCE(st.row_count, 0) = 0 THEN COALESCE(i.opening_balance, 0)
+               ELSE COALESCE(st.store_qty, 0)
+             END::numeric(14,3) AS quantity
+           FROM ims.items i
+           LEFT JOIN (
+             SELECT
+               s.branch_id,
+               si.product_id AS item_id,
+               COALESCE(SUM(si.quantity), 0)::numeric(14,3) AS store_qty,
+               COUNT(*)::int AS row_count
+             FROM ims.store_items si
+             JOIN ims.stores s ON s.store_id = si.store_id
+             GROUP BY s.branch_id, si.product_id
+           ) st
+             ON st.item_id = i.item_id
+            AND st.branch_id = i.branch_id
+          WHERE i.branch_id = $1
+            AND i.is_active = TRUE
+         )
+         SELECT COALESCE(SUM(quantity), 0)::text AS total
+           FROM item_stock`,
         [branchId]
       );
     };
@@ -291,34 +321,40 @@ export class DashboardService {
       quantity: string;
       stock_alert: string;
     }>(
-      `SELECT
-          i.item_id,
-          i.name AS item_name,
-          COALESCE(
-            SUM(CASE WHEN st.store_id IS NOT NULL THEN si.quantity ELSE 0 END),
-            0
-          )::text AS quantity,
-          ${thresholdExpr}::text AS stock_alert
+      `WITH item_stock AS (
+         SELECT
+           i.item_id,
+           i.name AS item_name,
+           ${thresholdExpr}::numeric(14,3) AS stock_alert,
+           CASE
+             WHEN COALESCE(st.row_count, 0) = 0 THEN COALESCE(i.opening_balance, 0)
+             ELSE COALESCE(st.store_qty, 0)
+           END::numeric(14,3) AS quantity
          FROM ims.items i
-         LEFT JOIN ims.store_items si
-           ON si.product_id = i.item_id
-         LEFT JOIN ims.stores st
-           ON st.store_id = si.store_id
+         LEFT JOIN (
+           SELECT
+             s.branch_id,
+             si.product_id AS item_id,
+             COALESCE(SUM(si.quantity), 0)::numeric(14,3) AS store_qty,
+             COUNT(*)::int AS row_count
+           FROM ims.store_items si
+           JOIN ims.stores s ON s.store_id = si.store_id
+           GROUP BY s.branch_id, si.product_id
+         ) st
+           ON st.item_id = i.item_id
           AND st.branch_id = i.branch_id
         WHERE i.branch_id = $1
           AND i.is_active = TRUE
-        GROUP BY i.item_id, i.name, ${alertExpr}
-       HAVING COALESCE(
-                SUM(CASE WHEN st.store_id IS NOT NULL THEN si.quantity ELSE 0 END),
-                0
-              ) <= ${thresholdExpr}
-        ORDER BY
-          (${thresholdExpr} - COALESCE(
-            SUM(CASE WHEN st.store_id IS NOT NULL THEN si.quantity ELSE 0 END),
-            0
-          )) DESC,
-          i.name ASC
-        LIMIT 12`,
+       )
+       SELECT
+         item_id,
+         item_name,
+         quantity::text AS quantity,
+         stock_alert::text AS stock_alert
+       FROM item_stock
+       WHERE quantity <= stock_alert
+       ORDER BY (stock_alert - quantity) DESC, item_name ASC
+       LIMIT 12`,
       [branchId]
     );
 

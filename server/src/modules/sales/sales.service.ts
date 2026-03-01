@@ -326,7 +326,7 @@ const resolveStoreForItem = async (
 
 const applyStoreItemDelta = async (
   client: PoolClient,
-  params: { storeId: number; itemId: number; delta: number }
+  params: { branchId: number; storeId: number; itemId: number; delta: number }
 ) => {
   if (!params.delta) return;
 
@@ -339,7 +339,20 @@ const applyStoreItemDelta = async (
     [params.storeId, params.itemId]
   );
 
-  const currentQty = Number(existing.rows[0]?.quantity || 0);
+  let currentQty = Number(existing.rows[0]?.quantity || 0);
+  if (!existing.rows[0]) {
+    // If store_items row is missing, treat opening_balance as initial stock.
+    const item = await client.query<{ opening_balance: string }>(
+      `SELECT COALESCE(opening_balance, 0)::text AS opening_balance
+         FROM ims.items
+        WHERE item_id = $1
+          AND branch_id = $2
+        LIMIT 1`,
+      [params.itemId, params.branchId]
+    );
+    currentQty = Number(item.rows[0]?.opening_balance || 0);
+  }
+
   const nextQty = currentQty + params.delta;
   if (nextQty < 0) {
     throw ApiError.badRequest(`Insufficient store stock for item ${params.itemId}`);
@@ -386,6 +399,7 @@ const applyStockByFunction = async (
       params.storeId ?? null
     );
     await applyStoreItemDelta(client, {
+      branchId: params.branchId,
       storeId,
       itemId: item.product_id,
       delta,
@@ -697,8 +711,6 @@ export const salesService = {
     try {
       await client.query('BEGIN');
       const schema = await getSalesSchemaMeta();
-      const supportsInlinePayment =
-        schema.salesColumns.has('pay_acc_id') && schema.salesColumns.has('paid_amount');
 
       const items = input.items || [];
       if (!items.length) {
@@ -720,19 +732,15 @@ export const salesService = {
         docType === 'quotation'
           ? 'credit'
           : input.saleType || (status === 'unpaid' ? 'credit' : 'cash');
-      const payment = supportsInlinePayment
-        ? normalizePayment({
-            total: totalWithTax,
-            docType,
-            status,
-            payAccId: input.payFromAccId,
-            paidAmount: input.paidAmount,
-          })
-        : { payAccId: null, paidAmount: 0 };
+      const payment = normalizePayment({
+        total: totalWithTax,
+        docType,
+        status,
+        payAccId: input.payFromAccId,
+        paidAmount: input.paidAmount,
+      });
 
-      if (supportsInlinePayment) {
-        await ensureAccount(client, context.branchId, payment.payAccId);
-      }
+      await ensureAccount(client, context.branchId, payment.payAccId);
 
       const insertColumns: string[] = [];
       const insertValues: Array<string | number | boolean | null> = [];
@@ -793,7 +801,7 @@ export const salesService = {
         });
       }
 
-      if (supportsInlinePayment && payment.payAccId && payment.paidAmount > 0) {
+      if (payment.payAccId && payment.paidAmount > 0) {
         await adjustAccountBalance(client, {
           accId: payment.payAccId,
           branchId: context.branchId,

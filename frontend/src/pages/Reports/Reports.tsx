@@ -51,21 +51,21 @@ export default function Reports() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-4 px-2 lg:px-0">
-      <div className="rounded-xl border border-[#2c6287] bg-gradient-to-r from-[#123f5c] to-[#1b5a80] px-5 py-4 text-white shadow-sm">
+      <div className="rounded-xl border border-zinc-300 bg-white px-5 py-4 text-black shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-[11px] uppercase tracking-[0.35em] opacity-80">Inventory ERP</p>
+            <p className="text-[11px] uppercase tracking-[0.35em] text-zinc-500">Inventory ERP</p>
             <h1 className="text-3xl font-bold leading-tight">Reports Control Center</h1>
-            <p className="mt-1 text-sm opacity-90">Reports are organized by module tabs. Open any card to preview, print, or export.</p>
+            <p className="mt-1 text-sm text-zinc-700">Reports are organized by module tabs. Open any card to preview, print, or export.</p>
           </div>
-          <div className="rounded-xl bg-white/15 px-4 py-3">
-            <div className="text-xs uppercase tracking-wide opacity-80">Categories</div>
+          <div className="rounded-xl border border-zinc-300 bg-white px-4 py-3">
+            <div className="text-xs uppercase tracking-wide text-zinc-500">Categories</div>
             <div className="text-2xl font-bold leading-none">{reportTabs.length}</div>
           </div>
         </div>
       </div>
 
-      <div className="rounded-xl border border-[#c4d0db] bg-[#f2f5f8] p-4 shadow-sm">
+      <div className="rounded-xl border border-zinc-300 bg-white p-4 shadow-sm">
         <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
           {reportTabs.map((tab) => {
             const Icon = tab.icon;
@@ -76,8 +76,8 @@ export default function Reports() {
                 onClick={() => setActiveTab(tab.id)}
                 className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition whitespace-nowrap ${
                   active
-                    ? 'border-[#0f4f76] bg-[#0f4f76] text-white shadow'
-                    : 'border-[#b9c7d5] bg-white text-[#14344c] hover:bg-[#e9f0f6]'
+                    ? 'border-black bg-black text-white shadow'
+                    : 'border-zinc-300 bg-white text-black hover:bg-zinc-100'
                 }`}
               >
                 <Icon className="h-4 w-4" />
@@ -100,7 +100,7 @@ export default function Reports() {
           activeTab !== 'financial' &&
           activeTab !== 'hr' &&
           activeTab !== 'customer' && (
-          <div className="rounded-lg border border-dashed border-[#b4c3d1] bg-white px-4 py-8 text-center text-[#3f5a72]">
+          <div className="rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-8 text-center text-zinc-700">
             <p className="text-lg font-semibold">{reportTabs.find((tab) => tab.id === activeTab)?.title} reports tab</p>
             <p className="mt-1 text-sm">This tab is ready for modular implementation in its own report subfolder.</p>
           </div>

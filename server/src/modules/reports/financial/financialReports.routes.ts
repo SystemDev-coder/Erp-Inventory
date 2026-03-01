@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import {
+  getAccountsPayableReport,
+  getAccountsReceivableReport,
   getAccountStatementReport,
   getAccountBalancesReport,
   getAccountTransactionsReport,
@@ -23,6 +25,8 @@ router.get('/account-balances', getAccountBalancesReport);
 router.get('/expense-summary', getExpenseSummaryReport);
 router.get('/customer-receipts', getCustomerReceiptsReport);
 router.get('/supplier-payments', getSupplierPaymentsReport);
+router.get('/accounts-receivable', getAccountsReceivableReport);
+router.get('/accounts-payable', getAccountsPayableReport);
 router.get('/account-transactions', getAccountTransactionsReport);
 router.get('/account-statement', getAccountStatementReport);
 router.get('/trial-balance', getTrialBalanceReport);

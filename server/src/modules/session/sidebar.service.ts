@@ -137,6 +137,14 @@ export class SidebarService {
     // Required to be visible for all authenticated users.
     modules.push(
       {
+        id: 'assets',
+        name: 'Assets',
+        nameSo: 'Hantida',
+        icon: 'BriefcaseBusiness',
+        route: '/assets',
+        permission: 'accounts.view',
+      },
+      {
         id: 'finance',
         name: 'Finance',
         nameSo: 'Maaliyadda',

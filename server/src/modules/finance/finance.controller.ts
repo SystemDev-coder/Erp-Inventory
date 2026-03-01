@@ -161,12 +161,34 @@ export const listCustomerUnpaid = asyncHandler(async (req: AuthRequest, res: Res
   return ApiResponse.success(res, { unpaid });
 });
 
+export const getCustomerCombinedBalance = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const customerId = Number(req.params.customerId);
+  if (!Number.isFinite(customerId) || customerId <= 0) {
+    throw ApiError.badRequest('Invalid customer id');
+  }
+  const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
+  const balance = await financeService.getCustomerCombinedBalance(scope, customerId, branchId);
+  return ApiResponse.success(res, { balance });
+});
+
 export const listSupplierUnpaid = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
   const month = typeof req.query.month === 'string' ? req.query.month : undefined;
   const unpaid = await financeService.listSupplierUnpaid(scope, month, branchId);
   return ApiResponse.success(res, { unpaid });
+});
+
+export const getSupplierCombinedBalance = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const supplierId = Number(req.params.supplierId);
+  if (!Number.isFinite(supplierId) || supplierId <= 0) {
+    throw ApiError.badRequest('Invalid supplier id');
+  }
+  const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
+  const balance = await financeService.getSupplierCombinedBalance(scope, supplierId, branchId);
+  return ApiResponse.success(res, { balance });
 });
 
 export const listSupplierOutstandingPurchases = asyncHandler(async (req: AuthRequest, res: Response) => {

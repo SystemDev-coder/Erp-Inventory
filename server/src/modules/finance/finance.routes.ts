@@ -34,7 +34,9 @@ import {
   updateExpense,
   deleteExpense,
   listCustomerUnpaid,
+  getCustomerCombinedBalance,
   listSupplierUnpaid,
+  getSupplierCombinedBalance,
   listSupplierOutstandingPurchases,
 } from './finance.controller';
 
@@ -49,6 +51,7 @@ router.put('/transfers/:id', updateAccountTransfer);
 
 // Receipts - customers
 router.get('/receipts/customers/unpaid', listCustomerUnpaid);
+router.get('/receipts/customers/:customerId/balance', getCustomerCombinedBalance);
 router.get('/receipts/customers', listCustomerReceipts);
 router.post('/receipts/customers', createCustomerReceipt);
 router.put('/receipts/customers/:id', updateCustomerReceipt);
@@ -56,6 +59,7 @@ router.delete('/receipts/customers/:id', deleteCustomerReceipt);
 
 // Receipts - suppliers
 router.get('/receipts/suppliers/unpaid', listSupplierUnpaid);
+router.get('/receipts/suppliers/:supplierId/balance', getSupplierCombinedBalance);
 router.get('/receipts/suppliers/outstanding', listSupplierOutstandingPurchases);
 router.get('/receipts/suppliers', listSupplierReceipts);
 router.post('/receipts/suppliers', createSupplierReceipt);

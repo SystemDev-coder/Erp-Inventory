@@ -98,6 +98,10 @@ const Receipts = () => {
     const [submitting, setSubmitting] = useState(false);
     const [deleteTarget, setDeleteTarget] = useState<DeleteReceiptTarget | null>(null);
     const [deletingReceipt, setDeletingReceipt] = useState(false);
+    const [customerCombinedBalance, setCustomerCombinedBalance] = useState<number | null>(null);
+    const [customerBalanceLoading, setCustomerBalanceLoading] = useState(false);
+    const [supplierCombinedBalance, setSupplierCombinedBalance] = useState<number | null>(null);
+    const [supplierBalanceLoading, setSupplierBalanceLoading] = useState(false);
 
     // ─── Data Loading ──────────────────────────────────────────────────────────
     const loadAll = async () => {
@@ -264,11 +268,73 @@ const Receipts = () => {
                 reference_no: row.reference_no ?? '',
                 note: row.note ?? '',
             });
+            if (row.customer_id) {
+                void (async () => {
+                    setCustomerBalanceLoading(true);
+                    const balanceRes = await financeService.getCustomerCombinedBalance(row.customer_id as number);
+                    if (balanceRes.success && balanceRes.data?.balance) {
+                        setCustomerCombinedBalance(Number(balanceRes.data.balance.total_balance ?? 0));
+                    } else {
+                        setCustomerCombinedBalance(null);
+                    }
+                    setCustomerBalanceLoading(false);
+                })();
+            } else {
+                setCustomerCombinedBalance(null);
+            }
         } else {
             setEditingReceiptId(null);
             setReceiptForm({});
+            setCustomerCombinedBalance(null);
         }
         setIsCustModalOpen(true);
+    };
+
+    const handleCustomerChange = async (customerId?: number) => {
+        setReceiptForm((f) => ({ ...f, customer_id: customerId }));
+        if (!customerId) {
+            setCustomerCombinedBalance(null);
+            return;
+        }
+
+        setCustomerBalanceLoading(true);
+        const balanceRes = await financeService.getCustomerCombinedBalance(customerId);
+        setCustomerBalanceLoading(false);
+
+        if (!balanceRes.success || !balanceRes.data?.balance) {
+            setCustomerCombinedBalance(null);
+            showToast('error', 'Receipts', balanceRes.error || 'Failed to load customer balance');
+            return;
+        }
+
+        const totalBalance = Number(balanceRes.data.balance.total_balance ?? 0);
+        setCustomerCombinedBalance(totalBalance);
+    };
+
+    const loadSupplierCombinedBalance = async (supplierId: number): Promise<number | null> => {
+        setSupplierBalanceLoading(true);
+        const balanceRes = await financeService.getSupplierCombinedBalance(supplierId);
+        setSupplierBalanceLoading(false);
+
+        if (!balanceRes.success || !balanceRes.data?.balance) {
+            setSupplierCombinedBalance(null);
+            showToast('error', 'Receipts', balanceRes.error || 'Failed to load supplier balance');
+            return null;
+        }
+
+        const totalBalance = Number(balanceRes.data.balance.total_balance ?? 0);
+        setSupplierCombinedBalance(totalBalance);
+        return totalBalance;
+    };
+
+    const handleSupplierChange = async (supplierId?: number) => {
+        setReceiptForm((f) => ({ ...f, supplier_id: supplierId, purchase_id: undefined }));
+        if (!supplierId) {
+            setSupplierCombinedBalance(null);
+            return;
+        }
+        const totalBalance = await loadSupplierCombinedBalance(supplierId);
+        if (totalBalance === null) return;
     };
 
     const openSupModal = (row?: Receipt) => {
@@ -282,9 +348,15 @@ const Receipts = () => {
                 reference_no: row.reference_no ?? '',
                 note: row.note ?? '',
             });
+            if (row.supplier_id) {
+                void loadSupplierCombinedBalance(row.supplier_id as number);
+            } else {
+                setSupplierCombinedBalance(null);
+            }
         } else {
             setEditingReceiptId(null);
             setReceiptForm({});
+            setSupplierCombinedBalance(null);
         }
         setIsSupModalOpen(true);
     };
@@ -316,6 +388,7 @@ const Receipts = () => {
                 setIsCustModalOpen(false);
                 setReceiptForm({});
                 setEditingReceiptId(null);
+                setCustomerCombinedBalance(null);
                 loadAll();
             } else {
                 showToast('error', 'Receipts', res.error || 'Failed to save receipt');
@@ -367,6 +440,7 @@ const Receipts = () => {
                 setIsSupModalOpen(false);
                 setReceiptForm({});
                 setEditingReceiptId(null);
+                setSupplierCombinedBalance(null);
                 loadAll();
             } else {
                 showToast('error', 'Receipts', res.error || 'Failed to save receipt');
@@ -418,9 +492,6 @@ const Receipts = () => {
     };
 
     // ─── Selected customer/supplier for balance preview ────────────────────────
-    const selectedCustomer = customers.find(c => c.customer_id === receiptForm.customer_id);
-    const selectedUnpaidCust = unpaidCustomers.find(u => u.customer_id === receiptForm.customer_id);
-    const selectedUnpaidSup = unpaidSuppliers.find(u => u.supplier_id === receiptForm.supplier_id);
     const filteredOutstandingBySupplier = outstandingPurchases.filter(
         p => !receiptForm.supplier_id || p.supplier_id === receiptForm.supplier_id
     );
@@ -478,6 +549,7 @@ const Receipts = () => {
                                     setReceiptForm({ customer_id: rec.customer_id, amount: rec.balance });
                                     setEditingReceiptId(null);
                                     setIsCustModalOpen(true);
+                                    void handleCustomerChange(rec.customer_id);
                                 }}
                             />
                         </div>
@@ -557,6 +629,11 @@ const Receipts = () => {
                                     });
                                     setEditingReceiptId(null);
                                     setIsSupModalOpen(true);
+                                    if (p.supplier_id) {
+                                        void loadSupplierCombinedBalance(p.supplier_id);
+                                    } else {
+                                        setSupplierCombinedBalance(null);
+                                    }
                                 }}
                             />
                             {/* Outstanding by supplier summary */}
@@ -573,6 +650,7 @@ const Receipts = () => {
                                             setReceiptForm({ supplier_id: rec.supplier_id, amount: rec.balance });
                                             setEditingReceiptId(null);
                                             setIsSupModalOpen(true);
+                                            void handleSupplierChange(rec.supplier_id);
                                         }}
                                     />
                                 </div>
@@ -616,7 +694,7 @@ const Receipts = () => {
             {/* ─── Customer Receipt Modal ──────────────────────────────────────── */}
             <Modal
                 isOpen={isCustModalOpen}
-                onClose={() => { setIsCustModalOpen(false); setEditingReceiptId(null); setReceiptForm({}); }}
+                onClose={() => { setIsCustModalOpen(false); setEditingReceiptId(null); setReceiptForm({}); setCustomerCombinedBalance(null); }}
                 title={editingReceiptId ? 'Edit Customer Receipt' : 'New Customer Receipt'}
                 size="md"
             >
@@ -627,17 +705,7 @@ const Receipts = () => {
                         <select
                             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                             value={receiptForm.customer_id ?? ''}
-                            onChange={(e) => {
-                                const customerId = e.target.value ? Number(e.target.value) : undefined;
-                                const unpaid = unpaidCustomers.find((u) => u.customer_id === customerId);
-                                const customer = customers.find((c) => c.customer_id === customerId);
-                                const nextAmount = Number(unpaid?.balance ?? customer?.balance ?? 0);
-                                setReceiptForm((f) => ({
-                                    ...f,
-                                    customer_id: customerId,
-                                    amount: customerId ? nextAmount : f.amount,
-                                }));
-                            }}
+                            onChange={(e) => void handleCustomerChange(e.target.value ? Number(e.target.value) : undefined)}
                         >
                             <option value="">— Select Customer (optional) —</option>
                             {customers.map(c => (
@@ -646,22 +714,23 @@ const Receipts = () => {
                                 </option>
                             ))}
                         </select>
-                        {selectedUnpaidCust && (
-                            <div className="mt-1.5 flex items-center gap-1.5 rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-800">
-                                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                                Outstanding balance: <strong>{fmt(selectedUnpaidCust.balance)}</strong>
-                                <button
-                                    type="button"
-                                    className="ml-auto rounded bg-amber-200 px-1.5 py-0.5 text-xs font-semibold hover:bg-amber-300"
-                                    onClick={() => setReceiptForm(f => ({ ...f, amount: selectedUnpaidCust.balance }))}
-                                >
-                                    Use Full Balance
-                                </button>
+                        {receiptForm.customer_id ? (
+                            <div className="mt-1.5 rounded-md bg-white px-2 py-1.5 text-sm font-bold text-slate-900 ring-1 ring-slate-200">
+                                Customer Balance:{' '}
+                                <span className="font-extrabold">
+                                    {customerBalanceLoading ? 'Loading...' : fmt(customerCombinedBalance ?? 0)}
+                                </span>
+                                {!customerBalanceLoading && (
+                                    <button
+                                        type="button"
+                                        className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-semibold hover:bg-slate-200"
+                                        onClick={() => setReceiptForm(f => ({ ...f, amount: customerCombinedBalance ?? 0 }))}
+                                    >
+                                        Use Full Balance
+                                    </button>
+                                )}
                             </div>
-                        )}
-                        {selectedCustomer && !selectedUnpaidCust && (
-                            <div className="mt-1.5 text-xs text-slate-500">Open balance on account: {fmt(selectedCustomer.balance ?? 0)}</div>
-                        )}
+                        ) : null}
                     </label>
 
                     {/* Account selector */}
@@ -734,7 +803,7 @@ const Receipts = () => {
                     </div>
 
                     <div className="flex justify-end gap-2 pt-2">
-                        <button type="button" onClick={() => { setIsCustModalOpen(false); setReceiptForm({}); setEditingReceiptId(null); }} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-50">
+                        <button type="button" onClick={() => { setIsCustModalOpen(false); setReceiptForm({}); setEditingReceiptId(null); setCustomerCombinedBalance(null); }} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-50">
                             Cancel
                         </button>
                         <button
@@ -752,7 +821,7 @@ const Receipts = () => {
             {/* ─── Supplier Receipt Modal ──────────────────────────────────────── */}
             <Modal
                 isOpen={isSupModalOpen}
-                onClose={() => { setIsSupModalOpen(false); setEditingReceiptId(null); setReceiptForm({}); }}
+                onClose={() => { setIsSupModalOpen(false); setEditingReceiptId(null); setReceiptForm({}); setSupplierCombinedBalance(null); }}
                 title={editingReceiptId ? 'Edit Supplier Payment' : 'New Supplier Payment'}
                 size="md"
             >
@@ -763,7 +832,7 @@ const Receipts = () => {
                         <select
                             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                             value={receiptForm.supplier_id ?? ''}
-                            onChange={(e) => setReceiptForm(f => ({ ...f, supplier_id: e.target.value ? Number(e.target.value) : undefined, purchase_id: undefined }))}
+                            onChange={(e) => void handleSupplierChange(e.target.value ? Number(e.target.value) : undefined)}
                         >
                             <option value="">— Select Supplier —</option>
                             {suppliers.map(s => (
@@ -772,19 +841,23 @@ const Receipts = () => {
                                 </option>
                             ))}
                         </select>
-                        {selectedUnpaidSup && (
-                            <div className="mt-1.5 flex items-center gap-1.5 rounded-md bg-red-50 px-2 py-1.5 text-xs text-red-800">
-                                <TrendingDown className="h-3.5 w-3.5 shrink-0" />
-                                Outstanding ledger balance: <strong>{fmt(selectedUnpaidSup.balance)}</strong>
-                                <button
-                                    type="button"
-                                    className="ml-auto rounded bg-red-200 px-1.5 py-0.5 text-xs font-semibold hover:bg-red-300"
-                                    onClick={() => setReceiptForm(f => ({ ...f, amount: selectedUnpaidSup.balance }))}
-                                >
-                                    Use Full Balance
-                                </button>
+                        {receiptForm.supplier_id ? (
+                            <div className="mt-1.5 rounded-md bg-white px-2 py-1.5 text-sm font-bold text-slate-900 ring-1 ring-slate-200">
+                                Supplier Balance:{' '}
+                                <span className="font-extrabold">
+                                    {supplierBalanceLoading ? 'Loading...' : fmt(supplierCombinedBalance ?? 0)}
+                                </span>
+                                {!supplierBalanceLoading && (
+                                    <button
+                                        type="button"
+                                        className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-semibold hover:bg-slate-200"
+                                        onClick={() => setReceiptForm(f => ({ ...f, amount: supplierCombinedBalance ?? 0 }))}
+                                    >
+                                        Use Full Balance
+                                    </button>
+                                )}
                             </div>
-                        )}
+                        ) : null}
                     </label>
 
                     {/* Outstanding purchase selector */}
@@ -803,6 +876,8 @@ const Receipts = () => {
                                         purchase_id: purchId,
                                         amount: purch ? Number(purch.outstanding) : f.amount,
                                     }));
+                                    if (!purch?.supplier_id) return;
+                                    void loadSupplierCombinedBalance(purch.supplier_id);
                                 }}
                             >
                                 <option value="">— Select Purchase (optional) —</option>
@@ -885,7 +960,7 @@ const Receipts = () => {
                     </div>
 
                     <div className="flex justify-end gap-2 pt-2">
-                        <button type="button" onClick={() => { setIsSupModalOpen(false); setReceiptForm({}); setEditingReceiptId(null); }} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-50">
+                        <button type="button" onClick={() => { setIsSupModalOpen(false); setReceiptForm({}); setEditingReceiptId(null); setSupplierCombinedBalance(null); }} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-50">
                             Cancel
                         </button>
                         <button

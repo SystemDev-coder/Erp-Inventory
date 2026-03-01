@@ -326,3 +326,28 @@ body {
 .apexcharts-gridline {
   @apply !stroke-slate-200 dark:!stroke-slate-700;
 }
+
+/* Dark-mode fallback for legacy hard-coded utility classes */
+.dark .erp-main-shell [class*="bg-white"],
+.dark .erp-main-shell [class*="bg-slate-50"],
+.dark .erp-main-shell [class*="bg-zinc-50"],
+.dark .erp-main-shell [class*="bg-zinc-100"] {
+  background-color: #0f172a !important;
+}
+
+.dark .erp-main-shell [class*="bg-[#"]:not(button):not(a):not(input):not(select):not(textarea) {
+  background-color: #0f172a !important;
+}
+
+.dark .erp-main-shell [class*="text-black"],
+.dark .erp-main-shell [class*="text-zinc-"],
+.dark .erp-main-shell [class*="text-slate-"],
+.dark .erp-main-shell [class*="text-[#"] {
+  color: #e2e8f0 !important;
+}
+
+.dark .erp-main-shell [class*="border-zinc-"],
+.dark .erp-main-shell [class*="border-slate-"],
+.dark .erp-main-shell [class*="border-[#"] {
+  border-color: #334155 !important;
+}

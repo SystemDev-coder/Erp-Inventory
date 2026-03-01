@@ -103,6 +103,28 @@ export interface TrialBalanceRow {
   closing_credit: number;
 }
 
+export interface AccountsReceivableRow {
+  customer_name: string;
+  invoice_no: number;
+  invoice_date: string;
+  due_date: string;
+  amount: number;
+  paid: number;
+  balance: number;
+  status: string;
+}
+
+export interface AccountsPayableRow {
+  supplier_name: string;
+  bill_no: number;
+  bill_date: string;
+  due_date: string;
+  amount: number;
+  paid: number;
+  balance: number;
+  status: string;
+}
+
 interface FinancialOptionsResponse {
   branchId: number;
   accounts: ReportOption[];
@@ -196,6 +218,24 @@ export const financialReportsService = {
       supplierId: input.mode === 'show' ? input.supplierId : undefined,
     });
     return apiClient.get<RowsResponse<SupplierPaymentRow>>(`${API.REPORTS.FINANCIAL_SUPPLIER_PAYMENTS}${query}`);
+  },
+
+  async getAccountsReceivable(input: { fromDate: string; toDate: string; branchId?: number }) {
+    const query = toQuery({
+      branchId: input.branchId,
+      fromDate: input.fromDate,
+      toDate: input.toDate,
+    });
+    return apiClient.get<RowsResponse<AccountsReceivableRow>>(`${API.REPORTS.FINANCIAL_ACCOUNTS_RECEIVABLE}${query}`);
+  },
+
+  async getAccountsPayable(input: { fromDate: string; toDate: string; branchId?: number }) {
+    const query = toQuery({
+      branchId: input.branchId,
+      fromDate: input.fromDate,
+      toDate: input.toDate,
+    });
+    return apiClient.get<RowsResponse<AccountsPayableRow>>(`${API.REPORTS.FINANCIAL_ACCOUNTS_PAYABLE}${query}`);
   },
 
   async getAccountTransactions(input: {

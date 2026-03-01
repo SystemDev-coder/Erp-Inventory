@@ -132,7 +132,8 @@ const applyStoreItemDelta = async (
     client: PoolClient,
     storeId: number,
     itemId: number,
-    deltaQty: number
+    deltaQty: number,
+    branchId: number
 ) => {
     if (!deltaQty) return;
     const current = await client.query<{ quantity: string }>(
@@ -143,7 +144,18 @@ const applyStoreItemDelta = async (
           FOR UPDATE`,
         [storeId, itemId]
     );
-    const currentQty = Number(current.rows[0]?.quantity || 0);
+    let currentQty = Number(current.rows[0]?.quantity || 0);
+    if (!current.rows[0]) {
+        const item = await client.query<{ opening_balance: string }>(
+            `SELECT COALESCE(opening_balance, 0)::text AS opening_balance
+               FROM ims.items
+              WHERE item_id = $1
+                AND branch_id = $2
+              LIMIT 1`,
+            [itemId, branchId]
+        );
+        currentQty = Number(item.rows[0]?.opening_balance || 0);
+    }
     const nextQty = currentQty + Number(deltaQty);
     if (nextQty < 0) {
         throw ApiError.badRequest(`Insufficient quantity for item ${itemId}`);
@@ -311,15 +323,7 @@ export const returnsService = {
                     [context.branchId, sr.sr_id, item.itemId, item.quantity, unitPrice, lineTotal]
                 );
 
-                await client.query(
-                    `INSERT INTO ims.store_items (store_id, product_id, quantity)
-                     VALUES ($1, $2, $3)
-                     ON CONFLICT (store_id, product_id)
-                     DO UPDATE
-                           SET quantity = ims.store_items.quantity + EXCLUDED.quantity,
-                               updated_at = NOW()`,
-                    [storeId, item.itemId, item.quantity]
-                );
+                await applyStoreItemDelta(client, storeId, item.itemId, Number(item.quantity), context.branchId);
             }
 
             await client.query('COMMIT');
@@ -377,7 +381,7 @@ export const returnsService = {
             );
             const deltas = buildItemDelta(oldItemsRes.rows, items);
             for (const d of deltas) {
-                await applyStoreItemDelta(client, storeId, d.itemId, d.delta);
+                await applyStoreItemDelta(client, storeId, d.itemId, d.delta, Number(current.branch_id));
             }
 
             const subtotal = items.reduce((s, i) => s + Number(i.quantity) * Number(i.unitPrice || 0), 0);
@@ -453,7 +457,13 @@ export const returnsService = {
                 [id]
             );
             for (const line of lines.rows) {
-                await applyStoreItemDelta(client, storeId, Number(line.item_id), -Number(line.quantity || 0));
+                await applyStoreItemDelta(
+                    client,
+                    storeId,
+                    Number(line.item_id),
+                    -Number(line.quantity || 0),
+                    Number(current.branch_id)
+                );
             }
 
             await client.query(`DELETE FROM ims.sales_returns WHERE sr_id = $1`, [id]);
@@ -580,15 +590,7 @@ export const returnsService = {
                     [context.branchId, pr.pr_id, item.itemId, item.quantity, unitCost, lineTotal]
                 );
 
-                await client.query(
-                    `INSERT INTO ims.store_items (store_id, product_id, quantity)
-                     VALUES ($1, $2, 0)
-                     ON CONFLICT (store_id, product_id)
-                     DO UPDATE
-                           SET quantity = GREATEST(0, ims.store_items.quantity - $3),
-                               updated_at = NOW()`,
-                    [storeId, item.itemId, item.quantity]
-                );
+                await applyStoreItemDelta(client, storeId, item.itemId, -Number(item.quantity), context.branchId);
             }
 
             await client.query('COMMIT');
@@ -638,7 +640,7 @@ export const returnsService = {
             );
             const deltas = buildItemDelta(oldItemsRes.rows, items);
             for (const d of deltas) {
-                await applyStoreItemDelta(client, storeId, d.itemId, -d.delta);
+                await applyStoreItemDelta(client, storeId, d.itemId, -d.delta, Number(current.branch_id));
             }
 
             const subtotal = items.reduce((s, i) => s + Number(i.quantity) * Number(i.unitCost || 0), 0);
@@ -713,7 +715,13 @@ export const returnsService = {
                 [id]
             );
             for (const line of lines.rows) {
-                await applyStoreItemDelta(client, storeId, Number(line.item_id), Number(line.quantity || 0));
+                await applyStoreItemDelta(
+                    client,
+                    storeId,
+                    Number(line.item_id),
+                    Number(line.quantity || 0),
+                    Number(current.branch_id)
+                );
             }
 
             await client.query(`DELETE FROM ims.purchase_returns WHERE pr_id = $1`, [id]);

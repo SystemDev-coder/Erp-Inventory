@@ -148,6 +148,8 @@ export const API = {
     FINANCIAL_EXPENSE_SUMMARY: '/api/reports/financial/expense-summary',
     FINANCIAL_CUSTOMER_RECEIPTS: '/api/reports/financial/customer-receipts',
     FINANCIAL_SUPPLIER_PAYMENTS: '/api/reports/financial/supplier-payments',
+    FINANCIAL_ACCOUNTS_RECEIVABLE: '/api/reports/financial/accounts-receivable',
+    FINANCIAL_ACCOUNTS_PAYABLE: '/api/reports/financial/accounts-payable',
     FINANCIAL_ACCOUNT_TRANSACTIONS: '/api/reports/financial/account-transactions',
     FINANCIAL_ACCOUNT_STATEMENT: '/api/reports/financial/account-statement',
     FINANCIAL_TRIAL_BALANCE: '/api/reports/financial/trial-balance',
@@ -176,6 +178,11 @@ export const API = {
     ITEM: (id: number) => `/api/receipts/${id}`,
   },
 
+  ASSETS: {
+    LIST: '/api/assets',
+    ITEM: (id: number) => `/api/assets/${id}`,
+  },
+
   NOTIFICATIONS: {
     LIST: '/api/notifications',
     ITEM: (id: number) => `/api/notifications/${id}`,
@@ -187,8 +194,10 @@ export const API = {
     TRANSFERS: '/api/finance/transfers',
     CUSTOMER_RECEIPTS: '/api/finance/receipts/customers',
     CUSTOMER_RECEIPTS_UNPAID: '/api/finance/receipts/customers/unpaid',
+    CUSTOMER_BALANCE: (customerId: number) => `/api/finance/receipts/customers/${customerId}/balance`,
     SUPPLIER_RECEIPTS: '/api/finance/receipts/suppliers',
     SUPPLIER_RECEIPTS_UNPAID: '/api/finance/receipts/suppliers/unpaid',
+    SUPPLIER_BALANCE: (supplierId: number) => `/api/finance/receipts/suppliers/${supplierId}/balance`,
     SUPPLIER_OUTSTANDING: '/api/finance/receipts/suppliers/outstanding',
     EXPENSES: '/api/finance/expenses',
     EXPENSE_CHARGES: '/api/finance/expenses/charges',

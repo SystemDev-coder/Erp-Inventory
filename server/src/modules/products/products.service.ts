@@ -237,8 +237,14 @@ const getProductSql = (stockAlertExpr: string, storeIdExpr = 'NULL::bigint') => 
     i.sell_price,
     i.sell_price AS price,
     i.cost_price AS cost,
-    COALESCE(sq.qty, 0)::numeric(14,3) AS quantity,
-    COALESCE(sq.qty, 0)::numeric(14,3) AS stock,
+    CASE
+      WHEN COALESCE(sq.row_count, 0) = 0 THEN COALESCE(i.opening_balance, 0)
+      ELSE COALESCE(sq.qty, 0)
+    END::numeric(14,3) AS quantity,
+    CASE
+      WHEN COALESCE(sq.row_count, 0) = 0 THEN COALESCE(i.opening_balance, 0)
+      ELSE COALESCE(sq.qty, 0)
+    END::numeric(14,3) AS stock,
     i.opening_balance,
     i.is_active,
     CASE WHEN i.is_active THEN 'active' ELSE 'inactive' END AS status,
@@ -248,7 +254,9 @@ const getProductSql = (stockAlertExpr: string, storeIdExpr = 'NULL::bigint') => 
   FROM ims.items i
   LEFT JOIN ims.stores s ON s.store_id = i.store_id
   LEFT JOIN LATERAL (
-    SELECT COALESCE(SUM(si.quantity), 0)::numeric(14,3) AS qty
+    SELECT
+      COALESCE(SUM(si.quantity), 0)::numeric(14,3) AS qty,
+      COUNT(*)::int AS row_count
       FROM ims.store_items si
      WHERE si.product_id = i.item_id
        AND si.store_id = COALESCE(

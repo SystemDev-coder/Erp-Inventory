@@ -6,7 +6,6 @@ import { DataTable } from '../../components/ui/table/DataTable';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { Modal } from '../../components/ui/modal/Modal';
 import { PageHeader } from '../../components/ui/layout';
-import Badge from '../../components/ui/badge/Badge';
 import { useToast } from '../../components/ui/toast/Toast';
 import { Product, productService } from '../../services/product.service';
 import { InventoryTransactionRow, inventoryService } from '../../services/inventory.service';
@@ -104,20 +103,18 @@ const Products = () => {
   const itemColumns: ColumnDef<Product>[] = useMemo(
     () => [
       { accessorKey: 'name', header: 'Item' },
-      { accessorKey: 'barcode', header: 'Barcode', cell: ({ row }) => row.original.barcode || '-' },
-      { accessorKey: 'stock_alert', header: 'Stock Alert', cell: ({ row }) => Number(row.original.stock_alert || 0).toFixed(3) },
-      { accessorKey: 'cost_price', header: 'Cost Price', cell: ({ row }) => `$${Number(row.original.cost_price || 0).toFixed(2)}` },
-      { accessorKey: 'sell_price', header: 'Sell Price', cell: ({ row }) => `$${Number(row.original.sell_price || 0).toFixed(2)}` },
       { accessorKey: 'quantity', header: 'Quantity', cell: ({ row }) => Number(row.original.quantity ?? row.original.stock ?? 0).toFixed(3) },
+      { accessorKey: 'cost_price', header: 'Cost Price', cell: ({ row }) => `$${Number(row.original.cost_price || 0).toFixed(2)}` },
       {
-        accessorKey: 'is_active',
-        header: 'Active',
-        cell: ({ row }) => (
-          <Badge color={row.original.is_active ? 'success' : 'warning'} variant="light">
-            {row.original.is_active ? 'Yes' : 'No'}
-          </Badge>
-        ),
+        accessorKey: 'amount',
+        header: 'Amount',
+        cell: ({ row }) => {
+          const qty = Number(row.original.quantity ?? row.original.stock ?? 0);
+          const cost = Number(row.original.cost_price || 0);
+          return `$${(qty * cost).toFixed(2)}`;
+        },
       },
+      { accessorKey: 'sell_price', header: 'Sell Price', cell: ({ row }) => `$${Number(row.original.sell_price || 0).toFixed(2)}` },
     ],
     []
   );
@@ -361,8 +358,8 @@ const Products = () => {
         onClose={() => setItemImportOpen(false)}
         importType="items"
         title="Upload Items"
-        columns={['store_id', 'name', 'barcode', 'stock_alert', 'opening_balance', 'cost_price', 'sell_price']}
-        templateHeaders={['store_id', 'name', 'barcode', 'stock_alert', 'opening_balance', 'cost_price', 'sell_price']}
+        columns={['item', 'quantity', 'cost_price', 'amount', 'sell_price']}
+        templateHeaders={['item', 'quantity', 'cost_price', 'sell_price', 'store_id', 'barcode', 'stock_alert', 'is_active']}
         onImported={async () => {
           await loadProducts();
         }}

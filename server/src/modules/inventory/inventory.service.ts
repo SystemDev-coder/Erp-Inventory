@@ -504,20 +504,34 @@ export const inventoryService = {
     return queryMany(
       `WITH store_totals AS (
          SELECT
-           s.branch_id,
-           si.product_id AS item_id,
-           COALESCE(SUM(si.quantity), 0)::numeric(14,3) AS store_qty,
-           json_agg(
-             json_build_object(
-               'wh_id', s.store_id,
-               'wh_name', s.store_name,
-               'quantity', si.quantity
-             )
-             ORDER BY s.store_name
-           ) AS store_breakdown
-         FROM ims.store_items si
-         JOIN ims.stores s ON s.store_id = si.store_id
-         GROUP BY s.branch_id, si.product_id
+           i.branch_id,
+           i.item_id,
+           CASE
+             WHEN COALESCE(st.row_count, 0) = 0 THEN COALESCE(i.opening_balance, 0)
+             ELSE COALESCE(st.store_qty, 0)
+           END::numeric(14,3) AS store_qty,
+           COALESCE(st.store_breakdown, '[]'::json) AS store_breakdown
+         FROM ims.items i
+         LEFT JOIN (
+           SELECT
+             s.branch_id,
+             si.product_id AS item_id,
+             COALESCE(SUM(si.quantity), 0)::numeric(14,3) AS store_qty,
+             COUNT(*)::int AS row_count,
+             json_agg(
+               json_build_object(
+                 'wh_id', s.store_id,
+                 'wh_name', s.store_name,
+                 'quantity', si.quantity
+               )
+               ORDER BY s.store_name
+             ) AS store_breakdown
+           FROM ims.store_items si
+           JOIN ims.stores s ON s.store_id = si.store_id
+           GROUP BY s.branch_id, si.product_id
+         ) st
+           ON st.item_id = i.item_id
+          AND st.branch_id = i.branch_id
        )
        SELECT
              i.item_id AS product_id,
@@ -536,7 +550,7 @@ export const inventoryService = {
              GREATEST(COALESCE(NULLIF(${alertExpr}, 0), 5), 1)::numeric(14,3) AS min_stock_threshold,
              (COALESCE(st.store_qty, 0) <= GREATEST(COALESCE(NULLIF(${alertExpr}, 0), 5), 1)) AS low_stock,
              FALSE AS qty_mismatch,
-             COALESCE(st.store_breakdown, '[]'::json) AS warehouse_breakdown
+            st.store_breakdown AS warehouse_breakdown
         FROM ims.items i
         JOIN ims.branches b ON b.branch_id = i.branch_id
          LEFT JOIN store_totals st
@@ -1472,7 +1486,18 @@ export const inventoryService = {
             FOR UPDATE`,
           [input.storeId, input.itemId]
         );
-        const currentQty = Number(existingStock.rows[0]?.quantity || '0');
+        let currentQty = Number(existingStock.rows[0]?.quantity || '0');
+        if (!existingStock.rows[0]) {
+          const itemStock = await client.query<{ opening_balance: string }>(
+            `SELECT COALESCE(opening_balance, 0)::text AS opening_balance
+               FROM ims.items
+              WHERE item_id = $1
+                AND branch_id = $2
+              LIMIT 1`,
+            [input.itemId, Number(storeRow.branch_id)]
+          );
+          currentQty = Number(itemStock.rows[0]?.opening_balance || '0');
+        }
 
         const stockDelta =
           input.transactionType === 'ADJUSTMENT'

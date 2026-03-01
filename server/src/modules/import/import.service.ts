@@ -50,7 +50,6 @@ type CustomerImportRow = {
   gender: 'male' | 'female' | null;
   address: string | null;
   remaining_balance: number;
-  is_active: boolean;
 };
 
 type SupplierImportRow = {
@@ -330,7 +329,6 @@ const parseCustomerRow = (raw: Record<string, unknown>): ParseResult<CustomerImp
     'open_balance',
     'balance',
   ]);
-  const isActiveRaw = readRawValue(raw, ['is_active', 'active', 'status']);
 
   if (!fullName) {
     errors.push('full_name is required');
@@ -376,7 +374,6 @@ const parseCustomerRow = (raw: Record<string, unknown>): ParseResult<CustomerImp
     errors,
     0
   );
-  const isActive = parseBooleanLike(isActiveRaw, 'is_active', errors, true);
 
   const data: CustomerImportRow = {
     full_name: fullName,
@@ -386,7 +383,6 @@ const parseCustomerRow = (raw: Record<string, unknown>): ParseResult<CustomerImp
     gender,
     address: address || null,
     remaining_balance: remainingBalance,
-    is_active: isActive,
   };
 
   return {
@@ -434,10 +430,6 @@ const parseSupplierRow = (raw: Record<string, unknown>): ParseResult<SupplierImp
     errors.push('phone must be at most 30 characters');
   }
 
-  if (!phone) {
-    errors.push('phone is required');
-  }
-
   if (location && location.length > 80) {
     errors.push('location/country must be at most 80 characters');
   }
@@ -474,7 +466,7 @@ const parseSupplierRow = (raw: Record<string, unknown>): ParseResult<SupplierImp
 
 const parseItemRow = (raw: Record<string, unknown>): ParseResult<ItemImportRow> => {
   const errors: string[] = [];
-  const name = readString(raw, ['name']) || '';
+  const name = readString(raw, ['name', 'item']) || '';
   const barcode = readString(raw, ['barcode', 'bar_code', 'sku']);
   const stockAlertRaw = readRawValue(raw, ['stock_alert', 'stockalert', 'reorder_level']);
   const openingBalanceRaw = readRawValue(raw, ['opening_balance', 'opening_stock', 'quantity']);
@@ -485,9 +477,9 @@ const parseItemRow = (raw: Record<string, unknown>): ParseResult<ItemImportRow> 
   const branchFromFile = readRawValue(raw, ['branch_id', 'branch']);
 
   if (!name) {
-    errors.push('name is required');
+    errors.push('item is required');
   } else if (name.length > 160) {
-    errors.push('name must be at most 160 characters');
+    errors.push('item must be at most 160 characters');
   }
 
   if (barcode && barcode.length > 80) {
@@ -498,10 +490,20 @@ const parseItemRow = (raw: Record<string, unknown>): ParseResult<ItemImportRow> 
     errors.push('branch_id must not be provided in the file; it is derived from your session');
   }
 
+  if (isBlank(openingBalanceRaw)) {
+    errors.push('quantity is required');
+  }
+  if (isBlank(costPriceRaw)) {
+    errors.push('cost_price is required');
+  }
+  if (isBlank(sellPriceRaw)) {
+    errors.push('sell_price is required');
+  }
+
   const stockAlert = parseNonNegativeNumber(stockAlertRaw, 'stock_alert', errors, 5);
   const openingBalance = parseNonNegativeNumber(
     openingBalanceRaw,
-    'opening_balance',
+    'quantity',
     errors,
     0
   );
@@ -692,7 +694,8 @@ const insertCustomer = async (
 
   columns.push('address', shape.balanceColumn, 'is_active');
   placeholders.push(`$${values.length + 1}`, `$${values.length + 2}`, `$${values.length + 3}`);
-  values.push(row.address, row.remaining_balance, row.is_active);
+  // Customer imports always default to active status.
+  values.push(row.address, row.remaining_balance, true);
 
   await client.query(
     `INSERT INTO ims.customers (${columns.join(', ')})
@@ -837,7 +840,6 @@ const suppliersDefinition: ImportDefinition<SupplierImportRow> = {
   type: 'suppliers',
   requiredHeaders: [
     { field: 'supplier_name', aliases: ['supplier_name', 'name'] },
-    { field: 'phone', aliases: ['phone', 'mobile'] },
     { field: 'remaining_balance', aliases: ['remaining_balance', 'open_balance', 'balance'] },
   ],
   parseRow: (raw) => parseSupplierRow(raw),
@@ -848,11 +850,29 @@ const suppliersDefinition: ImportDefinition<SupplierImportRow> = {
 
 const itemsDefinition: ImportDefinition<ItemImportRow> = {
   type: 'items',
-  requiredHeaders: [{ field: 'name', aliases: ['name'] }],
+  requiredHeaders: [
+    { field: 'item', aliases: ['item', 'name'] },
+    { field: 'quantity', aliases: ['quantity', 'opening_balance', 'opening_stock'] },
+    { field: 'cost_price', aliases: ['cost_price', 'cost'] },
+    { field: 'sell_price', aliases: ['sell_price', 'price'] },
+  ],
   parseRow: (raw) => parseItemRow(raw),
   applyBusinessChecks: applyItemChecks,
   insertRow: insertItem,
-  toPreviewData: (row) => row,
+  toPreviewData: (row) => {
+    const quantity = Number(row.opening_balance || 0);
+    const costPrice = Number(row.cost_price || 0);
+    return {
+      item: row.name,
+      quantity,
+      cost_price: costPrice,
+      amount: quantity * costPrice,
+      sell_price: Number(row.sell_price || 0),
+      store_id: row.store_id,
+      barcode: row.barcode,
+      stock_alert: Number(row.stock_alert || 0),
+    };
+  },
 };
 
 const getDefinition = (

@@ -21,6 +21,9 @@ import Lock from "./pages/Lock/Lock";
 import Customers from "./pages/Customers/Customers";
 import Employees from "./pages/Employees/Employees";
 import Reports from "./pages/Reports/Reports";
+import Assets from "./pages/Assets/Assets";
+import AccountsReceivableReportPage from "./pages/Reports/financial/AccountsReceivableReportPage";
+import AccountsPayableReportPage from "./pages/Reports/financial/AccountsPayableReportPage";
 import Settings from "./pages/Settings/Settings";
 import System from "./pages/System/System";
 import Support from "./pages/Support/Support";
@@ -88,6 +91,9 @@ function AppRoutes() {
           <Route path="/employees/state" element={<ProtectedRoute permission="employees.view"><Employees /></ProtectedRoute>} />
           <Route path="/employees/shifts" element={<ProtectedRoute permission="employees.view"><Employees /></ProtectedRoute>} />
           <Route path="/reports" element={<ProtectedRoute permission="reports.all"><Reports /></ProtectedRoute>} />
+          <Route path="/reports/accounts-receivable" element={<ProtectedRoute permission="reports.all"><AccountsReceivableReportPage /></ProtectedRoute>} />
+          <Route path="/reports/accounts-payable" element={<ProtectedRoute permission="reports.all"><AccountsPayableReportPage /></ProtectedRoute>} />
+          <Route path="/assets" element={<ProtectedRoute permission="accounts.view"><Assets /></ProtectedRoute>} />
           <Route path="/system" element={<ProtectedRoute><System /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute permission="system.settings"><Settings /></ProtectedRoute>} />
           <Route path="/support" element={<ProtectedRoute><Support /></ProtectedRoute>} />

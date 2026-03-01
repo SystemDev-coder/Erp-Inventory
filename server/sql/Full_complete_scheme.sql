@@ -847,11 +847,11 @@ BEGIN
     VALUES
         (p_branch_id, p_customer_id, 'payment', 'customer_receipts', v_receipt_id, p_account_id, 0, p_amount, p_note);
 
-    -- account transaction
+    -- account transaction (cash inflow)
     INSERT INTO ims.account_transactions
         (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, note)
     VALUES
-        (p_branch_id, p_account_id, 'sale_payment', 'customer_receipts', v_receipt_id, p_amount, 0, p_note);
+        (p_branch_id, p_account_id, 'sale_payment', 'customer_receipts', v_receipt_id, 0, p_amount, p_note);
 
     RETURN QUERY SELECT v_receipt_id::BIGINT AS out_receipt_id, 'Customer receipt recorded'::TEXT AS out_message;
 END;

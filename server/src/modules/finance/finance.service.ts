@@ -220,24 +220,105 @@ export const financeService = {
 
   async createCustomerReceipt(input: CustomerReceiptInput, scope: BranchScope, _userId: number) {
     const branchId = pickBranchForWrite(scope, input.branchId);
-    const row = await queryOne<{ out_receipt_id?: number; receipt_id?: number; out_message: string }>(
-      `SELECT * FROM ims.sp_record_customer_receipt($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [
+    if (!input.customerId) {
+      throw ApiError.badRequest('Customer is required for customer receipt');
+    }
+
+    await queryOne('BEGIN');
+    try {
+      const customerExists = await queryOne<{ customer_id: number }>(
+        `SELECT customer_id
+           FROM ims.customers
+          WHERE customer_id = $1
+            AND branch_id = $2`,
+        [input.customerId, branchId]
+      );
+      if (!customerExists) {
+        throw ApiError.badRequest('Customer not found in selected branch');
+      }
+
+      const accountExists = await queryOne<{ acc_id: number }>(
+        `SELECT acc_id
+           FROM ims.accounts
+          WHERE acc_id = $1
+            AND branch_id = $2`,
+        [input.accId, branchId]
+      );
+      if (!accountExists) {
+        throw ApiError.badRequest('Account not found in selected branch');
+      }
+
+      const hasSaleIdColumn = await hasColumn('customer_receipts', 'sale_id');
+      const insertColumns = ['branch_id', 'customer_id', 'acc_id', 'receipt_date', 'amount', 'payment_method', 'reference_no', 'note'];
+      const insertValues: unknown[] = [
         branchId,
         input.customerId,
         input.accId,
+        input.receiptDate || null,
         input.amount,
         input.paymentMethod || null,
         input.referenceNo || null,
         input.note || null,
-        input.receiptDate || null,
-      ]
-    );
-    if (!row) throw ApiError.internal('Failed to record receipt');
-    const receiptId = row.out_receipt_id ?? row.receipt_id;
-    if (!receiptId) throw ApiError.internal('Receipt ID not returned');
-    // return full receipt row for API
-    return queryOne(`SELECT * FROM ims.customer_receipts WHERE receipt_id = $1`, [receiptId]);
+      ];
+
+      if (hasSaleIdColumn) {
+        insertColumns.splice(2, 0, 'sale_id');
+        insertValues.splice(2, 0, input.saleId ?? null);
+      }
+
+      const placeholders = insertValues.map((_, idx) =>
+        insertColumns[idx] === 'receipt_date' ? `COALESCE($${idx + 1}::timestamptz, NOW())` : `$${idx + 1}`
+      );
+
+      const receipt = await queryOne<any>(
+        `INSERT INTO ims.customer_receipts (${insertColumns.join(', ')})
+         VALUES (${placeholders.join(', ')})
+         RETURNING *`,
+        insertValues as any[]
+      );
+      if (!receipt) throw ApiError.internal('Failed to create customer receipt');
+
+      await adjustEntityBalance('customers', Number(input.customerId), branchId, -input.amount);
+
+      const hasTotalPaid = await hasColumn('customers', 'total_paid');
+      if (hasTotalPaid) {
+        await queryOne(
+          `UPDATE ims.customers
+              SET total_paid = COALESCE(total_paid, 0) + $3
+            WHERE customer_id = $1
+              AND branch_id = $2`,
+          [input.customerId, branchId, input.amount]
+        );
+      }
+
+      await queryOne(
+        `UPDATE ims.accounts
+            SET balance = balance + $3
+          WHERE branch_id = $1
+            AND acc_id = $2`,
+        [branchId, input.accId, input.amount]
+      );
+
+      await queryOne(
+        `INSERT INTO ims.customer_ledger
+           (branch_id, customer_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
+         VALUES ($1, $2, 'payment', 'customer_receipts', $3, $4, 0, $5, $6)`,
+        [branchId, input.customerId, receipt.receipt_id, input.accId, input.amount, input.note || null]
+      );
+
+      await queryOne(
+        `INSERT INTO ims.account_transactions
+           (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, note)
+         VALUES ($1, $2, 'sale_payment', 'customer_receipts', $3, 0, $4, $5)`,
+        [branchId, input.accId, receipt.receipt_id, input.amount, input.note || null]
+      );
+
+      await queryOne('COMMIT');
+      return receipt;
+    } catch (err) {
+      await queryOne('ROLLBACK');
+      throw err;
+    }
   },
 
   async listSupplierReceipts(scope: BranchScope, branchId?: number) {
@@ -484,6 +565,117 @@ export const financeService = {
   },
 
   /* Unpaid (current month) */
+  async getCustomerCombinedBalance(scope: BranchScope, customerId: number, branchId?: number) {
+    const params: any[] = [];
+    let customerBranchFilter = '1=1';
+    let salesBranchFilter = '1=1';
+    let receiptBranchFilter = '1=1';
+
+    if (branchId) {
+      assertBranchAccess(scope, branchId);
+      params.push(branchId);
+      customerBranchFilter = `c.branch_id = $${params.length}`;
+      salesBranchFilter = `s.branch_id = $${params.length}`;
+      receiptBranchFilter = `r.branch_id = $${params.length}`;
+    } else if (!scope.isAdmin) {
+      params.push(scope.branchIds);
+      customerBranchFilter = `c.branch_id = ANY($${params.length})`;
+      salesBranchFilter = `s.branch_id = ANY($${params.length})`;
+      receiptBranchFilter = `r.branch_id = ANY($${params.length})`;
+    }
+
+    params.push(customerId);
+    const customerParam = `$${params.length}`;
+
+    const balanceColumn = await detectColumn('customers', 'remaining_balance', ['open_balance', 'remaining_balance']);
+    const hasSalesDocType = await hasColumn('sales', 'doc_type');
+    const salesDocTypeFilter = hasSalesDocType
+      ? `AND COALESCE(s.doc_type::text, 'sale') <> 'quotation'`
+      : '';
+
+    const row = await queryOne<{
+      customer_id: number;
+      customer_name: string;
+      opening_balance: number;
+      credit_balance: number;
+      total_balance: number;
+    }>(
+      `WITH customer_base AS (
+         SELECT c.branch_id,
+                c.customer_id,
+                c.full_name AS customer_name,
+                COALESCE(c.${balanceColumn}, 0) AS opening_balance
+           FROM ims.customers c
+          WHERE ${customerBranchFilter}
+            AND c.customer_id = ${customerParam}
+         LIMIT 1
+       ),
+       sales_totals AS (
+         SELECT s.branch_id,
+                s.customer_id,
+                COALESCE(SUM(COALESCE(s.total, 0)), 0) AS total_sales
+           FROM ims.sales s
+          WHERE s.customer_id = ${customerParam}
+            AND s.status <> 'void'
+            AND ${salesBranchFilter}
+            ${salesDocTypeFilter}
+          GROUP BY s.branch_id, s.customer_id
+       ),
+       sales_payments AS (
+         SELECT s.branch_id,
+                s.customer_id,
+                COALESCE(SUM(COALESCE(sp.amount_paid, 0)), 0) AS paid_from_sales
+           FROM ims.sales s
+           JOIN ims.sale_payments sp ON sp.sale_id = s.sale_id
+          WHERE s.customer_id = ${customerParam}
+            AND s.status <> 'void'
+            AND ${salesBranchFilter}
+            ${salesDocTypeFilter}
+          GROUP BY s.branch_id, s.customer_id
+       ),
+       sales_bal AS (
+         SELECT COALESCE(st.branch_id, sp.branch_id) AS branch_id,
+                COALESCE(st.customer_id, sp.customer_id) AS customer_id,
+                GREATEST(COALESCE(st.total_sales, 0) - COALESCE(sp.paid_from_sales, 0), 0) AS sales_balance
+           FROM sales_totals st
+           FULL JOIN sales_payments sp
+             ON sp.branch_id = st.branch_id
+            AND sp.customer_id = st.customer_id
+       ),
+       receipt_bal AS (
+         SELECT r.branch_id,
+                r.customer_id,
+                COALESCE(SUM(COALESCE(r.amount, 0)), 0) AS paid_from_receipts
+           FROM ims.customer_receipts r
+          WHERE r.customer_id = ${customerParam}
+            AND ${receiptBranchFilter}
+          GROUP BY r.branch_id, r.customer_id
+       )
+       SELECT cb.customer_id,
+              cb.customer_name,
+              cb.opening_balance::double precision AS opening_balance,
+              GREATEST(COALESCE(sb.sales_balance, 0) - COALESCE(rb.paid_from_receipts, 0), 0)::double precision AS credit_balance,
+              GREATEST(
+                CASE
+                  WHEN cb.opening_balance > 0 THEN cb.opening_balance
+                  ELSE GREATEST(COALESCE(sb.sales_balance, 0) - COALESCE(rb.paid_from_receipts, 0), 0)
+                END,
+                0
+              )::double precision AS total_balance
+         FROM customer_base cb
+         LEFT JOIN sales_bal sb
+           ON sb.branch_id = cb.branch_id
+          AND sb.customer_id = cb.customer_id
+         LEFT JOIN receipt_bal rb
+           ON rb.branch_id = cb.branch_id
+          AND rb.customer_id = cb.customer_id`,
+      params
+    );
+
+    if (!row) throw ApiError.notFound('Customer not found');
+    return row;
+  },
+
   async listCustomerUnpaid(scope: BranchScope, month?: string, branchId?: number) {
     const params: any[] = [];
     let branchFilter = '1=1';
@@ -549,6 +741,8 @@ export const financeService = {
            SELECT c.branch_id,
                   c.customer_id,
                   c.full_name AS customer_name,
+                  COALESCE(c.${balanceColumn}, 0) AS opening_balance,
+                  GREATEST(COALESCE(sb.sales_balance, 0) - COALESCE(rb.paid_from_receipts, 0), 0) AS credit_balance,
                   GREATEST(
                     CASE
                       WHEN COALESCE(c.${balanceColumn}, 0) > 0 THEN COALESCE(c.${balanceColumn}, 0)
@@ -602,6 +796,123 @@ export const financeService = {
     );
   },
 
+  async getSupplierCombinedBalance(scope: BranchScope, supplierId: number, branchId?: number) {
+    const params: any[] = [];
+    let supplierBranchFilter = '1=1';
+    let purchaseBranchFilter = '1=1';
+    let receiptBranchFilter = '1=1';
+
+    if (branchId) {
+      assertBranchAccess(scope, branchId);
+      params.push(branchId);
+      supplierBranchFilter = `s.branch_id = $${params.length}`;
+      purchaseBranchFilter = `p.branch_id = $${params.length}`;
+      receiptBranchFilter = `sr.branch_id = $${params.length}`;
+    } else if (!scope.isAdmin) {
+      params.push(scope.branchIds);
+      supplierBranchFilter = `s.branch_id = ANY($${params.length})`;
+      purchaseBranchFilter = `p.branch_id = ANY($${params.length})`;
+      receiptBranchFilter = `sr.branch_id = ANY($${params.length})`;
+    }
+
+    params.push(supplierId);
+    const supplierParam = `$${params.length}`;
+
+    const supplierNameColumn = await detectColumn('suppliers', 'name', ['name', 'supplier_name']);
+    const supplierBalanceColumn = await detectColumn('suppliers', 'remaining_balance', ['open_balance', 'remaining_balance']);
+
+    const row = await queryOne<{
+      supplier_id: number;
+      supplier_name: string;
+      opening_balance: number;
+      credit_balance: number;
+      total_balance: number;
+    }>(
+      `WITH supplier_base AS (
+         SELECT s.branch_id,
+                s.supplier_id,
+                s.${supplierNameColumn} AS supplier_name,
+                COALESCE(s.${supplierBalanceColumn}, 0) AS opening_balance
+           FROM ims.suppliers s
+          WHERE ${supplierBranchFilter}
+            AND s.supplier_id = ${supplierParam}
+         LIMIT 1
+       ),
+       scoped_purchases AS (
+         SELECT p.purchase_id,
+                p.branch_id,
+                p.supplier_id,
+                COALESCE(p.total, 0) AS total
+           FROM ims.purchases p
+          WHERE p.supplier_id = ${supplierParam}
+            AND p.status <> 'void'
+            AND ${purchaseBranchFilter}
+       ),
+       purchase_payments AS (
+         SELECT x.purchase_id,
+                COALESCE(SUM(x.amount), 0) AS paid_amount
+           FROM (
+             SELECT sp.purchase_id, COALESCE(sp.amount_paid, 0) AS amount
+               FROM ims.supplier_payments sp
+             UNION ALL
+             SELECT sr.purchase_id, COALESCE(sr.amount, 0) AS amount
+               FROM ims.supplier_receipts sr
+              WHERE sr.purchase_id IS NOT NULL
+           ) x
+          GROUP BY x.purchase_id
+       ),
+       purchase_rollup AS (
+         SELECT sp.branch_id,
+                sp.supplier_id,
+                COALESCE(SUM(sp.total), 0) AS total_purchase,
+                COALESCE(SUM(COALESCE(pp.paid_amount, 0)), 0) AS paid_against_purchase
+           FROM scoped_purchases sp
+           LEFT JOIN purchase_payments pp ON pp.purchase_id = sp.purchase_id
+          GROUP BY sp.branch_id, sp.supplier_id
+       ),
+       supplier_unallocated_payments AS (
+         SELECT sr.branch_id,
+                sr.supplier_id,
+                COALESCE(SUM(sr.amount), 0) AS unallocated_paid
+           FROM ims.supplier_receipts sr
+          WHERE sr.purchase_id IS NULL
+            AND sr.supplier_id = ${supplierParam}
+            AND ${receiptBranchFilter}
+          GROUP BY sr.branch_id, sr.supplier_id
+       )
+       SELECT sb.supplier_id,
+              sb.supplier_name,
+              sb.opening_balance::double precision AS opening_balance,
+              GREATEST(
+                COALESCE(pr.total_purchase, 0)
+                - COALESCE(pr.paid_against_purchase, 0)
+                - COALESCE(up.unallocated_paid, 0),
+                0
+              )::double precision AS credit_balance,
+              GREATEST(
+                sb.opening_balance
+                + GREATEST(
+                    COALESCE(pr.total_purchase, 0)
+                    - COALESCE(pr.paid_against_purchase, 0)
+                    - COALESCE(up.unallocated_paid, 0),
+                    0
+                  ),
+                0
+              )::double precision AS total_balance
+         FROM supplier_base sb
+         LEFT JOIN purchase_rollup pr
+           ON pr.branch_id = sb.branch_id
+          AND pr.supplier_id = sb.supplier_id
+         LEFT JOIN supplier_unallocated_payments up
+           ON up.branch_id = sb.branch_id
+          AND up.supplier_id = sb.supplier_id`,
+      params
+    );
+
+    if (!row) throw ApiError.notFound('Supplier not found');
+    return row;
+  },
+
   async listSupplierUnpaid(scope: BranchScope, month?: string, branchId?: number) {
     const params: any[] = [];
     let branchFilter = '1=1';
@@ -616,6 +927,9 @@ export const financeService = {
       branchFilter = `s.branch_id = ANY($${params.length})`;
       purchaseBranchFilter = `p.branch_id = ANY($${params.length})`;
     }
+
+    const supplierNameColumn = await detectColumn('suppliers', 'name', ['name', 'supplier_name']);
+    const supplierBalanceColumn = await detectColumn('suppliers', 'remaining_balance', ['open_balance', 'remaining_balance']);
 
     if (!month) {
       return queryMany(
@@ -662,14 +976,25 @@ export const financeService = {
          )
          SELECT s.branch_id,
                 s.supplier_id,
-                s.name AS supplier_name,
+                s.${supplierNameColumn} AS supplier_name,
+                COALESCE(s.${supplierBalanceColumn}, 0) AS opening_balance,
                 GREATEST(
                   COALESCE(pr.total_purchase, 0)
                   - COALESCE(pr.paid_against_purchase, 0)
                   - COALESCE(up.unallocated_paid, 0),
                   0
+                ) AS credit_balance,
+                GREATEST(
+                  COALESCE(s.${supplierBalanceColumn}, 0)
+                  + GREATEST(
+                      COALESCE(pr.total_purchase, 0)
+                      - COALESCE(pr.paid_against_purchase, 0)
+                      - COALESCE(up.unallocated_paid, 0),
+                      0
+                    ),
+                  0
                 ) AS balance,
-                COALESCE(pr.total_purchase, 0) AS total,
+                COALESCE(pr.total_purchase, 0) + COALESCE(s.${supplierBalanceColumn}, 0) AS total,
                 COALESCE(pr.paid_against_purchase, 0) + COALESCE(up.unallocated_paid, 0) AS paid
          FROM ims.suppliers s
          LEFT JOIN purchase_rollup pr
@@ -680,9 +1005,13 @@ export const financeService = {
           AND up.supplier_id = s.supplier_id
          WHERE ${branchFilter}
            AND GREATEST(
-                 COALESCE(pr.total_purchase, 0)
-                 - COALESCE(pr.paid_against_purchase, 0)
-                 - COALESCE(up.unallocated_paid, 0),
+                 COALESCE(s.${supplierBalanceColumn}, 0)
+                 + GREATEST(
+                     COALESCE(pr.total_purchase, 0)
+                     - COALESCE(pr.paid_against_purchase, 0)
+                     - COALESCE(up.unallocated_paid, 0),
+                     0
+                   ),
                  0
                ) > 0
          ORDER BY balance DESC, supplier_name`,
@@ -699,7 +1028,7 @@ export const financeService = {
     return queryMany(
       `SELECT s.branch_id,
               s.supplier_id,
-              s.name AS supplier_name,
+              s.${supplierNameColumn} AS supplier_name,
               COALESCE(SUM(l.credit - l.debit),0) AS balance,
               COALESCE(SUM(l.credit),0) AS total,
               COALESCE(SUM(l.debit),0) AS paid
@@ -710,7 +1039,7 @@ export const financeService = {
         AND l.entry_date::date >= ${fromParam}::date
         AND l.entry_date < (${toParam}::date + INTERVAL '1 month')
        WHERE ${branchFilter}
-       GROUP BY s.branch_id, s.supplier_id, s.name
+       GROUP BY s.branch_id, s.supplier_id, s.${supplierNameColumn}
        HAVING COALESCE(SUM(l.credit - l.debit),0) > 0
        ORDER BY balance DESC, supplier_name`,
       params

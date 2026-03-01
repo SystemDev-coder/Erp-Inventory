@@ -3,7 +3,7 @@ import { ChevronDown, Loader2 } from 'lucide-react';
 import type { ReportColumn } from '../../../components/reports/ReportModal';
 import { financialReportsService } from '../../../services/reports/financialReports.service';
 import type { DateRange, ModalReportState } from '../types';
-import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, todayDate, defaultReportRange } from '../reportUtils';
+import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange } from '../reportUtils';
 
 type FinancialCardId =
   | 'income-statement'
@@ -13,6 +13,8 @@ type FinancialCardId =
   | 'expense-summary'
   | 'customer-receipts'
   | 'supplier-payments'
+  | 'accounts-receivable'
+  | 'accounts-payable'
   | 'account-statement'
   | 'trial-balance';
 
@@ -24,6 +26,8 @@ const financialCards: Array<{ id: FinancialCardId; title: string; hint: string }
   { id: 'expense-summary', title: 'Expense Summary', hint: 'Between two dates' },
   { id: 'customer-receipts', title: 'Customer Receipts', hint: 'Date range + Show / All' },
   { id: 'supplier-payments', title: 'Supplier Payments', hint: 'Date range + Show / All' },
+  { id: 'accounts-receivable', title: 'Accounts Receivable', hint: 'Between two dates' },
+  { id: 'accounts-payable', title: 'Accounts Payable', hint: 'Between two dates' },
   { id: 'account-statement', title: 'Account Statement', hint: 'Date range + Show / All' },
   { id: 'trial-balance', title: 'Trial Balance', hint: 'Between two dates' },
 ];
@@ -75,6 +79,28 @@ const supplierPaymentsColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'note', header: 'Note' },
 ];
 
+const accountsReceivableColumns: ReportColumn<Record<string, unknown>>[] = [
+  { key: 'customer_name', header: 'Customer' },
+  { key: 'invoice_no', header: 'Invoice #' },
+  { key: 'invoice_date', header: 'Invoice Date', render: (row) => formatDateOnly(row.invoice_date) },
+  { key: 'due_date', header: 'Due Date', render: (row) => formatDateOnly(row.due_date) },
+  { key: 'amount', header: 'Amount', align: 'right', render: (row) => formatCurrency(row.amount) },
+  { key: 'paid', header: 'Paid', align: 'right', render: (row) => formatCurrency(row.paid) },
+  { key: 'balance', header: 'Balance', align: 'right', render: (row) => formatCurrency(row.balance) },
+  { key: 'status', header: 'Status' },
+];
+
+const accountsPayableColumns: ReportColumn<Record<string, unknown>>[] = [
+  { key: 'supplier_name', header: 'Supplier' },
+  { key: 'bill_no', header: 'Bill #' },
+  { key: 'bill_date', header: 'Bill Date', render: (row) => formatDateOnly(row.bill_date) },
+  { key: 'due_date', header: 'Due Date', render: (row) => formatDateOnly(row.due_date) },
+  { key: 'amount', header: 'Amount', align: 'right', render: (row) => formatCurrency(row.amount) },
+  { key: 'paid', header: 'Paid', align: 'right', render: (row) => formatCurrency(row.paid) },
+  { key: 'balance', header: 'Balance', align: 'right', render: (row) => formatCurrency(row.balance) },
+  { key: 'status', header: 'Status' },
+];
+
 const accountStatementColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'txn_id', header: 'Txn #' },
   { key: 'txn_date', header: 'Date', render: (row) => formatDateTime(row.txn_date) },
@@ -103,19 +129,20 @@ type Props = {
 };
 
 export function FinancialReportsTab({ onOpenModal }: Props) {
-  const [expandedCardId, setExpandedCardId] = useState<FinancialCardId | null>(null);
+  const [expandedCardKey, setExpandedCardKey] = useState<string | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<FinancialCardId | null>(null);
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
 
   const [incomeRange, setIncomeRange] = useState<DateRange>(defaultReportRange());
   const [cashFlowRange, setCashFlowRange] = useState<DateRange>(defaultReportRange());
+  const [balanceRange, setBalanceRange] = useState<DateRange>(defaultReportRange());
   const [expenseRange, setExpenseRange] = useState<DateRange>(defaultReportRange());
   const [customerRange, setCustomerRange] = useState<DateRange>(defaultReportRange());
   const [supplierRange, setSupplierRange] = useState<DateRange>(defaultReportRange());
+  const [receivableRange, setReceivableRange] = useState<DateRange>(defaultReportRange());
+  const [payableRange, setPayableRange] = useState<DateRange>(defaultReportRange());
   const [statementRange, setStatementRange] = useState<DateRange>(defaultReportRange());
   const [trialBalanceRange, setTrialBalanceRange] = useState<DateRange>(defaultReportRange());
-  const [asOfDate, setAsOfDate] = useState(todayDate());
-
   const [selectedAccountBalanceId, setSelectedAccountBalanceId] = useState('');
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [selectedSupplierId, setSelectedSupplierId] = useState('');
@@ -206,23 +233,22 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
         data: toRecordRows(response.data.rows || []),
         columns: statementColumns,
         filters: { 'From Date': incomeRange.fromDate, 'To Date': incomeRange.toDate },
-        variant: 'income-statement',
       });
     });
 
   const handleBalanceSheet = () =>
     runCardAction('balance-sheet', async () => {
-      if (!asOfDate) throw new Error('Balance Sheet: as-of date is required');
+      ensureRangeValid(balanceRange, 'Balance Sheet');
+      const asOfDate = balanceRange.toDate;
       const response = await financialReportsService.getBalanceSheet({ asOfDate });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load balance sheet');
       onOpenModal({
         title: 'Balance Sheet',
-        subtitle: `As of ${formatDateOnly(asOfDate)}`,
+        subtitle: `${formatDateOnly(balanceRange.fromDate)} - ${formatDateOnly(balanceRange.toDate)}`,
         fileName: 'balance-sheet',
         data: toRecordRows(response.data.rows || []),
         columns: statementColumns,
-        filters: { 'As Of Date': asOfDate },
-        variant: 'balance-sheet',
+        filters: { 'From Date': balanceRange.fromDate, 'To Date': balanceRange.toDate, 'As Of Date': asOfDate },
       });
     });
 
@@ -246,7 +272,6 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
             amount: formatCurrency(totalAmount),
           },
         },
-        variant: 'cash-flow-statement',
       });
     });
 
@@ -451,6 +476,60 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
       });
     });
 
+  const handleAccountsReceivable = () =>
+    runCardAction('accounts-receivable', async () => {
+      ensureRangeValid(receivableRange, 'Accounts Receivable');
+      const response = await financialReportsService.getAccountsReceivable({
+        fromDate: receivableRange.fromDate,
+        toDate: receivableRange.toDate,
+      });
+      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load accounts receivable');
+      const rows = toRecordRows(response.data.rows || []);
+      onOpenModal({
+        title: 'Accounts Receivable',
+        subtitle: `${formatDateOnly(receivableRange.fromDate)} - ${formatDateOnly(receivableRange.toDate)}`,
+        fileName: 'accounts-receivable',
+        data: rows,
+        columns: accountsReceivableColumns,
+        tableTotals: {
+          label: 'Total',
+          values: {
+            amount: formatCurrency(sumNumericField(rows, 'amount')),
+            paid: formatCurrency(sumNumericField(rows, 'paid')),
+            balance: formatCurrency(sumNumericField(rows, 'balance')),
+          },
+        },
+        filters: { 'From Date': receivableRange.fromDate, 'To Date': receivableRange.toDate },
+      });
+    });
+
+  const handleAccountsPayable = () =>
+    runCardAction('accounts-payable', async () => {
+      ensureRangeValid(payableRange, 'Accounts Payable');
+      const response = await financialReportsService.getAccountsPayable({
+        fromDate: payableRange.fromDate,
+        toDate: payableRange.toDate,
+      });
+      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load accounts payable');
+      const rows = toRecordRows(response.data.rows || []);
+      onOpenModal({
+        title: 'Accounts Payable',
+        subtitle: `${formatDateOnly(payableRange.fromDate)} - ${formatDateOnly(payableRange.toDate)}`,
+        fileName: 'accounts-payable',
+        data: rows,
+        columns: accountsPayableColumns,
+        tableTotals: {
+          label: 'Total',
+          values: {
+            amount: formatCurrency(sumNumericField(rows, 'amount')),
+            paid: formatCurrency(sumNumericField(rows, 'paid')),
+            balance: formatCurrency(sumNumericField(rows, 'balance')),
+          },
+        },
+        filters: { 'From Date': payableRange.fromDate, 'To Date': payableRange.toDate },
+      });
+    });
+
   const renderDateRange = (range: DateRange, onChange: (next: DateRange) => void) => (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <label className="space-y-1 text-xs font-semibold text-[#47657f]">
@@ -493,15 +572,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
     if (cardId === 'balance-sheet') {
       return (
         <div className="space-y-3">
-          <label className="space-y-1 text-xs font-semibold text-[#47657f]">
-            <span>As Of Date</span>
-            <input
-              type="date"
-              value={asOfDate}
-              onChange={(event) => setAsOfDate(event.target.value)}
-              className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none"
-            />
-          </label>
+          {renderDateRange(balanceRange, setBalanceRange)}
           <button
             onClick={handleBalanceSheet}
             disabled={loadingCardId === cardId}
@@ -686,6 +757,36 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
       );
     }
 
+    if (cardId === 'accounts-receivable') {
+      return (
+        <div className="space-y-3">
+          {renderDateRange(receivableRange, setReceivableRange)}
+          <button
+            onClick={handleAccountsReceivable}
+            disabled={loadingCardId === cardId}
+            className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            Show
+          </button>
+        </div>
+      );
+    }
+
+    if (cardId === 'accounts-payable') {
+      return (
+        <div className="space-y-3">
+          {renderDateRange(payableRange, setPayableRange)}
+          <button
+            onClick={handleAccountsPayable}
+            disabled={loadingCardId === cardId}
+            className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            Show
+          </button>
+        </div>
+      );
+    }
+
     return (
       <div className="space-y-3">
         {renderDateRange(trialBalanceRange, setTrialBalanceRange)}
@@ -700,6 +801,38 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
     );
   };
 
+  const renderCard = (card: { id: FinancialCardId; title: string; hint: string }, index: number) => {
+    const cardKey = `${card.id}::${index}`;
+    const isOpen = expandedCardKey === cardKey;
+    return (
+      <div key={cardKey} className="self-start overflow-hidden rounded-2xl border border-[#bfd0df] bg-white shadow-[0_8px_18px_rgba(15,79,118,0.08)]">
+        <button
+          onClick={() => {
+            setCardErrors((prev) => ({ ...prev, [card.id]: '' }));
+            setExpandedCardKey((prev) => (prev === cardKey ? null : cardKey));
+          }}
+          className="flex w-full items-center justify-between border-b border-[#d8e4ee] bg-gradient-to-r from-[#0f4f76] to-[#1f6f9f] px-5 py-4 text-left text-white"
+        >
+          <div>
+            <p className="text-xl font-semibold leading-tight">{card.title}</p>
+            <p className="mt-1 text-xs font-medium text-white/85">{card.hint}</p>
+          </div>
+          <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        </button>
+        {isOpen && (
+          <div className="space-y-3 bg-[#f8fbff] px-5 py-4">
+            {renderCardBody(card.id)}
+            {cardErrors[card.id] && <p className="text-sm font-semibold text-red-600">{cardErrors[card.id]}</p>}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const indexedCards = financialCards.map((card, index) => ({ card, index }));
+  const leftColumnCards = indexedCards.filter(({ index }) => index % 2 === 0);
+  const rightColumnCards = indexedCards.filter(({ index }) => index % 2 === 1);
+
   return (
     <div className="space-y-3">
       {optionsError && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{optionsError}</div>}
@@ -709,32 +842,16 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
           Loading accounts, customers, and suppliers...
         </div>
       )}
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        {financialCards.map((card) => {
-          const isOpen = expandedCardId === card.id;
-          return (
-            <div key={card.id} className="overflow-hidden rounded-md border border-[#aebfd0] bg-white shadow-sm">
-              <button
-                onClick={() => {
-                  setCardErrors((prev) => ({ ...prev, [card.id]: '' }));
-                  setExpandedCardId((prev) => (prev === card.id ? null : card.id));
-                }}
-                className="flex w-full items-center justify-between bg-[#0f4f76] px-5 py-4 text-left text-white"
-              >
-                <div>
-                  <p className="text-xl font-semibold leading-tight">{card.title}</p>
-                </div>
-                <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-              </button>
-              {isOpen && (
-                <div className="space-y-3 border-t border-[#bfd0df] bg-[#f8fafc] px-5 py-4">
-                  {renderCardBody(card.id)}
-                  {cardErrors[card.id] && <p className="text-sm font-semibold text-red-600">{cardErrors[card.id]}</p>}
-                </div>
-              )}
-            </div>
-          );
-        })}
+      <div className="space-y-3 lg:hidden">
+        {indexedCards.map(({ card, index }) => renderCard(card, index))}
+      </div>
+      <div className="hidden items-start gap-3 lg:grid lg:grid-cols-2">
+        <div className="space-y-3">
+          {leftColumnCards.map(({ card, index }) => renderCard(card, index))}
+        </div>
+        <div className="space-y-3">
+          {rightColumnCards.map(({ card, index }) => renderCard(card, index))}
+        </div>
       </div>
     </div>
   );

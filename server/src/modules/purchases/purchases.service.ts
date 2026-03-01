@@ -305,7 +305,7 @@ const getStoreForItem = async (
 
 const applyStoreItemDelta = async (
   client: PoolClient,
-  params: { storeId: number; itemId: number; delta: number }
+  params: { storeId: number; itemId: number; delta: number; branchId: number }
 ) => {
   if (!params.delta) return;
   const existing = await client.query<{ quantity: string }>(
@@ -316,7 +316,18 @@ const applyStoreItemDelta = async (
       FOR UPDATE`,
     [params.storeId, params.itemId]
   );
-  const currentQty = Number(existing.rows[0]?.quantity || 0);
+  let currentQty = Number(existing.rows[0]?.quantity || 0);
+  if (!existing.rows[0]) {
+    const item = await client.query<{ opening_balance: string }>(
+      `SELECT COALESCE(opening_balance, 0)::text AS opening_balance
+         FROM ims.items
+        WHERE item_id = $1
+          AND branch_id = $2
+        LIMIT 1`,
+      [params.itemId, params.branchId]
+    );
+    currentQty = Number(item.rows[0]?.opening_balance || 0);
+  }
   const nextQty = currentQty + params.delta;
   if (nextQty < 0) {
     throw ApiError.badRequest(`Insufficient stock for item ${params.itemId}`);
@@ -360,6 +371,7 @@ const applyPurchaseStockEffects = async (
       storeId,
       itemId: Number(line.itemId),
       delta,
+      branchId: params.branchId,
     });
 
     const qtyIn = params.direction === 'in' ? qty : 0;
