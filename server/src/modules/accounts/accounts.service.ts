@@ -10,6 +10,7 @@ export interface Account {
   currency_code: string;
   balance: number;
   is_active: boolean;
+  account_type?: string;
   created_at?: string;
 }
 
@@ -20,6 +21,7 @@ const mapAccount = (row: {
   institution: string | null;
   balance: string | number;
   is_active: boolean;
+  account_type?: string;
   created_at?: string;
 }): Account => ({
   acc_id: Number(row.acc_id),
@@ -29,8 +31,25 @@ const mapAccount = (row: {
   currency_code: 'USD',
   balance: Number(row.balance || 0),
   is_active: Boolean(row.is_active),
+  account_type: row.account_type || 'asset',
   created_at: row.created_at,
 });
+
+let accountsSchemaReady = false;
+const ensureAccountsSchema = async () => {
+  if (accountsSchemaReady) return;
+  await queryMany(`
+    ALTER TABLE ims.accounts
+      ADD COLUMN IF NOT EXISTS account_type VARCHAR(20) NOT NULL DEFAULT 'asset'
+  `);
+  await queryMany(`
+    UPDATE ims.accounts
+       SET account_type = 'asset'
+     WHERE account_type IS NULL
+        OR account_type NOT IN ('asset', 'equity')
+  `);
+  accountsSchemaReady = true;
+};
 
 export const accountsService = {
   async findByNameAndCurrency(
@@ -38,6 +57,7 @@ export const accountsService = {
     _currencyCode: string,
     branchId?: number
   ): Promise<Account | null> {
+    await ensureAccountsSchema();
     const row = branchId
       ? await queryOne<{
           acc_id: number;
@@ -46,9 +66,10 @@ export const accountsService = {
           institution: string | null;
           balance: string;
           is_active: boolean;
+          account_type: string;
           created_at?: string;
         }>(
-          `SELECT acc_id, branch_id, name, institution, balance::text, is_active, created_at::text
+          `SELECT acc_id, branch_id, name, institution, balance::text, is_active, account_type, created_at::text
              FROM ims.accounts
             WHERE branch_id = $1
               AND LOWER(name) = LOWER($2)
@@ -62,9 +83,10 @@ export const accountsService = {
           institution: string | null;
           balance: string;
           is_active: boolean;
+          account_type: string;
           created_at?: string;
         }>(
-          `SELECT acc_id, branch_id, name, institution, balance::text, is_active, created_at::text
+          `SELECT acc_id, branch_id, name, institution, balance::text, is_active, account_type, created_at::text
              FROM ims.accounts
             WHERE LOWER(name) = LOWER($1)
             LIMIT 1`,
@@ -75,6 +97,7 @@ export const accountsService = {
   },
 
   async list(scope: BranchScope): Promise<Account[]> {
+    await ensureAccountsSchema();
     const rows = scope.isAdmin
       ? await queryMany<{
           acc_id: number;
@@ -83,9 +106,10 @@ export const accountsService = {
           institution: string | null;
           balance: string;
           is_active: boolean;
+          account_type: string;
           created_at?: string;
         }>(
-          `SELECT acc_id, branch_id, name, institution, balance::text, is_active, created_at::text
+          `SELECT acc_id, branch_id, name, institution, balance::text, is_active, account_type, created_at::text
              FROM ims.accounts
             ORDER BY name, acc_id DESC`
         )
@@ -96,9 +120,10 @@ export const accountsService = {
           institution: string | null;
           balance: string;
           is_active: boolean;
+          account_type: string;
           created_at?: string;
         }>(
-          `SELECT acc_id, branch_id, name, institution, balance::text, is_active, created_at::text
+          `SELECT acc_id, branch_id, name, institution, balance::text, is_active, account_type, created_at::text
              FROM ims.accounts
             WHERE branch_id = ANY($1)
             ORDER BY name, acc_id DESC`,
@@ -109,6 +134,7 @@ export const accountsService = {
   },
 
   async create(input: AccountInput, ctx: { branchId: number }): Promise<Account> {
+    await ensureAccountsSchema();
     const row = await queryOne<{
       acc_id: number;
       branch_id: number;
@@ -116,17 +142,19 @@ export const accountsService = {
       institution: string | null;
       balance: string;
       is_active: boolean;
+      account_type: string;
       created_at?: string;
     }>(
-      `INSERT INTO ims.accounts (branch_id, name, institution, balance, is_active)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING acc_id, branch_id, name, institution, balance::text, is_active, created_at::text`,
+      `INSERT INTO ims.accounts (branch_id, name, institution, balance, is_active, account_type)
+       VALUES ($1, $2, $3, $4, $5, COALESCE($6, 'asset'))
+       RETURNING acc_id, branch_id, name, institution, balance::text, is_active, account_type, created_at::text`,
       [
         ctx.branchId,
         input.name,
         input.institution || null,
         input.balance ?? 0,
         input.isActive ?? true,
+        (input as AccountInput & { accountType?: string }).accountType || 'asset',
       ]
     );
 
@@ -141,6 +169,7 @@ export const accountsService = {
     input: Partial<AccountInput>,
     scope: BranchScope
   ): Promise<Account | null> {
+    await ensureAccountsSchema();
     const updates: string[] = [];
     const values: unknown[] = [];
     let parameter = 1;
@@ -171,9 +200,10 @@ export const accountsService = {
             institution: string | null;
             balance: string;
             is_active: boolean;
+            account_type: string;
             created_at?: string;
           }>(
-            `SELECT acc_id, branch_id, name, institution, balance::text, is_active, created_at::text
+            `SELECT acc_id, branch_id, name, institution, balance::text, is_active, account_type, created_at::text
                FROM ims.accounts
               WHERE acc_id = $1`,
             [id]
@@ -185,9 +215,10 @@ export const accountsService = {
             institution: string | null;
             balance: string;
             is_active: boolean;
+            account_type: string;
             created_at?: string;
           }>(
-            `SELECT acc_id, branch_id, name, institution, balance::text, is_active, created_at::text
+            `SELECT acc_id, branch_id, name, institution, balance::text, is_active, account_type, created_at::text
                FROM ims.accounts
               WHERE acc_id = $1
                 AND branch_id = ANY($2)`,
@@ -210,12 +241,13 @@ export const accountsService = {
       institution: string | null;
       balance: string;
       is_active: boolean;
+      account_type: string;
       created_at?: string;
     }>(
       `UPDATE ims.accounts
           SET ${updates.join(', ')}
         WHERE ${whereSql}
-        RETURNING acc_id, branch_id, name, institution, balance::text, is_active, created_at::text`,
+        RETURNING acc_id, branch_id, name, institution, balance::text, is_active, account_type, created_at::text`,
       values
     );
 

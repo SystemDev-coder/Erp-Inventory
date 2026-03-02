@@ -28,13 +28,12 @@ const inventoryCards: Array<{ id: InventoryCardId; title: string; hint: string }
 
 const currentStockColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'item_name', header: 'Item' },
-  { key: 'barcode', header: 'Barcode' },
   { key: 'total_qty', header: 'Qty', align: 'right', render: (row) => formatQuantity(row.total_qty) },
   { key: 'min_stock_threshold', header: 'Min Qty', align: 'right', render: (row) => formatQuantity(row.min_stock_threshold) },
   { key: 'low_stock', header: 'Low Stock', render: (row) => (row.low_stock ? 'Yes' : 'No') },
   { key: 'cost_price', header: 'Cost', align: 'right', render: (row) => formatCurrency(row.cost_price) },
   { key: 'sale_price', header: 'Sale', align: 'right', render: (row) => formatCurrency(row.sale_price) },
-  { key: 'stock_value', header: 'Value', align: 'right', render: (row) => formatCurrency(row.stock_value) },
+  { key: 'amount', header: 'Amount', align: 'right', render: (row) => formatCurrency(row.amount) },
 ];
 
 const lowStockColumns: ReportColumn<Record<string, unknown>>[] = [
@@ -201,7 +200,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load current stock');
       const rows = toRecordRows(response.data.rows || []);
       const totalQty = sumByKey(rows, 'total_qty');
-      const totalCostValue = sumByKey(rows, 'stock_value');
+      const totalCostValue = sumByKey(rows, 'amount');
       const totalSaleValue = rows.reduce(
         (sum, row) => sum + Number(row.total_qty || 0) * Number(row.sale_price || 0),
         0
@@ -219,7 +218,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
           values: {
             total_qty: formatQuantity(totalQty),
             min_stock_threshold: formatQuantity(sumByKey(rows, 'min_stock_threshold')),
-            stock_value: formatCurrency(totalCostValue),
+            amount: formatCurrency(totalCostValue),
           },
         },
         totals: [

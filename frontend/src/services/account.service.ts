@@ -7,6 +7,7 @@ export interface Account {
   currency_code: string;
   balance: number;
   is_active: boolean;
+  account_type?: 'asset' | 'equity' | string;
 }
 
 export const accountService = {

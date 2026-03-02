@@ -8,12 +8,12 @@ export interface InventoryReportOption {
 export interface CurrentStockRow {
   item_id: number;
   item_name: string;
-  barcode: string;
   total_qty: number;
   min_stock_threshold: number;
   low_stock: boolean;
   cost_price: number;
   sale_price: number;
+  amount: number;
   stock_value: number;
 }
 
@@ -144,12 +144,12 @@ export const inventoryReportsService = {
        SELECT
          i.item_id,
          i.name AS item_name,
-         COALESCE(i.barcode, '') AS barcode,
          COALESCE(st.total_qty, 0)::double precision AS total_qty,
          GREATEST(COALESCE(NULLIF(i.stock_alert, 0), 5), 1)::double precision AS min_stock_threshold,
          (COALESCE(st.total_qty, 0) <= GREATEST(COALESCE(NULLIF(i.stock_alert, 0), 5), 1)) AS low_stock,
          COALESCE(i.cost_price, 0)::double precision AS cost_price,
          COALESCE(i.sell_price, i.cost_price, 0)::double precision AS sale_price,
+         (COALESCE(st.total_qty, 0) * COALESCE(i.cost_price, 0))::double precision AS amount,
          (COALESCE(st.total_qty, 0) * COALESCE(i.cost_price, 0))::double precision AS stock_value
        FROM ims.items i
        LEFT JOIN stock_totals st
@@ -168,12 +168,12 @@ export const inventoryReportsService = {
        SELECT
          i.item_id,
          i.name AS item_name,
-         COALESCE(i.barcode, '') AS barcode,
          COALESCE(st.total_qty, 0)::double precision AS total_qty,
          GREATEST(COALESCE(NULLIF(i.stock_alert, 0), 5), 1)::double precision AS min_stock_threshold,
          (COALESCE(st.total_qty, 0) <= GREATEST(COALESCE(NULLIF(i.stock_alert, 0), 5), 1)) AS low_stock,
          COALESCE(i.cost_price, 0)::double precision AS cost_price,
          COALESCE(i.sell_price, i.cost_price, 0)::double precision AS sale_price,
+         (COALESCE(st.total_qty, 0) * COALESCE(i.cost_price, 0))::double precision AS amount,
          (COALESCE(st.total_qty, 0) * COALESCE(i.cost_price, 0))::double precision AS stock_value
        FROM ims.items i
        LEFT JOIN stock_totals st

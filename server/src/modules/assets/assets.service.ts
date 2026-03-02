@@ -28,6 +28,17 @@ export interface CreateFixedAssetInput {
   branchId?: number;
 }
 
+export interface UpdateFixedAssetInput {
+  assetName?: string;
+  category?: string;
+  purchaseDate?: string;
+  cost?: number;
+  usefulLifeMonths?: number;
+  depreciationMethod?: string;
+  status?: string;
+  notes?: string | null;
+}
+
 let fixedAssetsSchemaReady = false;
 
 const ensureFixedAssetsSchema = async () => {
@@ -250,5 +261,157 @@ export const assetsService = {
     }
 
     return mapRow(row);
+  },
+
+  async updateFixedAsset(
+    assetId: number,
+    input: UpdateFixedAssetInput,
+    scope: BranchScope
+  ): Promise<FixedAssetRow | null> {
+    await ensureFixedAssetsSchema();
+
+    const updates: string[] = [];
+    const values: Array<string | number | number[] | null> = [];
+    let param = 1;
+
+    if (input.assetName !== undefined) {
+      updates.push(`asset_name = $${param++}`);
+      values.push(input.assetName);
+    }
+    if (input.category !== undefined) {
+      updates.push(`category = $${param++}`);
+      values.push(input.category);
+    }
+    if (input.purchaseDate !== undefined) {
+      updates.push(`purchase_date = $${param++}::date`);
+      values.push(input.purchaseDate);
+    }
+    if (input.cost !== undefined) {
+      updates.push(`cost = $${param++}`);
+      values.push(input.cost);
+    }
+    if (input.usefulLifeMonths !== undefined) {
+      updates.push(`useful_life_months = $${param++}`);
+      values.push(input.usefulLifeMonths);
+    }
+    if (input.depreciationMethod !== undefined) {
+      updates.push(`depreciation_method = $${param++}`);
+      values.push(input.depreciationMethod);
+    }
+    if (input.status !== undefined) {
+      updates.push(`status = $${param++}`);
+      values.push(input.status);
+    }
+    if (input.notes !== undefined) {
+      updates.push(`notes = $${param++}`);
+      values.push(input.notes ?? null);
+    }
+
+    if (!updates.length) {
+      const params: Array<number | number[]> = [assetId];
+      let scopeSql = '';
+      if (!scope.isAdmin) {
+        params.push(scope.branchIds);
+        scopeSql = ` AND fa.branch_id = ANY($${params.length})`;
+      }
+      const row = await queryOne<{
+        asset_id: number;
+        branch_id: number;
+        asset_name: string;
+        category: string;
+        purchase_date: string;
+        cost: string | number;
+        useful_life_months: number;
+        depreciation_method: string;
+        status: string;
+        notes: string | null;
+        created_by: number | null;
+        created_at: string;
+      }>(
+        `SELECT
+           fa.asset_id,
+           fa.branch_id,
+           fa.asset_name,
+           fa.category,
+           fa.purchase_date::text AS purchase_date,
+           fa.cost::text AS cost,
+           fa.useful_life_months,
+           fa.depreciation_method,
+           fa.status,
+           fa.notes,
+           fa.created_by,
+           fa.created_at::text AS created_at
+         FROM ims.fixed_assets fa
+         WHERE fa.asset_id = $1${scopeSql}
+         LIMIT 1`,
+        params
+      );
+      return row ? mapRow(row) : null;
+    }
+
+    updates.push(`updated_at = NOW()`);
+    const params: Array<string | number | number[] | null> = [...values];
+    params.push(assetId);
+    const assetIdParam = params.length;
+
+    let scopeSql = '';
+    if (!scope.isAdmin) {
+      params.push(scope.branchIds);
+      scopeSql = ` AND branch_id = ANY($${params.length})`;
+    }
+
+    const row = await queryOne<{
+      asset_id: number;
+      branch_id: number;
+      asset_name: string;
+      category: string;
+      purchase_date: string;
+      cost: string | number;
+      useful_life_months: number;
+      depreciation_method: string;
+      status: string;
+      notes: string | null;
+      created_by: number | null;
+      created_at: string;
+    }>(
+      `UPDATE ims.fixed_assets
+          SET ${updates.join(', ')}
+        WHERE asset_id = $${assetIdParam}${scopeSql}
+        RETURNING
+          asset_id,
+          branch_id,
+          asset_name,
+          category,
+          purchase_date::text AS purchase_date,
+          cost::text AS cost,
+          useful_life_months,
+          depreciation_method,
+          status,
+          notes,
+          created_by,
+          created_at::text AS created_at`,
+      params
+    );
+
+    return row ? mapRow(row) : null;
+  },
+
+  async deleteFixedAsset(assetId: number, scope: BranchScope): Promise<boolean> {
+    await ensureFixedAssetsSchema();
+
+    const params: Array<number | number[]> = [assetId];
+    let scopeSql = '';
+    if (!scope.isAdmin) {
+      params.push(scope.branchIds);
+      scopeSql = ` AND branch_id = ANY($${params.length})`;
+    }
+    const deleted = await queryOne<{ asset_id: number }>(
+      `DELETE FROM ims.fixed_assets
+        WHERE asset_id = $1${scopeSql}
+        RETURNING asset_id`,
+      params
+    );
+
+    return Boolean(deleted);
   },
 };

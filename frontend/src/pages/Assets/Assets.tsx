@@ -34,7 +34,7 @@ const initialForm: CreateFixedAssetInput = {
   cost: 0,
 };
 
-export default function Assets() {
+export default function Assets({ embedded = false }: { embedded?: boolean }) {
   const { showToast } = useToast();
   const [mode, setMode] = useState<AssetViewMode>('list');
   const [assets, setAssets] = useState<FixedAsset[]>([]);
@@ -45,6 +45,7 @@ export default function Assets() {
   const [categoryFilter, setCategoryFilter] = useState('');
   const [form, setForm] = useState<CreateFixedAssetInput>(initialForm);
   const [submitting, setSubmitting] = useState(false);
+  const [editingAssetId, setEditingAssetId] = useState<number | null>(null);
 
   const loadAssets = async () => {
     setLoading(true);
@@ -157,16 +158,21 @@ export default function Assets() {
     }
     setSubmitting(true);
     try {
-      const response = await assetsService.create({
+      const payload = {
         ...form,
         cost: Number(form.cost),
-      });
+        ...(editingAssetId ? {} : { status: 'active' }),
+      };
+      const response = editingAssetId
+        ? await assetsService.update(editingAssetId, payload)
+        : await assetsService.create(payload);
       if (!response.success) {
-        showToast('error', 'Assets', response.error || response.message || 'Failed to register asset');
+        showToast('error', 'Assets', response.error || response.message || `Failed to ${editingAssetId ? 'update' : 'register'} asset`);
         return;
       }
-      showToast('success', 'Assets', 'Fixed asset registered');
+      showToast('success', 'Assets', editingAssetId ? 'Fixed asset updated' : 'Fixed asset registered');
       setForm(initialForm);
+      setEditingAssetId(null);
       setMode('list');
       await loadAssets();
     } catch (e) {
@@ -178,18 +184,57 @@ export default function Assets() {
 
   return (
     <div className="space-y-4">
-      <PageHeader
-        title="Assets"
-        description="Manage fixed assets and review registered assets."
-        actions={
+      {!embedded ? (
+        <PageHeader
+          title="Assets"
+          description="Manage fixed assets and review registered assets."
+          actions={
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setMode('list');
+                  setEditingAssetId(null);
+                  void loadAssets();
+                }}
+                className={`rounded-lg px-4 py-2 text-sm font-semibold ${
+                  mode === 'list'
+                    ? 'border border-black bg-black text-white'
+                    : 'border border-black bg-white text-black'
+                }`}
+              >
+                Assets List
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setForm(initialForm);
+                  setEditingAssetId(null);
+                  setMode('register');
+                }}
+                className={`rounded-lg px-4 py-2 text-sm font-semibold ${
+                  mode === 'register'
+                    ? 'border border-black bg-black text-white'
+                    : 'border border-black bg-white text-black'
+                }`}
+              >
+                Fixed Assets
+              </button>
+            </div>
+          }
+        />
+      ) : (
+        <div className="flex items-center justify-between rounded-xl border border-zinc-300 bg-white p-4 shadow-sm">
+          <h3 className="text-base font-semibold text-black">Assets</h3>
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => {
                 setMode('list');
+                setEditingAssetId(null);
                 void loadAssets();
               }}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold ${
+              className={`rounded-lg px-3 py-2 text-xs font-semibold ${
                 mode === 'list'
                   ? 'border border-black bg-black text-white'
                   : 'border border-black bg-white text-black'
@@ -199,18 +244,22 @@ export default function Assets() {
             </button>
             <button
               type="button"
-              onClick={() => setMode('register')}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold ${
+              onClick={() => {
+                setForm(initialForm);
+                setEditingAssetId(null);
+                setMode('register');
+              }}
+              className={`rounded-lg px-3 py-2 text-xs font-semibold ${
                 mode === 'register'
                   ? 'border border-black bg-black text-white'
                   : 'border border-black bg-white text-black'
               }`}
             >
-              Fixed Assets
+              Register Asset
             </button>
           </div>
-        }
-      />
+        </div>
+      )}
 
       {mode === 'list' ? (
         <div className="space-y-4 rounded-xl border border-zinc-300 bg-white p-4 shadow-sm">
@@ -272,6 +321,26 @@ export default function Assets() {
             isLoading={loading}
             error={error || null}
             searchPlaceholder="Search assets..."
+            onEdit={(row) => {
+              setEditingAssetId(row.asset_id);
+              setForm({
+                assetName: row.asset_name,
+                category: row.category,
+                purchaseDate: row.purchase_date,
+                cost: Number(row.cost || 0),
+              });
+              setMode('register');
+            }}
+            onDelete={async (row) => {
+              if (!window.confirm(`Delete asset "${row.asset_name}"?`)) return;
+              const response = await assetsService.delete(row.asset_id);
+              if (!response.success) {
+                showToast('error', 'Assets', response.error || response.message || 'Failed to delete asset');
+                return;
+              }
+              showToast('success', 'Assets', 'Fixed asset deleted');
+              await loadAssets();
+            }}
           />
         </div>
       ) : (
@@ -330,6 +399,7 @@ export default function Assets() {
               type="button"
               onClick={() => {
                 setForm(initialForm);
+                setEditingAssetId(null);
                 setMode('list');
               }}
               className="rounded-md border border-black bg-white px-4 py-2 text-sm font-semibold text-black"
@@ -342,7 +412,7 @@ export default function Assets() {
               disabled={submitting}
               className="rounded-md border border-black bg-black px-4 py-2 text-sm font-semibold text-white disabled:opacity-70"
             >
-              {submitting ? 'Saving...' : 'Save Asset'}
+              {submitting ? 'Saving...' : editingAssetId ? 'Update Asset' : 'Save Asset'}
             </button>
           </div>
         </div>

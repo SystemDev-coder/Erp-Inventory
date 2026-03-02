@@ -1,4 +1,4 @@
-import { queryMany } from '../../../db/query';
+import { queryMany, queryOne } from '../../../db/query';
 
 export interface FinancialReportOption {
   id: number;
@@ -152,11 +152,56 @@ const resolveBalanceColumn = async (table: BalanceTable): Promise<BalanceColumn>
   return resolved;
 };
 
+const resolveBalanceExpression = async (
+  table: BalanceTable,
+  alias: string
+): Promise<string> => {
+  const cols = await queryMany<{ column_name: string }>(
+    `SELECT column_name
+       FROM information_schema.columns
+      WHERE table_schema = 'ims'
+        AND table_name = $1`,
+    [table]
+  );
+  const names = new Set(cols.map((row) => row.column_name));
+  const hasRemaining = names.has('remaining_balance');
+  const hasOpen = names.has('open_balance');
+
+  if (hasRemaining && hasOpen) {
+    return `GREATEST(COALESCE(${alias}.remaining_balance, 0), COALESCE(${alias}.open_balance, 0))`;
+  }
+  if (hasRemaining) {
+    return `COALESCE(${alias}.remaining_balance, 0)`;
+  }
+  if (hasOpen) {
+    return `COALESCE(${alias}.open_balance, 0)`;
+  }
+  return '0';
+};
+
 const toMoney = (value: unknown) => Number(value || 0);
 
 const queryAmount = async (sql: string, params: Array<string | number>): Promise<number> => {
   const rows = await queryMany<{ amount: number }>(sql, params);
   return toMoney(rows[0]?.amount);
+};
+
+const queryAmountIfTableExists = async (
+  table: string,
+  sql: string,
+  params: Array<string | number>
+): Promise<number> => {
+  const exists = await queryOne<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM information_schema.tables
+        WHERE table_schema = 'ims'
+          AND table_name = $1
+     ) AS exists`,
+    [table]
+  );
+  if (!exists?.exists) return 0;
+  return queryAmount(sql, params);
 };
 
 const isMissingBalanceSheetProcedureError = (error: unknown) => {
@@ -319,9 +364,9 @@ export const financialReportsService = {
   },
 
   async getBalanceSheet(branchId: number, asOfDate: string): Promise<BalanceSheetRow[]> {
-    const [customerBalanceColumn, supplierBalanceColumn] = await Promise.all([
+    const [customerBalanceColumn, supplierBalanceExpr] = await Promise.all([
       resolveBalanceColumn('customers'),
-      resolveBalanceColumn('suppliers'),
+      resolveBalanceExpression('suppliers', 's'),
     ]);
     const params: Array<number | string> = [branchId, asOfDate];
 
@@ -342,6 +387,7 @@ export const financialReportsService = {
       payrollExpenseToDate,
       otherIncomeToDate,
       supplierRefundsToDate,
+      ownerCapitalToDate,
     ] = await Promise.all([
       queryAmount(
         `WITH txn AS (
@@ -479,7 +525,7 @@ export const financialReportsService = {
          SELECT COALESCE(
                   SUM(
                     GREATEST(
-                      COALESCE(s.${supplierBalanceColumn}, 0)
+                      ${supplierBalanceExpr}
                       + GREATEST(
                           COALESCE(pr.total_purchase, 0)
                           - COALESCE(pr.paid_against_purchase, 0)
@@ -643,6 +689,14 @@ export const financialReportsService = {
             AND sr.receipt_date::date <= $2::date`,
         params
       ),
+      queryAmountIfTableExists(
+        'capital_contributions',
+        `SELECT COALESCE(SUM(cc.amount), 0)::double precision AS amount
+           FROM ims.capital_contributions cc
+          WHERE cc.branch_id = $1
+            AND cc.contribution_date <= $2::date`,
+        params
+      ),
     ]);
 
     let fixedAssetsAmount = 0;
@@ -669,7 +723,7 @@ export const financialReportsService = {
       [branchId]
     );
     const fallbackSupplierPayable = await queryAmount(
-      `SELECT COALESCE(SUM(GREATEST(COALESCE(s.${supplierBalanceColumn}, 0), 0)), 0)::double precision AS amount
+      `SELECT COALESCE(SUM(GREATEST(${supplierBalanceExpr}, 0)), 0)::double precision AS amount
          FROM ims.suppliers s
         WHERE s.branch_id = $1
           AND s.is_active = TRUE`,
@@ -692,8 +746,8 @@ export const financialReportsService = {
     const totalCurrentLiabilities = accountsPayable + customerAdvanceAmount + expensePayableAmount + payrollPayableAmount;
     const totalNonCurrentLiabilities = 0;
     const totalLiabilities = totalCurrentLiabilities + totalNonCurrentLiabilities;
-    const openingEquity = totalAssets - totalLiabilities - netProfitToDate;
-    const totalEquity = openingEquity + netProfitToDate;
+    const retainedEarnings = netProfitToDate;
+    const totalEquity = ownerCapitalToDate + retainedEarnings;
     const totalLiabilitiesEquity = totalLiabilities + totalEquity;
     const balanceDifference = totalAssets - totalLiabilitiesEquity;
 
@@ -720,6 +774,7 @@ export const financialReportsService = {
         amount: totalNonCurrentAssets,
         row_type: 'total',
       },
+      { section: 'Assets', line_item: 'Total Assets', amount: totalAssets, row_type: 'total' },
       { section: 'Current Liabilities', line_item: 'Accounts Payable', amount: accountsPayable, row_type: 'detail' },
       {
         section: 'Current Liabilities',
@@ -742,10 +797,9 @@ export const financialReportsService = {
         amount: totalNonCurrentLiabilities,
         row_type: 'total',
       },
-      { section: 'Equity', line_item: 'Opening / Owner Equity', amount: openingEquity, row_type: 'detail' },
-      { section: 'Equity', line_item: netResultLabel, amount: netProfitToDate, row_type: 'detail' },
+      { section: 'Equity', line_item: 'Owner Capital', amount: ownerCapitalToDate, row_type: 'detail' },
+      { section: 'Equity', line_item: netResultLabel === 'Net Profit' ? 'Retained Earnings' : 'Accumulated Loss', amount: retainedEarnings, row_type: 'detail' },
       { section: 'Equity', line_item: 'Total Equity', amount: totalEquity, row_type: 'total' },
-      { section: 'Summary', line_item: 'Total Assets', amount: totalAssets, row_type: 'total' },
       { section: 'Summary', line_item: 'Total Liabilities', amount: totalLiabilities, row_type: 'total' },
       { section: 'Summary', line_item: 'Total Liabilities + Equity', amount: totalLiabilitiesEquity, row_type: 'total' },
       { section: 'Summary', line_item: 'Balance Difference', amount: balanceDifference, row_type: 'detail' },

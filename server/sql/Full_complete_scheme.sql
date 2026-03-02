@@ -78,7 +78,7 @@ END IF;
 
 IF NOT EXISTS (SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace WHERE t.typname='account_txn_type_enum' AND n.nspname='ims') THEN
 CREATE TYPE ims.account_txn_type_enum AS ENUM
-('sale_payment','supplier_payment','expense_payment','payroll_payment','loan_payment','account_transfer','opening','return_refund','other');
+('sale_payment','supplier_payment','expense_payment','payroll_payment','loan_payment','account_transfer','opening','return_refund','other','capital_contribution');
 END IF;
 
 IF NOT EXISTS (SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace WHERE t.typname='shift_status_enum' AND n.nspname='ims') THEN
@@ -105,6 +105,7 @@ phone VARCHAR(30),
 address TEXT,
 logo_url TEXT,
 banner_url TEXT,
+capital_amount NUMERIC(14,2) NOT NULL DEFAULT 0,
 is_active BOOLEAN NOT NULL DEFAULT TRUE,
 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -295,6 +296,7 @@ branch_id   BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE
 name        VARCHAR(120) NOT NULL,
 institution VARCHAR(120),
 balance     NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (balance >= 0),
+account_type VARCHAR(20) NOT NULL DEFAULT 'asset' CHECK (account_type IN ('asset', 'equity')),
 is_active   BOOLEAN NOT NULL DEFAULT TRUE,
 created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 CONSTRAINT uq_account_branch_name UNIQUE (branch_id, name)
@@ -748,6 +750,43 @@ status          ims.account_transfer_status_enum NOT NULL DEFAULT 'draft',
 reference_no    VARCHAR(80),
 note            TEXT,
 CONSTRAINT chk_acc_transfer_diff CHECK (from_acc_id <> to_acc_id)
+);
+
+CREATE TABLE IF NOT EXISTS ims.journal_entries (
+journal_id   BIGSERIAL PRIMARY KEY,
+branch_id    BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+entry_date   DATE NOT NULL,
+memo         TEXT,
+source_table VARCHAR(40),
+source_id    BIGINT,
+created_by   BIGINT REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE SET NULL,
+created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS ims.journal_lines (
+journal_line_id BIGSERIAL PRIMARY KEY,
+journal_id      BIGINT NOT NULL REFERENCES ims.journal_entries(journal_id) ON UPDATE CASCADE ON DELETE CASCADE,
+acc_id          BIGINT NOT NULL REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+debit           NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (debit >= 0),
+credit          NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (credit >= 0),
+note            TEXT,
+created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+CONSTRAINT chk_journal_line_amt CHECK ((debit + credit) > 0)
+);
+
+CREATE TABLE IF NOT EXISTS ims.capital_contributions (
+capital_id         BIGSERIAL PRIMARY KEY,
+branch_id          BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+owner_name         VARCHAR(150) NOT NULL,
+amount             NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+contribution_date  DATE NOT NULL,
+acc_id             BIGINT NOT NULL REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+equity_acc_id      BIGINT NOT NULL REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+journal_id         BIGINT REFERENCES ims.journal_entries(journal_id) ON UPDATE CASCADE ON DELETE SET NULL,
+note               TEXT,
+created_by         BIGINT REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE SET NULL,
+created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Receipts (Finance)

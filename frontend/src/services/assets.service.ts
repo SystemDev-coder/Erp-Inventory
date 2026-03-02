@@ -21,6 +21,18 @@ export interface CreateFixedAssetInput {
   category: string;
   purchaseDate: string;
   cost: number;
+  status?: string;
+}
+
+export interface UpdateFixedAssetInput {
+  assetName?: string;
+  category?: string;
+  purchaseDate?: string;
+  cost?: number;
+  status?: string;
+  usefulLifeMonths?: number;
+  depreciationMethod?: string;
+  notes?: string | null;
 }
 
 const toQuery = (params: Record<string, string | number | undefined>) => {
@@ -46,5 +58,13 @@ export const assetsService = {
 
   async create(input: CreateFixedAssetInput) {
     return apiClient.post<{ asset: FixedAsset }>(API.ASSETS.LIST, input);
+  },
+
+  async update(id: number, input: UpdateFixedAssetInput) {
+    return apiClient.put<{ asset: FixedAsset }>(API.ASSETS.ITEM(id), input);
+  },
+
+  async delete(id: number) {
+    return apiClient.delete(API.ASSETS.ITEM(id));
   },
 };

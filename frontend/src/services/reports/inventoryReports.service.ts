@@ -8,12 +8,12 @@ export interface InventoryStoreOption {
 export interface CurrentStockLevelRow {
   item_id: number;
   item_name: string;
-  barcode: string;
   total_qty: number;
   min_stock_threshold: number;
   low_stock: boolean;
   cost_price: number;
   sale_price: number;
+  amount: number;
   stock_value: number;
 }
 

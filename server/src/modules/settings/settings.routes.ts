@@ -10,6 +10,11 @@ import {
   updateBranch,
   deleteBranch,
   listAudit,
+  listCapitalContributions,
+  createCapitalContribution,
+  updateCapitalContribution,
+  deleteCapitalContribution,
+  getCapitalReport,
 } from './settings.controller';
 
 const router = Router();
@@ -28,5 +33,12 @@ router.delete('/branches/:id', requirePerm('system.branches'), deleteBranch);
 
 // Audit History permissions (table CRUD + special audit key)
 router.get('/audit', requireAnyPerm(['audit_logs.view', 'system.audit.view', 'system.settings']), listAudit);
+
+// Capital (Owner Equity)
+router.get('/capital', requireAnyPerm(['system.settings', 'accounts.view', 'finance.reports']), listCapitalContributions);
+router.post('/capital', requireAnyPerm(['system.settings', 'accounts.view']), createCapitalContribution);
+router.put('/capital/:id', requireAnyPerm(['system.settings', 'accounts.view']), updateCapitalContribution);
+router.delete('/capital/:id', requireAnyPerm(['system.settings', 'accounts.view']), deleteCapitalContribution);
+router.get('/capital/report', requireAnyPerm(['system.settings', 'accounts.view', 'finance.reports']), getCapitalReport);
 
 export default router;

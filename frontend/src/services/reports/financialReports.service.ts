@@ -125,6 +125,12 @@ export interface AccountsPayableRow {
   status: string;
 }
 
+export interface CapitalReportSummary {
+  total_capital: number;
+  by_owner: Array<{ owner_name: string; total_amount: number }>;
+  by_account: Array<{ account_id: number; account_name: string; total_amount: number }>;
+}
+
 interface FinancialOptionsResponse {
   branchId: number;
   accounts: ReportOption[];
@@ -279,6 +285,15 @@ export const financialReportsService = {
       toDate: input.toDate,
     });
     return apiClient.get<RowsResponse<TrialBalanceRow>>(`${API.REPORTS.FINANCIAL_TRIAL_BALANCE}${query}`);
+  },
+
+  async getCapitalReport(input?: { owner?: string; fromDate?: string; toDate?: string }) {
+    const query = toQuery({
+      owner: input?.owner,
+      fromDate: input?.fromDate,
+      toDate: input?.toDate,
+    });
+    return apiClient.get<{ report: CapitalReportSummary }>(`/api/settings/capital/report${query}`);
   },
 };
 

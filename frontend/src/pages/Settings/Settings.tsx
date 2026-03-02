@@ -1,91 +1,13 @@
-import { useMemo, useState } from 'react';
-import { History, Home, Pencil, Plus, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { BriefcaseBusiness, CircleDollarSign, Home, Pencil, Plus, Trash2 } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
 import { Tabs } from '../../components/ui/tabs';
-import { settingsService, CompanyInfo, AuditLog } from '../../services/settings.service';
+import { settingsService, CompanyInfo, CapitalContribution } from '../../services/settings.service';
 import { useToast } from '../../components/ui/toast/Toast';
 import { Modal } from '../../components/ui/modal/Modal';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
-import { env } from '../../config/env';
-
-const formatAuditValue = (val: unknown): string => {
-  if (val === null || val === undefined) return '-';
-  if (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean') {
-    return String(val);
-  }
-  if (Array.isArray(val)) {
-    return val.map((entry) => formatAuditValue(entry)).join(', ');
-  }
-  if (typeof val === 'object') {
-    return Object.entries(val as Record<string, unknown>)
-      .map(([key, value]) => `${key}: ${formatAuditValue(value)}`)
-      .join(', ');
-  }
-  return String(val);
-};
-
-const getAuditChangedValues = (oldVal: unknown, newVal: unknown): { oldText: string; newText: string } => {
-  if ((oldVal === null || oldVal === undefined) && (newVal === null || newVal === undefined)) {
-    return { oldText: '-', newText: '-' };
-  }
-
-  const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-    !!value && typeof value === 'object' && !Array.isArray(value);
-
-  if (isPlainObject(oldVal) && isPlainObject(newVal)) {
-    const keys = Array.from(new Set([...Object.keys(oldVal), ...Object.keys(newVal)]));
-    const changed = keys.filter((key) => JSON.stringify(oldVal[key]) !== JSON.stringify(newVal[key]));
-
-    if (!changed.length) {
-      return { oldText: '-', newText: '-' };
-    }
-
-    return {
-      oldText: changed.map((key) => `${key}: ${formatAuditValue(oldVal[key])}`).join(', '),
-      newText: changed.map((key) => `${key}: ${formatAuditValue(newVal[key])}`).join(', '),
-    };
-  }
-
-  if (JSON.stringify(oldVal) === JSON.stringify(newVal)) {
-    return { oldText: '-', newText: '-' };
-  }
-
-  return {
-    oldText: formatAuditValue(oldVal),
-    newText: formatAuditValue(newVal),
-  };
-};
-
-const getDeviceLabel = (userAgent?: string | null): string => {
-  if (!userAgent) return '-';
-  const ua = userAgent.toLowerCase();
-  if (ua.includes('iphone') || ua.includes('android') || ua.includes('mobile') || ua.includes('ipad')) {
-    return 'Mobile';
-  }
-  return 'Laptop/Desktop';
-};
-
-const getAuditTableName = (log: AuditLog): string => {
-  const fromMeta =
-    log.meta && typeof log.meta === 'object' && 'source' in (log.meta as Record<string, unknown>)
-      ? String((log.meta as Record<string, unknown>).source || '')
-      : '';
-  return (log.entity || fromMeta || '-').toString();
-};
-
-const getAuditActionName = (log: AuditLog): string => {
-  return (log.action || '-').toString();
-};
-
-const resolveImagePath = (value?: string | null): string | null => {
-  if (!value) return null;
-  if (/^https?:\/\//i.test(value) || value.startsWith('data:')) return value;
-  if (value.startsWith('/')) return `${env.API_URL}${value}`;
-  return `${env.API_URL}/${value}`;
-};
-
-const buildProxyUrl = (url: string): string =>
-  `${env.API_URL}/api/media/proxy?url=${encodeURIComponent(url)}`;
+import Assets from '../Assets/Assets';
+import { useAuth } from '../../context/AuthContext';
 
 const emptyCompanyForm = {
   company_name: '',
@@ -93,66 +15,17 @@ const emptyCompanyForm = {
   manager_name: '',
   logo_img: '',
   banner_img: '',
+  capital_amount: '0',
 };
 
-const getImageCandidates = (value?: string | null): string[] => {
-  const resolved = resolveImagePath(value);
-  if (!resolved) return [];
+const today = () => new Date().toISOString().slice(0, 10);
 
-  const candidates = [resolved];
-  if (resolved.includes('/image/fetch/')) {
-    candidates.push(resolved.split('?')[0]);
-  }
-  if (resolved.includes('res.cloudinary.com')) {
-    candidates.push(buildProxyUrl(resolved));
-    const noQuery = resolved.split('?')[0];
-    if (noQuery !== resolved) candidates.push(buildProxyUrl(noQuery));
-  }
-
-  return Array.from(new Set(candidates));
-};
-
-const CompanyImageCell = ({
-  value,
-  alt,
-  className,
-}: {
-  value?: string | null;
-  alt: string;
-  className: string;
-}) => {
-  const candidates = useMemo(() => getImageCandidates(value), [value]);
-  const [index, setIndex] = useState(0);
-
-  if (candidates.length === 0) {
-    return <span className="text-slate-400">-</span>;
-  }
-
-  if (index >= candidates.length) {
-    return (
-      <a
-        href={candidates[0]}
-        target="_blank"
-        rel="noreferrer"
-        className="text-xs text-primary-600 underline"
-      >
-        Open image
-      </a>
-    );
-  }
-
-  return (
-    <img
-      src={candidates[index]}
-      alt={alt}
-      className={className}
-      onError={() => setIndex((prev) => prev + 1)}
-    />
-  );
-};
+const formatMoney = (value: number) =>
+  `$${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const Settings = () => {
   const { showToast } = useToast();
+  const { permissions } = useAuth();
 
   const [company, setCompany] = useState<CompanyInfo | null>(null);
   const [companyDisplayed, setCompanyDisplayed] = useState(false);
@@ -163,14 +36,28 @@ const Settings = () => {
   const [companyDeleteConfirmOpen, setCompanyDeleteConfirmOpen] = useState(false);
   const [companyForm, setCompanyForm] = useState(emptyCompanyForm);
 
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
-  const [auditLoading, setAuditLoading] = useState(false);
-  const [auditPage, setAuditPage] = useState(1);
-  const [auditTotal, setAuditTotal] = useState(0);
-  const [auditStartDate, setAuditStartDate] = useState('');
-  const [auditEndDate, setAuditEndDate] = useState('');
-  const [auditDisplayed, setAuditDisplayed] = useState(false);
-  const auditLimit = 20;
+  const [capitalRows, setCapitalRows] = useState<CapitalContribution[]>([]);
+  const [capitalLoading, setCapitalLoading] = useState(false);
+  const [capitalPage, setCapitalPage] = useState(1);
+  const [capitalLimit] = useState(10);
+  const [capitalTotal, setCapitalTotal] = useState(0);
+  const [capitalSearch, setCapitalSearch] = useState('');
+  const [capitalDisplayed, setCapitalDisplayed] = useState(false);
+
+  const [capitalModalOpen, setCapitalModalOpen] = useState(false);
+  const [capitalSaving, setCapitalSaving] = useState(false);
+  const [editingCapital, setEditingCapital] = useState<CapitalContribution | null>(null);
+  const [capitalDeleteId, setCapitalDeleteId] = useState<number | null>(null);
+  const [capitalDeleteLoading, setCapitalDeleteLoading] = useState(false);
+
+  const [capitalForm, setCapitalForm] = useState({
+    ownerName: '',
+    amount: '',
+    date: today(),
+    note: '',
+  });
+
+  const totalCapitalPages = Math.max(1, Math.ceil(capitalTotal / capitalLimit));
 
   const loadCompany = async () => {
     setCompanyLoading(true);
@@ -186,7 +73,8 @@ const Settings = () => {
       !!loaded.phone?.trim() ||
       !!loaded.manager_name?.trim() ||
       !!loaded.logo_img?.trim() ||
-      !!loaded.banner_img?.trim();
+      !!loaded.banner_img?.trim() ||
+      Number(loaded.capital_amount || 0) > 0;
     setCompany(hasValues ? loaded : null);
     setCompanyForm({
       company_name: loaded.company_name || '',
@@ -194,7 +82,22 @@ const Settings = () => {
       manager_name: loaded.manager_name || '',
       logo_img: loaded.logo_img || '',
       banner_img: loaded.banner_img || '',
+      capital_amount: String(loaded.capital_amount ?? 0),
     });
+  };
+
+  const loadCapital = async (page = 1) => {
+    setCapitalLoading(true);
+    const res = await settingsService.listCapital({ page, limit: capitalLimit, search: capitalSearch || undefined });
+    setCapitalLoading(false);
+    if (!res.success || !res.data) {
+      showToast('error', 'Capital', res.error || 'Failed to load capital records');
+      return;
+    }
+    setCapitalRows(res.data.rows || []);
+    setCapitalPage(res.data.page || page);
+    setCapitalTotal(res.data.total || 0);
+    setCapitalDisplayed(true);
   };
 
   const handleDisplayCompany = async () => {
@@ -210,6 +113,7 @@ const Settings = () => {
         manager_name: company.manager_name || '',
         logo_img: company.logo_img || '',
         banner_img: company.banner_img || '',
+        capital_amount: String(company.capital_amount ?? 0),
       });
     } else {
       setCompanyForm(emptyCompanyForm);
@@ -217,54 +121,12 @@ const Settings = () => {
     setCompanyModalOpen(true);
   };
 
-  const requestCompanyDelete = () => {
-    if (!company) return;
-    setCompanyDeleteConfirmOpen(true);
-  };
-
-  const handleCompanyDelete = async () => {
-    if (!company) return;
-
-    setCompanyDeleting(true);
-    const res = await settingsService.deleteCompany();
-    setCompanyDeleting(false);
-
-    if (!res.success) {
-      showToast('error', 'Company Info', res.error || 'Delete failed');
-      return;
-    }
-
-    setCompany(null);
-    setCompanyForm(emptyCompanyForm);
-    setCompanyModalOpen(false);
-    setCompanyDeleteConfirmOpen(false);
-    showToast('success', 'Company Info', 'Deleted');
-  };
-
-  const loadAudit = async (page = 1) => {
-    if (!auditStartDate || !auditEndDate) {
-      showToast('error', 'Audit History', 'Select start and end date first');
-      return;
-    }
-    if (auditStartDate > auditEndDate) {
-      showToast('error', 'Audit History', 'End date must be after start date');
-      return;
-    }
-
-    setAuditLoading(true);
-    const res = await settingsService.listAudit(page, auditLimit, auditStartDate, auditEndDate);
-    setAuditLoading(false);
-    if (!res.success || !res.data?.logs) {
-      showToast('error', 'Audit History', res.error || 'Failed to load audit history');
-      return;
-    }
-    setAuditLogs(res.data.logs);
-    setAuditPage(res.data.page || page);
-    setAuditTotal(res.data.total || 0);
-    setAuditDisplayed(true);
-  };
-
   const handleCompanySave = async () => {
+    const capitalAmount = Number(companyForm.capital_amount || 0);
+    if (!Number.isFinite(capitalAmount) || capitalAmount < 0) {
+      showToast('error', 'Company Info', 'Capital must be zero or greater');
+      return;
+    }
     setCompanySaving(true);
     const res = await settingsService.updateCompany({
       company_name: companyForm.company_name,
@@ -272,6 +134,7 @@ const Settings = () => {
       manager_name: companyForm.manager_name,
       logo_img: companyForm.logo_img,
       banner_img: companyForm.banner_img,
+      capital_amount: capitalAmount,
     });
     setCompanySaving(false);
 
@@ -280,34 +143,111 @@ const Settings = () => {
       return;
     }
 
-    const saved = res.data.company;
-    setCompany(saved);
-    setCompanyForm({
-      company_name: saved.company_name || '',
-      phone: saved.phone || '',
-      manager_name: saved.manager_name || '',
-      logo_img: saved.logo_img || '',
-      banner_img: saved.banner_img || '',
-    });
+    setCompany(res.data.company);
     setCompanyModalOpen(false);
     showToast('success', 'Company Info', 'Saved');
+    await loadCompany();
+  };
+
+  const handleCompanyDelete = async () => {
+    if (!company) return;
+    setCompanyDeleting(true);
+    const res = await settingsService.deleteCompany();
+    setCompanyDeleting(false);
+    if (!res.success) {
+      showToast('error', 'Company Info', res.error || 'Delete failed');
+      return;
+    }
+    setCompany(null);
+    setCompanyForm(emptyCompanyForm);
+    setCompanyDeleteConfirmOpen(false);
+    showToast('success', 'Company Info', 'Deleted');
+  };
+
+  const openCreateCapital = () => {
+    setEditingCapital(null);
+    setCapitalForm({ ownerName: '', amount: '', date: today(), note: '' });
+    setCapitalModalOpen(true);
+  };
+
+  const openEditCapital = (row: CapitalContribution) => {
+    setEditingCapital(row);
+    setCapitalForm({
+      ownerName: row.owner_name,
+      amount: String(row.amount),
+      date: row.date,
+      note: row.note || '',
+    });
+    setCapitalModalOpen(true);
+  };
+
+  const submitCapital = async () => {
+    const amount = Number(capitalForm.amount);
+    if (!capitalForm.ownerName.trim()) {
+      showToast('error', 'Capital', 'Owner name is required');
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      showToast('error', 'Capital', 'Amount must be greater than 0');
+      return;
+    }
+    if (!capitalForm.date) {
+      showToast('error', 'Capital', 'Date is required');
+      return;
+    }
+
+    setCapitalSaving(true);
+    const payload = {
+      ownerName: capitalForm.ownerName.trim(),
+      amount,
+      date: capitalForm.date,
+      note: capitalForm.note.trim(),
+    };
+
+    const res = editingCapital
+      ? await settingsService.updateCapital(editingCapital.capital_id, payload)
+      : await settingsService.createCapital(payload);
+    setCapitalSaving(false);
+
+    if (!res.success) {
+      showToast('error', 'Capital', res.error || (editingCapital ? 'Failed to update capital' : 'Failed to create capital'));
+      return;
+    }
+
+    setCapitalModalOpen(false);
+    showToast('success', 'Capital', editingCapital ? 'Capital updated' : 'Capital created');
+    await loadCapital(capitalPage);
+  };
+
+  const confirmDeleteCapital = async () => {
+    if (!capitalDeleteId) return;
+    setCapitalDeleteLoading(true);
+    const res = await settingsService.deleteCapital(capitalDeleteId);
+    setCapitalDeleteLoading(false);
+    if (!res.success) {
+      showToast('error', 'Capital', res.error || 'Delete failed');
+      return;
+    }
+    setCapitalDeleteId(null);
+    showToast('success', 'Capital', 'Capital deleted');
+    await loadCapital(capitalPage);
   };
 
   const companyContent = (
-    <div className="bg-white p-6 rounded-2xl border border-slate-200 dark:bg-slate-900 dark:border-slate-800">
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">Company Info</h3>
-        <div className="flex items-center gap-2">
+    <div className="bg-white border border-black rounded-xl p-6 space-y-4 text-black">
+      <div className="flex items-center justify-between">
+        <h3 className="text-base font-semibold">Company Info</h3>
+        <div className="flex gap-2">
           <button
             onClick={handleDisplayCompany}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 text-slate-700 text-sm hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+            className="px-3 py-2 rounded border border-black bg-white text-black text-sm"
             disabled={companyLoading}
           >
-            Display
+            {companyLoading ? 'Loading...' : 'Display'}
           </button>
           <button
             onClick={handleCompanyEdit}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white text-sm hover:bg-primary-700"
+            className="px-3 py-2 rounded border border-black bg-black text-white text-sm inline-flex items-center gap-2"
           >
             <Plus className="w-4 h-4" /> {company ? 'Edit' : 'Add'} Company
           </button>
@@ -315,59 +255,40 @@ const Settings = () => {
       </div>
 
       {!companyDisplayed ? (
-        <p className="text-sm text-slate-500">Click Display to load company info.</p>
-      ) : companyLoading ? (
-        <p className="text-sm text-slate-500">Loading...</p>
+        <p className="text-sm">Click Display to load company info.</p>
       ) : !company ? (
-        <p className="text-sm text-slate-500">No company profile yet.</p>
+        <p className="text-sm">No company profile yet.</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead>
-              <tr className="text-left text-slate-500">
+              <tr className="text-left border-b border-black">
                 <th className="py-2 pr-4">Name</th>
                 <th className="py-2 pr-4">Manager</th>
                 <th className="py-2 pr-4">Phone</th>
-                <th className="py-2 pr-4">Logo</th>
-                <th className="py-2 pr-4">Banner</th>
+                <th className="py-2 pr-4">Capital</th>
                 <th className="py-2 pr-4">Updated</th>
                 <th className="py-2 pr-4">Actions</th>
               </tr>
             </thead>
             <tbody>
-              <tr className="border-t border-slate-200 dark:border-slate-800">
-                <td className="py-2 pr-4 text-slate-800 dark:text-slate-100">{company.company_name || '-'}</td>
-                <td className="py-2 pr-4 text-slate-600 dark:text-slate-300">{company.manager_name || '-'}</td>
-                <td className="py-2 pr-4 text-slate-600 dark:text-slate-300">{company.phone || '-'}</td>
+              <tr>
+                <td className="py-2 pr-4">{company.company_name || '-'}</td>
+                <td className="py-2 pr-4">{company.manager_name || '-'}</td>
+                <td className="py-2 pr-4">{company.phone || '-'}</td>
+                <td className="py-2 pr-4">{formatMoney(Number(company.capital_amount || 0))}</td>
+                <td className="py-2 pr-4">{company.updated_at ? new Date(company.updated_at).toLocaleString() : '-'}</td>
                 <td className="py-2 pr-4">
-                  <CompanyImageCell
-                    value={company.logo_img}
-                    alt="Company logo"
-                    className="w-12 h-12 rounded-md object-cover border border-slate-200"
-                  />
-                </td>
-                <td className="py-2 pr-4">
-                  <CompanyImageCell
-                    value={company.banner_img}
-                    alt="Company banner"
-                    className="w-24 h-12 rounded-md object-cover border border-slate-200"
-                  />
-                </td>
-                <td className="py-2 pr-4 text-slate-500">{company.updated_at ? new Date(company.updated_at).toLocaleString() : '-'}</td>
-                <td className="py-2 pr-4">
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={handleCompanyEdit}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-                    >
+                  <div className="flex gap-2">
+                    <button onClick={handleCompanyEdit} className="px-2 py-1 rounded border border-black inline-flex items-center gap-1">
                       <Pencil className="w-3.5 h-3.5" /> Edit
                     </button>
                     <button
-                      onClick={requestCompanyDelete}
+                      onClick={() => setCompanyDeleteConfirmOpen(true)}
                       disabled={companyDeleting}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-60"
+                      className="px-2 py-1 rounded border border-black inline-flex items-center gap-1"
                     >
-                      <Trash2 className="w-3.5 h-3.5" /> {companyDeleting ? 'Deleting...' : 'Delete'}
+                      <Trash2 className="w-3.5 h-3.5" /> Delete
                     </button>
                   </div>
                 </td>
@@ -379,60 +300,35 @@ const Settings = () => {
 
       <Modal isOpen={companyModalOpen} onClose={() => setCompanyModalOpen(false)} title={`${company ? 'Edit' : 'Add'} Company`} size="lg">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
+          <label className="text-sm font-medium flex flex-col gap-1">
             Company Name
-            <input
-              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
-              value={companyForm.company_name}
-              onChange={(e) => setCompanyForm({ ...companyForm, company_name: e.target.value })}
-            />
+            <input className="rounded border border-black px-3 py-2" value={companyForm.company_name} onChange={(e) => setCompanyForm({ ...companyForm, company_name: e.target.value })} />
           </label>
-          <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
+          <label className="text-sm font-medium flex flex-col gap-1">
             Manager Name
-            <input
-              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
-              value={companyForm.manager_name}
-              onChange={(e) => setCompanyForm({ ...companyForm, manager_name: e.target.value })}
-            />
+            <input className="rounded border border-black px-3 py-2" value={companyForm.manager_name} onChange={(e) => setCompanyForm({ ...companyForm, manager_name: e.target.value })} />
           </label>
-          <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
+          <label className="text-sm font-medium flex flex-col gap-1">
             Phone
-            <input
-              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
-              value={companyForm.phone}
-              onChange={(e) => setCompanyForm({ ...companyForm, phone: e.target.value })}
-            />
+            <input className="rounded border border-black px-3 py-2" value={companyForm.phone} onChange={(e) => setCompanyForm({ ...companyForm, phone: e.target.value })} />
           </label>
-          <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
-            Logo Path / URL
-            <input
-              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
-              value={companyForm.logo_img}
-              onChange={(e) => setCompanyForm({ ...companyForm, logo_img: e.target.value })}
-            />
+          <label className="text-sm font-medium flex flex-col gap-1">
+            Capital
+            <input type="number" min="0" step="0.01" className="rounded border border-black px-3 py-2" value={companyForm.capital_amount} onChange={(e) => setCompanyForm({ ...companyForm, capital_amount: e.target.value })} />
           </label>
-          <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300 md:col-span-2">
-            Banner Path / URL
-            <input
-              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
-              value={companyForm.banner_img}
-              onChange={(e) => setCompanyForm({ ...companyForm, banner_img: e.target.value })}
-            />
+          <label className="text-sm font-medium flex flex-col gap-1">
+            Logo URL / Path
+            <input className="rounded border border-black px-3 py-2" value={companyForm.logo_img} onChange={(e) => setCompanyForm({ ...companyForm, logo_img: e.target.value })} />
+          </label>
+          <label className="text-sm font-medium flex flex-col gap-1 md:col-span-2">
+            Banner URL / Path
+            <input className="rounded border border-black px-3 py-2" value={companyForm.banner_img} onChange={(e) => setCompanyForm({ ...companyForm, banner_img: e.target.value })} />
           </label>
         </div>
-        <div className="flex justify-end gap-3 pt-4">
-          <button
-            className="px-4 py-2 rounded-lg border border-slate-200 text-slate-700 dark:border-slate-700 dark:text-slate-300"
-            onClick={() => setCompanyModalOpen(false)}
-          >
-            Cancel
-          </button>
-          <button
-            className="px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700"
-            onClick={handleCompanySave}
-            disabled={companySaving}
-          >
-            {companySaving ? (company ? 'Updating...' : 'Saving...') : (company ? 'Update' : 'Save')}
+        <div className="flex justify-end gap-2 pt-4">
+          <button className="px-4 py-2 rounded border border-black" onClick={() => setCompanyModalOpen(false)}>Cancel</button>
+          <button className="px-4 py-2 rounded border border-black bg-black text-white" onClick={handleCompanySave} disabled={companySaving}>
+            {companySaving ? 'Saving...' : company ? 'Update' : 'Save'}
           </button>
         </div>
       </Modal>
@@ -452,132 +348,146 @@ const Settings = () => {
     </div>
   );
 
-  const auditContent = (
-    <div className="bg-white p-6 rounded-2xl border border-slate-200 dark:bg-slate-900 dark:border-slate-800">
-      <div className="mb-4 space-y-3">
-        <div className="flex justify-between items-center">
-          <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">Audit History</h3>
-        </div>
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="flex flex-col gap-1 text-xs font-medium text-slate-600 dark:text-slate-300">
-            Start Date
-            <input
-              type="date"
-              value={auditStartDate}
-              onChange={(e) => {
-                setAuditStartDate(e.target.value);
-                setAuditDisplayed(false);
-                setAuditLogs([]);
-                setAuditPage(1);
-                setAuditTotal(0);
-              }}
-              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-xs font-medium text-slate-600 dark:text-slate-300">
-            End Date
-            <input
-              type="date"
-              value={auditEndDate}
-              onChange={(e) => {
-                setAuditEndDate(e.target.value);
-                setAuditDisplayed(false);
-                setAuditLogs([]);
-                setAuditPage(1);
-                setAuditTotal(0);
-              }}
-              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-            />
-          </label>
-          <button
-            onClick={() => loadAudit(1)}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 text-slate-700 text-sm hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-            disabled={auditLoading}
-          >
-            {auditLoading ? 'Loading...' : 'Display'}
-          </button>
+  const assetsContent = <Assets embedded />;
+
+  const capitalContent = (
+    <div className="space-y-4 text-black">
+      <div className="bg-white border border-black rounded-xl p-4">
+        <div className="flex flex-wrap items-end gap-2 justify-between">
+          <div className="flex items-end gap-2">
+            <label className="text-sm font-medium flex flex-col gap-1">
+              Search
+              <input
+                value={capitalSearch}
+                onChange={(e) => setCapitalSearch(e.target.value)}
+                placeholder="Owner / note"
+                className="rounded border border-black px-3 py-2 w-64"
+              />
+            </label>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => void loadCapital(1)}
+              className="px-3 py-2 rounded border border-black bg-white text-black text-sm"
+              disabled={capitalLoading}
+            >
+              {capitalLoading ? 'Loading...' : 'Display Capital'}
+            </button>
+            <button onClick={openCreateCapital} className="px-3 py-2 rounded border border-black bg-black text-white text-sm inline-flex items-center gap-2">
+              <Plus className="w-4 h-4" /> Add Capital
+            </button>
+          </div>
         </div>
       </div>
 
-      {!auditDisplayed ? (
-        <p className="text-sm text-slate-500">Select start and end date, then click Display.</p>
-      ) : auditLoading ? (
-        <p className="text-sm text-slate-500">Loading...</p>
-      ) : auditLogs.length === 0 ? (
-        <p className="text-sm text-slate-500">No audit logs for selected date range.</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="text-left text-slate-500">
-                <th className="py-2 pr-4">Table Name</th>
-                <th className="py-2 pr-4">Action</th>
-                <th className="py-2 pr-4">User</th>
-                <th className="py-2 pr-4">Old Value</th>
-                <th className="py-2 pr-4">New Value</th>
-                <th className="py-2 pr-4">Device</th>
-                <th className="py-2 pr-4">Date &amp; Time</th>
-              </tr>
-            </thead>
-            <tbody>
-              {auditLogs.map((log) => {
-                const { oldText, newText } = getAuditChangedValues(log.old_value, log.new_value);
-                const tableName = getAuditTableName(log);
-                const actionName = getAuditActionName(log);
-                return (
-                  <tr key={log.audit_id} className="border-t border-slate-200 dark:border-slate-800">
-                    <td className="py-2 pr-4 text-slate-800 dark:text-slate-100">{tableName}</td>
+      <div className="bg-white border border-black rounded-xl p-4">
+        {!capitalDisplayed ? (
+          <p className="text-sm">Click Display Capital to load records.</p>
+        ) : capitalRows.length === 0 ? (
+          <p className="text-sm">No capital records found.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="text-left border-b border-black">
+                  <th className="py-2 pr-4">Date</th>
+                  <th className="py-2 pr-4">Owner</th>
+                  <th className="py-2 pr-4">Amount</th>
+                  <th className="py-2 pr-4">Note</th>
+                  <th className="py-2 pr-4">Created By</th>
+                  <th className="py-2 pr-4">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {capitalRows.map((row) => (
+                  <tr key={row.capital_id} className="border-b border-zinc-200">
+                    <td className="py-2 pr-4">{row.date}</td>
+                    <td className="py-2 pr-4">{row.owner_name}</td>
+                    <td className="py-2 pr-4">{formatMoney(row.amount)}</td>
+                    <td className="py-2 pr-4">{row.note || '-'}</td>
+                    <td className="py-2 pr-4">{row.created_by_name || '-'}</td>
                     <td className="py-2 pr-4">
-                      <span className="inline-flex rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                        {actionName}
-                      </span>
+                      <div className="flex gap-2">
+                        <button onClick={() => openEditCapital(row)} className="px-2 py-1 rounded border border-black inline-flex items-center gap-1">
+                          <Pencil className="w-3.5 h-3.5" /> Edit
+                        </button>
+                        <button onClick={() => setCapitalDeleteId(row.capital_id)} className="px-2 py-1 rounded border border-black inline-flex items-center gap-1">
+                          <Trash2 className="w-3.5 h-3.5" /> Delete
+                        </button>
+                      </div>
                     </td>
-                    <td className="py-2 pr-4 text-slate-600 dark:text-slate-300">{log.username || log.user_id || '-'}</td>
-                    <td className="py-2 pr-4 text-slate-500 max-w-xs truncate" title={log.old_value ? JSON.stringify(log.old_value) : ''}>{oldText}</td>
-                    <td className="py-2 pr-4 text-slate-500 max-w-xs truncate" title={log.new_value ? JSON.stringify(log.new_value) : ''}>{newText}</td>
-                    <td className="py-2 pr-4 text-slate-500">{getDeviceLabel(log.user_agent)}</td>
-                    <td className="py-2 pr-4 text-slate-500">{new Date(log.created_at).toLocaleString()}</td>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
-      <div className="flex justify-between items-center mt-4 text-sm text-slate-600">
-        <span>Page {auditPage} of {Math.max(1, Math.ceil(auditTotal / auditLimit))}</span>
-        <div className="flex gap-2">
-          <button
-            className="px-3 py-1 rounded border border-slate-200 disabled:opacity-50"
-            onClick={() => loadAudit(Math.max(1, auditPage - 1))}
-            disabled={!auditDisplayed || auditPage <= 1 || auditLoading}
-          >
-            Prev
-          </button>
-          <button
-            className="px-3 py-1 rounded border border-slate-200 disabled:opacity-50"
-            onClick={() => loadAudit(auditPage + 1)}
-            disabled={!auditDisplayed || auditPage * auditLimit >= auditTotal || auditLoading}
-          >
-            Next
-          </button>
+        <div className="mt-3 flex items-center justify-between text-sm">
+          <span>Page {capitalPage} of {totalCapitalPages}</span>
+          <div className="flex gap-2">
+            <button className="px-3 py-1 rounded border border-black disabled:opacity-50" disabled={capitalPage <= 1 || capitalLoading} onClick={() => void loadCapital(Math.max(1, capitalPage - 1))}>Prev</button>
+            <button className="px-3 py-1 rounded border border-black disabled:opacity-50" disabled={capitalPage >= totalCapitalPages || capitalLoading} onClick={() => void loadCapital(Math.min(totalCapitalPages, capitalPage + 1))}>Next</button>
+          </div>
         </div>
       </div>
+
+      <Modal isOpen={capitalModalOpen} onClose={() => setCapitalModalOpen(false)} title={editingCapital ? 'Edit Capital' : 'Add Capital'} size="lg">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <label className="text-sm font-medium flex flex-col gap-1">
+            Owner Name *
+            <input className="rounded border border-black px-3 py-2" value={capitalForm.ownerName} onChange={(e) => setCapitalForm({ ...capitalForm, ownerName: e.target.value })} />
+          </label>
+          <label className="text-sm font-medium flex flex-col gap-1">
+            Amount *
+            <input type="number" min="0" step="0.01" className="rounded border border-black px-3 py-2" value={capitalForm.amount} onChange={(e) => setCapitalForm({ ...capitalForm, amount: e.target.value })} />
+          </label>
+          <label className="text-sm font-medium flex flex-col gap-1">
+            Date *
+            <input type="date" className="rounded border border-black px-3 py-2" value={capitalForm.date} onChange={(e) => setCapitalForm({ ...capitalForm, date: e.target.value })} />
+          </label>
+          <label className="text-sm font-medium flex flex-col gap-1 md:col-span-2">
+            Note
+            <textarea className="rounded border border-black px-3 py-2" rows={3} value={capitalForm.note} onChange={(e) => setCapitalForm({ ...capitalForm, note: e.target.value })} />
+          </label>
+        </div>
+        <div className="flex justify-end gap-2 pt-4">
+          <button className="px-4 py-2 rounded border border-black" onClick={() => setCapitalModalOpen(false)}>Cancel</button>
+          <button className="px-4 py-2 rounded border border-black bg-black text-white" onClick={submitCapital} disabled={capitalSaving}>
+            {capitalSaving ? 'Saving...' : editingCapital ? 'Update' : 'Create'}
+          </button>
+        </div>
+      </Modal>
+
+      <ConfirmDialog
+        isOpen={capitalDeleteId !== null}
+        onClose={() => setCapitalDeleteId(null)}
+        onConfirm={confirmDeleteCapital}
+        title="Delete Capital Entry?"
+        message="This will reverse and remove linked accounting records."
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="danger"
+        isLoading={capitalDeleteLoading}
+      />
     </div>
   );
 
-  const tabs = useMemo(
-    () => [
+  const tabs = useMemo(() => {
+    const canManageAssets = permissions.includes('accounts.view') || permissions.includes('reports.all');
+    const result = [
       { id: 'company', label: 'Company Info', icon: Home, content: companyContent },
-      { id: 'audit', label: 'Audit History', icon: History, content: auditContent },
-    ],
-    [companyContent, auditContent]
-  );
+      { id: 'capital', label: 'Capital', icon: CircleDollarSign, content: capitalContent },
+    ];
+    if (canManageAssets) {
+      result.splice(1, 0, { id: 'assets', label: 'Assets', icon: BriefcaseBusiness, content: assetsContent });
+    }
+    return result;
+  }, [permissions, companyContent, capitalContent, assetsContent]);
 
   return (
     <div>
-      <PageHeader title="Settings" description="Configure company profile and review audit history." />
+      <PageHeader title="Settings" description="Configure company profile and manage assets and owner capital." />
       <Tabs tabs={tabs} defaultTab="company" />
     </div>
   );
