@@ -50,6 +50,162 @@ const ensureItemBranchWarehouse = async (
   }
 };
 
+const resolveStoreForItem = async (
+  client: PoolClient,
+  branchId: number,
+  itemId: number
+): Promise<number> => {
+  const itemStore = await client.query<{ store_id: number | null }>(
+    `SELECT store_id
+       FROM ims.items
+      WHERE item_id = $1
+        AND branch_id = $2
+      LIMIT 1`,
+    [itemId, branchId]
+  );
+
+  const directStoreId = Number(itemStore.rows[0]?.store_id || 0);
+  if (directStoreId > 0) {
+    const scopedStore = await client.query<{ store_id: number }>(
+      `SELECT store_id
+         FROM ims.stores
+        WHERE store_id = $1
+          AND branch_id = $2
+        LIMIT 1`,
+      [directStoreId, branchId]
+    );
+    if (scopedStore.rows[0]) return Number(scopedStore.rows[0].store_id);
+  }
+
+  const fallbackStore = await client.query<{ store_id: number }>(
+    `SELECT store_id
+       FROM ims.stores
+      WHERE branch_id = $1
+      ORDER BY store_id
+      LIMIT 1`,
+    [branchId]
+  );
+  const storeId = Number(fallbackStore.rows[0]?.store_id || 0);
+  if (!storeId) {
+    throw ApiError.badRequest(`No store is configured for item ${itemId}`);
+  }
+  return storeId;
+};
+
+const applyStoreItemDelta = async (
+  client: PoolClient,
+  params: { branchId: number; itemId: number; delta: number }
+) => {
+  if (!params.delta) return;
+
+  const storeId = await resolveStoreForItem(client, params.branchId, params.itemId);
+  const existing = await client.query<{ quantity: string }>(
+    `SELECT quantity::text AS quantity
+       FROM ims.store_items
+      WHERE store_id = $1
+        AND product_id = $2
+      FOR UPDATE`,
+    [storeId, params.itemId]
+  );
+
+  let currentQty = Number(existing.rows[0]?.quantity || 0);
+  if (!existing.rows[0]) {
+    const itemStock = await client.query<{ opening_balance: string }>(
+      `SELECT COALESCE(opening_balance, 0)::text AS opening_balance
+         FROM ims.items
+        WHERE item_id = $1
+          AND branch_id = $2
+        LIMIT 1`,
+      [params.itemId, params.branchId]
+    );
+    currentQty = Number(itemStock.rows[0]?.opening_balance || 0);
+  }
+
+  const nextQty = currentQty + Number(params.delta);
+  if (!isNegativeStockAllowed() && nextQty < 0) {
+    throw ApiError.badRequest('Insufficient stock for this adjustment');
+  }
+
+  await client.query(
+    `INSERT INTO ims.store_items (store_id, product_id, quantity)
+     VALUES ($1, $2, GREATEST(0, $3))
+     ON CONFLICT (store_id, product_id)
+     DO UPDATE
+           SET quantity = GREATEST(0, ims.store_items.quantity + $4),
+               updated_at = NOW()`,
+    [storeId, params.itemId, nextQty, params.delta]
+  );
+};
+
+const isNegativeStockAllowed = () =>
+  String(process.env.ALLOW_NEGATIVE_STOCK || '').trim().toLowerCase() === 'true';
+
+let cachedItemsHasQuantity: boolean | null = null;
+const hasItemsQuantityColumn = async (): Promise<boolean> => {
+  if (cachedItemsHasQuantity !== null) return cachedItemsHasQuantity;
+  const row = await queryOne<{ has_column: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM information_schema.columns
+        WHERE table_schema = 'ims'
+          AND table_name = 'items'
+          AND column_name = 'quantity'
+     ) AS has_column`
+  );
+  cachedItemsHasQuantity = Boolean(row?.has_column);
+  return cachedItemsHasQuantity;
+};
+
+const applyItemQuantityDelta = async (
+  client: PoolClient,
+  params: { branchId: number; itemId: number; delta: number }
+) => {
+  if (!params.delta) return;
+
+  const hasQty = await hasItemsQuantityColumn();
+  const colExpr = hasQty
+    ? `COALESCE(quantity, COALESCE(opening_balance, 0))`
+    : `COALESCE(opening_balance, 0)`;
+
+  const item = await client.query<{ quantity: string }>(
+    `SELECT ${colExpr}::text AS quantity
+       FROM ims.items
+      WHERE item_id = $1
+        AND branch_id = $2
+      FOR UPDATE`,
+    [params.itemId, params.branchId]
+  );
+  if (!item.rows[0]) {
+    throw ApiError.badRequest('Item not found');
+  }
+
+  const currentQty = Number(item.rows[0].quantity || 0);
+  const nextQty = currentQty + Number(params.delta);
+
+  if (!isNegativeStockAllowed() && nextQty < 0) {
+    throw ApiError.badRequest('Insufficient stock for this adjustment');
+  }
+
+  if (hasQty) {
+    await client.query(
+      `UPDATE ims.items
+          SET quantity = $3
+        WHERE item_id = $1
+          AND branch_id = $2`,
+      [params.itemId, params.branchId, nextQty]
+    );
+    return;
+  }
+
+  await client.query(
+    `UPDATE ims.items
+        SET opening_balance = $3
+      WHERE item_id = $1
+        AND branch_id = $2`,
+    [params.itemId, params.branchId, Math.max(0, nextQty)]
+  );
+};
+
 let cachedInventoryMovementSoftDelete: boolean | null = null;
 let cachedInventoryTransactionColumns:
   | { hasStoreId: boolean; hasDirection: boolean; hasItemId: boolean }
@@ -244,41 +400,65 @@ const resolveTransactionDirection = (
   return direction || 'IN';
 };
 
-const getScopedAdjustmentRow = async (
+type AdjustmentSnapshot = {
+  adjustment_id: number;
+  item_id: number;
+  adjustment_type: string;
+  quantity: string;
+  status: string | null;
+  branch_id: number;
+};
+
+const getScopedAdjustmentSnapshot = async (
   client: PoolClient,
   adjustmentId: number,
   scope?: BranchScope
-) => {
+): Promise<AdjustmentSnapshot | null> => {
   if (!scope || scope.isAdmin) {
-    const result = await client.query<{
-      adjustment_id: number;
-      item_id: number;
-      branch_id: number;
-    }>(
-      `SELECT a.adjustment_id, a.item_id, i.branch_id
+    const result = await client.query<AdjustmentSnapshot>(
+      `SELECT a.adjustment_id,
+              a.item_id,
+              a.adjustment_type::text AS adjustment_type,
+              a.quantity::text AS quantity,
+              a.status::text AS status,
+              i.branch_id
          FROM ims.stock_adjustment a
          JOIN ims.items i ON i.item_id = a.item_id
         WHERE a.adjustment_id = $1
-        LIMIT 1`,
+        LIMIT 1
+        FOR UPDATE`,
       [adjustmentId]
     );
     return result.rows[0] || null;
   }
 
-  const result = await client.query<{
-    adjustment_id: number;
-    item_id: number;
-    branch_id: number;
-  }>(
-    `SELECT a.adjustment_id, a.item_id, i.branch_id
+  const result = await client.query<AdjustmentSnapshot>(
+    `SELECT a.adjustment_id,
+            a.item_id,
+            a.adjustment_type::text AS adjustment_type,
+            a.quantity::text AS quantity,
+            a.status::text AS status,
+            i.branch_id
        FROM ims.stock_adjustment a
        JOIN ims.items i ON i.item_id = a.item_id
       WHERE a.adjustment_id = $1
         AND i.branch_id = ANY($2)
-      LIMIT 1`,
+      LIMIT 1
+      FOR UPDATE`,
     [adjustmentId, scope.branchIds]
   );
   return result.rows[0] || null;
+};
+
+const getSignedAdjustmentQty = (row: {
+  adjustment_type: string;
+  quantity: string | number;
+  status?: string | null;
+}) => {
+  const sign = String(row.adjustment_type || '').toUpperCase() === 'DECREASE' ? -1 : 1;
+  const qty = sign * Number(row.quantity || 0);
+  const status = String(row.status || 'POSTED').toUpperCase();
+  return status === 'POSTED' ? qty : 0;
 };
 
 const createAdjustmentEntry = async (
@@ -291,6 +471,7 @@ const createAdjustmentEntry = async (
     unitCost?: number;
     note?: string;
     reason: string;
+    adjustmentDate?: string;
     status?: 'POSTED' | 'CANCELLED';
     userId?: number | null;
   }
@@ -303,6 +484,9 @@ const createAdjustmentEntry = async (
   }
 
   await ensureItemBranchWarehouse(client, payload.productId, payload.branchId, payload.whId);
+
+  const status = String(payload.status || 'POSTED').toUpperCase();
+  const appliedQty = status === 'POSTED' ? Number(payload.qty) : 0;
 
   if (payload.whId) {
     if (payload.qty > 0) {
@@ -322,43 +506,22 @@ const createAdjustmentEntry = async (
     }
   }
 
+  if (appliedQty !== 0) {
+    await applyStoreItemDelta(client, {
+      branchId: payload.branchId,
+      itemId: payload.productId,
+      delta: appliedQty,
+    });
+    await applyItemQuantityDelta(client, {
+      branchId: payload.branchId,
+      itemId: payload.productId,
+      delta: appliedQty,
+    });
+  }
+
   const stockAdjustmentTableExists = await hasStockAdjustmentTable();
   if (!stockAdjustmentTableExists) {
-    const qtyIn = payload.qty > 0 ? payload.qty : 0;
-    const qtyOut = payload.qty < 0 ? Math.abs(payload.qty) : 0;
-    const movement = await client.query<{
-      move_id: number;
-      branch_id: number;
-      wh_id: number | null;
-      move_date: string;
-      note: string | null;
-    }>(
-      `INSERT INTO ims.inventory_movements
-         (branch_id, wh_id, item_id, move_type, ref_table, ref_id, qty_in, qty_out, unit_cost, note)
-       VALUES ($1, $2, $3, 'adjustment', 'inventory_adjustments', NULL, $4, $5, $6, NULLIF($7, ''))
-       RETURNING move_id, branch_id, wh_id, move_date, note`,
-      [
-        payload.branchId,
-        payload.whId ?? null,
-        payload.productId,
-        qtyIn,
-        qtyOut,
-        payload.unitCost ?? 0,
-        payload.note || payload.reason || '',
-      ]
-    );
-    return {
-      adj_id: movement.rows[0].move_id,
-      branch_id: movement.rows[0].branch_id,
-      wh_id: movement.rows[0].wh_id,
-      user_id: payload.userId ?? null,
-      reason: payload.reason,
-      note: movement.rows[0].note,
-      adj_date: movement.rows[0].move_date,
-      item_id: payload.productId,
-      qty_delta: payload.qty,
-      unit_cost: payload.unitCost ?? 0,
-    };
+    throw ApiError.badRequest('Stock adjustment table is not available');
   }
 
   const stockAdjustmentCols = await getStockAdjustmentColumns();
@@ -378,6 +541,10 @@ const createAdjustmentEntry = async (
     payload.userId,
     payload.status || 'POSTED'
   );
+  if (payload.adjustmentDate) {
+    columns.push('adjustment_date');
+    values.push(payload.adjustmentDate);
+  }
   if (stockAdjustmentCols.hasNote) {
     columns.push('note');
     values.push(payload.note || null);
@@ -550,7 +717,7 @@ export const inventoryService = {
              GREATEST(COALESCE(NULLIF(${alertExpr}, 0), 5), 1)::numeric(14,3) AS min_stock_threshold,
              (COALESCE(st.store_qty, 0) <= GREATEST(COALESCE(NULLIF(${alertExpr}, 0), 5), 1)) AS low_stock,
              FALSE AS qty_mismatch,
-            st.store_breakdown AS warehouse_breakdown
+             st.store_breakdown AS warehouse_breakdown
         FROM ims.items i
         JOIN ims.branches b ON b.branch_id = i.branch_id
          LEFT JOIN store_totals st
@@ -1504,7 +1671,7 @@ export const inventoryService = {
             ? (direction === 'IN' ? Number(input.quantity) : -Number(input.quantity))
             : -Number(input.quantity);
 
-        if (currentQty + stockDelta < 0) {
+        if (!isNegativeStockAllowed() && currentQty + stockDelta < 0) {
           throw ApiError.badRequest('Insufficient store quantity for this transaction');
         }
 
@@ -1517,6 +1684,12 @@ export const inventoryService = {
                      updated_at = NOW()`,
           [input.storeId, input.itemId, currentQty + stockDelta, stockDelta]
         );
+
+        await applyItemQuantityDelta(client, {
+          branchId: Number(storeRow.branch_id),
+          itemId: Number(input.itemId),
+          delta: stockDelta,
+        });
       }
 
       return created.rows[0];
@@ -1533,6 +1706,7 @@ export const inventoryService = {
         unitCost: input.unitCost || 0,
         note: input.note,
         reason: input.reason || 'Manual Adjustment',
+        adjustmentDate: input.adjustmentDate,
         status: input.status || 'POSTED',
         userId: user?.userId ?? null,
       });
@@ -1544,12 +1718,14 @@ export const inventoryService = {
       throw ApiError.badRequest('Stock adjustment table is not available');
     }
     return withTransaction(async (client) => {
-      const current = await getScopedAdjustmentRow(client, id, scope);
+      const current = await getScopedAdjustmentSnapshot(client, id, scope);
       if (!current) return null;
 
       const updates: string[] = [];
       const params: any[] = [];
       let p = 1;
+      let nextItemId = Number(current.item_id);
+      let nextBranchId = Number(current.branch_id);
 
       if (input.itemId) {
         const item = scope.isAdmin
@@ -1569,6 +1745,8 @@ export const inventoryService = {
         if (!item.rows[0]) {
           throw ApiError.badRequest('Item not found in your branch scope');
         }
+        nextItemId = Number(item.rows[0].item_id);
+        nextBranchId = Number(item.rows[0].branch_id);
         updates.push(`item_id = $${p++}`);
         params.push(input.itemId);
       }
@@ -1588,6 +1766,10 @@ export const inventoryService = {
         updates.push(`reason = $${p++}`);
         params.push(input.reason);
       }
+      if (input.adjustmentDate !== undefined) {
+        updates.push(`adjustment_date = $${p++}`);
+        params.push(input.adjustmentDate);
+      }
       if (input.status !== undefined) {
         updates.push(`status = $${p++}`);
         params.push(String(input.status).toUpperCase());
@@ -1598,6 +1780,56 @@ export const inventoryService = {
           adj_id: current.adjustment_id,
           branch_id: current.branch_id,
         };
+      }
+
+      const currentAppliedQty = getSignedAdjustmentQty(current);
+      const currentRawSign =
+        String(current.adjustment_type || '').toUpperCase() === 'DECREASE' ? -1 : 1;
+      const currentRawQty = currentRawSign * Number(current.quantity || '0');
+      const nextRawQty =
+        input.qty !== undefined ? Number(input.qty) : currentRawQty;
+      const nextStatus = String(input.status || current.status || 'POSTED').toUpperCase();
+      const nextAppliedQty = nextStatus === 'POSTED' ? nextRawQty : 0;
+
+      if (Number(current.item_id) === nextItemId && Number(current.branch_id) === nextBranchId) {
+        const delta = nextAppliedQty - currentAppliedQty;
+        if (delta !== 0) {
+          await applyStoreItemDelta(client, {
+            branchId: nextBranchId,
+            itemId: nextItemId,
+            delta,
+          });
+          await applyItemQuantityDelta(client, {
+            branchId: nextBranchId,
+            itemId: nextItemId,
+            delta,
+          });
+        }
+      } else {
+        if (currentAppliedQty !== 0) {
+          await applyStoreItemDelta(client, {
+            branchId: Number(current.branch_id),
+            itemId: Number(current.item_id),
+            delta: -currentAppliedQty,
+          });
+          await applyItemQuantityDelta(client, {
+            branchId: Number(current.branch_id),
+            itemId: Number(current.item_id),
+            delta: -currentAppliedQty,
+          });
+        }
+        if (nextAppliedQty !== 0) {
+          await applyStoreItemDelta(client, {
+            branchId: nextBranchId,
+            itemId: nextItemId,
+            delta: nextAppliedQty,
+          });
+          await applyItemQuantityDelta(client, {
+            branchId: nextBranchId,
+            itemId: nextItemId,
+            delta: nextAppliedQty,
+          });
+        }
       }
 
       params.push(id);
@@ -1626,7 +1858,7 @@ export const inventoryService = {
           WHERE item_id = $1`,
         [row.item_id]
       );
-      const branchId = Number(itemMeta.rows[0]?.branch_id || current.branch_id);
+      const branchId = Number(itemMeta.rows[0]?.branch_id || nextBranchId || current.branch_id);
       const unitCost = Number(itemMeta.rows[0]?.cost_price || '0');
       const sign = String(row.adjustment_type || '').toUpperCase() === 'DECREASE' ? -1 : 1;
       const qtyDelta = sign * Number(row.quantity || '0');
@@ -1652,8 +1884,21 @@ export const inventoryService = {
       throw ApiError.badRequest('Stock adjustment table is not available');
     }
     return withTransaction(async (client) => {
-      const current = await getScopedAdjustmentRow(client, id, scope);
+      const current = await getScopedAdjustmentSnapshot(client, id, scope);
       if (!current) return false;
+      const appliedQty = getSignedAdjustmentQty(current);
+      if (appliedQty !== 0) {
+        await applyStoreItemDelta(client, {
+          branchId: Number(current.branch_id),
+          itemId: Number(current.item_id),
+          delta: -appliedQty,
+        });
+        await applyItemQuantityDelta(client, {
+          branchId: Number(current.branch_id),
+          itemId: Number(current.item_id),
+          delta: -appliedQty,
+        });
+      }
       const deleted = await client.query(
         `DELETE FROM ims.stock_adjustment WHERE adjustment_id = $1 RETURNING adjustment_id`,
         [id]

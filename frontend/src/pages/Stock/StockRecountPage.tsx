@@ -12,6 +12,7 @@ import {
   StockAdjustmentRow,
   InventoryItem,
 } from '../../services/inventory.service';
+import { itemLabelWithAvailability } from '../../utils/itemAvailability';
 
 const inputClass =
   'h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
@@ -28,6 +29,7 @@ const StockRecountPage = () => {
   const [branches, setBranches] = useState<InventoryBranch[]>([]);
   const [warehouses, setWarehouses] = useState<InventoryWarehouse[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [itemAvailableQty, setItemAvailableQty] = useState<Record<number, number>>({});
 
   const [filters, setFilters] = useState({
     branchId: '',
@@ -107,10 +109,11 @@ const StockRecountPage = () => {
 
   const loadMasters = async () => {
     setMastersLoading(true);
-    const [branchRes, whRes, itemRes] = await Promise.all([
+    const [branchRes, whRes, itemRes, stockRes] = await Promise.all([
       inventoryService.listBranches({ includeInactive: false }),
       inventoryService.listWarehouses({ includeInactive: false }),
       inventoryService.listItems({}),
+      inventoryService.listStock({ page: 1, limit: 5000 }),
     ]);
 
     if (branchRes.success && branchRes.data?.branches) {
@@ -129,6 +132,13 @@ const StockRecountPage = () => {
       setItems(itemRes.data.items);
     } else {
       showToast('error', 'Stock Recount', itemRes.error || 'Failed to load purchased items');
+    }
+    if (stockRes.success && stockRes.data?.rows) {
+      const nextMap: Record<number, number> = {};
+      stockRes.data.rows.forEach((row) => {
+        nextMap[Number(row.item_id)] = Number(row.total_qty ?? row.branch_qty ?? 0);
+      });
+      setItemAvailableQty(nextMap);
     }
     setMastersLoading(false);
   };
@@ -283,7 +293,7 @@ const StockRecountPage = () => {
               <option value="">All purchased items</option>
               {filterItems.map((item) => (
                 <option key={item.item_id} value={item.item_id}>
-                  {item.item_name}
+                  {itemLabelWithAvailability(item.item_name, itemAvailableQty[item.item_id])}
                 </option>
               ))}
             </select>
@@ -372,7 +382,7 @@ const StockRecountPage = () => {
               <option value="">Select purchased item</option>
               {formItems.map((item) => (
                 <option key={item.item_id} value={item.item_id}>
-                  {item.item_name}
+                  {itemLabelWithAvailability(item.item_name, itemAvailableQty[item.item_id])}
                 </option>
               ))}
             </select>

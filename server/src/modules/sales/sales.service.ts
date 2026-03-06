@@ -693,11 +693,11 @@ export const salesService = {
       `SELECT
          si.sale_item_id,
          si.sale_id,
-         si.${schema.saleItemIdColumn} AS product_id,
+         si.${schema.saleItemIdColumn} AS item_id,
          si.quantity,
          si.unit_price,
          si.line_total,
-         p.name AS product_name
+         p.name AS item_name
          FROM ims.sale_items si
          JOIN ims.items p ON p.item_id = si.${schema.saleItemIdColumn}
         WHERE si.sale_id = $1
@@ -718,12 +718,11 @@ export const salesService = {
       }
 
       const preparedItems = await prepareSaleItems(client, context.branchId, items);
-      const totals = normalizeTotals(preparedItems, input.discount, input.total);
+      const totals = normalizeTotals(preparedItems, input.discount, undefined);
       const tax = await resolveTaxRate(client, context.branchId, input.taxId ?? null, input.taxRate);
       const taxableBase = totals.subtotal - totals.discount;
       const taxAmount = (taxableBase * Number(tax?.rate_percent || 0)) / 100;
-      const totalWithTax =
-        input.total !== undefined ? Number(input.total) : taxableBase + taxAmount;
+      const totalWithTax = taxableBase + taxAmount;
 
       const docType: SaleDocType = input.docType || 'sale';
       const status: SaleStatus = input.status || (docType === 'quotation' ? 'unpaid' : 'paid');
@@ -758,7 +757,7 @@ export const salesService = {
       pushColumn('currency_code', input.currencyCode || 'USD');
       pushColumn('fx_rate', input.fxRate || 1);
       pushColumn('tax_id', tax?.tax_id ?? null, true);
-      pushColumn('total_before_tax', totals.subtotal);
+      pushColumn('total_before_tax', taxableBase);
       pushColumn('tax_amount', taxAmount, true);
       pushColumn('sale_date', input.saleDate || new Date().toISOString(), true);
       pushColumn('sale_type', saleType, true);
@@ -890,7 +889,7 @@ export const salesService = {
       const nextQuoteValidUntil =
         input.quoteValidUntil === undefined ? current.quote_valid_until : input.quoteValidUntil;
       const nextStoreId = input.storeId === undefined ? null : input.storeId;
-      const totals = normalizeTotals(preparedItems, input.discount ?? current.discount, input.total);
+      const totals = normalizeTotals(preparedItems, input.discount ?? current.discount, undefined);
       const tax = await resolveTaxRate(
         client,
         current.branch_id,
@@ -899,8 +898,7 @@ export const salesService = {
       );
       const taxableBase = totals.subtotal - (input.discount ?? current.discount ?? 0);
       const taxAmount = (taxableBase * Number(tax?.rate_percent || 0)) / 100;
-      const totalWithTax =
-        input.total !== undefined ? Number(input.total) : taxableBase + taxAmount;
+      const totalWithTax = taxableBase + taxAmount;
       const nextApplyStock = canApplyStock(nextDocType, nextStatus);
       const previousApplyStock =
         current.is_stock_applied ?? canApplyStock(current.doc_type || 'sale', current.status);
@@ -1063,7 +1061,7 @@ export const salesService = {
       }
       pushSet('is_stock_applied', nextApplyStock);
       pushSet('tax_id', tax?.tax_id ?? current.tax_id ?? null);
-      pushSet('total_before_tax', totals.subtotal);
+      pushSet('total_before_tax', taxableBase);
       pushSet('tax_amount', taxAmount);
 
       if (schema.salesColumns.has('voided_at')) {

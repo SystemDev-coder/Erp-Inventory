@@ -33,6 +33,10 @@ const emptyForm: CustomerForm = {
     remaining_balance: 0,
 };
 
+const formLabelClass = 'mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300';
+const formInputClass =
+    'h-12 w-full rounded-md border border-slate-300 bg-white px-3 text-base text-slate-900 shadow-sm outline-none transition-all placeholder:text-slate-400 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-100 dark:placeholder:text-slate-400 dark:focus:border-primary-400 dark:focus:ring-primary-500/25';
+
 const Customers = () => {
     const { tab } = useParams();
     const { showToast } = useToast();
@@ -249,33 +253,33 @@ const Customers = () => {
                 <form onSubmit={(e) => {
                     e.preventDefault();
                     handleSave();
-                }} className="mx-auto max-w-xl space-y-4">
+                }} className="mx-auto max-w-xl space-y-4 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-4 dark:border-slate-700 dark:bg-slate-900/40">
                     <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                         <div className="space-y-1">
-                            <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Customer Name</label>
+                            <label className={formLabelClass}>Customer Name</label>
                             <input
                                 type="text"
                                 required
                                 placeholder="Full Name"
                                 value={form.full_name}
                                 onChange={(e) => setForm({ ...form, full_name: e.target.value })}
-                                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none transition-all focus:ring-2 focus:ring-primary-500 dark:border-slate-700 dark:bg-slate-800"
+                                className={formInputClass}
                             />
                         </div>
                         <div className="space-y-1">
-                            <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Phone Number</label>
+                            <label className={formLabelClass}>Phone Number</label>
                             <input
                                 type="tel"
                                 placeholder="+123..."
                                 value={form.phone}
                                 onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none transition-all focus:ring-2 focus:ring-primary-500 dark:border-slate-700 dark:bg-slate-800"
+                                className={formInputClass}
                             />
                         </div>
                         <div className="space-y-1">
-                            <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Customer Type</label>
+                            <label className={formLabelClass}>Customer Type</label>
                             <select
-                                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none transition-all focus:ring-2 focus:ring-primary-500 dark:border-slate-700 dark:bg-slate-800"
+                                className={formInputClass}
                                 value={form.customer_type}
                                 onChange={(e) => setForm({ ...form, customer_type: e.target.value as 'regular' | 'one-time' })}
                             >
@@ -284,10 +288,10 @@ const Customers = () => {
                             </select>
                         </div>
                         <div className="space-y-1">
-                            <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Gender</label>
+                            <label className={formLabelClass}>Gender</label>
                             <select
                                 required
-                                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none transition-all focus:ring-2 focus:ring-primary-500 dark:border-slate-700 dark:bg-slate-800"
+                                className={formInputClass}
                                 value={form.gender}
                                 onChange={(e) => setForm({ ...form, gender: e.target.value as 'male' | 'female' })}
                             >
@@ -296,17 +300,17 @@ const Customers = () => {
                             </select>
                         </div>
                         <div className="space-y-1">
-                            <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Address</label>
+                            <label className={formLabelClass}>Address</label>
                             <input
                                 type="text"
                                 placeholder="Address (optional)"
                                 value={form.address}
                                 onChange={(e) => setForm({ ...form, address: e.target.value })}
-                                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none transition-all focus:ring-2 focus:ring-primary-500 dark:border-slate-700 dark:bg-slate-800"
+                                className={formInputClass}
                             />
                         </div>
                         <div className="space-y-1">
-                            <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Remaining Balance</label>
+                            <label className={formLabelClass}>Remaining Balance</label>
                             <input
                                 type="number"
                                 min={0}
@@ -314,14 +318,16 @@ const Customers = () => {
                                 placeholder="0.00"
                                 value={form.remaining_balance}
                                 onChange={(e) => setForm({ ...form, remaining_balance: Number(e.target.value || 0) })}
-                                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none transition-all focus:ring-2 focus:ring-primary-500 dark:border-slate-700 dark:bg-slate-800"
+                                className={formInputClass}
                             />
-                            <p className="text-xs text-slate-500">Opening balance or amount customer owes</p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">Opening balance or amount customer owes</p>
                         </div>
                     </div>
 
-                    <div className="flex justify-center gap-3 pt-2">
-                        <button type="button" onClick={() => setIsAddOpen(false)} className="rounded-xl px-5 py-2 font-bold text-slate-600 transition-all hover:bg-slate-100">Cancel</button>
+                    <div className="flex justify-center gap-3 pt-3">
+                        <button type="button" onClick={() => setIsAddOpen(false)} className="rounded-xl border border-slate-300 bg-white px-5 py-2 font-semibold text-slate-700 transition-all hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
+                            Cancel
+                        </button>
                         <button type="submit" className="rounded-xl bg-primary-600 px-7 py-2 text-white font-bold transition-all shadow-lg shadow-primary-500/20 hover:bg-primary-700 active:scale-95">
                             {form.customer_id ? 'Update Customer' : 'Save Customer'}
                         </button>

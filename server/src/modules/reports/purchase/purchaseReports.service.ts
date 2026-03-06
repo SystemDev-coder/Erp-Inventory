@@ -255,34 +255,77 @@ export const purchaseReportsService = {
   async getSupplierLedger(branchId: number, supplierId?: number): Promise<SupplierLedgerRow[]> {
     const params: Array<number> = [branchId];
     const filters: string[] = ['l.branch_id = $1'];
+    const supplierFilters: string[] = ['s.branch_id = $1'];
 
     if (supplierId) {
       params.push(supplierId);
       filters.push(`l.supplier_id = $${params.length}`);
+      supplierFilters.push(`s.supplier_id = $${params.length}`);
     }
 
     return queryMany<SupplierLedgerRow>(
-      `SELECT
-         l.sup_ledger_id,
-         l.entry_date::text AS entry_date,
-         l.supplier_id,
-         COALESCE(s.name, 'Unknown Supplier') AS supplier_name,
-         COALESCE(l.entry_type::text, 'purchase') AS entry_type,
-         COALESCE(l.ref_table, '') AS ref_table,
-         l.ref_id,
-         COALESCE(l.debit, 0)::double precision AS debit,
-         COALESCE(l.credit, 0)::double precision AS credit,
-         SUM(COALESCE(l.credit, 0) - COALESCE(l.debit, 0))
+      `WITH ledger_rows AS (
+         SELECT
+           l.sup_ledger_id::bigint AS sup_ledger_id,
+           l.entry_date,
+           l.supplier_id,
+           COALESCE(s.name, 'Unknown Supplier') AS supplier_name,
+           COALESCE(l.entry_type::text, 'purchase') AS entry_type,
+           COALESCE(l.ref_table, '') AS ref_table,
+           l.ref_id,
+           COALESCE(l.debit, 0)::double precision AS debit,
+           COALESCE(l.credit, 0)::double precision AS credit,
+           COALESCE(l.note, '') AS note
+         FROM ims.supplier_ledger l
+         LEFT JOIN ims.suppliers s ON s.supplier_id = l.supplier_id
+        WHERE ${filters.join(' AND ')}
+       ),
+       opening_rows AS (
+         SELECT
+           (-s.supplier_id)::bigint AS sup_ledger_id,
+           COALESCE(s.created_at, NOW()) AS entry_date,
+           s.supplier_id,
+           COALESCE(NULLIF(to_jsonb(s) ->> 'name', ''), NULLIF(to_jsonb(s) ->> 'supplier_name', ''), 'Unknown Supplier') AS supplier_name,
+           'opening'::text AS entry_type,
+           'suppliers'::text AS ref_table,
+           NULL::bigint AS ref_id,
+           0::double precision AS debit,
+           GREATEST(
+             COALESCE(NULLIF(to_jsonb(s) ->> 'remaining_balance', '')::double precision, 0),
+             COALESCE(NULLIF(to_jsonb(s) ->> 'open_balance', '')::double precision, 0)
+           )::double precision AS credit,
+           'Opening payable balance'::text AS note
+         FROM ims.suppliers s
+        WHERE ${supplierFilters.join(' AND ')}
+          AND GREATEST(
+                COALESCE(NULLIF(to_jsonb(s) ->> 'remaining_balance', '')::double precision, 0),
+                COALESCE(NULLIF(to_jsonb(s) ->> 'open_balance', '')::double precision, 0)
+              ) > 0
+       ),
+       unioned AS (
+         SELECT * FROM opening_rows
+         UNION ALL
+         SELECT * FROM ledger_rows
+       )
+       SELECT
+         u.sup_ledger_id,
+         u.entry_date::text AS entry_date,
+         u.supplier_id,
+         u.supplier_name,
+         u.entry_type,
+         u.ref_table,
+         u.ref_id,
+         u.debit,
+         u.credit,
+         SUM(COALESCE(u.credit, 0) - COALESCE(u.debit, 0))
            OVER (
-             PARTITION BY l.supplier_id
-             ORDER BY l.entry_date, l.sup_ledger_id
+             PARTITION BY u.supplier_id
+             ORDER BY u.entry_date, u.sup_ledger_id
              ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
            )::double precision AS running_balance,
-         COALESCE(l.note, '') AS note
-       FROM ims.supplier_ledger l
-       LEFT JOIN ims.suppliers s ON s.supplier_id = l.supplier_id
-      WHERE ${filters.join(' AND ')}
-      ORDER BY l.entry_date DESC, l.sup_ledger_id DESC
+         u.note
+       FROM unioned u
+      ORDER BY u.entry_date DESC, u.sup_ledger_id DESC
       LIMIT 4000`,
       params
     );

@@ -5,34 +5,31 @@ export interface FixedAsset {
   asset_id: number;
   branch_id: number;
   asset_name: string;
-  category: string;
+  category?: string;
   purchase_date: string;
   cost: number;
-  useful_life_months: number;
-  depreciation_method: string;
+  useful_life_months?: number;
+  depreciation_method?: string;
   status: string;
-  notes: string | null;
+  notes?: string | null;
   created_by: number | null;
   created_at: string;
 }
 
 export interface CreateFixedAssetInput {
   assetName: string;
-  category: string;
   purchaseDate: string;
   cost: number;
+  category?: string;
   status?: string;
 }
 
 export interface UpdateFixedAssetInput {
   assetName?: string;
-  category?: string;
   purchaseDate?: string;
   cost?: number;
   status?: string;
-  usefulLifeMonths?: number;
-  depreciationMethod?: string;
-  notes?: string | null;
+  category?: string;
 }
 
 const toQuery = (params: Record<string, string | number | undefined>) => {

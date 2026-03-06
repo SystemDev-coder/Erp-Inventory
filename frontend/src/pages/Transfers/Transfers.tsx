@@ -10,6 +10,7 @@ import {
   InventoryItem,
   InventoryWarehouse,
 } from '../../services/inventory.service';
+import { itemLabelWithAvailability } from '../../utils/itemAvailability';
 
 type MovementRow = {
   move_id: number;
@@ -62,6 +63,7 @@ const Transfers = () => {
   const [branches, setBranches] = useState<InventoryBranch[]>([]);
   const [warehouses, setWarehouses] = useState<InventoryWarehouse[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [itemAvailableQty, setItemAvailableQty] = useState<Record<number, number>>({});
   const [movements, setMovements] = useState<MovementRow[]>([]);
   const [form, setForm] = useState<TransferForm>(initialForm);
 
@@ -115,10 +117,11 @@ const Transfers = () => {
 
   const loadData = async () => {
     setLoading(true);
-    const [branchRes, warehouseRes, itemRes, movementRes] = await Promise.all([
+    const [branchRes, warehouseRes, itemRes, stockRes, movementRes] = await Promise.all([
       inventoryService.listBranches(),
       inventoryService.listWarehouses(),
       inventoryService.listItems({}),
+      inventoryService.listStock({ page: 1, limit: 5000 }),
       inventoryService.listMovements({ limit: 200, page: 1 }),
     ]);
 
@@ -138,6 +141,13 @@ const Transfers = () => {
       setItems(itemRes.data.items);
     } else {
       showToast('error', 'Transfers', itemRes.error || 'Failed to load items');
+    }
+    if (stockRes.success && stockRes.data?.rows) {
+      const nextMap: Record<number, number> = {};
+      stockRes.data.rows.forEach((row) => {
+        nextMap[Number(row.item_id)] = Number(row.total_qty ?? row.branch_qty ?? 0);
+      });
+      setItemAvailableQty(nextMap);
     }
 
     if (movementRes.success && movementRes.data?.rows) {
@@ -389,7 +399,7 @@ const Transfers = () => {
               <option value="">Select item</option>
               {availableItems.map((row) => (
                 <option key={row.item_id} value={row.item_id}>
-                  {row.item_name}
+                  {itemLabelWithAvailability(row.item_name, itemAvailableQty[row.item_id])}
                 </option>
               ))}
             </select>

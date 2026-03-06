@@ -25,6 +25,7 @@ const buildPrintableInvoice = (sale: Sale, items: SaleItem[]) => {
   const date = new Date(sale.sale_date).toLocaleString();
   const customer = sale.customer_name || 'Walking Customer';
   const totalAmount = Number(sale.total || 0);
+  const taxAmount = Number((sale as any).tax_amount || 0);
   // When status is paid, show full total as paid and 0 balance (fixes display inconsistency)
   const paidAmount =
     sale.status === 'paid'
@@ -40,9 +41,7 @@ const buildPrintableInvoice = (sale: Sale, items: SaleItem[]) => {
       const lineTotal = Number(line.line_total || qty * unitPrice);
       const itemId = Number(line.item_id || 0);
       const itemName = line.item_name || '';
-      const itemLabel = itemName
-        ? `${escapeHtml(itemName)} (ID ${itemId})`
-        : `Item ${itemId}`;
+      const itemLabel = itemName ? escapeHtml(itemName) : `Item ${itemId}`;
       return `
         <tr>
           <td>${idx + 1}</td>
@@ -103,7 +102,7 @@ const buildPrintableInvoice = (sale: Sale, items: SaleItem[]) => {
           <thead>
             <tr>
               <th style="width: 60px;">#</th>
-              <th>Item ID</th>
+              <th>Item</th>
               <th style="width: 120px;">Qty</th>
               <th style="width: 140px;">Unit Price</th>
               <th style="width: 160px;">Line Total</th>
@@ -117,6 +116,7 @@ const buildPrintableInvoice = (sale: Sale, items: SaleItem[]) => {
         <div class="totals">
           <div class="totals-row"><span>Subtotal</span><span>${formatMoney(sale.subtotal)}</span></div>
           <div class="totals-row"><span>Discount</span><span>${formatMoney(sale.discount)}</span></div>
+          <div class="totals-row"><span>Tax</span><span>${formatMoney(taxAmount)}</span></div>
           <div class="totals-row"><span>Paid</span><span>${formatMoney(paidAmount)}</span></div>
           <div class="totals-row"><span>Balance</span><span>${formatMoney(balance)}</span></div>
           <div class="totals-row total"><span>Total</span><span>${formatMoney(sale.total)}</span></div>
@@ -167,22 +167,42 @@ const Sales = () => {
         // Build the HTML content
         const html = buildPrintableInvoice(res.data.sale, res.data.items || []);
         
-        // Open new window for printing
-        const printWindow = window.open('', '_blank', 'width=900,height=700');
-        
-        if (!printWindow) {
-          showToast('error', 'Print Blocked', 'Please allow popups for this site. Click the popup icon in your address bar.');
+        // Print in a hidden iframe so no new tab/window appears.
+        const printFrame = document.createElement('iframe');
+        printFrame.style.position = 'fixed';
+        printFrame.style.right = '0';
+        printFrame.style.bottom = '0';
+        printFrame.style.width = '0';
+        printFrame.style.height = '0';
+        printFrame.style.border = '0';
+        document.body.appendChild(printFrame);
+
+        const frameWindow = printFrame.contentWindow;
+        if (!frameWindow) {
+          document.body.removeChild(printFrame);
+          showToast('error', 'Print Failed', 'Unable to open print frame');
           return;
         }
 
-        // Write the HTML content
-        printWindow.document.write(html);
-        printWindow.document.close();
-        printWindow.focus();
+        frameWindow.document.open();
+        frameWindow.document.write(html);
+        frameWindow.document.close();
 
-        // Single print call after content is ready
-        printWindow.onload = () => {
-          printWindow.print();
+        let printed = false;
+        const cleanup = () => {
+          setTimeout(() => {
+            if (document.body.contains(printFrame)) {
+              document.body.removeChild(printFrame);
+            }
+          }, 300);
+        };
+
+        printFrame.onload = () => {
+          if (printed) return;
+          printed = true;
+          frameWindow.focus();
+          frameWindow.print();
+          cleanup();
         };
         
       } catch (error) {

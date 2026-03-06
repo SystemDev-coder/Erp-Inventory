@@ -94,7 +94,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
             {/* Dialog */}
             <div className="flex min-h-full items-center justify-center p-4">
                 <div
-                    className="relative w-full max-w-sm rounded-xl border border-[#9ec5df] bg-[#f8fbfe] shadow-2xl transform transition-all animate-[scaleIn_200ms_ease-out] dark:border-[#2c6287] dark:bg-[#12344c]"
+                    className="relative w-full max-w-sm rounded-xl border border-[#6f8fbd] bg-[#fbfcff] shadow-2xl transform transition-all animate-[scaleIn_200ms_ease-out] dark:border-[#264676] dark:bg-[#10233f]"
                     onClick={(e) => e.stopPropagation()}
                 >
                     {/* Icon */}
@@ -108,15 +108,15 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
 
                     {/* Content */}
                     <div className="px-6 pb-4 text-center">
-                        <h3 className="mb-2 text-lg font-bold text-[#123f5c] dark:text-[#e7f2fb]">
+                        <h3 className="mb-2 text-lg font-bold text-[#0a1f44] dark:text-[#f4f8ff]">
                             {title}
                         </h3>
                         {highlightedName && (
-                            <p className="mb-2 text-lg font-extrabold text-[#123f5c] dark:text-[#e7f2fb]">
+                            <p className="mb-2 text-lg font-extrabold text-[#0a1f44] dark:text-[#f4f8ff]">
                                 {highlightedName}
                             </p>
                         )}
-                        <p className="text-xs leading-relaxed text-[#57748c] dark:text-[#9fc3da]">
+                        <p className="text-xs leading-relaxed text-[#6f86a8] dark:text-[#9fc3da]">
                             {message}
                         </p>
                     </div>
@@ -127,7 +127,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
                             <button
                                 onClick={onClose}
                                 disabled={isLoading}
-                                className="flex-1 rounded-lg border border-[#b7cde0] px-3 py-2 text-sm font-medium text-[#123f5c] transition-colors hover:bg-[#edf5fb] disabled:cursor-not-allowed disabled:opacity-50 dark:border-[#2c6287] dark:text-[#e7f2fb] dark:hover:bg-[#1b5a80]/35"
+                                className="flex-1 rounded-lg border border-[#9bb3d5] px-3 py-2 text-sm font-medium text-[#0a1f44] transition-colors hover:bg-[#f4f7fd] disabled:cursor-not-allowed disabled:opacity-50 dark:border-[#264676] dark:text-[#f4f8ff] dark:hover:bg-[#102b59]/35"
                             >
                                 {cancelText}
                             </button>

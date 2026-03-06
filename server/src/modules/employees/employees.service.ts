@@ -41,10 +41,12 @@ export interface ShiftAssignment {
 export interface EmployeeRole {
   role_id: number;
   role_name: string;
+  monthly_salary?: number;
 }
 
 let employeesHaveGenderColumn: boolean | null = null;
 let employeeSalaryHasBranchColumn: boolean | null = null;
+let rolesMonthlySalaryReady = false;
 
 const detectEmployeesGenderColumn = async (): Promise<boolean> => {
   if (employeesHaveGenderColumn !== null) return employeesHaveGenderColumn;
@@ -70,10 +72,32 @@ const detectEmployeeSalaryBranchColumn = async (): Promise<boolean> => {
   return employeeSalaryHasBranchColumn;
 };
 
+const ensureRolesMonthlySalaryColumn = async (): Promise<void> => {
+  if (rolesMonthlySalaryReady) return;
+  await queryMany(`
+    ALTER TABLE ims.roles
+      ADD COLUMN IF NOT EXISTS monthly_salary NUMERIC(14,2) NOT NULL DEFAULT 0
+  `);
+  rolesMonthlySalaryReady = true;
+};
+
+const getRoleMonthlySalary = async (roleId?: number | null): Promise<number> => {
+  if (!roleId) return 0;
+  await ensureRolesMonthlySalaryColumn();
+  const role = await queryOne<{ monthly_salary: string | number }>(
+    `SELECT COALESCE(monthly_salary, 0)::text AS monthly_salary
+       FROM ims.roles
+      WHERE role_id = $1`,
+    [roleId]
+  );
+  return Number(role?.monthly_salary || 0);
+};
+
 export const employeesService = {
   async listRoles(): Promise<EmployeeRole[]> {
+    await ensureRolesMonthlySalaryColumn();
     return queryMany<EmployeeRole>(
-      `SELECT role_id, role_name
+      `SELECT role_id, role_name, COALESCE(monthly_salary, 0)::float8 AS monthly_salary
          FROM ims.roles
         ORDER BY role_name`
     );
@@ -84,6 +108,7 @@ export const employeesService = {
    */
   async list(params?: { search?: string; status?: string; branchIds?: number[] }): Promise<Employee[]> {
     const hasGender = await detectEmployeesGenderColumn();
+    await ensureRolesMonthlySalaryColumn();
     let query = `
       SELECT 
         e.emp_id,
@@ -101,7 +126,7 @@ export const employeesService = {
         e.created_at,
         u.username,
         r.role_name,
-        COALESCE(es.basic_salary, 0) as basic_salary
+        COALESCE(es.basic_salary, e.salary_amount, r.monthly_salary, 0) as basic_salary
       FROM ims.employees e
       LEFT JOIN ims.users u ON e.user_id = u.user_id
       LEFT JOIN ims.roles r ON COALESCE(e.role_id, u.role_id) = r.role_id
@@ -146,13 +171,14 @@ export const employeesService = {
    * Get employee by ID
    */
   async getById(id: number): Promise<Employee | null> {
+    await ensureRolesMonthlySalaryColumn();
     return queryOne<Employee>(
       `SELECT 
         e.*,
         COALESCE(e.role_id, u.role_id) AS role_id,
         u.username,
         r.role_name,
-        COALESCE(es.basic_salary, 0) as basic_salary
+        COALESCE(es.basic_salary, e.salary_amount, r.monthly_salary, 0) as basic_salary
       FROM ims.employees e
       LEFT JOIN ims.users u ON e.user_id = u.user_id
       LEFT JOIN ims.roles r ON COALESCE(e.role_id, u.role_id) = r.role_id
@@ -168,7 +194,12 @@ export const employeesService = {
   async create(input: EmployeeInput, context: { branchId: number }): Promise<Employee> {
     const hasGender = await detectEmployeesGenderColumn();
     const employeeSalaryHasBranch = await detectEmployeeSalaryBranchColumn();
-    const salaryType = input.salary_type ?? 'Monthly';
+    const roleMonthlySalary = await getRoleMonthlySalary(input.role_id);
+    const manualSalary = Number(input.salary) || 0;
+    const effectiveSalary = input.role_id
+      ? (roleMonthlySalary > 0 ? roleMonthlySalary : manualSalary)
+      : manualSalary;
+    const salaryType = 'Monthly';
     const shiftType = input.shift_type ?? 'Morning';
     const salaryBaseType = salaryType.toLowerCase() as 'monthly' | 'hourly';
     const salaryTypeName = salaryBaseType === 'hourly' ? 'Hourly Salary' : 'Monthly Salary';
@@ -188,7 +219,7 @@ export const employeesService = {
             input.hire_date || new Date().toISOString().split('T')[0],
             salaryType,
             shiftType,
-            Number(input.salary) || 0,
+            effectiveSalary,
             input.status || 'active',
           ]
         )
@@ -206,7 +237,7 @@ export const employeesService = {
             input.hire_date || new Date().toISOString().split('T')[0],
             salaryType,
             shiftType,
-            Number(input.salary) || 0,
+            effectiveSalary,
             input.status || 'active',
           ]
         );
@@ -223,7 +254,7 @@ export const employeesService = {
     }
 
     // If salary provided, create employee_salary record
-    if (input.salary && input.salary > 0) {
+    if (effectiveSalary > 0) {
       // Get or create default salary type
       const salType = await queryOne<any>(
         `INSERT INTO ims.salary_types (branch_id, type_name, base_type)
@@ -238,13 +269,13 @@ export const employeesService = {
           await queryOne(
             `INSERT INTO ims.employee_salary (branch_id, emp_id, sal_type_id, basic_salary, start_date)
              VALUES ($1, $2, $3, $4, $5)`,
-            [context.branchId, result.emp_id, salType.sal_type_id, input.salary, result.hire_date]
+            [context.branchId, result.emp_id, salType.sal_type_id, effectiveSalary, result.hire_date]
           );
         } else {
           await queryOne(
             `INSERT INTO ims.employee_salary (emp_id, sal_type_id, basic_salary, start_date)
              VALUES ($1, $2, $3, $4)`,
-            [result.emp_id, salType.sal_type_id, input.salary, result.hire_date]
+            [result.emp_id, salType.sal_type_id, effectiveSalary, result.hire_date]
           );
         }
       }
@@ -293,7 +324,7 @@ export const employeesService = {
     }
     if (input.salary_type !== undefined) {
       updates.push(`salary_type = $${paramCount++}`);
-      values.push(input.salary_type);
+      values.push('Monthly');
     }
     if (input.status !== undefined) {
       updates.push(`status = $${paramCount++}::ims.employment_status_enum`);
@@ -304,13 +335,22 @@ export const employeesService = {
       values.push(input.role_id || null);
     }
 
-    // Update salary if provided
-    if (input.salary !== undefined && input.salary >= 0) {
-      if (input.salary_type === undefined) {
+    const roleMonthlySalary = input.role_id !== undefined
+      ? await getRoleMonthlySalary(input.role_id)
+      : 0;
+    const manualSalary = input.salary !== undefined ? Number(input.salary) || 0 : undefined;
+    const shouldUpdateSalary = input.role_id !== undefined || (input.salary !== undefined && input.salary >= 0);
+    const effectiveSalary = input.role_id !== undefined
+      ? (roleMonthlySalary > 0 ? roleMonthlySalary : manualSalary)
+      : manualSalary;
+
+    // Update salary if needed
+    if (shouldUpdateSalary && effectiveSalary !== undefined && effectiveSalary >= 0) {
+      if (input.salary_type === undefined || input.role_id !== undefined) {
         updates.push(`salary_type = 'Monthly'`);
       }
       updates.push(`salary_amount = $${paramCount++}`);
-      values.push(input.salary);
+      values.push(effectiveSalary);
     }
 
     if (updates.length > 0) {
@@ -332,8 +372,8 @@ export const employeesService = {
       );
     }
 
-    // Update salary history if provided
-    if (input.salary !== undefined && input.salary >= 0) {
+    // Update salary history if salary changed (directly or by role change)
+    if (shouldUpdateSalary && effectiveSalary !== undefined && effectiveSalary >= 0) {
       const employee = await queryOne<{ branch_id: number | null; effective_branch_id: number | null; salary_type: string | null }>(
         `SELECT
            e.branch_id,
@@ -376,7 +416,7 @@ export const employeesService = {
         );
       }
 
-      const salaryType = input.salary_type ?? employee.salary_type ?? 'Monthly';
+      const salaryType = 'Monthly';
       const salaryBaseType = salaryType.toLowerCase() as 'monthly' | 'hourly';
       const salaryTypeName = salaryBaseType === 'hourly' ? 'Hourly Salary' : 'Monthly Salary';
 
@@ -398,13 +438,13 @@ export const employeesService = {
           await queryOne(
             `INSERT INTO ims.employee_salary (branch_id, emp_id, sal_type_id, basic_salary, start_date)
              VALUES ($1, $2, $3, $4, CURRENT_DATE)`,
-            [employee.effective_branch_id, id, salType.sal_type_id, input.salary]
+            [employee.effective_branch_id, id, salType.sal_type_id, effectiveSalary]
           );
         } else {
           await queryOne(
             `INSERT INTO ims.employee_salary (emp_id, sal_type_id, basic_salary, start_date)
              VALUES ($1, $2, $3, CURRENT_DATE)`,
-            [id, salType.sal_type_id, input.salary]
+            [id, salType.sal_type_id, effectiveSalary]
           );
         }
       }

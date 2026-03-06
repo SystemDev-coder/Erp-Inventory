@@ -1,7 +1,7 @@
 import { useState, FormEvent } from "react";
-import { Link, useNavigate } from "react-router";
+import { useNavigate } from "react-router";
 import { ShoppingCart } from "lucide-react";
-import { ChevronLeftIcon, EyeCloseIcon, EyeIcon } from "../../icons";
+import { EyeCloseIcon, EyeIcon } from "../../icons";
 import Label from "../form/Label";
 import Input from "../form/input/InputField";
 import Checkbox from "../form/input/Checkbox";
@@ -45,15 +45,6 @@ export default function SignInForm() {
   };
   return (
     <div className="flex flex-col flex-1">
-      <div className="w-full max-w-md pt-10 mx-auto">
-        <Link
-          to="/"
-          className="inline-flex items-center text-sm text-slate-600 transition-colors hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
-        >
-          <ChevronLeftIcon className="size-5" />
-          Back to dashboard
-        </Link>
-      </div>
       <div className="flex flex-col justify-center flex-1 w-full max-w-md mx-auto">
         <div>
           <div className="mb-5 sm:mb-8">
@@ -82,11 +73,11 @@ export default function SignInForm() {
                 )}
                 <div>
                   <Label>
-                    Username or Phone <span className="text-error-500">*</span>{" "}
+                    Username <span className="text-error-500">*</span>{" "}
                   </Label>
                   <Input
                     className="border-2 border-slate-300 focus:border-primary-500 focus:ring-primary-500/20 dark:border-slate-700"
-                    placeholder="Enter username or phone" 
+                    placeholder="Enter username" 
                     value={identifier}
                     onChange={(e) => setIdentifier(e.target.value)}
                     required

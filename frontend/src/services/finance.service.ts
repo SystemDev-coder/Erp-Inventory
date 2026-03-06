@@ -138,6 +138,73 @@ export interface Expense {
   created_by?: string | null;
 }
 
+export type ClosingMode = 'monthly' | 'quarterly' | 'yearly' | 'custom';
+export type ClosingStatus = 'draft' | 'closed' | 'reopened';
+export type ProfitAllocationType = 'partner' | 'retained' | 'reinvestment' | 'reserve';
+
+export interface ProfitSharePartner {
+  partnerName: string;
+  sharePct: number;
+  accId?: number | null;
+}
+
+export interface ProfitShareRule {
+  ruleId?: number | null;
+  branchId?: number;
+  ruleName: string;
+  sourceAccId?: number | null;
+  retainedPct: number;
+  retainedAccId?: number | null;
+  reinvestmentPct: number;
+  reinvestmentAccId?: number | null;
+  reservePct: number;
+  reserveAccId?: number | null;
+  partners: ProfitSharePartner[];
+  isDefault?: boolean;
+}
+
+export interface FinanceClosingPeriod {
+  closing_id: number;
+  branch_id: number;
+  close_mode: ClosingMode;
+  period_from: string;
+  period_to: string;
+  operational_from?: string | null;
+  operational_to?: string | null;
+  status: ClosingStatus;
+  is_locked: boolean;
+  scheduled_at?: string | null;
+  note?: string | null;
+  summary_json?: any;
+  profit_json?: any;
+  closed_at?: string | null;
+  journal_id?: number | null;
+  created_at: string;
+}
+
+export interface ClosingSnapshot {
+  salesRevenue: number;
+  salesReturns: number;
+  netRevenue: number;
+  cogs: number;
+  grossProfit: number;
+  expenseCharges: number;
+  payrollExpense: number;
+  otherIncome: number;
+  netIncome: number;
+  stockValuation: number;
+  cashBalance: number;
+  capitalBalance: number;
+}
+
+export interface ProfitAllocation {
+  allocationType: ProfitAllocationType;
+  label: string;
+  sharePct: number;
+  amount: number;
+  accId: number | null;
+}
+
 export const financeService = {
   // Transfers
   async listTransfers(branchId?: number) {
@@ -387,5 +454,118 @@ export const financeService = {
   },
   async deleteExpense(id: number) {
     return apiClient.delete<{ message: string }>(`${API.FINANCE.EXPENSES}/${id}`);
+  },
+
+  // Closing finance & profit sharing
+  async listClosingPeriods(payload?: {
+    branchId?: number;
+    status?: ClosingStatus;
+    fromDate?: string;
+    toDate?: string;
+  }) {
+    const params = new URLSearchParams();
+    if (payload?.branchId) params.set('branchId', String(payload.branchId));
+    if (payload?.status) params.set('status', payload.status);
+    if (payload?.fromDate) params.set('fromDate', payload.fromDate);
+    if (payload?.toDate) params.set('toDate', payload.toDate);
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    return apiClient.get<{ periods: FinanceClosingPeriod[] }>(`${API.FINANCE.CLOSING_PERIODS}${qs}`);
+  },
+  async createClosingPeriod(payload: {
+    branchId?: number;
+    closeMode: ClosingMode;
+    periodFrom: string;
+    periodTo: string;
+    operationalFrom?: string;
+    operationalTo?: string;
+    scheduledAt?: string;
+    note?: string;
+  }) {
+    return apiClient.post<{ period: FinanceClosingPeriod }>(API.FINANCE.CLOSING_PERIODS, payload);
+  },
+  async updateClosingPeriod(
+    closingId: number,
+    payload: {
+      closeMode?: ClosingMode;
+      periodFrom?: string;
+      periodTo?: string;
+      operationalFrom?: string;
+      operationalTo?: string;
+      scheduledAt?: string;
+      note?: string;
+    }
+  ) {
+    return apiClient.put<{ period: FinanceClosingPeriod }>(API.FINANCE.CLOSING_PERIOD(closingId), payload);
+  },
+  async previewClosingPeriod(
+    closingId: number,
+    payload: {
+      ruleId?: number;
+      rule?: ProfitShareRule;
+      autoTransfer?: boolean;
+      force?: boolean;
+      saveRuleAsDefault?: boolean;
+    }
+  ) {
+    return apiClient.post<{
+      preview: {
+        period: FinanceClosingPeriod;
+        summary: ClosingSnapshot;
+        rule: ProfitShareRule;
+        allocations: ProfitAllocation[];
+        warnings: string[];
+      };
+    }>(API.FINANCE.CLOSING_PREVIEW(closingId), payload);
+  },
+  async closeClosingPeriod(
+    closingId: number,
+    payload: {
+      ruleId?: number;
+      rule?: ProfitShareRule;
+      autoTransfer?: boolean;
+      force?: boolean;
+      saveRuleAsDefault?: boolean;
+    }
+  ) {
+    return apiClient.post<{
+      result: {
+        period: FinanceClosingPeriod;
+        summary: ClosingSnapshot;
+        rule: ProfitShareRule;
+        allocations: ProfitAllocation[];
+        journalId: number | null;
+        warnings: string[];
+      };
+    }>(API.FINANCE.CLOSING_CLOSE(closingId), payload);
+  },
+  async reopenClosingPeriod(closingId: number, payload?: { reason?: string }) {
+    return apiClient.post<{ period: FinanceClosingPeriod }>(API.FINANCE.CLOSING_REOPEN(closingId), payload || {});
+  },
+  async getClosingSummary(closingId: number) {
+    return apiClient.get<{
+      summary: {
+        period: FinanceClosingPeriod;
+        summary: ClosingSnapshot | null;
+        profit: {
+          rule?: ProfitShareRule;
+          allocations?: ProfitAllocation[];
+          warnings?: string[];
+          transferPosted?: boolean;
+        };
+      };
+    }>(API.FINANCE.CLOSING_SUMMARY(closingId));
+  },
+  async listProfitShareRules(branchId?: number) {
+    const qs = branchId ? `?branchId=${branchId}` : '';
+    return apiClient.get<{ rules: ProfitShareRule[] }>(`${API.FINANCE.CLOSING_RULES}${qs}`);
+  },
+  async saveProfitShareRule(payload: ProfitShareRule) {
+    return apiClient.post<{ rule: ProfitShareRule }>(API.FINANCE.CLOSING_RULES, payload);
+  },
+  async runScheduledClosings() {
+    return apiClient.post<{ result: { due: number; closed: number; failed: Array<{ closingId: number; reason: string }> } }>(
+      API.FINANCE.CLOSING_RUN_SCHEDULED,
+      {}
+    );
   },
 };

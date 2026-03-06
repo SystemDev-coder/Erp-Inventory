@@ -15,7 +15,7 @@ export interface Employee {
   phone: string | null;
   address: string | null;
   gender?: 'male' | 'female' | null;
-  salary_type?: 'Hourly' | 'Monthly' | 'hourly' | 'monthly' | null;
+  salary_type?: 'Monthly' | 'monthly' | null;
   shift_type?: 'Morning' | 'Night' | 'Evening' | null;
   hire_date: string;
   status: 'active' | 'inactive' | 'terminated';
@@ -33,7 +33,7 @@ export interface EmployeeInput {
   gender?: 'male' | 'female';
   role_id?: number;
   salary?: number;
-  salary_type?: 'Hourly' | 'Monthly';
+  salary_type?: 'Monthly';
   shift_type?: 'Morning' | 'Night' | 'Evening';
   hire_date?: string;
   status?: 'active' | 'inactive' | 'terminated';

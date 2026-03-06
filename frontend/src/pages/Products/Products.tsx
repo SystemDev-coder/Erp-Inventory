@@ -29,6 +29,9 @@ const defaultProductForm: ProductForm = {
 
 const fieldCls =
   'mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900';
+const modalLabelCls = 'mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300';
+const modalInputCls =
+  'h-12 w-full rounded-md border border-slate-300 bg-white px-3 text-base text-slate-900 shadow-sm outline-none transition-all placeholder:text-slate-400 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-100 dark:placeholder:text-slate-400 dark:focus:border-primary-400 dark:focus:ring-primary-500/25';
 const txLabel: Record<TxCategory, string> = {
   adjustment: 'Adjustment',
   paid: 'Paid',
@@ -49,7 +52,6 @@ const Products = () => {
   const [itemImportOpen, setItemImportOpen] = useState(false);
 
   const [itemForm, setItemForm] = useState<ProductForm>(defaultProductForm);
-  const [selectedStoreId, setSelectedStoreId] = useState<number | ''>('');
   const [itemStoreId, setItemStoreId] = useState<number | ''>('');
   const [stores, setStores] = useState<StoreType[]>([]);
   const [stateForm, setStateForm] = useState<{ product_id?: number; status: 'active' | 'inactive' }>({
@@ -65,10 +67,6 @@ const Products = () => {
     if (storeRes.success && storeRes.data?.stores) {
       const loaded = storeRes.data.stores;
       setStores(loaded);
-      if (!selectedStoreId && loaded.length) {
-        const firstId = loaded[0].store_id;
-        setSelectedStoreId(firstId);
-      }
       return loaded;
     }
     return [];
@@ -76,9 +74,8 @@ const Products = () => {
 
   const loadProducts = async () => {
     setLoading(true);
-    const loadedStores = await resolveStores();
-    const effectiveStoreId = selectedStoreId || loadedStores[0]?.store_id || undefined;
-    const res = await productService.list({ limit: 200, storeId: effectiveStoreId });
+    await resolveStores();
+    const res = await productService.list({ limit: 200 });
     if (res.success && res.data?.products) setProducts(res.data.products);
     else showToast('error', 'Items', res.error || 'Failed to load items');
     setLoading(false);
@@ -205,19 +202,6 @@ const Products = () => {
       content: (
         <div className="space-y-2">
           <div className="flex flex-wrap items-center justify-end gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
-            <label className="text-sm font-medium">Store
-              <select
-                className={`${fieldCls} min-w-[180px]`}
-                value={selectedStoreId}
-                onChange={(e) => {
-                  const next = e.target.value ? Number(e.target.value) : '';
-                  setSelectedStoreId(next);
-                }}
-              >
-                <option value="">Select store</option>
-                {stores.map((s) => <option key={s.store_id} value={s.store_id}>{s.store_name}</option>)}
-              </select>
-            </label>
             <button type="button" onClick={loadProducts} className="rounded-lg border px-3 py-2 text-sm">Display</button>
             <button
               type="button"
@@ -233,7 +217,7 @@ const Products = () => {
                 const storeRes = await storeService.list();
                 if (storeRes.success && storeRes.data?.stores) {
                   setStores(storeRes.data.stores);
-                  setItemStoreId(selectedStoreId || '');
+                  setItemStoreId('');
                 } else {
                   setItemStoreId('');
                 }
@@ -253,7 +237,7 @@ const Products = () => {
               setItemForm((prev) => ({ ...prev, quantity: Number(row.quantity ?? row.stock ?? 0) }));
               const storeRes = await storeService.list();
               if (storeRes.success && storeRes.data?.stores) setStores(storeRes.data.stores);
-              setItemStoreId(selectedStoreId || row.store_id || '');
+              setItemStoreId(row.store_id || '');
               setItemModalOpen(true);
             }}
             onDelete={(row) => setItemToDelete(row)}
@@ -323,23 +307,113 @@ const Products = () => {
       <Tabs tabs={storeTabs} defaultTab="items" />
 
       <Modal isOpen={itemModalOpen} onClose={() => setItemModalOpen(false)} title={itemForm.product_id ? 'Edit Item' : 'New Item'} size="lg">
-        <form onSubmit={(e) => { e.preventDefault(); void saveItem(); }} className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <label className="text-sm font-medium">Name<input className={fieldCls} value={itemForm.name || ''} onChange={(e) => setItemForm({ ...itemForm, name: e.target.value })} required /></label>
-          <label className="text-sm font-medium">Barcode<input className={fieldCls} value={itemForm.barcode || ''} onChange={(e) => setItemForm({ ...itemForm, barcode: e.target.value })} /></label>
-          <label className="text-sm font-medium">Stock Alert<input type="number" step="0.001" className={fieldCls} value={itemForm.stock_alert ?? 5} onChange={(e) => setItemForm({ ...itemForm, stock_alert: Number(e.target.value || 0) })} /></label>
-          <label className="text-sm font-medium">Cost Price<input type="number" step="0.01" className={fieldCls} value={itemForm.cost_price ?? 0} onChange={(e) => setItemForm({ ...itemForm, cost_price: Number(e.target.value || 0) })} /></label>
-          <label className="text-sm font-medium">Sell Price<input type="number" step="0.01" className={fieldCls} value={itemForm.sell_price ?? 0} onChange={(e) => setItemForm({ ...itemForm, sell_price: Number(e.target.value || 0) })} /></label>
-          <label className="text-sm font-medium">Opening Balance<input type="number" step="0.001" className={fieldCls} value={itemForm.opening_balance ?? 0} onChange={(e) => setItemForm({ ...itemForm, opening_balance: Number(e.target.value || 0) })} /></label>
-          <label className="text-sm font-medium">Store (optional)
-            <select className={fieldCls} value={itemStoreId} onChange={(e) => setItemStoreId(e.target.value ? Number(e.target.value) : '')}>
-              <option value="">None</option>
-              {stores.map((s) => <option key={s.store_id} value={s.store_id}>{s.store_name}</option>)}
-            </select>
-          </label>
-          <label className="text-sm font-medium">Quantity
-            <input type="number" step="0.001" min={0} className={fieldCls} value={itemForm.quantity ?? 0} onChange={(e) => setItemForm({ ...itemForm, quantity: Number(e.target.value || 0) })} />
-          </label>
-          <div className="md:col-span-2 flex justify-end gap-2 pt-2"><button type="button" onClick={() => setItemModalOpen(false)} className="rounded-lg border px-4 py-2">Cancel</button><button type="submit" className="rounded-lg bg-primary-600 px-4 py-2 text-white">{itemForm.product_id ? 'Update' : 'Save'}</button></div>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void saveItem();
+          }}
+          className="space-y-4 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-4 dark:border-slate-700 dark:bg-slate-900/40"
+        >
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="space-y-1">
+              <label className={modalLabelCls}>Name</label>
+              <input
+                className={modalInputCls}
+                value={itemForm.name || ''}
+                onChange={(e) => setItemForm({ ...itemForm, name: e.target.value })}
+                placeholder="Item name"
+                required
+              />
+            </div>
+            <div className="space-y-1">
+              <label className={modalLabelCls}>Barcode</label>
+              <input
+                className={modalInputCls}
+                value={itemForm.barcode || ''}
+                onChange={(e) => setItemForm({ ...itemForm, barcode: e.target.value })}
+                placeholder="Scan or enter barcode"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className={modalLabelCls}>Stock Alert</label>
+              <input
+                type="number"
+                step="0.001"
+                className={modalInputCls}
+                value={itemForm.stock_alert ?? 5}
+                onChange={(e) => setItemForm({ ...itemForm, stock_alert: Number(e.target.value || 0) })}
+                placeholder="5"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className={modalLabelCls}>Cost Price</label>
+              <input
+                type="number"
+                step="0.01"
+                className={modalInputCls}
+                value={itemForm.cost_price ?? 0}
+                onChange={(e) => setItemForm({ ...itemForm, cost_price: Number(e.target.value || 0) })}
+                placeholder="0.00"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className={modalLabelCls}>Sell Price</label>
+              <input
+                type="number"
+                step="0.01"
+                className={modalInputCls}
+                value={itemForm.sell_price ?? 0}
+                onChange={(e) => setItemForm({ ...itemForm, sell_price: Number(e.target.value || 0) })}
+                placeholder="0.00"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className={modalLabelCls}>Opening Balance</label>
+              <input
+                type="number"
+                step="0.001"
+                className={modalInputCls}
+                value={itemForm.opening_balance ?? 0}
+                onChange={(e) => setItemForm({ ...itemForm, opening_balance: Number(e.target.value || 0) })}
+                placeholder="0"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className={modalLabelCls}>Store (optional)</label>
+              <select
+                className={modalInputCls}
+                value={itemStoreId}
+                onChange={(e) => setItemStoreId(e.target.value ? Number(e.target.value) : '')}
+              >
+                <option value="">Select Store (optional)</option>
+                {stores.map((s) => <option key={s.store_id} value={s.store_id}>{s.store_name}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className={modalLabelCls}>Quantity</label>
+              <input
+                type="number"
+                step="0.001"
+                min={0}
+                className={modalInputCls}
+                value={itemForm.quantity ?? 0}
+                onChange={(e) => setItemForm({ ...itemForm, quantity: Number(e.target.value || 0) })}
+                placeholder="0"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 pt-3">
+            <button
+              type="button"
+              onClick={() => setItemModalOpen(false)}
+              className="rounded-xl border border-slate-300 bg-white px-5 py-2 font-semibold text-slate-700 transition-all hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+            >
+              Cancel
+            </button>
+            <button type="submit" className="rounded-xl bg-primary-600 px-7 py-2 text-white font-bold transition-all shadow-lg shadow-primary-500/20 hover:bg-primary-700 active:scale-95">
+              {itemForm.product_id ? 'Update Item' : 'Save Item'}
+            </button>
+          </div>
         </form>
       </Modal>
 

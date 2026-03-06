@@ -137,6 +137,7 @@ export const inventoryService = {
     adjustmentType?: 'INCREASE' | 'DECREASE';
     quantity?: number;
     reason?: string;
+    adjustmentDate?: string;
     status?: 'POSTED' | 'CANCELLED';
     qty?: number;
   }) {

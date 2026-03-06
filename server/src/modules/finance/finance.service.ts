@@ -1270,6 +1270,15 @@ export const financeService = {
       payment.acc_id,
     ]);
 
+    await queryOne(
+      `DELETE FROM ims.account_transactions
+        WHERE branch_id = $1
+          AND txn_type = 'expense_payment'
+          AND ref_table = 'expense_payments'
+          AND ref_id = $2`,
+      [payment.branch_id, payment.exp_payment_id]
+    );
+
     await queryOne(`DELETE FROM ims.expense_payments WHERE exp_payment_id = $1`, [id]);
   },
 
@@ -1301,6 +1310,20 @@ export const financeService = {
       await queryOne(
         `UPDATE ims.accounts SET balance = balance - $3 WHERE branch_id = $1 AND acc_id = $2`,
         [branchId, input.accId, amount]
+      );
+
+      await queryOne(
+        `INSERT INTO ims.account_transactions
+           (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
+         VALUES ($1, $2, 'expense_payment', 'expense_payments', $3, $4, 0, COALESCE($5::timestamptz, NOW()), $6)`,
+        [
+          branchId,
+          input.accId,
+          payment.exp_payment_id,
+          amount,
+          payDate,
+          note ? `[Expense Payment] ${note}` : '[Expense Payment]',
+        ]
       );
 
       await queryOne('COMMIT');
@@ -1641,6 +1664,20 @@ export const financeService = {
         [input.accId, amount]
       );
 
+      await queryOne(
+        `INSERT INTO ims.account_transactions
+           (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
+         VALUES ($1, $2, 'payroll_payment', 'employee_payments', $3, $4, 0, COALESCE($5::timestamptz, NOW()), $6)`,
+        [
+          line.branch_id,
+          input.accId,
+          pay.emp_payment_id,
+          amount,
+          input.payDate || null,
+          input.note ? `[Payroll Payment] ${input.note}` : '[Payroll Payment]',
+        ]
+      );
+
       await queryOne('COMMIT');
       return pay;
     } catch (e) {
@@ -1661,6 +1698,29 @@ export const financeService = {
 
       await queryOne('BEGIN');
       try {
+        const payments = await queryMany<{ emp_payment_id: number; acc_id: number; amount_paid: number }>(
+          `SELECT emp_payment_id, acc_id, amount_paid
+             FROM ims.employee_payments
+            WHERE payroll_line_id = $1`,
+          [line.payroll_line_id]
+        );
+
+        for (const payment of payments) {
+          await queryOne(`UPDATE ims.accounts SET balance = balance + $1 WHERE branch_id = $2 AND acc_id = $3`, [
+            payment.amount_paid,
+            line.branch_id,
+            payment.acc_id,
+          ]);
+          await queryOne(
+            `DELETE FROM ims.account_transactions
+              WHERE branch_id = $1
+                AND txn_type = 'payroll_payment'
+                AND ref_table = 'employee_payments'
+                AND ref_id = $2`,
+            [line.branch_id, payment.emp_payment_id]
+          );
+        }
+
         await queryOne(`DELETE FROM ims.employee_payments WHERE payroll_line_id = $1`, [line.payroll_line_id]);
         await queryOne(`DELETE FROM ims.payroll_lines WHERE payroll_line_id = $1`, [line.payroll_line_id]);
 
@@ -1702,6 +1762,31 @@ export const financeService = {
       if (runIds.length === 0) {
         await queryOne('ROLLBACK');
         throw ApiError.notFound('No payroll runs for this period');
+      }
+
+      const payments = await queryMany<{ emp_payment_id: number; branch_id: number; acc_id: number; amount_paid: number }>(
+        `SELECT ep.emp_payment_id, ep.branch_id, ep.acc_id, ep.amount_paid
+           FROM ims.employee_payments ep
+          WHERE ep.payroll_line_id IN (
+            SELECT payroll_line_id FROM ims.payroll_lines WHERE payroll_id = ANY($1::bigint[])
+          )`,
+        [runIds]
+      );
+
+      for (const payment of payments) {
+        await queryOne(`UPDATE ims.accounts SET balance = balance + $1 WHERE branch_id = $2 AND acc_id = $3`, [
+          payment.amount_paid,
+          payment.branch_id,
+          payment.acc_id,
+        ]);
+        await queryOne(
+          `DELETE FROM ims.account_transactions
+            WHERE branch_id = $1
+              AND txn_type = 'payroll_payment'
+              AND ref_table = 'employee_payments'
+              AND ref_id = $2`,
+          [payment.branch_id, payment.emp_payment_id]
+        );
       }
 
       await queryOne(

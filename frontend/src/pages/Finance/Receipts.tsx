@@ -104,30 +104,46 @@ const Receipts = () => {
     const [supplierBalanceLoading, setSupplierBalanceLoading] = useState(false);
 
     // ─── Data Loading ──────────────────────────────────────────────────────────
-    const loadAll = async () => {
+    const loadCustomerData = async () => {
         setLoading(true);
         try {
-            const [accRes, custRes, supRes, crRes, srRes, unpaidC, unpaidS, outPurch] = await Promise.all([
+            const [accRes, custRes, crRes, unpaidC] = await Promise.all([
                 accountService.list(),
                 customerService.list(),
-                supplierService.list(),
                 financeService.listCustomerReceipts(),
-                financeService.listSupplierReceipts(),
                 financeService.listCustomerUnpaid(),
+            ]);
+            if (accRes.success && accRes.data?.accounts) setAccounts(accRes.data.accounts);
+            if (custRes.success && custRes.data?.customers) setCustomers(custRes.data.customers);
+            if (crRes.success && crRes.data?.receipts) setCustomerReceipts(crRes.data.receipts);
+            if (unpaidC.success && unpaidC.data?.unpaid) setUnpaidCustomers(unpaidC.data.unpaid);
+
+            if (firstLoadRef.current) {
+                if (unpaidC.success && (unpaidC.data?.unpaid?.length ?? 0) > 0) setShowCustOutstanding(true);
+                firstLoadRef.current = false;
+            }
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const loadSupplierData = async () => {
+        setLoading(true);
+        try {
+            const [accRes, supRes, srRes, unpaidS, outPurch] = await Promise.all([
+                accountService.list(),
+                supplierService.list(),
+                financeService.listSupplierReceipts(),
                 financeService.listSupplierUnpaid(),
                 financeService.listSupplierOutstandingPurchases(),
             ]);
             if (accRes.success && accRes.data?.accounts) setAccounts(accRes.data.accounts);
-            if (custRes.success && custRes.data?.customers) setCustomers(custRes.data.customers);
             if (supRes.success && supRes.data?.suppliers) setSuppliers(supRes.data.suppliers);
-            if (crRes.success && crRes.data?.receipts) setCustomerReceipts(crRes.data.receipts);
             if (srRes.success && srRes.data?.receipts) setSupplierReceipts(srRes.data.receipts);
-            if (unpaidC.success && unpaidC.data?.unpaid) setUnpaidCustomers(unpaidC.data.unpaid);
             if (unpaidS.success && unpaidS.data?.unpaid) setUnpaidSuppliers(unpaidS.data.unpaid);
             if (outPurch.success && outPurch.data?.purchases) setOutstandingPurchases(outPurch.data.purchases);
 
             if (firstLoadRef.current) {
-                if (unpaidC.success && (unpaidC.data?.unpaid?.length ?? 0) > 0) setShowCustOutstanding(true);
                 if (unpaidS.success && (unpaidS.data?.unpaid?.length ?? 0) > 0) setShowSupOutstanding(true);
                 firstLoadRef.current = false;
             }
@@ -137,14 +153,18 @@ const Receipts = () => {
     };
 
     const displayReceiptsData = async () => {
-        await loadAll();
+        if (activeTab === 'supplier-receipts') {
+            await loadSupplierData();
+            return;
+        }
+        await loadCustomerData();
     };
 
     // ─── Computed Summaries ────────────────────────────────────────────────────
     const custTotalReceived = customerReceipts.reduce((s, r) => s + Number(r.amount ?? 0), 0);
     const custTotalOwed = unpaidCustomers.reduce((s, u) => s + Number(u.balance ?? 0), 0);
     const supTotalPaid = supplierReceipts.reduce((s, r) => s + Number(r.amount ?? 0), 0);
-    const supTotalOwed = outstandingPurchases.reduce((s, p) => s + Number(p.outstanding ?? 0), 0);
+    const supTotalOwed = unpaidSuppliers.reduce((s, u) => s + Number(u.balance ?? 0), 0);
 
     // ─── Columns ───────────────────────────────────────────────────────────────
     const custReceiptColumns: ColumnDef<Receipt>[] = useMemo(() => [

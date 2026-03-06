@@ -78,7 +78,7 @@ END IF;
 
 IF NOT EXISTS (SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace WHERE t.typname='account_txn_type_enum' AND n.nspname='ims') THEN
 CREATE TYPE ims.account_txn_type_enum AS ENUM
-('sale_payment','supplier_payment','expense_payment','payroll_payment','loan_payment','account_transfer','opening','return_refund','other','capital_contribution');
+('sale_payment','supplier_payment','expense_payment','payroll_payment','loan_payment','account_transfer','opening','return_refund','other','capital_contribution','owner_drawing');
 END IF;
 
 IF NOT EXISTS (SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace WHERE t.typname='shift_status_enum' AND n.nspname='ims') THEN
@@ -117,8 +117,12 @@ role_id     BIGSERIAL PRIMARY KEY,
 role_code   VARCHAR(40) NOT NULL UNIQUE,
 role_name   VARCHAR(60) NOT NULL,
 description TEXT,
+monthly_salary NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (monthly_salary >= 0),
 is_system   BOOLEAN NOT NULL DEFAULT FALSE
 );
+ALTER TABLE ims.roles ADD COLUMN IF NOT EXISTS monthly_salary NUMERIC(14,2) NOT NULL DEFAULT 0;
+ALTER TABLE ims.roles DROP CONSTRAINT IF EXISTS chk_roles_monthly_salary;
+ALTER TABLE ims.roles ADD CONSTRAINT chk_roles_monthly_salary CHECK (monthly_salary >= 0);
 
 CREATE TABLE IF NOT EXISTS ims.permissions (
     perm_id     SERIAL PRIMARY KEY,
@@ -301,6 +305,74 @@ is_active   BOOLEAN NOT NULL DEFAULT TRUE,
 created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 CONSTRAINT uq_account_branch_name UNIQUE (branch_id, name)
 );
+-- Enforce account-name uniqueness per company/store scope (branch here) in a case-insensitive way.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_account_branch_name_ci
+  ON ims.accounts (branch_id, LOWER(TRIM(name)));
+
+CREATE TABLE IF NOT EXISTS ims.fixed_assets (
+asset_id      BIGSERIAL PRIMARY KEY,
+branch_id     BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+asset_name    VARCHAR(150) NOT NULL,
+purchase_date DATE NOT NULL,
+cost          NUMERIC(14,2) NOT NULL CHECK (cost >= 0),
+status        VARCHAR(30) NOT NULL DEFAULT 'active',
+created_by    BIGINT REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE SET NULL,
+created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_fixed_assets_branch_created
+  ON ims.fixed_assets(branch_id, created_at DESC);
+
+ALTER TABLE ims.fixed_assets ADD COLUMN IF NOT EXISTS category VARCHAR(100) NOT NULL DEFAULT 'Fixed Asset';
+
+CREATE OR REPLACE FUNCTION ims.fn_prepare_asset_accounts(p_branch_id BIGINT)
+RETURNS INTEGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_created INTEGER := 0;
+BEGIN
+  WITH required(name) AS (
+    VALUES
+      ('Cash @ Salaam Bank'),
+      ('Cash @ Merchant'),
+      ('Cash @ EVC-Plus'),
+      ('Cash @ Premier Bank'),
+      ('Cash @ Dahabshiil Bank')
+  ),
+  inserted AS (
+    INSERT INTO ims.accounts(branch_id, name, institution, balance, account_type, is_active)
+    SELECT p_branch_id, r.name, '', 0, 'asset', TRUE
+      FROM required r
+     WHERE NOT EXISTS (
+       SELECT 1
+         FROM ims.accounts a
+        WHERE a.branch_id = p_branch_id
+          AND LOWER(a.name) = LOWER(r.name)
+     )
+    RETURNING 1
+  )
+  SELECT COUNT(*) INTO v_created FROM inserted;
+
+  UPDATE ims.accounts
+     SET is_active = FALSE
+   WHERE branch_id = p_branch_id
+     AND (
+       account_type = 'equity'
+       OR LOWER(name) LIKE 'accounts payable%'
+       OR LOWER(name) LIKE 'accounts receivable%'
+       OR LOWER(name) LIKE 'fixed asset%'
+       OR LOWER(name) LIKE '%capital%'
+       OR LOWER(name) LIKE 'office furniture%'
+       OR LOWER(name) LIKE 'computer%'
+       OR LOWER(name) LIKE 'equipment%'
+       OR LOWER(name) LIKE 'vehicle%'
+       OR LOWER(name) LIKE 'mukeef%'
+     );
+
+  RETURN v_created;
+END $$;
 
 CREATE TABLE IF NOT EXISTS ims.items (
 item_id         BIGSERIAL PRIMARY KEY,
@@ -309,6 +381,7 @@ store_id        BIGINT, -- FK added later after stores table is defined
 name            VARCHAR(160) NOT NULL,
 barcode         VARCHAR(80) NULL,
 stock_alert NUMERIC(14,3) NOT NULL DEFAULT 5 CHECK (stock_alert >= 0),
+quantity        NUMERIC(14,3) NOT NULL DEFAULT 0,
 opening_balance NUMERIC(14,3) NOT NULL DEFAULT 0 CHECK (opening_balance >= 0),
 cost_price      NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (cost_price >= 0),
 sell_price      NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (sell_price >= 0),
@@ -326,6 +399,7 @@ BEGIN
        AND table_name = 'items'
   ) THEN
     ALTER TABLE ims.items
+      ADD COLUMN IF NOT EXISTS quantity NUMERIC(14,3) NOT NULL DEFAULT 0,
       ADD COLUMN IF NOT EXISTS stock_alert NUMERIC(14,3) NOT NULL DEFAULT 5;
     IF NOT EXISTS (
       SELECT 1 FROM pg_constraint c
@@ -338,6 +412,12 @@ BEGIN
     END IF;
   END IF;
 END $$;
+
+-- Backfill quantity from opening balance for old databases where quantity was missing.
+UPDATE ims.items
+   SET quantity = COALESCE(NULLIF(quantity, 0), opening_balance, 0)
+ WHERE COALESCE(quantity, 0) = 0
+   AND COALESCE(opening_balance, 0) > 0;
 
 CREATE TABLE IF NOT EXISTS ims.item_suppliers (
 branch_id    BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
@@ -779,6 +859,7 @@ capital_id         BIGSERIAL PRIMARY KEY,
 branch_id          BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 owner_name         VARCHAR(150) NOT NULL,
 amount             NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+share_pct          NUMERIC(7,4) NOT NULL DEFAULT 0 CHECK (share_pct >= 0 AND share_pct <= 100),
 contribution_date  DATE NOT NULL,
 acc_id             BIGINT NOT NULL REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 equity_acc_id      BIGINT NOT NULL REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE RESTRICT,
@@ -787,6 +868,93 @@ note               TEXT,
 created_by         BIGINT REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE SET NULL,
 created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_capital_contributions_branch_date ON ims.capital_contributions(branch_id, contribution_date DESC, capital_id DESC);
+CREATE INDEX IF NOT EXISTS idx_capital_contributions_branch_owner ON ims.capital_contributions(branch_id, owner_name);
+
+CREATE TABLE IF NOT EXISTS ims.owner_drawings (
+draw_id            BIGSERIAL PRIMARY KEY,
+branch_id          BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+owner_name         VARCHAR(150) NOT NULL,
+amount             NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+draw_date          DATE NOT NULL,
+acc_id             BIGINT NOT NULL REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+equity_acc_id      BIGINT NOT NULL REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+journal_id         BIGINT REFERENCES ims.journal_entries(journal_id) ON UPDATE CASCADE ON DELETE SET NULL,
+note               TEXT,
+created_by         BIGINT REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE SET NULL,
+created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_owner_drawings_branch_date ON ims.owner_drawings(branch_id, draw_date DESC, draw_id DESC);
+CREATE INDEX IF NOT EXISTS idx_owner_drawings_branch_owner ON ims.owner_drawings(branch_id, owner_name);
+
+CREATE TABLE IF NOT EXISTS ims.finance_closing_periods (
+closing_id        BIGSERIAL PRIMARY KEY,
+branch_id         BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+close_mode        VARCHAR(20) NOT NULL CHECK (close_mode IN ('monthly','quarterly','yearly','custom')),
+period_from       DATE NOT NULL,
+period_to         DATE NOT NULL,
+operational_from  DATE,
+operational_to    DATE,
+status            VARCHAR(20) NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','closed','reopened')),
+is_locked         BOOLEAN NOT NULL DEFAULT FALSE,
+scheduled_at      TIMESTAMPTZ,
+note              TEXT,
+summary_json      JSONB NOT NULL DEFAULT '{}'::jsonb,
+profit_json       JSONB NOT NULL DEFAULT '{}'::jsonb,
+journal_id        BIGINT REFERENCES ims.journal_entries(journal_id) ON UPDATE CASCADE ON DELETE SET NULL,
+created_by        BIGINT REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE SET NULL,
+closed_by         BIGINT REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE SET NULL,
+reopened_by       BIGINT REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE SET NULL,
+closed_at         TIMESTAMPTZ,
+reopened_at       TIMESTAMPTZ,
+created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+CONSTRAINT chk_finance_closing_dates CHECK (period_from <= period_to),
+CONSTRAINT uq_finance_closing_period UNIQUE (branch_id, period_from, period_to)
+);
+
+CREATE TABLE IF NOT EXISTS ims.finance_profit_share_rules (
+rule_id               BIGSERIAL PRIMARY KEY,
+branch_id             BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+rule_name             VARCHAR(120) NOT NULL,
+source_acc_id         BIGINT REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE SET NULL,
+retained_pct          NUMERIC(7,4) NOT NULL DEFAULT 0 CHECK (retained_pct >= 0 AND retained_pct <= 100),
+retained_acc_id       BIGINT REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE SET NULL,
+reinvestment_pct      NUMERIC(7,4) NOT NULL DEFAULT 0 CHECK (reinvestment_pct >= 0 AND reinvestment_pct <= 100),
+reinvestment_acc_id   BIGINT REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE SET NULL,
+reserve_pct           NUMERIC(7,4) NOT NULL DEFAULT 0 CHECK (reserve_pct >= 0 AND reserve_pct <= 100),
+reserve_acc_id        BIGINT REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE SET NULL,
+is_default            BOOLEAN NOT NULL DEFAULT FALSE,
+is_active             BOOLEAN NOT NULL DEFAULT TRUE,
+created_by            BIGINT REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE SET NULL,
+created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS ims.finance_profit_share_partners (
+partner_id         BIGSERIAL PRIMARY KEY,
+rule_id            BIGINT NOT NULL REFERENCES ims.finance_profit_share_rules(rule_id) ON UPDATE CASCADE ON DELETE CASCADE,
+branch_id          BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+partner_name       VARCHAR(120) NOT NULL,
+share_pct          NUMERIC(7,4) NOT NULL DEFAULT 0 CHECK (share_pct >= 0 AND share_pct <= 100),
+acc_id             BIGINT REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE SET NULL,
+is_active          BOOLEAN NOT NULL DEFAULT TRUE,
+created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS ims.finance_profit_allocations (
+alloc_id           BIGSERIAL PRIMARY KEY,
+closing_id         BIGINT NOT NULL REFERENCES ims.finance_closing_periods(closing_id) ON UPDATE CASCADE ON DELETE CASCADE,
+branch_id          BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+allocation_type    VARCHAR(20) NOT NULL CHECK (allocation_type IN ('partner','retained','reinvestment','reserve')),
+partner_name       VARCHAR(120),
+share_pct          NUMERIC(7,4) NOT NULL DEFAULT 0 CHECK (share_pct >= 0 AND share_pct <= 100),
+amount             NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (amount >= 0),
+acc_id             BIGINT REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE SET NULL,
+created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Receipts (Finance)
@@ -2713,6 +2881,17 @@ other_income_to_date AS (
     AND at.txn_date::date <= p_as_of
     AND at.txn_type = 'other'
 ),
+drawing_to_date AS (
+  SELECT COALESCE(SUM(GREATEST(at.debit - at.credit, 0)), 0)::NUMERIC AS v
+  FROM ims.account_transactions at
+  JOIN ims.accounts a
+    ON a.acc_id = at.acc_id
+   AND a.branch_id = at.branch_id
+  WHERE at.branch_id = p_branch_id
+    AND at.txn_date::date <= p_as_of
+    AND a.account_type = 'equity'
+    AND LOWER(a.name) LIKE '%drawing%'
+),
 supplier_refunds_to_date AS (
   SELECT COALESCE(SUM(sr.amount), 0)::NUMERIC AS v
   FROM ims.supplier_receipts sr
@@ -2759,8 +2938,8 @@ opening_equity AS (
   FROM assets_total, liabilities_total, net_profit_to_date
 ),
 total_equity AS (
-  SELECT (opening_equity.v + net_profit_to_date.v)::NUMERIC AS v
-  FROM opening_equity, net_profit_to_date
+  SELECT (opening_equity.v - drawing_to_date.v + net_profit_to_date.v)::NUMERIC AS v
+  FROM opening_equity, drawing_to_date, net_profit_to_date
 ),
 liabilities_equity_total AS (
   SELECT (liabilities_total.v + total_equity.v)::NUMERIC AS v
@@ -2787,9 +2966,11 @@ rows AS (
   UNION ALL
   SELECT 100, 'Liabilities', 'Total Liabilities', liabilities_total.v, 'total' FROM liabilities_total
   UNION ALL
-  SELECT 110, 'Equity', 'Opening / Owner Equity', opening_equity.v, 'detail' FROM opening_equity
+  SELECT 110, 'Equity', 'Capital', opening_equity.v, 'detail' FROM opening_equity
   UNION ALL
-  SELECT 120, 'Equity', CASE WHEN net_profit_to_date.v >= 0 THEN 'Net Profit' ELSE 'Net Loss' END, net_profit_to_date.v, 'detail' FROM net_profit_to_date
+  SELECT 120, 'Equity', 'Drawing', (drawing_to_date.v * -1), 'detail' FROM drawing_to_date
+  UNION ALL
+  SELECT 125, 'Equity', CASE WHEN net_profit_to_date.v >= 0 THEN 'Retained Earnings' ELSE 'Accumulated Loss' END, net_profit_to_date.v, 'detail' FROM net_profit_to_date
   UNION ALL
   SELECT 130, 'Equity', 'Total Equity', total_equity.v, 'total' FROM total_equity
   UNION ALL
@@ -2797,6 +2978,7 @@ rows AS (
 )
 SELECT section, line_item, ROUND(amount, 2) AS amount, row_type
 FROM rows
+WHERE row_type = 'total' OR ROUND(COALESCE(amount, 0), 2) <> 0
 ORDER BY sort_no;
 $$;
 

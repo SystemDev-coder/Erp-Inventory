@@ -33,9 +33,11 @@ export const formatDateTime = (value: unknown) => {
   return parsed.toLocaleString();
 };
 
-export const formatDateOnly = (value: string) => {
-  const parsed = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(parsed.getTime())) return value;
+export const formatDateOnly = (value: unknown) => {
+  if (value === null || value === undefined || value === '') return '-';
+  const raw = String(value);
+  const parsed = new Date(`${raw}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return raw;
   return parsed.toLocaleDateString();
 };
 

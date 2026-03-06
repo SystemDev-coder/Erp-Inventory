@@ -17,6 +17,7 @@ export interface UserRow {
 export interface RoleRow {
   role_id: number;
   role_name: string;
+  monthly_salary?: number;
 }
 
 export const userService = {

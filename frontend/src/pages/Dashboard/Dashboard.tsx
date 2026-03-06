@@ -128,7 +128,7 @@ const statusTone = (status: string) => {
   if (normalized.includes('unpaid') || normalized.includes('pending') || normalized.includes('partial')) {
     return 'border-[#f0d6be] bg-[#fff6eb] text-[#b8681f] dark:border-[#7c5b33] dark:bg-[#3d2d18] dark:text-[#ffc98d]';
   }
-  return 'border-[#b9d4e6] bg-[#edf5fb] text-[#0f4f76] dark:border-[#2c6183] dark:bg-[#123b56] dark:text-[#9bcde8]';
+  return 'border-[#b9d4e6] bg-[#f4f7fd] text-[#163a72] dark:border-[#2c6183] dark:bg-[#123b56] dark:text-[#9bcde8]';
 };
 
 const Dashboard = () => {
@@ -297,14 +297,14 @@ const Dashboard = () => {
 
   return (
     <div className="space-y-7">
-      <section className="relative overflow-hidden rounded-3xl border border-[#b7cde0] bg-gradient-to-r from-[#f8fbff] via-[#eef5fb] to-[#e5eff8] p-6 shadow-sm dark:border-[#1f4a67] dark:bg-gradient-to-r dark:from-[#113751] dark:via-[#0f334b] dark:to-[#0b2739]">
-        <div className="pointer-events-none absolute -right-20 top-[-60px] h-64 w-64 rounded-full bg-[#0f4f76]/10 blur-3xl dark:bg-[#7cc0e4]/20" />
+      <section className="relative overflow-hidden rounded-3xl border border-[#9bb3d5] bg-gradient-to-r from-[#f8fbff] via-[#eef5fb] to-[#e5eff8] p-6 shadow-sm dark:border-[#1f4a67] dark:bg-gradient-to-r dark:from-[#113751] dark:via-[#0b2448] dark:to-[#081b39]">
+        <div className="pointer-events-none absolute -right-20 top-[-60px] h-64 w-64 rounded-full bg-[#163a72]/10 blur-3xl dark:bg-[#7cc0e4]/20" />
         <div className="pointer-events-none absolute -left-20 -bottom-28 h-64 w-64 rounded-full bg-[#7cc0e4]/10 blur-3xl dark:bg-[#c5ecff]/16" />
 
         <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className="text-[11px] uppercase tracking-[0.32em] text-[#4f6f87] dark:text-[#b7d1e4]">Inventory ERP</p>
-            <h1 className="mt-2 text-4xl font-semibold tracking-tight text-[#123f5c] dark:text-white">Dashboard</h1>
+            <h1 className="mt-2 text-4xl font-semibold tracking-tight text-[#0a1f44] dark:text-white">Dashboard</h1>
             <p className="mt-1 text-sm text-[#38576f] dark:text-[#d3e8f7]">
               {hasLoaded
                 ? `Live metrics loaded | ${lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : ''}`
@@ -316,7 +316,7 @@ const Dashboard = () => {
             <button
               onClick={() => void loadDashboard()}
               disabled={loading}
-              className="inline-flex items-center gap-2 rounded-xl border border-[#9fc3da] bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#0b4061] disabled:opacity-65 dark:border-[#2d6386] dark:bg-[#e8f3fb] dark:text-[#0f4f76] dark:hover:bg-white"
+              className="inline-flex items-center gap-2 rounded-xl border border-[#9fc3da] bg-[#163a72] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#0f2f62] disabled:opacity-65 dark:border-[#2d6386] dark:bg-[#e8f3fb] dark:text-[#163a72] dark:hover:bg-white"
             >
               <RefreshCcw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
               {!hasLoaded ? 'Display Dashboard' : loading ? 'Refreshing...' : 'Refresh'}
@@ -332,11 +332,11 @@ const Dashboard = () => {
       )}
 
       {!hasLoaded && !loading && (
-        <section className="rounded-3xl border border-dashed border-[#9fc3da] bg-white/95 p-12 text-center shadow-sm dark:border-[#2f6385] dark:bg-[#0f334b]/80">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#edf5fb] text-[#0f4f76] dark:bg-[#154261] dark:text-[#9fd0ec]">
+        <section className="rounded-3xl border border-dashed border-[#9fc3da] bg-white/95 p-12 text-center shadow-sm dark:border-[#2f6385] dark:bg-[#0b2448]/80">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#f4f7fd] text-[#163a72] dark:bg-[#154261] dark:text-[#9fd0ec]">
             <BarChart3 className="h-7 w-7" />
           </div>
-          <h2 className="mt-4 text-2xl font-semibold text-[#123f5c] dark:text-[#f2f9ff]">Dashboard ready</h2>
+          <h2 className="mt-4 text-2xl font-semibold text-[#0a1f44] dark:text-[#f2f9ff]">Dashboard ready</h2>
           <p className="mx-auto mt-2 max-w-xl text-sm text-[#4f6f87] dark:text-[#b2cee0]">
             Press <span className="font-semibold">Display Dashboard</span> to render live metrics and chart trends.
           </p>
@@ -348,7 +348,7 @@ const Dashboard = () => {
           {Array.from({ length: 8 }).map((_, index) => (
             <div
               key={`dash-skeleton-${index}`}
-              className="h-28 animate-pulse rounded-2xl border border-[#c6d9e8] bg-gradient-to-br from-[#f7fbff] to-[#edf5fb] dark:border-[#2b5b7a] dark:bg-gradient-to-br dark:from-[#123a55] dark:to-[#0d2f45]"
+              className="h-28 animate-pulse rounded-2xl border border-[#c6d9e8] bg-gradient-to-br from-[#f7fbff] to-[#f4f7fd] dark:border-[#2b5b7a] dark:bg-gradient-to-br dark:from-[#123a55] dark:to-[#0a2142]"
             />
           ))}
         </section>
@@ -363,7 +363,7 @@ const Dashboard = () => {
               return (
                 <article
                   key={card.id}
-                  className="group relative overflow-hidden rounded-2xl border border-[#b7cde0] bg-gradient-to-br from-white via-[#f7fbff] to-[#edf5fb] p-4 shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-md dark:border-[#1f4a67] dark:bg-gradient-to-br dark:from-[#123a55] dark:via-[#0f334b] dark:to-[#0d2f45]"
+                  className="group relative overflow-hidden rounded-2xl border border-[#9bb3d5] bg-gradient-to-br from-white via-[#f7fbff] to-[#f4f7fd] p-4 shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-md dark:border-[#1f4a67] dark:bg-gradient-to-br dark:from-[#123a55] dark:via-[#0b2448] dark:to-[#0a2142]"
                 >
                   <div className={`absolute left-0 top-0 h-1.5 w-full bg-gradient-to-r ${tone.stripe}`} />
                   <div className="flex items-start justify-between gap-3">
@@ -371,7 +371,7 @@ const Dashboard = () => {
                       <p className="truncate text-[11px] font-semibold uppercase tracking-[0.17em] text-[#4f6f87] dark:text-[#9fc0d7]">
                         {card.title}
                       </p>
-                      <p className="mt-2 truncate text-[1.7rem] font-semibold leading-tight text-[#123f5c] dark:text-[#f2f9ff]">
+                      <p className="mt-2 truncate text-[1.7rem] font-semibold leading-tight text-[#0a1f44] dark:text-[#f2f9ff]">
                         {formatValue(card.value, card.format)}
                       </p>
                       <p className="mt-1 text-xs text-[#5d7c93] dark:text-[#b5cee0]">{card.subtitle}</p>
@@ -387,10 +387,10 @@ const Dashboard = () => {
 
           <section className="space-y-5">
             {incomeTrendChart && chartOptions[incomeTrendChart.id] && chartHasData(incomeTrendChart) && (
-              <article className="rounded-2xl border border-[#b7cde0] bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-[#1f4a67] dark:bg-[#0f334b]/88">
+              <article className="rounded-2xl border border-[#9bb3d5] bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-[#1f4a67] dark:bg-[#0b2448]/88">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
-                    <h3 className="text-base font-semibold text-[#123f5c] dark:text-[#e9f5ff]">
+                    <h3 className="text-base font-semibold text-[#0a1f44] dark:text-[#e9f5ff]">
                       {incomeTrendChart.name}
                     </h3>
                     <p className="text-xs text-[#335973] dark:text-[#c4def0]">
@@ -434,10 +434,10 @@ const Dashboard = () => {
                 <>
                   {salesBottomChart && chartOptions[salesBottomChart.id] && chartHasData(salesBottomChart) && (
                     <section className="grid grid-cols-1 gap-5 xl:grid-cols-3">
-                      <article className="xl:col-span-2 rounded-2xl border border-[#b7cde0] bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-[#1f4a67] dark:bg-[#0f334b]/88">
+                      <article className="xl:col-span-2 rounded-2xl border border-[#9bb3d5] bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-[#1f4a67] dark:bg-[#0b2448]/88">
                         <div className="flex flex-wrap items-start justify-between gap-2">
                           <div>
-                            <h3 className="text-base font-semibold text-[#123f5c] dark:text-[#e9f5ff]">
+                            <h3 className="text-base font-semibold text-[#0a1f44] dark:text-[#e9f5ff]">
                               {salesBottomChart.name}
                             </h3>
                             <p className="text-xs text-[#335973] dark:text-[#c4def0]">
@@ -455,17 +455,17 @@ const Dashboard = () => {
                         </div>
                       </article>
 
-                      <article className="rounded-2xl border border-[#b7cde0] bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-[#1f4a67] dark:bg-[#0f334b]/88">
+                      <article className="rounded-2xl border border-[#9bb3d5] bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-[#1f4a67] dark:bg-[#0b2448]/88">
                         <div className="flex items-start justify-between gap-2">
                           <div>
-                            <h3 className="text-base font-semibold text-[#123f5c] dark:text-[#e9f5ff]">
+                            <h3 className="text-base font-semibold text-[#0a1f44] dark:text-[#e9f5ff]">
                               Low Stock Alert Items
                             </h3>
                             <p className="text-xs text-[#335973] dark:text-[#c4def0]">
                               Items at or below reorder level
                             </p>
                           </div>
-                          <span className="rounded-full border border-[#c7dced] bg-[#edf5fb] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#0f4f76] dark:border-[#2f6385] dark:bg-[#123b56] dark:text-[#9bcde8]">
+                          <span className="rounded-full border border-[#c7dced] bg-[#f4f7fd] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#163a72] dark:border-[#2f6385] dark:bg-[#123b56] dark:text-[#9bcde8]">
                             {lowStockItems.length} items
                           </span>
                         </div>
@@ -481,7 +481,7 @@ const Dashboard = () => {
                                 className="flex items-center justify-between rounded-lg border border-[#d8e5ef] px-3 py-2 dark:border-[#23506d]"
                               >
                                 <div className="min-w-0">
-                                  <p className="truncate text-sm font-semibold text-[#123f5c] dark:text-[#ecf7ff]">
+                                  <p className="truncate text-sm font-semibold text-[#0a1f44] dark:text-[#ecf7ff]">
                                     {item.item_name}
                                   </p>
                                   <p className="text-xs text-[#5f7f96] dark:text-[#b0cce0]">
@@ -508,11 +508,11 @@ const Dashboard = () => {
                         return (
                           <article
                             key={chart.id}
-                            className="rounded-2xl border border-[#b7cde0] bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-[#1f4a67] dark:bg-[#0f334b]/88"
+                            className="rounded-2xl border border-[#9bb3d5] bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-[#1f4a67] dark:bg-[#0b2448]/88"
                           >
                             <div className="flex flex-wrap items-start justify-between gap-2">
                               <div>
-                                <h3 className="text-base font-semibold text-[#123f5c] dark:text-[#e9f5ff]">{chart.name}</h3>
+                                <h3 className="text-base font-semibold text-[#0a1f44] dark:text-[#e9f5ff]">{chart.name}</h3>
                                 <p className="text-xs text-[#335973] dark:text-[#c4def0]">{getChartSubtitle(chart.id)}</p>
                               </div>
                             </div>
@@ -534,17 +534,17 @@ const Dashboard = () => {
             })()}
 
             {!hasRenderableCharts && (
-              <article className="rounded-2xl border border-dashed border-[#b7cde0] bg-white/90 p-8 text-center text-[#5d7890] dark:border-[#2f6385] dark:bg-[#0f334b]/78 dark:text-[#b4cfe1]">
+              <article className="rounded-2xl border border-dashed border-[#9bb3d5] bg-white/90 p-8 text-center text-[#5d7890] dark:border-[#2f6385] dark:bg-[#0b2448]/78 dark:text-[#b4cfe1]">
                 No charts available for your current permissions.
               </article>
             )}
           </section>
 
           <section className="grid grid-cols-1 gap-5">
-            <article className="rounded-2xl border border-[#b7cde0] bg-white/95 p-5 shadow-sm dark:border-[#1f4a67] dark:bg-[#0f334b]/88">
+            <article className="rounded-2xl border border-[#9bb3d5] bg-white/95 p-5 shadow-sm dark:border-[#1f4a67] dark:bg-[#0b2448]/88">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <h3 className="text-base font-semibold text-[#123f5c] dark:text-[#e9f5ff]">Recent Activity</h3>
+                  <h3 className="text-base font-semibold text-[#0a1f44] dark:text-[#e9f5ff]">Recent Activity</h3>
                   <p className="text-xs text-[#5f7f96] dark:text-[#b0cce0]">Latest sales and purchase transactions</p>
                 </div>
                 <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#6d8aa0] dark:text-[#9ab9cf]">
@@ -566,10 +566,10 @@ const Dashboard = () => {
                   <tbody>
                     {data.recent.map((row) => (
                       <tr key={row.id} className="border-b border-[#ebf2f8] dark:border-[#1b4662]">
-                        <td className="px-2 py-3 text-sm font-semibold text-[#123f5c] dark:text-[#ecf7ff]">{row.type}</td>
-                        <td className="px-2 py-3 text-sm text-[#57748c] dark:text-[#b5cee0]">{row.ref}</td>
+                        <td className="px-2 py-3 text-sm font-semibold text-[#0a1f44] dark:text-[#ecf7ff]">{row.type}</td>
+                        <td className="px-2 py-3 text-sm text-[#6f86a8] dark:text-[#b5cee0]">{row.ref}</td>
                         <td className="px-2 py-3 text-sm text-[#2c4a62] dark:text-[#d4e6f4]">{formatValue(row.amount, 'currency')}</td>
-                        <td className="px-2 py-3 text-sm text-[#57748c] dark:text-[#b5cee0]">{formatDateTime(row.date)}</td>
+                        <td className="px-2 py-3 text-sm text-[#6f86a8] dark:text-[#b5cee0]">{formatDateTime(row.date)}</td>
                         <td className="px-2 py-3 text-right">
                           <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${statusTone(row.status)}`}>
                             {row.status}

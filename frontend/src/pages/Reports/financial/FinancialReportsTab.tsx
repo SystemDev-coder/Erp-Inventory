@@ -9,7 +9,6 @@ type FinancialCardId =
   | 'income-statement'
   | 'balance-sheet'
   | 'cash-flow'
-  | 'capital-report'
   | 'account-balances'
   | 'expense-summary'
   | 'customer-receipts'
@@ -23,7 +22,6 @@ const financialCards: Array<{ id: FinancialCardId; title: string; hint: string }
   { id: 'income-statement', title: 'Income Statement', hint: 'Between two dates' },
   { id: 'balance-sheet', title: 'Balance Sheet', hint: 'As of selected date' },
   { id: 'cash-flow', title: 'Cash Flow Statement', hint: 'Between two dates' },
-  { id: 'capital-report', title: 'Capital Report', hint: 'Date range + optional owner' },
   { id: 'account-balances', title: 'Account Balances', hint: 'Dropdown + Show / All' },
   { id: 'expense-summary', title: 'Expense Summary', hint: 'Between two dates' },
   { id: 'customer-receipts', title: 'Customer Receipts', hint: 'Date range + Show / All' },
@@ -138,7 +136,6 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
   const [incomeRange, setIncomeRange] = useState<DateRange>(defaultReportRange());
   const [cashFlowRange, setCashFlowRange] = useState<DateRange>(defaultReportRange());
   const [balanceRange, setBalanceRange] = useState<DateRange>(defaultReportRange());
-  const [capitalRange, setCapitalRange] = useState<DateRange>(defaultReportRange());
   const [expenseRange, setExpenseRange] = useState<DateRange>(defaultReportRange());
   const [customerRange, setCustomerRange] = useState<DateRange>(defaultReportRange());
   const [supplierRange, setSupplierRange] = useState<DateRange>(defaultReportRange());
@@ -147,7 +144,6 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
   const [statementRange, setStatementRange] = useState<DateRange>(defaultReportRange());
   const [trialBalanceRange, setTrialBalanceRange] = useState<DateRange>(defaultReportRange());
   const [selectedAccountBalanceId, setSelectedAccountBalanceId] = useState('');
-  const [capitalOwner, setCapitalOwner] = useState('');
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [selectedSupplierId, setSelectedSupplierId] = useState('');
   const [selectedAccountStatementId, setSelectedAccountStatementId] = useState('');
@@ -157,7 +153,6 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
   const [accounts, setAccounts] = useState<Array<{ id: number; label: string }>>([]);
   const [customers, setCustomers] = useState<Array<{ id: number; label: string }>>([]);
   const [suppliers, setSuppliers] = useState<Array<{ id: number; label: string }>>([]);
-  const [capitalOwners, setCapitalOwners] = useState<string[]>([]);
 
   useEffect(() => {
     let alive = true;
@@ -184,26 +179,6 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
         if (alive) setOptionsLoading(false);
       });
 
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    let alive = true;
-    financialReportsService
-      .getCapitalReport()
-      .then((response) => {
-        if (!alive || !response.success || !response.data?.report) return;
-        const owners = (response.data.report.by_owner || [])
-          .map((row) => row.owner_name)
-          .filter((name) => !!name?.trim());
-        const uniqueOwners = Array.from(new Set(owners)).sort((a, b) => a.localeCompare(b));
-        setCapitalOwners(uniqueOwners);
-      })
-      .catch(() => {
-        if (alive) setCapitalOwners([]);
-      });
     return () => {
       alive = false;
     };
@@ -299,53 +274,6 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
           values: {
             amount: formatCurrency(totalAmount),
           },
-        },
-      });
-    });
-
-  const handleCapitalReport = () =>
-    runCardAction('capital-report', async () => {
-      ensureRangeValid(capitalRange, 'Capital Report');
-      const response = await financialReportsService.getCapitalReport({
-        owner: capitalOwner || undefined,
-        fromDate: capitalRange.fromDate,
-        toDate: capitalRange.toDate,
-      });
-      if (!response.success || !response.data?.report) throw new Error(response.error || response.message || 'Failed to load capital report');
-
-      const report = response.data.report;
-      const rows = toRecordRows([
-        { section: 'Summary', line_item: 'Total Capital Contributions', amount: Number(report.total_capital || 0), row_type: 'total' },
-        ...report.by_owner.map((row) => ({
-          section: 'By Owner',
-          line_item: row.owner_name,
-          amount: Number(row.total_amount || 0),
-          row_type: 'detail' as const,
-        })),
-        ...report.by_account.map((row) => ({
-          section: 'By Account',
-          line_item: row.account_name,
-          amount: Number(row.total_amount || 0),
-          row_type: 'detail' as const,
-        })),
-      ]);
-
-      onOpenModal({
-        title: 'Capital Report',
-        subtitle: `${formatDateOnly(capitalRange.fromDate)} - ${formatDateOnly(capitalRange.toDate)}`,
-        fileName: 'capital-report',
-        data: rows,
-        columns: statementColumns,
-        totals: [
-          {
-            label: 'Total Capital Contributions',
-            value: formatCurrency(Number(report.total_capital || 0)),
-          },
-        ],
-        filters: {
-          'From Date': capitalRange.fromDate,
-          'To Date': capitalRange.toDate,
-          Owner: capitalOwner || 'All Owners',
         },
       });
     });
@@ -705,36 +633,6 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
               All
             </button>
           </div>
-        </div>
-      );
-    }
-
-    if (cardId === 'capital-report') {
-      return (
-        <div className="space-y-3">
-          {renderDateRange(capitalRange, setCapitalRange)}
-          <label className="space-y-1 text-xs font-semibold text-[#47657f]">
-            <span>Owner (optional)</span>
-            <select
-              value={capitalOwner}
-              onChange={(event) => setCapitalOwner(event.target.value)}
-              className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none"
-            >
-              <option value="">All owners</option>
-              {capitalOwners.map((owner) => (
-                <option key={owner} value={owner}>
-                  {owner}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            onClick={handleCapitalReport}
-            disabled={loadingCardId === cardId}
-            className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            Show
-          </button>
         </div>
       );
     }

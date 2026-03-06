@@ -46,6 +46,7 @@ export interface RoleRow {
   role_code: string;
   role_name: string;
   description: string | null;
+  monthly_salary: number;
   is_system: boolean;
   permission_count: number;
 }
@@ -98,6 +99,21 @@ const normalizeRoleCode = (value: string): string =>
     .replace(/[^A-Z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')
     .slice(0, 40);
+
+let rolesMonthlySalaryReady = false;
+const ensureRolesMonthlySalaryColumn = async (): Promise<void> => {
+  if (rolesMonthlySalaryReady) return;
+  await queryMany(`
+    ALTER TABLE ims.roles
+      ADD COLUMN IF NOT EXISTS monthly_salary NUMERIC(14,2) NOT NULL DEFAULT 0
+  `);
+  await queryMany(`
+    UPDATE ims.roles
+       SET monthly_salary = 0
+     WHERE monthly_salary IS NULL
+  `);
+  rolesMonthlySalaryReady = true;
+};
 
 const detectAuditLogColumns = async (): Promise<AuditLogColumns> => {
   if (auditLogColumnsCache) return auditLogColumnsCache;
@@ -246,30 +262,33 @@ export const systemService = {
   },
 
   async listRoles(): Promise<RoleRow[]> {
+    await ensureRolesMonthlySalaryColumn();
     return queryMany<RoleRow>(
       `SELECT
           r.role_id,
           r.role_code,
           r.role_name,
           r.description,
+          COALESCE(r.monthly_salary, 0)::float8 AS monthly_salary,
           r.is_system,
           COUNT(rp.perm_id)::int AS permission_count
        FROM ims.roles r
        LEFT JOIN ims.role_permissions rp ON rp.role_id = r.role_id
-       GROUP BY r.role_id
+       GROUP BY r.role_id, r.role_code, r.role_name, r.description, r.monthly_salary, r.is_system
        ORDER BY r.role_name`
     );
   },
 
   async createRole(input: CreateRoleInput): Promise<RoleRow> {
+    await ensureRolesMonthlySalaryColumn();
     const preparedCode = normalizeRoleCode(input.roleCode || input.roleName);
     const roleCode = await ensureUniqueRoleCode(preparedCode);
 
     const created = await queryOne<RoleRow>(
-      `INSERT INTO ims.roles (role_code, role_name, description, is_system)
-       VALUES ($1, $2, $3, FALSE)
-       RETURNING role_id, role_code, role_name, description, is_system, 0::int AS permission_count`,
-      [roleCode, input.roleName, input.description ?? null]
+      `INSERT INTO ims.roles (role_code, role_name, description, monthly_salary, is_system)
+       VALUES ($1, $2, $3, $4, FALSE)
+       RETURNING role_id, role_code, role_name, description, COALESCE(monthly_salary, 0)::float8 AS monthly_salary, is_system, 0::int AS permission_count`,
+      [roleCode, input.roleName, input.description ?? null, input.monthlySalary ?? 0]
     );
 
     if (!created) {
@@ -279,6 +298,7 @@ export const systemService = {
   },
 
   async updateRole(id: number, input: UpdateRoleInput): Promise<RoleRow | null> {
+    await ensureRolesMonthlySalaryColumn();
     const current = await queryOne<{ role_id: number; role_code: string }>(
       `SELECT role_id, role_code
          FROM ims.roles
@@ -308,26 +328,32 @@ export const systemService = {
       values.push(input.description || null);
     }
 
+    if (input.monthlySalary !== undefined) {
+      updates.push(`monthly_salary = $${parameter++}`);
+      values.push(input.monthlySalary);
+    }
+
     if (!updates.length) {
       return queryOne<RoleRow>(
-        `SELECT
-            r.role_id,
-            r.role_code,
-            r.role_name,
-            r.description,
-            r.is_system,
-            COUNT(rp.perm_id)::int AS permission_count
-         FROM ims.roles r
-         LEFT JOIN ims.role_permissions rp ON rp.role_id = r.role_id
-         WHERE r.role_id = $1
-         GROUP BY r.role_id`,
+          `SELECT
+             r.role_id,
+             r.role_code,
+             r.role_name,
+             r.description,
+             COALESCE(r.monthly_salary, 0)::float8 AS monthly_salary,
+             r.is_system,
+             COUNT(rp.perm_id)::int AS permission_count
+          FROM ims.roles r
+          LEFT JOIN ims.role_permissions rp ON rp.role_id = r.role_id
+          WHERE r.role_id = $1
+          GROUP BY r.role_id, r.role_code, r.role_name, r.description, r.monthly_salary, r.is_system`,
         [id]
       );
     }
 
     values.push(id);
 
-    return queryOne<RoleRow>(
+    const updatedRole = await queryOne<RoleRow>(
       `WITH updated AS (
           UPDATE ims.roles
              SET ${updates.join(', ')}
@@ -339,13 +365,26 @@ export const systemService = {
           u.role_code,
           u.role_name,
           u.description,
+          COALESCE(u.monthly_salary, 0)::float8 AS monthly_salary,
           u.is_system,
           COUNT(rp.perm_id)::int AS permission_count
        FROM updated u
        LEFT JOIN ims.role_permissions rp ON rp.role_id = u.role_id
-       GROUP BY u.role_id, u.role_code, u.role_name, u.description, u.is_system`,
+       GROUP BY u.role_id, u.role_code, u.role_name, u.description, u.monthly_salary, u.is_system`,
       values
     );
+
+    if (updatedRole && input.monthlySalary !== undefined) {
+      await queryMany(
+        `UPDATE ims.employees
+            SET salary_amount = $1,
+                salary_type = 'Monthly'
+          WHERE role_id = $2`,
+        [input.monthlySalary, id]
+      );
+    }
+
+    return updatedRole;
   },
 
   async deleteRole(id: number): Promise<void> {

@@ -42,6 +42,7 @@ export interface CapitalContribution {
   branch_id: number;
   owner_name: string;
   amount: number;
+  share_pct: number;
   date: string;
   account_id: number;
   account_name: string;
@@ -57,6 +58,71 @@ export interface CapitalReportSummary {
   by_owner: Array<{ owner_name: string; total_amount: number }>;
   by_account: Array<{ account_id: number; account_name: string; total_amount: number }>;
 }
+
+export interface CapitalOwnerEquity {
+  owner_name: string;
+  share_pct: number;
+  contributed_amount: number;
+  profit_allocated: number;
+  drawing_amount: number;
+  equity_balance: number;
+}
+
+export interface CapitalOwnerEquitySummary {
+  owners: CapitalOwnerEquity[];
+  totals: {
+    contributed_amount: number;
+    profit_allocated: number;
+    drawing_amount: number;
+    equity_balance: number;
+  };
+}
+
+export interface OwnerDrawing {
+  draw_id: number;
+  branch_id: number;
+  owner_name: string;
+  amount: number;
+  date: string;
+  account_id: number;
+  account_name: string;
+  note: string | null;
+  created_by: number | null;
+  created_by_name: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AssetOverviewCurrentAccount {
+  account_name: string;
+  institution: string | null;
+  balance: number;
+}
+
+export interface AssetOverviewFixedAsset {
+  asset_id: number;
+  asset_name: string;
+  purchase_date: string;
+  cost: number;
+  status: string;
+}
+
+export interface AssetOverviewSummary {
+  current_assets: AssetOverviewCurrentAccount[];
+  fixed_assets: AssetOverviewFixedAsset[];
+  current_assets_total: number;
+  fixed_assets_total: number;
+}
+
+const REQUIRED_CURRENT_ASSET_ACCOUNTS = [
+  'Cash @ Salaam Bank',
+  'Cash @ Merchant',
+  'Cash @ EVC-Plus',
+  'Cash @ Premier Bank',
+  'Cash @ Dahabshiil Bank',
+];
+
+const normalizeOwnerKey = (value: string) => value.trim().replace(/\s+/g, ' ').toLowerCase();
 
 type AuditLogColumns = {
   idColumn: 'log_id' | 'audit_id';
@@ -135,6 +201,24 @@ const ensureCapitalSchema = async (): Promise<void> => {
   `);
 
   await queryMany(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+          FROM pg_enum e
+          JOIN pg_type t ON t.oid = e.enumtypid
+          JOIN pg_namespace n ON n.oid = t.typnamespace
+         WHERE n.nspname = 'ims'
+           AND t.typname = 'account_txn_type_enum'
+           AND e.enumlabel = 'owner_drawing'
+      ) THEN
+        ALTER TYPE ims.account_txn_type_enum ADD VALUE 'owner_drawing';
+      END IF;
+    END
+    $$;
+  `);
+
+  await queryMany(`
     CREATE TABLE IF NOT EXISTS ims.journal_entries (
       journal_id BIGSERIAL PRIMARY KEY,
       branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
@@ -166,6 +250,7 @@ const ensureCapitalSchema = async (): Promise<void> => {
       branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
       owner_name VARCHAR(150) NOT NULL,
       amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+      share_pct NUMERIC(7,4) NOT NULL DEFAULT 0 CHECK (share_pct >= 0 AND share_pct <= 100),
       contribution_date DATE NOT NULL,
       acc_id BIGINT NOT NULL REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE RESTRICT,
       equity_acc_id BIGINT NOT NULL REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE RESTRICT,
@@ -178,6 +263,48 @@ const ensureCapitalSchema = async (): Promise<void> => {
   `);
 
   await queryMany(`
+    ALTER TABLE ims.capital_contributions
+      ADD COLUMN IF NOT EXISTS share_pct NUMERIC(7,4) NOT NULL DEFAULT 0
+  `);
+
+  await queryMany(`
+    CREATE TABLE IF NOT EXISTS ims.owner_drawings (
+      draw_id BIGSERIAL PRIMARY KEY,
+      branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+      owner_name VARCHAR(150) NOT NULL,
+      amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+      draw_date DATE NOT NULL,
+      acc_id BIGINT NOT NULL REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+      equity_acc_id BIGINT NOT NULL REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+      journal_id BIGINT REFERENCES ims.journal_entries(journal_id) ON UPDATE CASCADE ON DELETE SET NULL,
+      note TEXT,
+      created_by BIGINT REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await queryMany(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+         WHERE n.nspname = 'ims'
+           AND t.relname = 'capital_contributions'
+           AND c.conname = 'chk_capital_contributions_share_pct'
+      ) THEN
+        ALTER TABLE ims.capital_contributions
+          ADD CONSTRAINT chk_capital_contributions_share_pct
+          CHECK (share_pct >= 0 AND share_pct <= 100);
+      END IF;
+    END
+    $$;
+  `);
+
+  await queryMany(`
     CREATE INDEX IF NOT EXISTS idx_capital_contributions_branch_date
       ON ims.capital_contributions(branch_id, contribution_date DESC, capital_id DESC)
   `);
@@ -185,6 +312,16 @@ const ensureCapitalSchema = async (): Promise<void> => {
   await queryMany(`
     CREATE INDEX IF NOT EXISTS idx_capital_contributions_branch_owner
       ON ims.capital_contributions(branch_id, owner_name)
+  `);
+
+  await queryMany(`
+    CREATE INDEX IF NOT EXISTS idx_owner_drawings_branch_date
+      ON ims.owner_drawings(branch_id, draw_date DESC, draw_id DESC)
+  `);
+
+  await queryMany(`
+    CREATE INDEX IF NOT EXISTS idx_owner_drawings_branch_owner
+      ON ims.owner_drawings(branch_id, owner_name)
   `);
 
   capitalSchemaReady = true;
@@ -281,6 +418,51 @@ const ensureReversibleCapitalBalances = async (
   }
 };
 
+const getOwnerAvailableEquity = async (
+  branchId: number,
+  ownerName: string,
+  input?: { excludeDrawingId?: number }
+): Promise<number> => {
+  const contributionTotalRow = await queryOne<{ total: string | number }>(
+    `SELECT COALESCE(SUM(amount), 0)::text AS total
+       FROM ims.capital_contributions
+      WHERE branch_id = $1
+        AND LOWER(BTRIM(owner_name)) = LOWER(BTRIM($2))`,
+    [branchId, ownerName]
+  );
+
+  const profitTotalRow = await queryOne<{ total: string | number }>(
+    `SELECT COALESCE(SUM(fpa.amount), 0)::text AS total
+       FROM ims.finance_profit_allocations fpa
+       JOIN ims.finance_closing_periods cp ON cp.closing_id = fpa.closing_id
+      WHERE fpa.branch_id = $1
+        AND fpa.allocation_type = 'partner'
+        AND cp.status = 'closed'
+        AND LOWER(BTRIM(fpa.partner_name)) = LOWER(BTRIM($2))`,
+    [branchId, ownerName]
+  );
+
+  const drawingParams: Array<number | string> = [branchId, ownerName];
+  let excludeSql = '';
+  if (input?.excludeDrawingId && Number(input.excludeDrawingId) > 0) {
+    drawingParams.push(Number(input.excludeDrawingId));
+    excludeSql = ` AND draw_id <> $${drawingParams.length}`;
+  }
+  const drawingTotalRow = await queryOne<{ total: string | number }>(
+    `SELECT COALESCE(SUM(amount), 0)::text AS total
+       FROM ims.owner_drawings
+      WHERE branch_id = $1
+        AND LOWER(BTRIM(owner_name)) = LOWER(BTRIM($2))
+        ${excludeSql}`,
+    drawingParams
+  );
+
+  const contributed = Number(contributionTotalRow?.total || 0);
+  const profitAllocated = Number(profitTotalRow?.total || 0);
+  const alreadyDrawn = Number(drawingTotalRow?.total || 0);
+  return contributed + profitAllocated - alreadyDrawn;
+};
+
 const detectAuditLogColumns = async (): Promise<AuditLogColumns> => {
   if (auditLogColumnsCache) return auditLogColumnsCache;
 
@@ -327,6 +509,8 @@ const mapCompany = (row: {
   created_at: row.created_at,
   updated_at: row.updated_at,
 });
+
+const compactOwnerName = (value: string) => value.trim().replace(/\s+/g, ' ');
 
 export const settingsService = {
   async getCompanyInfo(): Promise<CompanyInfo | null> {
@@ -403,6 +587,151 @@ export const settingsService = {
 
   async deleteCompanyInfo(): Promise<void> {
     await queryOne(`DELETE FROM ims.company WHERE company_id = 1`);
+  },
+
+  async prepareAssetAccounts(scope: BranchScope, branchId?: number): Promise<{ created: number }> {
+    const targetBranchId = pickBranchForWrite(scope, branchId);
+    let created = 0;
+    for (const name of REQUIRED_CURRENT_ASSET_ACCOUNTS) {
+      const row = await queryOne<{ acc_id: number }>(
+        `INSERT INTO ims.accounts (branch_id, name, institution, balance, account_type, is_active)
+         VALUES ($1, $2, '', 0, 'asset', TRUE)
+         ON CONFLICT (branch_id, name) DO NOTHING
+         RETURNING acc_id`,
+        [targetBranchId, name]
+      );
+      if (row?.acc_id) created += 1;
+    }
+
+    await queryMany(
+      `UPDATE ims.accounts
+          SET is_active = FALSE
+        WHERE branch_id = $1
+          AND (
+            account_type = 'equity'
+            OR LOWER(name) LIKE 'accounts payable%'
+            OR LOWER(name) LIKE 'accounts receivable%'
+            OR LOWER(name) LIKE 'fixed asset%'
+            OR LOWER(name) LIKE '%capital%'
+            OR LOWER(name) LIKE 'office furniture%'
+            OR LOWER(name) LIKE 'computer%'
+            OR LOWER(name) LIKE 'equipment%'
+            OR LOWER(name) LIKE 'vehicle%'
+            OR LOWER(name) LIKE 'mukeef%'
+          )`,
+      [targetBranchId]
+    );
+
+    return { created };
+  },
+
+  async getAssetOverview(scope: BranchScope): Promise<AssetOverviewSummary> {
+    const where: string[] = ['a.is_active = TRUE'];
+    const params: Array<string | number | number[] | string[]> = [];
+
+    if (!scope.isAdmin) {
+      params.push(scope.branchIds);
+      where.push(`a.branch_id = ANY($${params.length})`);
+    }
+
+    params.push(REQUIRED_CURRENT_ASSET_ACCOUNTS.map((name) => name.toLowerCase()));
+    where.push(`LOWER(a.name) = ANY($${params.length}::text[])`);
+
+    const currentRows = await queryMany<{
+      account_name: string;
+      institution: string | null;
+      balance: string | number;
+    }>(
+      `SELECT
+         a.name AS account_name,
+         a.institution,
+         COALESCE(SUM(a.balance), 0)::text AS balance
+       FROM ims.accounts a
+       WHERE ${where.join(' AND ')}
+       GROUP BY a.name, a.institution
+       ORDER BY a.name`,
+      params
+    );
+
+    const fixedAssetsExists = await queryOne<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1
+           FROM information_schema.tables
+          WHERE table_schema = 'ims'
+            AND table_name = 'fixed_assets'
+       ) AS exists`
+    );
+
+    let fixedRows: Array<{
+      asset_id: number;
+      asset_name: string;
+      purchase_date: string;
+      cost: string | number;
+      status: string;
+    }> = [];
+    if (fixedAssetsExists?.exists) {
+      const fixedWhere: string[] = [];
+      const fixedParams: Array<number | number[]> = [];
+      if (!scope.isAdmin) {
+        fixedParams.push(scope.branchIds);
+        fixedWhere.push(`fa.branch_id = ANY($${fixedParams.length})`);
+      }
+      const fixedWhereSql = fixedWhere.length ? `WHERE ${fixedWhere.join(' AND ')}` : '';
+      fixedRows = await queryMany<{
+        asset_id: number;
+        asset_name: string;
+        purchase_date: string;
+        cost: string | number;
+        status: string;
+      }>(
+        `SELECT
+           fa.asset_id,
+           fa.asset_name,
+           fa.purchase_date::text AS purchase_date,
+           COALESCE(fa.cost, 0)::text AS cost,
+           COALESCE(fa.status, 'active') AS status
+         FROM ims.fixed_assets fa
+         ${fixedWhereSql}
+         ORDER BY fa.purchase_date DESC, fa.asset_id DESC`,
+        fixedParams
+      );
+    }
+
+    const byName = new Map(
+      currentRows.map((row) => [
+        row.account_name.trim().toLowerCase(),
+        {
+          account_name: row.account_name,
+          institution: row.institution,
+          balance: Number(row.balance || 0),
+        },
+      ])
+    );
+    const current_assets = REQUIRED_CURRENT_ASSET_ACCOUNTS.map((name) => {
+      const found = byName.get(name.toLowerCase());
+      return (
+        found || {
+          account_name: name,
+          institution: null,
+          balance: 0,
+        }
+      );
+    });
+
+    const fixed_assets = fixedRows.map((row) => ({
+      asset_id: Number(row.asset_id),
+      asset_name: row.asset_name,
+      purchase_date: row.purchase_date,
+      cost: Number(row.cost || 0),
+      status: row.status,
+    }));
+
+    return {
+      current_assets,
+      fixed_assets,
+      current_assets_total: current_assets.reduce((sum, row) => sum + Number(row.balance || 0), 0),
+      fixed_assets_total: fixed_assets.reduce((sum, row) => sum + Number(row.cost || 0), 0),
+    };
   },
 
   async listBranches(): Promise<Branch[]> {
@@ -601,6 +930,7 @@ export const settingsService = {
       branch_id: number;
       owner_name: string;
       amount: string | number;
+      share_pct: string | number;
       date: string;
       account_id: number;
       account_name: string;
@@ -615,6 +945,7 @@ export const settingsService = {
          cc.branch_id,
          cc.owner_name,
          cc.amount::text AS amount,
+         cc.share_pct::text AS share_pct,
          cc.contribution_date::text AS date,
          cc.acc_id AS account_id,
          a.name AS account_name,
@@ -647,6 +978,250 @@ export const settingsService = {
         branch_id: Number(row.branch_id),
         owner_name: row.owner_name,
         amount: Number(row.amount || 0),
+        share_pct: Number(row.share_pct || 0),
+        date: row.date,
+        account_id: Number(row.account_id),
+        account_name: row.account_name,
+        note: row.note,
+        created_by: row.created_by ? Number(row.created_by) : null,
+        created_by_name: row.created_by_name,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+      })),
+      total: Number(totalRow?.count || 0),
+      page: input.page,
+      limit: input.limit,
+    };
+  },
+
+  async listCapitalOwnerEquity(
+    scope: BranchScope,
+    input: { owner?: string; search?: string } = {}
+  ): Promise<CapitalOwnerEquitySummary> {
+    await ensureCapitalSchema();
+
+    const scopeCondition = scope.isAdmin ? '' : 'AND branch_id = ANY($1::bigint[])';
+    const scopeParams = scope.isAdmin ? [] : [scope.branchIds];
+
+    const contributionRows = await queryMany<{
+      owner_key: string;
+      owner_name: string;
+      total_amount: string | number;
+    }>(
+      `SELECT
+         LOWER(BTRIM(owner_name)) AS owner_key,
+         MAX(BTRIM(owner_name)) AS owner_name,
+         COALESCE(SUM(amount), 0)::text AS total_amount
+       FROM ims.capital_contributions
+       WHERE COALESCE(BTRIM(owner_name), '') <> ''
+         ${scopeCondition}
+       GROUP BY LOWER(BTRIM(owner_name))`,
+      scopeParams
+    );
+
+    const shareRows = await queryMany<{
+      owner_key: string;
+      owner_name: string;
+      share_pct: string | number;
+    }>(
+      `SELECT DISTINCT ON (LOWER(BTRIM(owner_name)))
+         LOWER(BTRIM(owner_name)) AS owner_key,
+         BTRIM(owner_name) AS owner_name,
+         COALESCE(share_pct, 0)::text AS share_pct
+       FROM ims.capital_contributions
+       WHERE COALESCE(BTRIM(owner_name), '') <> ''
+         ${scopeCondition}
+       ORDER BY LOWER(BTRIM(owner_name)), contribution_date DESC, capital_id DESC`,
+      scopeParams
+    );
+
+    const drawingRows = await queryMany<{
+      owner_key: string;
+      owner_name: string;
+      total_amount: string | number;
+    }>(
+      `SELECT
+         LOWER(BTRIM(owner_name)) AS owner_key,
+         MAX(BTRIM(owner_name)) AS owner_name,
+         COALESCE(SUM(amount), 0)::text AS total_amount
+       FROM ims.owner_drawings
+       WHERE COALESCE(BTRIM(owner_name), '') <> ''
+         ${scopeCondition}
+       GROUP BY LOWER(BTRIM(owner_name))`,
+      scopeParams
+    );
+
+    const profitRows = await queryMany<{
+      owner_key: string;
+      owner_name: string;
+      total_amount: string | number;
+    }>(
+      `SELECT
+         LOWER(BTRIM(fpa.partner_name)) AS owner_key,
+         MAX(BTRIM(fpa.partner_name)) AS owner_name,
+         COALESCE(SUM(fpa.amount), 0)::text AS total_amount
+       FROM ims.finance_profit_allocations fpa
+       JOIN ims.finance_closing_periods cp ON cp.closing_id = fpa.closing_id
+       WHERE fpa.allocation_type = 'partner'
+         AND cp.status = 'closed'
+         AND COALESCE(BTRIM(fpa.partner_name), '') <> ''
+         ${scope.isAdmin ? '' : 'AND fpa.branch_id = ANY($1::bigint[])'}
+       GROUP BY LOWER(BTRIM(fpa.partner_name))`,
+      scopeParams
+    );
+
+    const ownerMap = new Map<string, CapitalOwnerEquity>();
+    const ensureRow = (ownerKey: string, ownerName: string) => {
+      const safeKey = ownerKey || normalizeOwnerKey(ownerName || '');
+      if (!safeKey) return null;
+      const existing = ownerMap.get(safeKey);
+      if (existing) {
+        if (ownerName && ownerName.length > existing.owner_name.length) {
+          existing.owner_name = ownerName;
+        }
+        return existing;
+      }
+      const created: CapitalOwnerEquity = {
+        owner_name: ownerName || safeKey,
+        share_pct: 0,
+        contributed_amount: 0,
+        profit_allocated: 0,
+        drawing_amount: 0,
+        equity_balance: 0,
+      };
+      ownerMap.set(safeKey, created);
+      return created;
+    };
+
+    for (const row of shareRows) {
+      const owner = ensureRow(row.owner_key, row.owner_name);
+      if (!owner) continue;
+      owner.share_pct = Number(row.share_pct || 0);
+    }
+    for (const row of contributionRows) {
+      const owner = ensureRow(row.owner_key, row.owner_name);
+      if (!owner) continue;
+      owner.contributed_amount = Number(row.total_amount || 0);
+    }
+    for (const row of drawingRows) {
+      const owner = ensureRow(row.owner_key, row.owner_name);
+      if (!owner) continue;
+      owner.drawing_amount = Number(row.total_amount || 0);
+    }
+    for (const row of profitRows) {
+      const owner = ensureRow(row.owner_key, row.owner_name);
+      if (!owner) continue;
+      owner.profit_allocated = Number(row.total_amount || 0);
+    }
+
+    let owners = Array.from(ownerMap.values()).map((row) => ({
+      ...row,
+      equity_balance: Number(row.contributed_amount || 0) + Number(row.profit_allocated || 0) - Number(row.drawing_amount || 0),
+    }));
+
+    const ownerTerm = (input.owner || '').trim().toLowerCase();
+    const searchTerm = (input.search || '').trim().toLowerCase();
+    if (ownerTerm) {
+      owners = owners.filter((row) => row.owner_name.toLowerCase().includes(ownerTerm));
+    }
+    if (searchTerm) {
+      owners = owners.filter((row) => row.owner_name.toLowerCase().includes(searchTerm));
+    }
+
+    owners.sort((a, b) => a.owner_name.localeCompare(b.owner_name));
+    return {
+      owners,
+      totals: {
+        contributed_amount: owners.reduce((sum, row) => sum + Number(row.contributed_amount || 0), 0),
+        profit_allocated: owners.reduce((sum, row) => sum + Number(row.profit_allocated || 0), 0),
+        drawing_amount: owners.reduce((sum, row) => sum + Number(row.drawing_amount || 0), 0),
+        equity_balance: owners.reduce((sum, row) => sum + Number(row.equity_balance || 0), 0),
+      },
+    };
+  },
+
+  async listOwnerDrawings(
+    scope: BranchScope,
+    input: { page: number; limit: number; search?: string; owner?: string; fromDate?: string; toDate?: string }
+  ): Promise<{ rows: OwnerDrawing[]; total: number; page: number; limit: number }> {
+    await ensureCapitalSchema();
+    const where: string[] = [];
+    const params: Array<string | number | number[]> = [];
+
+    if (!scope.isAdmin) {
+      params.push(scope.branchIds);
+      where.push(`od.branch_id = ANY($${params.length})`);
+    }
+    if (input.search) {
+      params.push(`%${input.search}%`);
+      where.push(`(od.owner_name ILIKE $${params.length} OR COALESCE(od.note, '') ILIKE $${params.length} OR COALESCE(a.name, '') ILIKE $${params.length})`);
+    }
+    if (input.owner) {
+      params.push(`%${input.owner}%`);
+      where.push(`od.owner_name ILIKE $${params.length}`);
+    }
+    if (input.fromDate && input.toDate) {
+      params.push(input.fromDate, input.toDate);
+      where.push(`od.draw_date BETWEEN $${params.length - 1}::date AND $${params.length}::date`);
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const offset = (input.page - 1) * input.limit;
+    params.push(input.limit, offset);
+    const limitParam = params.length - 1;
+    const offsetParam = params.length;
+
+    const rows = await queryMany<{
+      draw_id: number;
+      branch_id: number;
+      owner_name: string;
+      amount: string | number;
+      date: string;
+      account_id: number;
+      account_name: string;
+      note: string | null;
+      created_by: number | null;
+      created_by_name: string | null;
+      created_at: string;
+      updated_at: string;
+    }>(
+      `SELECT
+         od.draw_id,
+         od.branch_id,
+         od.owner_name,
+         od.amount::text AS amount,
+         od.draw_date::text AS date,
+         od.acc_id AS account_id,
+         a.name AS account_name,
+         od.note,
+         od.created_by,
+         COALESCE(u.full_name, u.name, u.username) AS created_by_name,
+         od.created_at::text AS created_at,
+         od.updated_at::text AS updated_at
+       FROM ims.owner_drawings od
+       JOIN ims.accounts a ON a.acc_id = od.acc_id
+       LEFT JOIN ims.users u ON u.user_id = od.created_by
+       ${whereSql}
+       ORDER BY od.draw_date DESC, od.draw_id DESC
+       LIMIT $${limitParam} OFFSET $${offsetParam}`,
+      params
+    );
+
+    const countParams = params.slice(0, params.length - 2);
+    const totalRow = await queryOne<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+         FROM ims.owner_drawings od
+         JOIN ims.accounts a ON a.acc_id = od.acc_id
+         ${whereSql}`,
+      countParams
+    );
+
+    return {
+      rows: rows.map((row) => ({
+        draw_id: Number(row.draw_id),
+        branch_id: Number(row.branch_id),
+        owner_name: row.owner_name,
+        amount: Number(row.amount || 0),
         date: row.date,
         account_id: Number(row.account_id),
         account_name: row.account_name,
@@ -666,6 +1241,7 @@ export const settingsService = {
     input: {
       ownerName: string;
       amount: number;
+      sharePct?: number;
       date: string;
       accountId?: number;
       note?: string | null;
@@ -676,6 +1252,8 @@ export const settingsService = {
   ): Promise<CapitalContribution> {
     await ensureCapitalSchema();
     const branchId = pickBranchForWrite(scope, input.branchId);
+    const ownerName = compactOwnerName(input.ownerName);
+    if (!ownerName) throw ApiError.badRequest('Owner name is required');
     const account = input.accountId
       ? await queryOne<{ acc_id: number; account_type: string }>(
           `SELECT acc_id, account_type
@@ -724,10 +1302,20 @@ export const settingsService = {
         capital_id: number;
       }>(
         `INSERT INTO ims.capital_contributions
-           (branch_id, owner_name, amount, contribution_date, acc_id, equity_acc_id, note, created_by)
-         VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8)
+           (branch_id, owner_name, amount, share_pct, contribution_date, acc_id, equity_acc_id, note, created_by)
+         VALUES ($1, $2, $3, $4, $5::date, $6, $7, $8, $9)
          RETURNING capital_id`,
-        [branchId, input.ownerName, input.amount, input.date, receivingAccountId, ownerCapitalAccId, input.note || null, userId]
+        [
+          branchId,
+          ownerName,
+          input.amount,
+          Number(input.sharePct || 0),
+          input.date,
+          receivingAccountId,
+          ownerCapitalAccId,
+          input.note || null,
+          userId,
+        ]
       );
       if (!row) throw ApiError.internal('Failed to create capital entry');
 
@@ -735,7 +1323,7 @@ export const settingsService = {
         `INSERT INTO ims.journal_entries (branch_id, entry_date, memo, source_table, source_id, created_by)
          VALUES ($1, $2::date, $3, 'capital_contributions', $4, $5)
          RETURNING journal_id`,
-        [branchId, input.date, input.note || `Capital contribution by ${input.ownerName}`, row.capital_id, userId]
+        [branchId, input.date, input.note || `Capital contribution by ${ownerName}`, row.capital_id, userId]
       );
       if (!journal) throw ApiError.internal('Failed to create journal entry');
 
@@ -792,6 +1380,7 @@ export const settingsService = {
       branch_id: number;
       owner_name: string;
       amount: string | number;
+      share_pct: string | number;
       date: string;
       account_id: number;
       account_name: string;
@@ -806,6 +1395,7 @@ export const settingsService = {
          cc.branch_id,
          cc.owner_name,
          cc.amount::text AS amount,
+         cc.share_pct::text AS share_pct,
          cc.contribution_date::text AS date,
          cc.acc_id AS account_id,
          a.name AS account_name,
@@ -827,6 +1417,7 @@ export const settingsService = {
       branch_id: Number(row.branch_id),
       owner_name: row.owner_name,
       amount: Number(row.amount || 0),
+      share_pct: Number(row.share_pct || 0),
       date: row.date,
       account_id: Number(row.account_id),
       account_name: row.account_name,
@@ -838,9 +1429,439 @@ export const settingsService = {
     };
   },
 
+  async getOwnerDrawingById(id: number, scope: BranchScope): Promise<OwnerDrawing | null> {
+    await ensureCapitalSchema();
+    const params: Array<number | number[]> = [id];
+    let scopeSql = '';
+    if (!scope.isAdmin) {
+      params.push(scope.branchIds);
+      scopeSql = ` AND od.branch_id = ANY($${params.length})`;
+    }
+
+    const row = await queryOne<{
+      draw_id: number;
+      branch_id: number;
+      owner_name: string;
+      amount: string | number;
+      date: string;
+      account_id: number;
+      account_name: string;
+      note: string | null;
+      created_by: number | null;
+      created_by_name: string | null;
+      created_at: string;
+      updated_at: string;
+    }>(
+      `SELECT
+         od.draw_id,
+         od.branch_id,
+         od.owner_name,
+         od.amount::text AS amount,
+         od.draw_date::text AS date,
+         od.acc_id AS account_id,
+         a.name AS account_name,
+         od.note,
+         od.created_by,
+         COALESCE(u.full_name, u.name, u.username) AS created_by_name,
+         od.created_at::text AS created_at,
+         od.updated_at::text AS updated_at
+       FROM ims.owner_drawings od
+       JOIN ims.accounts a ON a.acc_id = od.acc_id
+       LEFT JOIN ims.users u ON u.user_id = od.created_by
+      WHERE od.draw_id = $1${scopeSql}
+      LIMIT 1`,
+      params
+    );
+
+    if (!row) return null;
+    return {
+      draw_id: Number(row.draw_id),
+      branch_id: Number(row.branch_id),
+      owner_name: row.owner_name,
+      amount: Number(row.amount || 0),
+      date: row.date,
+      account_id: Number(row.account_id),
+      account_name: row.account_name,
+      note: row.note,
+      created_by: row.created_by ? Number(row.created_by) : null,
+      created_by_name: row.created_by_name,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    };
+  },
+
+  async createOwnerDrawing(
+    input: {
+      ownerName: string;
+      amount: number;
+      date: string;
+      accountId?: number;
+      note?: string | null;
+      branchId?: number;
+    },
+    scope: BranchScope,
+    userId: number
+  ): Promise<OwnerDrawing> {
+    await ensureCapitalSchema();
+    const branchId = pickBranchForWrite(scope, input.branchId);
+    const ownerName = compactOwnerName(input.ownerName);
+    if (!ownerName) throw ApiError.badRequest('Owner name is required');
+
+    if (await isCapitalDateLocked(branchId, input.date)) {
+      throw ApiError.badRequest('Cannot create drawing entry in a closed accounting period');
+    }
+
+    const availableEquity = await getOwnerAvailableEquity(branchId, ownerName);
+
+    if (availableEquity <= 0) {
+      throw ApiError.badRequest('No available owner equity to draw');
+    }
+    if (input.amount > availableEquity) {
+      throw ApiError.badRequest(`Draw amount exceeds available equity (${availableEquity.toFixed(2)})`);
+    }
+
+    const payoutAccount = input.accountId
+      ? await queryOne<{ acc_id: number; account_type: string; balance: string | number }>(
+          `SELECT acc_id, account_type, balance::text AS balance
+             FROM ims.accounts
+            WHERE acc_id = $1
+              AND branch_id = $2
+              AND is_active = TRUE`,
+          [input.accountId, branchId]
+        )
+      : await queryOne<{ acc_id: number; account_type: string; balance: string | number }>(
+          `SELECT acc_id, account_type, balance::text AS balance
+             FROM ims.accounts
+            WHERE branch_id = $1
+              AND is_active = TRUE
+              AND account_type = 'asset'
+            ORDER BY
+              CASE
+                WHEN name ILIKE '%cash%' THEN 0
+                WHEN name ILIKE '%bank%' THEN 1
+                ELSE 2
+              END,
+              acc_id ASC
+            LIMIT 1`,
+          [branchId]
+        );
+
+    if (!payoutAccount) {
+      throw ApiError.badRequest('No active payout account found for this branch');
+    }
+    if ((payoutAccount.account_type || 'asset') !== 'asset') {
+      throw ApiError.badRequest('Payout account must be an asset (cash/bank) account');
+    }
+
+    const payoutAccountId = Number(payoutAccount.acc_id);
+    const payoutBalance = Number(payoutAccount.balance || 0);
+    if (payoutBalance < input.amount) {
+      throw ApiError.badRequest('Insufficient account balance for this drawing');
+    }
+
+    const ownerCapitalAccId = await ensureOwnerCapitalAccount(branchId);
+    const ownerCapitalBalanceRow = await queryOne<{ balance: string | number }>(
+      `SELECT balance::text AS balance FROM ims.accounts WHERE acc_id = $1`,
+      [ownerCapitalAccId]
+    );
+    const ownerCapitalBalance = Number(ownerCapitalBalanceRow?.balance || 0);
+    if (ownerCapitalBalance < input.amount) {
+      throw ApiError.badRequest('Owner Capital account balance is insufficient');
+    }
+
+    await queryOne('BEGIN');
+    try {
+      const row = await queryOne<{ draw_id: number }>(
+        `INSERT INTO ims.owner_drawings
+           (branch_id, owner_name, amount, draw_date, acc_id, equity_acc_id, note, created_by)
+         VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8)
+         RETURNING draw_id`,
+        [branchId, ownerName, input.amount, input.date, payoutAccountId, ownerCapitalAccId, input.note || null, userId]
+      );
+      if (!row) throw ApiError.internal('Failed to create owner drawing');
+
+      const journal = await queryOne<{ journal_id: number }>(
+        `INSERT INTO ims.journal_entries (branch_id, entry_date, memo, source_table, source_id, created_by)
+         VALUES ($1, $2::date, $3, 'owner_drawings', $4, $5)
+         RETURNING journal_id`,
+        [branchId, input.date, input.note || `Owner drawing by ${ownerName}`, row.draw_id, userId]
+      );
+      if (!journal) throw ApiError.internal('Failed to create owner drawing journal');
+
+      await queryOne(
+        `INSERT INTO ims.journal_lines (journal_id, acc_id, debit, credit, note)
+         VALUES ($1, $2, $3, 0, $4), ($1, $5, 0, $3, $4)`,
+        [journal.journal_id, ownerCapitalAccId, input.amount, input.note || null, payoutAccountId]
+      );
+
+      await queryOne(
+        `UPDATE ims.owner_drawings
+            SET journal_id = $2
+          WHERE draw_id = $1`,
+        [row.draw_id, journal.journal_id]
+      );
+
+      await queryOne(
+        `INSERT INTO ims.account_transactions
+           (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
+         VALUES ($1, $2, 'owner_drawing', 'owner_drawings', $3, $4, 0, $5::date, $6)`,
+        [branchId, payoutAccountId, row.draw_id, input.amount, input.date, input.note || null]
+      );
+
+      await queryOne(
+        `UPDATE ims.accounts SET balance = balance - $2 WHERE acc_id = $1`,
+        [payoutAccountId, input.amount]
+      );
+      await queryOne(
+        `UPDATE ims.accounts SET balance = balance - $2 WHERE acc_id = $1`,
+        [ownerCapitalAccId, input.amount]
+      );
+
+      await queryOne('COMMIT');
+      const created = await this.getOwnerDrawingById(row.draw_id, scope);
+      if (!created) throw ApiError.internal('Failed to load created drawing entry');
+      return created;
+    } catch (error) {
+      await queryOne('ROLLBACK');
+      throw error;
+    }
+  },
+
+  async updateOwnerDrawing(
+    id: number,
+    input: { ownerName?: string; amount?: number; date?: string; accountId?: number; note?: string | null },
+    scope: BranchScope,
+    userId: number
+  ): Promise<OwnerDrawing> {
+    await ensureCapitalSchema();
+    const existing = await queryOne<{
+      draw_id: number;
+      branch_id: number;
+      owner_name: string;
+      amount: string | number;
+      draw_date: string;
+      acc_id: number;
+      equity_acc_id: number;
+      note: string | null;
+      journal_id: number | null;
+    }>(
+      `SELECT draw_id, branch_id, owner_name, amount::text AS amount, draw_date::text, acc_id, equity_acc_id, note, journal_id
+         FROM ims.owner_drawings
+        WHERE draw_id = $1`,
+      [id]
+    );
+    if (!existing) throw ApiError.notFound('Drawing record not found');
+    assertBranchAccess(scope, Number(existing.branch_id));
+
+    const next = {
+      ownerName: compactOwnerName(input.ownerName ?? existing.owner_name),
+      amount: input.amount ?? Number(existing.amount),
+      date: input.date ?? existing.draw_date,
+      accountId: input.accountId ?? Number(existing.acc_id),
+      note: input.note !== undefined ? input.note : existing.note,
+      equityAccId: Number(existing.equity_acc_id),
+    };
+
+    if (!next.ownerName) throw ApiError.badRequest('Owner name is required');
+    if (!Number.isFinite(next.amount) || next.amount <= 0) throw ApiError.badRequest('Amount must be greater than 0');
+    if (await isCapitalDateLocked(Number(existing.branch_id), existing.draw_date) || await isCapitalDateLocked(Number(existing.branch_id), next.date)) {
+      throw ApiError.badRequest('Cannot update drawing entry in a closed accounting period');
+    }
+
+    const payoutAccount = await queryOne<{ acc_id: number; account_type: string; balance: string | number }>(
+      `SELECT acc_id, account_type, balance::text AS balance
+         FROM ims.accounts
+        WHERE acc_id = $1
+          AND branch_id = $2
+          AND is_active = TRUE`,
+      [next.accountId, existing.branch_id]
+    );
+    if (!payoutAccount) {
+      throw ApiError.badRequest('Payout account not found in selected branch');
+    }
+    if ((payoutAccount.account_type || 'asset') !== 'asset') {
+      throw ApiError.badRequest('Payout account must be an asset (cash/bank) account');
+    }
+
+    const availableEquity = await getOwnerAvailableEquity(Number(existing.branch_id), next.ownerName, { excludeDrawingId: id });
+    if (availableEquity <= 0) {
+      throw ApiError.badRequest('No available owner equity to draw');
+    }
+    if (next.amount > availableEquity) {
+      throw ApiError.badRequest(`Draw amount exceeds available equity (${availableEquity.toFixed(2)})`);
+    }
+
+    const existingAmount = Number(existing.amount || 0);
+    const existingAccountId = Number(existing.acc_id);
+    const nextAccountId = Number(next.accountId);
+    const accountChanged = existingAccountId !== nextAccountId;
+    const amountDelta = Number(next.amount) - existingAmount;
+
+    await queryOne('BEGIN');
+    try {
+      const balanceAccIds = Array.from(new Set([existingAccountId, nextAccountId, Number(existing.equity_acc_id)]));
+      const balanceRows = await queryMany<{ acc_id: number; balance: string | number }>(
+        `SELECT acc_id, balance::text AS balance
+           FROM ims.accounts
+          WHERE acc_id = ANY($1::bigint[])
+          FOR UPDATE`,
+        [balanceAccIds]
+      );
+      const balances = new Map(balanceRows.map((row) => [Number(row.acc_id), Number(row.balance || 0)]));
+      const oldPayoutBalance = balances.get(existingAccountId) ?? 0;
+      const nextPayoutBalance = balances.get(nextAccountId) ?? 0;
+      const equityBalance = balances.get(Number(existing.equity_acc_id)) ?? 0;
+
+      if (accountChanged) {
+        if (nextPayoutBalance < Number(next.amount)) {
+          throw ApiError.badRequest('Insufficient account balance for this drawing');
+        }
+      } else if (amountDelta > 0 && oldPayoutBalance < amountDelta) {
+        throw ApiError.badRequest('Insufficient account balance for this drawing');
+      }
+
+      if (amountDelta > 0 && equityBalance < amountDelta) {
+        throw ApiError.badRequest('Owner Capital account balance is insufficient');
+      }
+
+      if (accountChanged) {
+        await queryOne(`UPDATE ims.accounts SET balance = balance + $2 WHERE acc_id = $1`, [existingAccountId, existingAmount]);
+        await queryOne(`UPDATE ims.accounts SET balance = balance - $2 WHERE acc_id = $1`, [nextAccountId, next.amount]);
+      } else if (amountDelta !== 0) {
+        if (amountDelta > 0) {
+          await queryOne(`UPDATE ims.accounts SET balance = balance - $2 WHERE acc_id = $1`, [existingAccountId, amountDelta]);
+        } else {
+          await queryOne(`UPDATE ims.accounts SET balance = balance + $2 WHERE acc_id = $1`, [existingAccountId, Math.abs(amountDelta)]);
+        }
+      }
+
+      if (amountDelta > 0) {
+        await queryOne(`UPDATE ims.accounts SET balance = balance - $2 WHERE acc_id = $1`, [existing.equity_acc_id, amountDelta]);
+      } else if (amountDelta < 0) {
+        await queryOne(`UPDATE ims.accounts SET balance = balance + $2 WHERE acc_id = $1`, [existing.equity_acc_id, Math.abs(amountDelta)]);
+      }
+
+      let journalId = existing.journal_id ?? null;
+      if (!journalId) {
+        const journal = await queryOne<{ journal_id: number }>(
+          `INSERT INTO ims.journal_entries (branch_id, entry_date, memo, source_table, source_id, created_by)
+           VALUES ($1, $2::date, $3, 'owner_drawings', $4, $5)
+           RETURNING journal_id`,
+          [existing.branch_id, next.date, next.note || `Owner drawing by ${next.ownerName}`, id, userId]
+        );
+        if (!journal) throw ApiError.internal('Failed to create journal entry');
+        journalId = journal.journal_id;
+      } else {
+        await queryOne(
+          `UPDATE ims.journal_entries
+              SET entry_date = $2::date,
+                  memo = $3
+            WHERE journal_id = $1`,
+          [journalId, next.date, next.note || `Owner drawing by ${next.ownerName}`]
+        );
+        await queryOne(`DELETE FROM ims.journal_lines WHERE journal_id = $1`, [journalId]);
+      }
+
+      await queryOne(
+        `INSERT INTO ims.journal_lines (journal_id, acc_id, debit, credit, note)
+         VALUES ($1, $2, $3, 0, $4), ($1, $5, 0, $3, $4)`,
+        [journalId, next.equityAccId, next.amount, next.note || null, nextAccountId]
+      );
+
+      const updatedTxnRows = await queryMany<{ txn_id: number }>(
+        `UPDATE ims.account_transactions
+            SET acc_id = $2,
+                debit = $3,
+                credit = 0,
+                txn_date = $4::date,
+                note = $5
+          WHERE ref_table = 'owner_drawings'
+            AND ref_id = $1
+          RETURNING txn_id`,
+        [id, nextAccountId, next.amount, next.date, next.note || null]
+      );
+      if (updatedTxnRows.length === 0) {
+        await queryOne(
+          `INSERT INTO ims.account_transactions
+             (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
+           VALUES ($1, $2, 'owner_drawing', 'owner_drawings', $3, $4, 0, $5::date, $6)`,
+          [existing.branch_id, nextAccountId, id, next.amount, next.date, next.note || null]
+        );
+      }
+
+      await queryOne(
+        `UPDATE ims.owner_drawings
+            SET owner_name = $2,
+                amount = $3,
+                draw_date = $4::date,
+                acc_id = $5,
+                note = $6,
+                journal_id = $7,
+                updated_at = NOW()
+          WHERE draw_id = $1`,
+        [id, next.ownerName, next.amount, next.date, nextAccountId, next.note || null, journalId]
+      );
+
+      await queryOne('COMMIT');
+      const updated = await this.getOwnerDrawingById(id, scope);
+      if (!updated) throw ApiError.internal('Failed to load updated drawing entry');
+      return updated;
+    } catch (error) {
+      await queryOne('ROLLBACK');
+      throw error;
+    }
+  },
+
+  async deleteOwnerDrawing(id: number, scope: BranchScope): Promise<void> {
+    await ensureCapitalSchema();
+    const existing = await queryOne<{
+      draw_id: number;
+      branch_id: number;
+      amount: string | number;
+      draw_date: string;
+      acc_id: number;
+      equity_acc_id: number;
+      journal_id: number | null;
+    }>(
+      `SELECT draw_id, branch_id, amount::text AS amount, draw_date::text, acc_id, equity_acc_id, journal_id
+         FROM ims.owner_drawings
+        WHERE draw_id = $1`,
+      [id]
+    );
+    if (!existing) throw ApiError.notFound('Drawing record not found');
+    assertBranchAccess(scope, Number(existing.branch_id));
+    if (await isCapitalDateLocked(Number(existing.branch_id), existing.draw_date)) {
+      throw ApiError.badRequest('Cannot delete: accounting period is closed for this date');
+    }
+
+    const amount = Number(existing.amount || 0);
+    await queryOne('BEGIN');
+    try {
+      await queryOne(`UPDATE ims.accounts SET balance = balance + $2 WHERE acc_id = $1`, [existing.acc_id, amount]);
+      await queryOne(`UPDATE ims.accounts SET balance = balance + $2 WHERE acc_id = $1`, [existing.equity_acc_id, amount]);
+
+      await queryOne(
+        `DELETE FROM ims.account_transactions
+          WHERE ref_table = 'owner_drawings'
+            AND ref_id = $1`,
+        [id]
+      );
+
+      if (existing.journal_id) {
+        await queryOne(`DELETE FROM ims.journal_entries WHERE journal_id = $1`, [existing.journal_id]);
+      }
+
+      await queryOne(`DELETE FROM ims.owner_drawings WHERE draw_id = $1`, [id]);
+      await queryOne('COMMIT');
+    } catch (error) {
+      await queryOne('ROLLBACK');
+      throw error;
+    }
+  },
+
   async updateCapitalContribution(
     id: number,
-    input: { ownerName?: string; amount?: number; date?: string; note?: string | null },
+    input: { ownerName?: string; amount?: number; sharePct?: number; date?: string; note?: string | null },
     scope: BranchScope,
     userId: number
   ): Promise<CapitalContribution> {
@@ -850,13 +1871,14 @@ export const settingsService = {
       branch_id: number;
       owner_name: string;
       amount: number;
+      share_pct: number;
       contribution_date: string;
       acc_id: number;
       equity_acc_id: number;
       note: string | null;
       journal_id: number | null;
     }>(
-      `SELECT capital_id, branch_id, owner_name, amount, contribution_date::text, acc_id, equity_acc_id, note, journal_id
+      `SELECT capital_id, branch_id, owner_name, amount, share_pct, contribution_date::text, acc_id, equity_acc_id, note, journal_id
          FROM ims.capital_contributions
         WHERE capital_id = $1`,
       [id]
@@ -865,14 +1887,16 @@ export const settingsService = {
     assertBranchAccess(scope, Number(existing.branch_id));
 
     const next = {
-      ownerName: input.ownerName ?? existing.owner_name,
+      ownerName: compactOwnerName(input.ownerName ?? existing.owner_name),
       amount: input.amount ?? Number(existing.amount),
+      sharePct: input.sharePct ?? Number(existing.share_pct || 0),
       date: input.date ?? existing.contribution_date,
       accountId: Number(existing.acc_id),
       note: input.note !== undefined ? input.note : existing.note,
       equityAccId: Number(existing.equity_acc_id),
     };
 
+    if (!next.ownerName) throw ApiError.badRequest('Owner name is required');
     if (next.amount <= 0) throw ApiError.badRequest('Amount must be greater than 0');
     if (await isCapitalDateLocked(Number(existing.branch_id), existing.contribution_date) || await isCapitalDateLocked(Number(existing.branch_id), next.date)) {
       throw ApiError.badRequest('Cannot update capital entry in a closed accounting period');
@@ -973,13 +1997,14 @@ export const settingsService = {
         `UPDATE ims.capital_contributions
             SET owner_name = $2,
                 amount = $3,
-                contribution_date = $4::date,
-                acc_id = $5,
-                note = $6,
-                journal_id = $7,
+                share_pct = $4,
+                contribution_date = $5::date,
+                acc_id = $6,
+                note = $7,
+                journal_id = $8,
                 updated_at = NOW()
           WHERE capital_id = $1`,
-        [id, next.ownerName, next.amount, next.date, next.accountId, next.note || null, journalId]
+        [id, next.ownerName, next.amount, Number(next.sharePct || 0), next.date, next.accountId, next.note || null, journalId]
       );
 
       await queryOne('COMMIT');

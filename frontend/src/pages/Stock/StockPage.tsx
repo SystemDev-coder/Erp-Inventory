@@ -9,6 +9,8 @@ import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { inventoryService, InventoryBranch, InventoryWarehouse, InventoryItem, StockLevelRow } from '../../services/inventory.service';
 import { useToast } from '../../components/ui/toast/Toast';
 import { useAuth } from '../../context/AuthContext';
+import { itemLabelWithAvailability } from '../../utils/itemAvailability';
+import { formatAvailableQty } from '../../utils/itemAvailability';
 
 type MovementRow = {
   move_date: string;
@@ -83,6 +85,36 @@ const StockPage = () => {
     const lowStockCount = stock.filter((row) => row.low_stock).length;
     return { totalQty, totalValue, lowStockCount };
   }, [stock]);
+
+  const itemAvailableQtyMap = useMemo(() => {
+    const map: Record<number, number> = {};
+    stock.forEach((row) => {
+      map[Number(row.item_id)] = Number(row.total_qty ?? row.branch_qty ?? 0);
+    });
+    return map;
+  }, [stock]);
+
+  const selectedAdjustAvailableQty = useMemo(() => {
+    const productId = Number(adjustForm.productId || 0);
+    const branchId = Number(adjustForm.branchId || 0);
+    const whId = Number(adjustForm.whId || 0);
+    if (!productId || !branchId) return 0;
+
+    const row = stock.find(
+      (stockRow) =>
+        Number(stockRow.item_id) === productId && Number(stockRow.branch_id) === branchId
+    );
+    if (!row) return 0;
+    if (whId > 0) {
+      const breakdown = (row.warehouse_breakdown || []).find((w) => Number(w.wh_id) === whId);
+      return Number(breakdown?.quantity ?? 0);
+    }
+    return Number(row.total_qty ?? row.branch_qty ?? 0);
+  }, [adjustForm.branchId, adjustForm.productId, adjustForm.whId, stock]);
+
+  const isAdjustDecreaseInsufficient =
+    Number(adjustForm.qty || 0) < 0 &&
+    Math.abs(Number(adjustForm.qty || 0)) > selectedAdjustAvailableQty;
 
   const filterWarehouses = useMemo(() => {
     if (!filters.branchId) return activeWarehouses;
@@ -321,6 +353,14 @@ const StockPage = () => {
       showToast('error', 'Adjust', 'Branch, item, and quantity are required');
       return;
     }
+    if (isAdjustDecreaseInsufficient) {
+      showToast(
+        'error',
+        'Adjust',
+        `Current stock is ${formatAvailableQty(selectedAdjustAvailableQty)} units. Decrease quantity is too high.`
+      );
+      return;
+    }
     const res = await inventoryService.adjust({
       branchId: Number(adjustForm.branchId),
       whId: adjustForm.whId ? Number(adjustForm.whId) : undefined,
@@ -542,7 +582,7 @@ const StockPage = () => {
           <div><label className={labelClass}>Search</label><input className={inputClass} placeholder="Item name..." value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} /></div>
           <div><label className={labelClass}>Branch</label><select className={inputClass} value={filters.branchId} onChange={(e) => setFilters({ ...filters, branchId: e.target.value, whId: '' })}><option value="">All branches</option>{activeBranches.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>)}</select></div>
           <div><label className={labelClass}>Warehouse</label><select className={inputClass} value={filters.whId} onChange={(e) => setFilters({ ...filters, whId: e.target.value })}><option value="">All warehouses</option>{filterWarehouses.map((w) => <option key={w.wh_id} value={w.wh_id}>{w.wh_name}</option>)}</select></div>
-          <div><label className={labelClass}>Purchased Item</label><select className={inputClass} value={filters.productId} onChange={(e) => setFilters({ ...filters, productId: e.target.value })}><option value="">All purchased items</option>{filterItems.map((item) => <option key={item.item_id} value={item.item_id}>{item.item_name}</option>)}</select></div>
+          <div><label className={labelClass}>Purchased Item</label><select className={inputClass} value={filters.productId} onChange={(e) => setFilters({ ...filters, productId: e.target.value })}><option value="">All purchased items</option>{filterItems.map((item) => <option key={item.item_id} value={item.item_id}>{itemLabelWithAvailability(item.item_name, itemAvailableQtyMap[item.item_id])}</option>)}</select></div>
         </div>
         <div className="mt-3 flex justify-end"><button onClick={() => { setStockDisplayed(true); void Promise.all([loadStock(), loadMovements()]); }} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"><Filter className="h-4 w-4" />Display</button></div>
       </div>
@@ -553,14 +593,14 @@ const StockPage = () => {
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div><label className={labelClass}>Branch *</label><select className={inputClass} value={adjustForm.branchId} onChange={(e) => setAdjustForm({ ...adjustForm, branchId: e.target.value, whId: '', productId: '', unitCost: 0, salePrice: 0 })}><option value="">Select branch</option>{activeBranches.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>)}</select></div>
           <div><label className={labelClass}>Warehouse</label><select className={inputClass} value={adjustForm.whId} onChange={(e) => setAdjustForm({ ...adjustForm, whId: e.target.value })}><option value="">Branch level only</option>{adjustWarehouses.map((w) => <option key={w.wh_id} value={w.wh_id}>{w.wh_name}</option>)}</select></div>
-          <div><label className={labelClass}>Purchased Item *</label><select className={inputClass} value={adjustForm.productId} onChange={(e) => handleAdjustItemChange(e.target.value)}><option value="">Select purchased item</option>{adjustItems.map((item) => <option key={item.item_id} value={item.item_id}>{item.item_name}</option>)}</select></div>
-          <div><label className={labelClass}>Quantity *</label><input type="number" className={inputClass} value={adjustForm.qty} onChange={(e) => setAdjustForm({ ...adjustForm, qty: Number(e.target.value) })} /></div>
+          <div><label className={labelClass}>Purchased Item *</label><select className={inputClass} value={adjustForm.productId} onChange={(e) => handleAdjustItemChange(e.target.value)}><option value="">Select purchased item</option>{adjustItems.map((item) => <option key={item.item_id} value={item.item_id}>{itemLabelWithAvailability(item.item_name, itemAvailableQtyMap[item.item_id])}</option>)}</select><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Current Stock: <span className="font-medium text-slate-700 dark:text-slate-200">{formatAvailableQty(selectedAdjustAvailableQty)} units</span></p></div>
+          <div><label className={labelClass}>Quantity * (use negative for decrease)</label><input type="number" className={inputClass} value={adjustForm.qty} onChange={(e) => setAdjustForm({ ...adjustForm, qty: Number(e.target.value) })} />{isAdjustDecreaseInsufficient && <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">Cannot decrease more than current stock.</p>}</div>
           <div><label className={labelClass}>Cost Price</label><input type="number" className={inputClass} value={adjustForm.unitCost} onChange={(e) => setAdjustForm({ ...adjustForm, unitCost: Number(e.target.value) })} /></div>
           <div><label className={labelClass}>Sale Price</label><input type="number" className={inputClass} value={adjustForm.salePrice} readOnly /></div>
           <div><label className={labelClass}>Auto Value (Qty x Cost)</label><input type="number" className={inputClass} value={adjustAutoValue} readOnly /></div>
           <div><label className={labelClass}>Note</label><input className={inputClass} value={adjustForm.note} onChange={(e) => setAdjustForm({ ...adjustForm, note: e.target.value })} /></div>
         </div>
-        <div className="mt-4 flex justify-end gap-2 border-t border-slate-200 pt-3 dark:border-slate-700"><button className="rounded-lg border px-4 py-2 text-sm" onClick={() => setShowAdjust(false)}>Cancel</button><button className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white" onClick={handleAdjust}>Save</button></div>
+        <div className="mt-4 flex justify-end gap-2 border-t border-slate-200 pt-3 dark:border-slate-700"><button className="rounded-lg border px-4 py-2 text-sm" onClick={() => setShowAdjust(false)}>Cancel</button><button className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60" onClick={handleAdjust} disabled={isAdjustDecreaseInsufficient}>Save</button></div>
       </Modal>
 
       <Modal isOpen={showTransfer} onClose={() => setShowTransfer(false)} title="Stock Transfer" size="lg">
@@ -583,7 +623,7 @@ const StockPage = () => {
           {transferForm.toType === 'branch' && transferForm.toBranchId && (
             <div><label className={labelClass}>To Warehouse (optional)</label><select className={inputClass} value={transferForm.toWhId} onChange={(e) => setTransferForm({ ...transferForm, toWhId: e.target.value })}><option value="">Use branch stock</option>{transferToWarehouses.map((w) => <option key={w.wh_id} value={w.wh_id}>{w.wh_name}</option>)}</select></div>
           )}
-          <div><label className={labelClass}>Purchased Item *</label><select className={inputClass} value={transferForm.productId} onChange={(e) => handleTransferItemChange(e.target.value)}><option value="">Select purchased item</option>{transferItems.map((item) => <option key={item.item_id} value={item.item_id}>{item.item_name}</option>)}</select></div>
+          <div><label className={labelClass}>Purchased Item *</label><select className={inputClass} value={transferForm.productId} onChange={(e) => handleTransferItemChange(e.target.value)}><option value="">Select purchased item</option>{transferItems.map((item) => <option key={item.item_id} value={item.item_id}>{itemLabelWithAvailability(item.item_name, itemAvailableQtyMap[item.item_id])}</option>)}</select></div>
           <div><label className={labelClass}>Quantity *</label><input type="number" className={inputClass} value={transferForm.qty} onChange={(e) => setTransferForm({ ...transferForm, qty: Number(e.target.value) })} /></div>
           <div><label className={labelClass}>Cost Price</label><input type="number" className={inputClass} value={transferForm.unitCost} onChange={(e) => setTransferForm({ ...transferForm, unitCost: Number(e.target.value) })} /></div>
           <div><label className={labelClass}>Sale Price</label><input type="number" className={inputClass} value={transferForm.salePrice} readOnly /></div>

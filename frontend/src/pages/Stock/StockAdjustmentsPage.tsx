@@ -8,15 +8,18 @@ import { Modal } from '../../components/ui/modal/Modal';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { useToast } from '../../components/ui/toast/Toast';
 import { inventoryService, InventoryItem, StockAdjustmentRow } from '../../services/inventory.service';
+import { formatAvailableQty, itemLabelWithAvailability } from '../../utils/itemAvailability';
 
 const inputClass =
   'h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
 const labelClass = 'mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400';
+const todayDate = () => new Date().toISOString().slice(0, 10);
 
 const StockAdjustmentsPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const { showToast } = useToast();
   const [rows, setRows] = useState<StockAdjustmentRow[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [itemAvailableQty, setItemAvailableQty] = useState<Record<number, number>>({});
   const [loading, setLoading] = useState(false);
   const [mastersLoading, setMastersLoading] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -28,13 +31,18 @@ const StockAdjustmentsPage: React.FC<{ embedded?: boolean }> = ({ embedded = fal
     itemId: '',
     adjustmentType: 'INCREASE' as 'INCREASE' | 'DECREASE',
     quantity: 1,
+    adjustmentDate: todayDate(),
     reason: '',
     status: 'POSTED' as 'POSTED' | 'CANCELLED',
   });
 
   const columns = useMemo<ColumnDef<StockAdjustmentRow>[]>(
     () => [
-      { accessorKey: 'adj_date', header: 'Date', cell: ({ row }) => new Date(row.original.adj_date).toLocaleString() },
+      {
+        accessorKey: 'adj_date',
+        header: 'Date',
+        cell: ({ row }) => new Date(row.original.adj_date).toLocaleDateString(),
+      },
       { accessorKey: 'item_names', header: 'Item' },
       { accessorKey: 'qty_delta', header: 'Qty Delta', cell: ({ row }) => Number(row.original.qty_delta).toFixed(3) },
       { accessorKey: 'value_delta', header: 'Value Delta', cell: ({ row }) => `$${Number(row.original.value_delta).toFixed(2)}` },
@@ -48,11 +56,21 @@ const StockAdjustmentsPage: React.FC<{ embedded?: boolean }> = ({ embedded = fal
 
   const loadMasters = async () => {
     setMastersLoading(true);
-    const itemRes = await inventoryService.listItems({});
+    const [itemRes, stockRes] = await Promise.all([
+      inventoryService.listItems({}),
+      inventoryService.listStock({ page: 1, limit: 5000 }),
+    ]);
     if (itemRes.success && itemRes.data?.items) {
       setItems(itemRes.data.items);
     } else {
       showToast('error', 'Stock Adjustments', itemRes.error || 'Failed to load items');
+    }
+    if (stockRes.success && stockRes.data?.rows) {
+      const nextMap: Record<number, number> = {};
+      stockRes.data.rows.forEach((row) => {
+        nextMap[Number(row.item_id)] = Number(row.total_qty ?? row.branch_qty ?? 0);
+      });
+      setItemAvailableQty(nextMap);
     }
     setMastersLoading(false);
   };
@@ -85,21 +103,37 @@ const StockAdjustmentsPage: React.FC<{ embedded?: boolean }> = ({ embedded = fal
       itemId: '',
       adjustmentType: 'INCREASE',
       quantity: 1,
+      adjustmentDate: todayDate(),
       reason: '',
       status: 'POSTED',
     });
   };
 
   const handleSave = async () => {
+    const selectedAvailableQty = Number(itemAvailableQty[Number(form.itemId)] ?? 0);
+    const isDecreaseInsufficient =
+      form.adjustmentType === 'DECREASE' &&
+      Number(form.quantity || 0) > selectedAvailableQty;
+
     if (!form.itemId || Number(form.quantity) <= 0 || !form.reason.trim()) {
       showToast('error', 'Stock Adjustments', 'Item, quantity, and reason are required');
+      return;
+    }
+    if (isDecreaseInsufficient) {
+      showToast(
+        'error',
+        'Stock Adjustments',
+        `Current stock is ${formatAvailableQty(selectedAvailableQty)} units. You cannot decrease by ${form.quantity}.`
+      );
       return;
     }
 
     const payload = {
       itemId: Number(form.itemId),
+      branchId: items.find((item) => item.item_id === Number(form.itemId))?.branch_id,
       adjustmentType: form.adjustmentType,
       quantity: Number(form.quantity),
+      adjustmentDate: form.adjustmentDate,
       reason: form.reason.trim(),
       status: form.status,
     };
@@ -132,6 +166,7 @@ const StockAdjustmentsPage: React.FC<{ embedded?: boolean }> = ({ embedded = fal
       itemId: row.item_id ? String(row.item_id) : '',
       adjustmentType: row.adjustment_type || fallbackType,
       quantity: Number((row.quantity ?? Math.abs(Number(row.qty_delta || 0))) || 1),
+      adjustmentDate: row.adj_date ? String(row.adj_date).slice(0, 10) : todayDate(),
       reason: row.reason || '',
       status: (row.status || 'POSTED') as 'POSTED' | 'CANCELLED',
     });
@@ -194,7 +229,7 @@ const StockAdjustmentsPage: React.FC<{ embedded?: boolean }> = ({ embedded = fal
               <option value="">All items</option>
               {items.map((item) => (
                 <option key={item.item_id} value={item.item_id}>
-                  {item.item_name}
+                  {itemLabelWithAvailability(item.item_name, itemAvailableQty[item.item_id])}
                 </option>
               ))}
             </select>
@@ -242,6 +277,13 @@ const StockAdjustmentsPage: React.FC<{ embedded?: boolean }> = ({ embedded = fal
         title={editingId ? 'Edit Stock Adjustment' : 'New Stock Adjustment'}
         size="md"
       >
+        {(() => {
+          const selectedAvailableQty = Number(itemAvailableQty[Number(form.itemId)] ?? 0);
+          const isDecreaseInsufficient =
+            form.adjustmentType === 'DECREASE' &&
+            Number(form.quantity || 0) > selectedAvailableQty;
+          return (
+        <>
         <div className="grid grid-cols-1 gap-3">
           <div>
             <label className={labelClass}>Item *</label>
@@ -249,10 +291,16 @@ const StockAdjustmentsPage: React.FC<{ embedded?: boolean }> = ({ embedded = fal
               <option value="">Select item</option>
               {items.map((item) => (
                 <option key={item.item_id} value={item.item_id}>
-                  {item.item_name}
+                  {itemLabelWithAvailability(item.item_name, itemAvailableQty[item.item_id])}
                 </option>
               ))}
             </select>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              Current Stock:{' '}
+              <span className="font-medium text-slate-700 dark:text-slate-200">
+                {formatAvailableQty(selectedAvailableQty)} units
+              </span>
+            </p>
           </div>
           <div>
             <label className={labelClass}>Adjustment Type *</label>
@@ -274,6 +322,20 @@ const StockAdjustmentsPage: React.FC<{ embedded?: boolean }> = ({ embedded = fal
               className={inputClass}
               value={form.quantity}
               onChange={(e) => setForm((prev) => ({ ...prev, quantity: Number(e.target.value || 0) }))}
+            />
+            {isDecreaseInsufficient && (
+              <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
+                Cannot decrease more than current stock.
+              </p>
+            )}
+          </div>
+          <div>
+            <label className={labelClass}>Date *</label>
+            <input
+              type="date"
+              className={inputClass}
+              value={form.adjustmentDate}
+              onChange={(e) => setForm((prev) => ({ ...prev, adjustmentDate: e.target.value }))}
             />
           </div>
           <div>
@@ -304,10 +366,17 @@ const StockAdjustmentsPage: React.FC<{ embedded?: boolean }> = ({ embedded = fal
           }}>
             Cancel
           </button>
-          <button className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white" onClick={handleSave}>
+          <button
+            className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+            onClick={handleSave}
+            disabled={isDecreaseInsufficient}
+          >
             {editingId ? 'Update Adjustment' : 'Save Adjustment'}
           </button>
         </div>
+        </>
+          );
+        })()}
       </Modal>
 
       <ConfirmDialog

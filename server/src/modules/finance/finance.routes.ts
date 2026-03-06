@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middlewares/requireAuth';
+import { requireAnyPerm } from '../../middlewares/requirePerm';
 import {
   listAccountTransfers,
   createAccountTransfer,
@@ -39,6 +40,18 @@ import {
   getSupplierCombinedBalance,
   listSupplierOutstandingPurchases,
 } from './finance.controller';
+import {
+  listClosingPeriods,
+  createClosingPeriod,
+  updateClosingPeriod,
+  previewClosingPeriod,
+  closeClosingPeriod,
+  reopenClosingPeriod,
+  getClosingSummary,
+  listProfitShareRules,
+  saveProfitShareRule,
+  runScheduledClosings,
+} from './financeClosing.controller';
 
 const router = Router();
 
@@ -92,5 +105,17 @@ router.get('/payroll', listPayroll);
 router.post('/payroll/charge', chargeSalaries);
 router.post('/payroll/pay', paySalary);
 router.post('/payroll/delete', deletePayroll);
+
+// Closing finance & profit sharing
+router.get('/closing/periods', requireAnyPerm(['finance.reports', 'accounts.view']), listClosingPeriods);
+router.post('/closing/periods', requireAnyPerm(['finance.reports', 'accounts.view']), createClosingPeriod);
+router.put('/closing/periods/:id', requireAnyPerm(['finance.reports', 'accounts.view']), updateClosingPeriod);
+router.post('/closing/periods/:id/preview', requireAnyPerm(['finance.reports', 'accounts.view']), previewClosingPeriod);
+router.post('/closing/periods/:id/close', requireAnyPerm(['finance.reports', 'accounts.view']), closeClosingPeriod);
+router.post('/closing/periods/:id/reopen', requireAnyPerm(['system.settings']), reopenClosingPeriod);
+router.get('/closing/periods/:id/summary', requireAnyPerm(['finance.reports', 'accounts.view']), getClosingSummary);
+router.get('/closing/rules', requireAnyPerm(['finance.reports', 'accounts.view']), listProfitShareRules);
+router.post('/closing/rules', requireAnyPerm(['finance.reports', 'accounts.view']), saveProfitShareRule);
+router.post('/closing/run-scheduled', requireAnyPerm(['system.settings', 'finance.reports']), runScheduledClosings);
 
 export default router;

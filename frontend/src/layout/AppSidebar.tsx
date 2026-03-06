@@ -167,7 +167,7 @@ const AppSidebar: React.FC = () => {
 
   return (
     <aside
-      className={`fixed mt-16 flex flex-col lg:mt-0 top-0 left-0 bg-gradient-to-b from-[#123f5c] to-[#1b5a80] text-[#e7f2fb] border-r border-[#2c6287] h-screen transition-all duration-300 ease-in-out z-50 shadow-[0_8px_26px_-12px_rgba(15,23,42,0.45)]
+      className={`fixed mt-16 flex flex-col lg:mt-0 top-0 left-0 bg-gradient-to-b from-[#0a1f44] to-[#102b59] text-[#f4f8ff] border-r border-[#264676] h-screen transition-all duration-300 ease-in-out z-50 shadow-[0_8px_26px_-12px_rgba(15,23,42,0.45)]
         ${showExpanded ? 'w-[280px]' : 'w-[80px]'}
         ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'}
         lg:translate-x-0`}
@@ -180,7 +180,7 @@ const AppSidebar: React.FC = () => {
         }`}
       >
         <Link to="/" className="flex items-center gap-3 min-w-0">
-          <div className="w-9 h-9 shrink-0 rounded-lg border border-[#3e7396] bg-[#0f4f76] flex items-center justify-center shadow-sm">
+          <div className="w-9 h-9 shrink-0 rounded-lg border border-[#3a5d90] bg-[#163a72] flex items-center justify-center shadow-sm">
             <ShoppingCart className="w-5 h-5 text-white" />
           </div>
           {showExpanded && (
@@ -193,7 +193,7 @@ const AppSidebar: React.FC = () => {
         <button
           onClick={toggleSidebar}
           aria-label={showExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
-          className="hidden lg:flex shrink-0 p-1.5 hover:bg-[#0f4f76] rounded-lg transition-colors text-[#c6dceb]"
+          className="hidden lg:flex shrink-0 p-1.5 hover:bg-[#163a72] rounded-lg transition-colors text-[#d8e3f5]"
         >
           {showExpanded ? <ChevronLeft className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
         </button>
@@ -220,14 +220,14 @@ const AppSidebar: React.FC = () => {
                       onClick={() => toggleGroup(item.id)}
                       className={`flex items-center w-full rounded-lg px-3 py-2.5 transition-colors ${
                         hasActiveSub
-                          ? 'bg-[#0f4f76] text-white ring-1 ring-[#83b2cf]'
-                          : 'text-[#dbeaf6] hover:bg-[#0f4f76] hover:text-white'
+                          ? 'bg-[#163a72] text-white ring-1 ring-[#5d7fb3]'
+                          : 'text-[#e8effb] hover:bg-[#163a72] hover:text-white'
                       } ${!showExpanded ? 'lg:justify-center px-0' : ''}`}
                     >
                       <span className={`flex items-center min-w-0 flex-1 ${!showExpanded ? 'lg:justify-center' : 'gap-3'}`}>
                         <span
                           className={`flex-shrink-0 ${
-                            hasActiveSub ? 'text-white' : 'text-[#b5d0e4]'
+                            hasActiveSub ? 'text-white' : 'text-[#b8c8e4]'
                           }`}
                         >
                           <Icon className="w-4 h-4" />
@@ -241,7 +241,7 @@ const AppSidebar: React.FC = () => {
                       )}
                     </button>
                     {showExpanded && groupOpen && (
-                      <ul className="ml-5 mt-2 space-y-1 border-l border-[#83b2cf]/60 pl-3">
+                      <ul className="ml-5 mt-2 space-y-1 border-l border-[#5d7fb3]/60 pl-3">
                         {(item.subItems || []).map((sub) => {
                           const subActive = isActive(sub.to, sub.exact);
                           return (
@@ -250,8 +250,8 @@ const AppSidebar: React.FC = () => {
                                 to={sub.to}
                                 className={`block rounded-lg px-3 py-2 text-sm transition-colors ${
                                   subActive
-                                    ? 'bg-[#0f4f76] text-white ring-1 ring-[#83b2cf]'
-                                    : 'text-[#dbeaf6] hover:bg-[#0f4f76] hover:text-white'
+                                    ? 'bg-[#163a72] text-white ring-1 ring-[#5d7fb3]'
+                                    : 'text-[#e8effb] hover:bg-[#163a72] hover:text-white'
                                 }`}
                               >
                                 {sub.label}
@@ -271,12 +271,12 @@ const AppSidebar: React.FC = () => {
                     to={item.to || '/'}
                     className={`flex items-center w-full rounded-lg transition-colors ${
                       active
-                        ? 'bg-[#0f4f76] text-white ring-1 ring-[#83b2cf]'
-                        : 'text-[#dbeaf6] hover:bg-[#0f4f76] hover:text-white'
+                        ? 'bg-[#163a72] text-white ring-1 ring-[#5d7fb3]'
+                        : 'text-[#e8effb] hover:bg-[#163a72] hover:text-white'
                     } ${!showExpanded ? 'lg:justify-center px-0' : 'px-3'}`}
                   >
                     <span className={`flex items-center min-w-0 flex-1 py-2.5 ${!showExpanded ? 'lg:justify-center' : 'gap-3'}`}>
-                      <span className={`${active ? 'text-white' : 'text-[#b5d0e4]'} flex-shrink-0`}>
+                      <span className={`${active ? 'text-white' : 'text-[#b8c8e4]'} flex-shrink-0`}>
                         <Icon className="w-4 h-4" />
                       </span>
                       {showExpanded && <span className="text-sm font-medium truncate">{item.label}</span>}
@@ -293,17 +293,17 @@ const AppSidebar: React.FC = () => {
       </div>
 
       {showExpanded && (
-        <div className="p-4 border-t border-[#83b2cf]/40 space-y-3">
+        <div className="p-4 border-t border-[#5d7fb3]/40 space-y-3">
           <button
             onClick={() => {
               lock();
               navigate('/lock');
             }}
-            className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-[#83b2cf] bg-[#0f4f76] px-3 py-2 text-sm font-semibold text-white hover:bg-[#0b4061]"
+            className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-[#5d7fb3] bg-[#163a72] px-3 py-2 text-sm font-semibold text-white hover:bg-[#0f2f62]"
           >
             <LockIcon className="h-4 w-4" /> Lock
           </button>
-          <p className="text-xs text-[#c6dceb] text-center">
+          <p className="text-xs text-[#d8e3f5] text-center">
             (c) 2026 {user?.branch_name || 'KeydMaal ERP'} | All rights reserved
           </p>
         </div>

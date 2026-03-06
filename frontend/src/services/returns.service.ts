@@ -51,6 +51,12 @@ export const returnsService = {
     listItems() {
         return apiClient.get<{ items: ReturnItemOption[] }>('/api/returns/items');
     },
+    listSalesItemsByCustomer(customerId: number) {
+        return apiClient.get<{ items: ReturnItemOption[] }>(`/api/returns/sales/customer-items?customerId=${customerId}`);
+    },
+    listPurchaseItemsBySupplier(supplierId: number) {
+        return apiClient.get<{ items: ReturnItemOption[] }>(`/api/returns/purchases/supplier-items?supplierId=${supplierId}`);
+    },
     listSalesReturns() {
         return apiClient.get<{ rows: SalesReturn[] }>('/api/returns/sales');
     },

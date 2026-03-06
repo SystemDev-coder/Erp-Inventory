@@ -7,6 +7,7 @@ import { accountService, Account } from '../../services/account.service';
 import { customerService, Customer } from '../../services/customer.service';
 import { inventoryService, InventoryItem } from '../../services/inventory.service';
 import { SaleDocType, SaleStatus, salesService } from '../../services/sales.service';
+import { formatAvailableQty, itemLabelWithAvailability } from '../../utils/itemAvailability';
 
 type FormLine = {
   item_id: number | '';
@@ -85,7 +86,7 @@ const SaleCreate = () => {
         customerService.list(),
         accountService.list(),
         inventoryService.listItems({}),
-        inventoryService.listStock({ page: 1, limit: 1000 }),
+        inventoryService.listStock({ page: 1, limit: 5000 }),
       ]);
 
       if (cRes.success && cRes.data?.customers) setCustomers(cRes.data.customers);
@@ -106,7 +107,7 @@ const SaleCreate = () => {
             item_id: itemId,
             item_name: item.item_name,
             unit_price: Number(fallbackPrice),
-            available_qty: stockMap.get(itemId),
+            available_qty: stockMap.get(itemId) ?? 0,
           };
         });
         setItemOptions(mapped);
@@ -149,11 +150,17 @@ const SaleCreate = () => {
         status: sale.status || 'paid',
         sale_date: sale.sale_date?.slice(0, 10) || todayString(),
         quote_valid_until: sale.quote_valid_until?.slice(0, 10) || '',
-      subtotal: Number(sale.subtotal || 0),
-      discount: Number(sale.discount || 0),
-      tax_rate: Number((sale as any).tax_amount ? ((sale as any).tax_amount / Math.max(1, (sale as any).total_before_tax || sale.subtotal || 1)) * 100 : 0),
-      tax_amount: Number((sale as any).tax_amount || 0),
-      total: Number(sale.total || 0),
+        subtotal: Number(sale.subtotal || 0),
+        discount: Number(sale.discount || 0),
+        tax_rate: Number(
+          (sale as any).tax_amount
+            ? (((sale as any).tax_amount /
+                Math.max(1, (sale as any).total_before_tax || sale.subtotal || 1)) *
+                100)
+            : 0
+        ),
+        tax_amount: Number((sale as any).tax_amount || 0),
+        total: Number(sale.total || 0),
         acc_id: sale.pay_acc_id ?? '',
         paid_amount: Number(sale.paid_amount || 0),
         note: sale.note || '',
@@ -164,15 +171,16 @@ const SaleCreate = () => {
     void loadSale();
   }, [editId, isEditing, navigate, showToast]);
 
-  const recalcTotals = (nextItems: FormLine[], headerDiscount: number) => {
+  const recalcTotals = (nextItems: FormLine[], headerDiscount: number, headerTaxRate = saleForm.tax_rate) => {
     const subtotal = nextItems.reduce(
       (sum, line) => sum + Number(line.quantity || 0) * Number(line.unit_price || 0),
       0
     );
     const discount = Number(headerDiscount || 0);
-    const taxRate = Number(saleForm.tax_rate || 0);
-    const taxAmount = ((subtotal - discount) * taxRate) / 100;
-    const total = Math.max(0, subtotal - discount + taxAmount);
+    const taxRate = Number(headerTaxRate || 0);
+    const taxableAmount = Math.max(0, subtotal - discount);
+    const taxAmount = (taxableAmount * taxRate) / 100;
+    const total = taxableAmount + taxAmount;
     setSaleForm((prev) => ({
       ...prev,
       subtotal: Number(subtotal.toFixed(2)),
@@ -198,10 +206,45 @@ const SaleCreate = () => {
     effectiveStatus !== 'void' &&
     effectiveStatus !== 'unpaid';
 
+  const itemOptionsMap = useMemo(() => {
+    const map = new Map<number, SaleItemOption>();
+    itemOptions.forEach((item) => map.set(Number(item.item_id), item));
+    return map;
+  }, [itemOptions]);
+
+  const getLineAvailableQty = (line: FormLine) => {
+    if (!line.item_id) return 0;
+    const fromOption = itemOptionsMap.get(Number(line.item_id))?.available_qty;
+    if (fromOption !== undefined && fromOption !== null) return Number(fromOption);
+    return Number(line.available_qty ?? 0);
+  };
+
+  const firstInsufficientLine = saleForm.items.find((line) => {
+    if (!line.item_id) return false;
+    const available = getLineAvailableQty(line);
+    return Number(line.quantity || 0) > available;
+  });
+  const firstInsufficientAvailableQty = firstInsufficientLine
+    ? getLineAvailableQty(firstInsufficientLine)
+    : 0;
+  const hasInsufficientStock = Boolean(firstInsufficientLine);
+
   const handleSaveSale = async () => {
     const validItems = saleForm.items.filter((line) => line.item_id && line.quantity > 0);
     if (!validItems.length) {
       showToast('error', 'Sales', 'Select at least one item with quantity');
+      return;
+    }
+    if (firstInsufficientLine) {
+      const selected = itemOptions.find((item) => item.item_id === Number(firstInsufficientLine.item_id));
+      const itemLabel = selected?.item_name || `Item ${firstInsufficientLine.item_id}`;
+      showToast(
+        'error',
+        'Sales',
+        `${itemLabel}: requested ${Number(firstInsufficientLine.quantity)} but only ${formatAvailableQty(
+          firstInsufficientAvailableQty
+        )} available`
+      );
       return;
     }
 
@@ -373,22 +416,6 @@ const SaleCreate = () => {
             </select>
           </label>
 
-          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-            Tax %
-            <input
-              type="number"
-              min={0}
-              className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
-              value={saleForm.tax_rate}
-              onChange={(e) => {
-                const rate = Number(e.target.value || 0);
-                setSaleForm((prev) => ({ ...prev, tax_rate: rate }));
-                recalcTotals(saleForm.items, saleForm.discount);
-              }}
-              disabled={loading}
-              placeholder="0"
-            />
-          </label>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -484,10 +511,9 @@ const SaleCreate = () => {
             </button>
           </div>
 
-          <div className="hidden md:grid md:grid-cols-[2fr_1fr_1fr_1fr_auto] gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400 px-1">
+          <div className="hidden md:grid md:grid-cols-[2fr_1fr_1fr_auto] gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400 px-1">
             <span>Item</span>
             <span className="text-right">Qty</span>
-            <span className="text-right">Available</span>
             <span className="text-right">Unit Price</span>
             <span className="text-right pr-6">Line Total / Action</span>
           </div>
@@ -496,63 +522,71 @@ const SaleCreate = () => {
             {saleForm.items.map((line, idx) => (
               <div
                 key={idx}
-                className="grid grid-cols-1 md:grid-cols-[2fr_1fr_1fr_1fr_auto] gap-2 items-center"
+                className="grid grid-cols-1 md:grid-cols-[2fr_1fr_1fr_auto] gap-2 items-start"
               >
-                <select
-                  className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-sm"
-                  value={line.item_id}
-                  onChange={(e) => {
-                    const itemId = e.target.value ? Number(e.target.value) : '';
-                    const option = itemOptions.find((item) => item.item_id === itemId);
-                    const nextItems = [...saleForm.items];
-                    nextItems[idx] = {
-                      ...nextItems[idx],
-                      item_id: itemId,
-                      unit_price: option ? Number(option.unit_price || 0) : nextItems[idx].unit_price,
-                      available_qty: option?.available_qty,
-                    };
-                    setSaleForm((prev) => ({ ...prev, items: nextItems }));
-                    recalcTotals(nextItems, saleForm.discount);
-                  }}
-                  disabled={loading}
-                >
-                  <option value="">Select item</option>
-                  {itemOptions.map((item) => (
-                    <option key={item.item_id} value={item.item_id}>
-                      {`${item.item_name} - Stock: ${
-                        item.available_qty !== undefined ? Number(item.available_qty).toFixed(3) : 'N/A'
-                      } - Price: $${Number(item.unit_price || 0).toFixed(2)}`}
-                    </option>
-                  ))}
-                </select>
+                <div>
+                  <select
+                    className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-sm w-full"
+                    value={line.item_id}
+                    onChange={(e) => {
+                      const itemId = e.target.value ? Number(e.target.value) : '';
+                      const option = itemOptions.find((item) => item.item_id === itemId);
+                      const nextItems = [...saleForm.items];
+                      nextItems[idx] = {
+                        ...nextItems[idx],
+                        item_id: itemId,
+                        unit_price: option ? Number(option.unit_price || 0) : nextItems[idx].unit_price,
+                        available_qty: option?.available_qty ?? 0,
+                      };
+                      setSaleForm((prev) => ({ ...prev, items: nextItems }));
+                      recalcTotals(nextItems, saleForm.discount);
+                    }}
+                    disabled={loading}
+                  >
+                    <option value="">Select item</option>
+                    {itemOptions.map((item) => (
+                      <option key={item.item_id} value={item.item_id}>
+                        {itemLabelWithAvailability(item.item_name, item.available_qty)}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                    Available Quantity:{' '}
+                    <span className="font-medium text-slate-700 dark:text-slate-200">
+                      {formatAvailableQty(getLineAvailableQty(line))} units
+                    </span>
+                  </p>
+                </div>
 
-                <input
-                  type="number"
-                  min={0}
-                  className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-sm text-right"
-                  value={line.quantity}
-                  onChange={(e) => {
-                    const quantity = Number(e.target.value || 0);
-                    const nextItems = [...saleForm.items];
-                    const selected = itemOptions.find((item) => item.item_id === nextItems[idx].item_id);
-                    nextItems[idx] = {
-                      ...nextItems[idx],
-                      quantity,
-                      unit_price:
-                        nextItems[idx].unit_price > 0
-                          ? nextItems[idx].unit_price
-                          : Number(selected?.unit_price || 0),
-                    };
-                    setSaleForm((prev) => ({ ...prev, items: nextItems }));
-                    recalcTotals(nextItems, saleForm.discount);
-                  }}
-                  disabled={loading}
-                />
-
-                <div className="text-right text-xs text-slate-500 dark:text-slate-400">
-                  {line.available_qty !== undefined
-                    ? `${line.available_qty} in stock`
-                    : '—'}
+                <div>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.001}
+                    className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-sm text-right w-full"
+                    value={line.quantity}
+                    onChange={(e) => {
+                      const quantity = Number(e.target.value || 0);
+                      const nextItems = [...saleForm.items];
+                      const selected = itemOptions.find((item) => item.item_id === nextItems[idx].item_id);
+                      nextItems[idx] = {
+                        ...nextItems[idx],
+                        quantity,
+                        unit_price:
+                          nextItems[idx].unit_price > 0
+                            ? nextItems[idx].unit_price
+                            : Number(selected?.unit_price || 0),
+                      };
+                      setSaleForm((prev) => ({ ...prev, items: nextItems }));
+                      recalcTotals(nextItems, saleForm.discount);
+                    }}
+                    disabled={loading}
+                  />
+                  {!!line.item_id && Number(line.quantity || 0) > getLineAvailableQty(line) && (
+                    <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
+                      Quantity exceeds available stock.
+                    </p>
+                  )}
                 </div>
 
                 <input
@@ -619,8 +653,22 @@ const SaleCreate = () => {
             />
           </div>
           <div className="flex flex-col items-end">
-            <span className="text-slate-500">Tax</span>
-            <span className="font-semibold">${(saleForm.tax_amount || 0).toFixed(2)}</span>
+            <span className="text-slate-500">Tax %</span>
+            <input
+              type="number"
+              min={0}
+              step={0.01}
+              className="mt-1 rounded-lg border px-3 py-1 text-sm text-right bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 w-28"
+              value={saleForm.tax_rate}
+              onChange={(e) => {
+                const taxRate = Number(e.target.value || 0);
+                const next = { ...saleForm, tax_rate: taxRate };
+                setSaleForm(next);
+                recalcTotals(next.items, next.discount, taxRate);
+              }}
+              disabled={loading}
+            />
+            <span className="mt-1 text-xs text-slate-500">${(saleForm.tax_amount || 0).toFixed(2)}</span>
           </div>
           <div className="flex flex-col items-end">
             <span className="text-slate-500">Total</span>
@@ -661,7 +709,7 @@ const SaleCreate = () => {
           <button
             type="button"
             onClick={() => void handleSaveSale()}
-            disabled={submitting || loading}
+            disabled={submitting || loading || hasInsufficientStock}
             className="px-8 py-2.5 bg-primary-600 text-white font-bold rounded-lg hover:bg-primary-700 transition-all shadow-md shadow-primary-500/20 active:scale-95 disabled:opacity-60"
           >
             {submitting ? 'Saving...' : isEditing ? 'Update Document' : 'Create Document'}

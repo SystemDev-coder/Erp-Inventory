@@ -20,6 +20,7 @@ import profileRoutes from './modules/profile/profile.routes';
 import userRoutes from './modules/users/users.routes';
 import inventoryRoutes from './modules/inventory/inventory.routes';
 import financeRoutes from './modules/finance/finance.routes';
+import { ensureFinanceClosingSchema } from './modules/finance/financeClosing.service';
 import notificationRoutes from './modules/notifications/notifications.routes';
 import employeeRoutes from './modules/employees/employees.routes';
 import storeRoutes from './modules/stores/stores.routes';
@@ -33,6 +34,11 @@ import assetsRoutes from './modules/assets/assets.routes';
 import { config } from './config/env';
 
 const app = express();
+
+// Bootstrap finance closing structures/triggers once so period locking is active system-wide.
+void ensureFinanceClosingSchema().catch((error) => {
+  console.error('Finance closing bootstrap failed:', error);
+});
 
 // Security middleware
 app.use(helmet());
@@ -49,7 +55,7 @@ if (config.isDev) {
 }
 
 // Health check
-app.get('/api/health', (req, res) => {
+app.get('/api/health', (_req, res) => {
   res.json({
     success: true,
     message: 'Server is healthy',
@@ -85,7 +91,7 @@ app.use('/api/assets', assetsRoutes);
 // app.use('/api/schedules', scheduleRoutes); // TEMP: Disabled - has import errors
 
 // 404 handler
-app.use((req, res) => {
+app.use((_req, res) => {
   res.status(404).json({
     success: false,
     message: 'Route not found',

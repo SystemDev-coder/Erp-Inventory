@@ -37,7 +37,7 @@ export const stockQuerySchema = z.object({
   itemId: optionalPositiveInt,
   search: z.string().optional(),
   page: z.coerce.number().int().positive().default(1),
-  limit: z.coerce.number().int().positive().max(200).default(50),
+  limit: z.coerce.number().int().positive().max(5000).default(50),
 }).transform((value) => ({
   ...value,
   productId: value.productId ?? value.itemId,
@@ -48,6 +48,7 @@ export const adjustmentListQuerySchema = stockQuerySchema;
 export const recountListQuerySchema = stockQuerySchema;
 const adjustmentTypeSchema = z.enum(['INCREASE', 'DECREASE']);
 const adjustmentStatusSchema = z.enum(['POSTED', 'CANCELLED']);
+const dateStringSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format');
 
 export const locationQuerySchema = z.object({
   branchId: optionalPositiveInt,
@@ -63,6 +64,7 @@ export const adjustmentSchema = z.object({
   quantity: z.coerce.number().positive().optional(),
   qty: z.coerce.number().optional(),
   unitCost: z.coerce.number().nonnegative().default(0),
+  adjustmentDate: dateStringSchema.optional(),
   reason: z.string().trim().min(1).max(255).optional(),
   status: adjustmentStatusSchema.optional().default('POSTED'),
   note: z.string().optional(),
@@ -120,14 +122,16 @@ export const adjustmentUpdateSchema = z.object({
   quantity: z.coerce.number().positive().optional(),
   qty: z.coerce.number().optional(),
   reason: z.string().trim().min(1).max(255).optional(),
+  adjustmentDate: dateStringSchema.optional(),
   status: adjustmentStatusSchema.optional(),
 }).superRefine((value, ctx) => {
   const hasItem = !!(value.productId || value.itemId);
   const hasQty = value.qty !== undefined;
   const hasPair = value.adjustmentType !== undefined || value.quantity !== undefined;
   const hasReason = value.reason !== undefined;
+  const hasDate = value.adjustmentDate !== undefined;
   const hasStatus = value.status !== undefined;
-  if (!hasItem && !hasQty && !hasPair && !hasReason && !hasStatus) {
+  if (!hasItem && !hasQty && !hasPair && !hasReason && !hasDate && !hasStatus) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: 'At least one field is required',

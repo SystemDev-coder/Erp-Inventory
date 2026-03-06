@@ -18,15 +18,6 @@ export const createAccount = asyncHandler(async (req: AuthRequest, res: Response
   const input = accountSchema.parse(req.body);
   const branchId = pickBranchForWrite(scope, input.branchId);
 
-  const existing = await accountsService.findByNameAndCurrency(
-    input.name,
-    input.currencyCode || 'USD',
-    branchId
-  );
-  if (existing) {
-    return ApiResponse.success(res, { account: existing }, 'Account already exists in this branch');
-  }
-
   const account = await accountsService.create(input, { branchId });
   return ApiResponse.created(res, { account }, 'Account created');
 });

@@ -185,7 +185,9 @@ export function ReportModal<T extends Record<string, any>>({
       (row) => row.section.includes("current assets") && row.rowType === "detail"
     );
     const nonCurrentAssets = rows.filter(
-      (row) => row.section.includes("non-current assets") && row.rowType === "detail"
+      (row) =>
+        (row.section.includes("non-current assets") || row.section.includes("fixed assets")) &&
+        row.rowType === "detail"
     );
     const currentLiabilities = rows.filter(
       (row) => row.section.includes("current liabilities") && row.rowType === "detail"
@@ -215,23 +217,26 @@ export function ReportModal<T extends Record<string, any>>({
         row.lineItem.toLowerCase().includes("total liabilities") &&
         !row.lineItem.toLowerCase().includes("+")
     );
-    const totalEquityRow = rows.find(
-      (row) =>
-        row.lineItem.toLowerCase().includes("retained equity") ||
-        row.lineItem.toLowerCase().includes("total equity")
-    );
+    const totalEquityRow = rows.find((row) => {
+      const key = row.lineItem.toLowerCase();
+      return key.includes("retained equity") || key.includes("total equity") || key.includes("total owners equity");
+    });
     const retainedEarningsRow = rows.find((row) => row.lineItem.toLowerCase().includes("retained earnings"));
     const netResultRow = rows.find((row) =>
       /(net profit|net loss|net income)/i.test(row.lineItem)
     );
-    const totalLiabilitiesEquityRow = rows.find((row) =>
-      row.lineItem.toLowerCase().includes("total liabilities + equity")
-    );
+    const totalLiabilitiesEquityRow = rows.find((row) => {
+      const key = row.lineItem.toLowerCase();
+      return key.includes("total liabilities + equity") || key.includes("total liabilities + owners equity");
+    });
 
     const currentAssetsTotal =
       currentAssetsTotalRow?.amount ?? currentAssets.reduce((sum, row) => sum + row.amount, 0);
     const nonCurrentAssetsTotal =
-      rows.find((row) => row.lineItem.toLowerCase().includes("total non-current assets"))?.amount ??
+      rows.find((row) => {
+        const key = row.lineItem.toLowerCase();
+        return key.includes("total non-current assets") || key.includes("total fixed assets");
+      })?.amount ??
       nonCurrentAssets.reduce((sum, row) => sum + row.amount, 0);
     const currentLiabilitiesTotal =
       currentLiabilitiesTotalRow?.amount ?? currentLiabilities.reduce((sum, row) => sum + row.amount, 0);
@@ -548,7 +553,7 @@ export function ReportModal<T extends Record<string, any>>({
                   </div>
                   {balanceSheetData.nonCurrentAssets.length > 0 && (
                     <>
-                      <div className="mb-1 mt-5 text-[16px] font-semibold text-slate-700">Non-Current Assets</div>
+                      <div className="mb-1 mt-5 text-[16px] font-semibold text-slate-700">Fixed Assets</div>
                       <div className="space-y-0.5">
                         {balanceSheetData.nonCurrentAssets.map((row, index) => (
                           <div key={`${row.lineItem}-${index}`} className="flex justify-between gap-4 border-b border-slate-200 py-1.5">
@@ -558,7 +563,7 @@ export function ReportModal<T extends Record<string, any>>({
                         ))}
                       </div>
                       <div className="mt-2 flex justify-between border-b border-slate-200 py-1.5 text-[16px] font-semibold">
-                        <span>Total Non-Current Assets</span>
+                        <span>Total Fixed Assets</span>
                         <span className="tabular-nums">{formatStatementCurrency(balanceSheetData.nonCurrentAssetsTotal)}</span>
                       </div>
                     </>
@@ -620,7 +625,7 @@ export function ReportModal<T extends Record<string, any>>({
                     ))}
                   </div>
                   <div className="mt-2 flex justify-between border-b border-slate-200 py-1.5 text-[16px] font-semibold">
-                    <span>Total Equity</span>
+                    <span>Total Owners Equity</span>
                     <span className="tabular-nums">{formatStatementCurrency(balanceSheetData.totalEquity)}</span>
                   </div>
                 </section>
@@ -631,7 +636,7 @@ export function ReportModal<T extends Record<string, any>>({
                     <span className="tabular-nums">{formatStatementCurrency(balanceSheetData.totalLiabilities)}</span>
                   </div>
                   <div className="flex justify-between border-t border-slate-300 pt-3 text-[18px] font-semibold leading-tight">
-                    <span>Total Liabilities + Equity</span>
+                    <span>Total Liabilities + Owners Equity</span>
                     <span className="tabular-nums">{formatStatementCurrency(balanceSheetData.totalLiabilitiesEquity)}</span>
                   </div>
                   <div className="mt-2 flex justify-between text-[14px] text-black">

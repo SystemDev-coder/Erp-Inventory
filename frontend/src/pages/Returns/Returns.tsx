@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { RotateCcw, ShoppingBag, Plus, RefreshCw } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
 import { Tabs } from '../../components/ui/tabs';
@@ -7,6 +7,7 @@ import { returnsService, SalesReturn, PurchaseReturn, ReturnItemOption } from '.
 import { customerService, Customer } from '../../services/customer.service';
 import { supplierService, Supplier } from '../../services/supplier.service';
 import { Modal } from '../../components/ui/modal/Modal';
+import DeleteConfirmModal from '../../components/ui/modal/DeleteConfirmModal';
 
 const inputClass =
   'h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
@@ -19,6 +20,10 @@ const fmtDate = (d: string) => {
 };
 const fmtCurrency = (n: number) => `$${Number(n || 0).toFixed(2)}`;
 const resolveStatus = (value?: string | null) => (value && value.trim() ? value.toUpperCase() : 'POSTED');
+
+type DeleteReturnTarget =
+  | { type: 'sales'; id: number; label: string }
+  | { type: 'purchase'; id: number; label: string };
 
 const Returns = () => {
   const { showToast } = useToast();
@@ -36,15 +41,76 @@ const Returns = () => {
   const [editingPurchaseId, setEditingPurchaseId] = useState<number | null>(null);
   const [purchaseForm, setPurchaseForm] = useState({ referenceNo: '', note: '', supplierId: '', itemId: '', qty: 1, unitCost: 0 });
 
-  // --- Shared items list ---
-  const [items, setItems] = useState<ReturnItemOption[]>([]);
+  // --- Modal item options ---
+  const [salesItems, setSalesItems] = useState<ReturnItemOption[]>([]);
+  const [purchaseItems, setPurchaseItems] = useState<ReturnItemOption[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteReturnTarget | null>(null);
+  const [deletingReturn, setDeletingReturn] = useState(false);
+  const salesReturnAmount = Number(salesForm.qty || 0) * Number(salesForm.unitPrice || 0);
+  const purchaseReturnAmount = Number(purchaseForm.qty || 0) * Number(purchaseForm.unitCost || 0);
 
-  const loadItems = async () => {
-    const res = await returnsService.listItems();
-    if (res.success && res.data?.items) setItems(res.data.items);
-    else showToast('error', 'Returns', res.error || 'Failed to load return items');
+  useEffect(() => {
+    if (!salesForm.itemId) return;
+    const selected = salesItems.find((item) => Number(item.item_id) === Number(salesForm.itemId));
+    if (!selected) return;
+    const price = Number(selected.sell_price || selected.cost_price || 0);
+    if (Number(salesForm.unitPrice || 0) !== price) {
+      setSalesForm((prev) => ({ ...prev, unitPrice: price }));
+    }
+  }, [salesItems, salesForm.itemId, salesForm.unitPrice]);
+
+  useEffect(() => {
+    if (!purchaseForm.itemId) return;
+    const selected = purchaseItems.find((item) => Number(item.item_id) === Number(purchaseForm.itemId));
+    if (!selected) return;
+    const cost = Number(selected.cost_price || 0);
+    if (Number(purchaseForm.unitCost || 0) !== cost) {
+      setPurchaseForm((prev) => ({ ...prev, unitCost: cost }));
+    }
+  }, [purchaseItems, purchaseForm.itemId, purchaseForm.unitCost]);
+
+  const loadSalesItemsForCustomer = async (customerId?: number) => {
+    if (!customerId) {
+      setSalesItems([]);
+      return;
+    }
+    const res = await returnsService.listSalesItemsByCustomer(customerId);
+    if (res.success && res.data?.items) {
+      setSalesItems(
+        res.data.items.map((item) => ({
+          ...item,
+          item_id: Number(item.item_id),
+          cost_price: Number(item.cost_price || 0),
+          sell_price: Number(item.sell_price || 0),
+        }))
+      );
+      return;
+    }
+    setSalesItems([]);
+    showToast('error', 'Sales Return', res.error || 'Failed to load customer items');
+  };
+
+  const loadPurchaseItemsForSupplier = async (supplierId?: number) => {
+    if (!supplierId) {
+      setPurchaseItems([]);
+      return;
+    }
+    const res = await returnsService.listPurchaseItemsBySupplier(supplierId);
+    if (res.success && res.data?.items) {
+      setPurchaseItems(
+        res.data.items.map((item) => ({
+          ...item,
+          item_id: Number(item.item_id),
+          cost_price: Number(item.cost_price || 0),
+          sell_price: Number(item.sell_price || 0),
+        }))
+      );
+      return;
+    }
+    setPurchaseItems([]);
+    showToast('error', 'Purchase Return', res.error || 'Failed to load supplier items');
   };
 
   const loadSalesReturns = async () => {
@@ -70,21 +136,24 @@ const Returns = () => {
   };
 
   const openSalesModal = async () => {
-    await Promise.all([loadItems(), loadCustomers()]);
+    await loadCustomers();
     setEditingSalesId(null);
     setSalesForm({ referenceNo: '', note: '', customerId: '', itemId: '', qty: 1, unitPrice: 0 });
+    setSalesItems([]);
     setSalesModalOpen(true);
   };
 
   const openPurchaseModal = async () => {
-    await Promise.all([loadItems(), loadSuppliers()]);
+    await loadSuppliers();
     setEditingPurchaseId(null);
     setPurchaseForm({ referenceNo: '', note: '', supplierId: '', itemId: '', qty: 1, unitCost: 0 });
+    setPurchaseItems([]);
     setPurchaseModalOpen(true);
   };
 
   const openEditSalesModal = async (row: SalesReturn) => {
-    await Promise.all([loadItems(), loadCustomers()]);
+    await loadCustomers();
+    await loadSalesItemsForCustomer(row.customer_id ? Number(row.customer_id) : undefined);
     setEditingSalesId(row.sr_id);
     setSalesForm({
       referenceNo: row.reference_no || '',
@@ -98,7 +167,8 @@ const Returns = () => {
   };
 
   const openEditPurchaseModal = async (row: PurchaseReturn) => {
-    await Promise.all([loadItems(), loadSuppliers()]);
+    await loadSuppliers();
+    await loadPurchaseItemsForSupplier(row.supplier_id ? Number(row.supplier_id) : undefined);
     setEditingPurchaseId(row.pr_id);
     setPurchaseForm({
       referenceNo: row.reference_no || '',
@@ -125,6 +195,11 @@ const Returns = () => {
     e.preventDefault();
     if (!salesForm.customerId || !salesForm.itemId || salesForm.qty <= 0) {
       showToast('error', 'Sales Return', 'Customer, item and quantity are required');
+      return;
+    }
+    const selectedItem = salesItems.find((item) => Number(item.item_id) === Number(salesForm.itemId));
+    if (!selectedItem) {
+      showToast('error', 'Sales Return', 'Select an item purchased by this customer');
       return;
     }
     setLoading(true);
@@ -154,6 +229,11 @@ const Returns = () => {
       showToast('error', 'Purchase Return', 'Supplier, item and quantity are required');
       return;
     }
+    const selectedItem = purchaseItems.find((item) => Number(item.item_id) === Number(purchaseForm.itemId));
+    if (!selectedItem) {
+      showToast('error', 'Purchase Return', 'Select an item purchased from this supplier');
+      return;
+    }
     setLoading(true);
     const payload = {
       supplierId: Number(purchaseForm.supplierId),
@@ -176,7 +256,6 @@ const Returns = () => {
   };
 
   const removeSalesReturn = async (id: number) => {
-    if (!window.confirm('Delete this sales return?')) return;
     setLoading(true);
     const res = await returnsService.deleteSalesReturn(id);
     setLoading(false);
@@ -189,7 +268,6 @@ const Returns = () => {
   };
 
   const removePurchaseReturn = async (id: number) => {
-    if (!window.confirm('Delete this purchase return?')) return;
     setLoading(true);
     const res = await returnsService.deletePurchaseReturn(id);
     setLoading(false);
@@ -201,11 +279,36 @@ const Returns = () => {
     }
   };
 
-  const salesItemsById = useMemo(() => {
-    const m: Record<number, string> = {};
-    items.forEach((i) => { m[i.item_id] = i.name; });
-    return m;
-  }, [items]);
+  const requestDeleteSalesReturn = (row: SalesReturn) => {
+    setDeleteTarget({
+      type: 'sales',
+      id: row.sr_id,
+      label: `${row.reference_no || `SR-${row.sr_id}`} - ${row.customer_name || 'Sales Return'}`,
+    });
+  };
+
+  const requestDeletePurchaseReturn = (row: PurchaseReturn) => {
+    setDeleteTarget({
+      type: 'purchase',
+      id: row.pr_id,
+      label: `${row.reference_no || `PR-${row.pr_id}`} - ${row.supplier_name || 'Purchase Return'}`,
+    });
+  };
+
+  const confirmDeleteReturn = async () => {
+    if (!deleteTarget) return;
+    setDeletingReturn(true);
+    try {
+      if (deleteTarget.type === 'sales') {
+        await removeSalesReturn(deleteTarget.id);
+      } else {
+        await removePurchaseReturn(deleteTarget.id);
+      }
+    } finally {
+      setDeletingReturn(false);
+      setDeleteTarget(null);
+    }
+  };
 
   const tabs = [
     {
@@ -275,7 +378,7 @@ const Returns = () => {
                       <td className={tableCellCls}>
                         <div className="flex items-center gap-2">
                           <button type="button" onClick={() => void openEditSalesModal(row)} className="rounded border px-2 py-1 text-xs">Edit</button>
-                          <button type="button" onClick={() => void removeSalesReturn(row.sr_id)} className="rounded border border-red-300 px-2 py-1 text-xs text-red-600">Delete</button>
+                          <button type="button" onClick={() => requestDeleteSalesReturn(row)} className="rounded border border-red-300 px-2 py-1 text-xs text-red-600">Delete</button>
                         </div>
                       </td>
                     </tr>
@@ -354,7 +457,7 @@ const Returns = () => {
                       <td className={tableCellCls}>
                         <div className="flex items-center gap-2">
                           <button type="button" onClick={() => void openEditPurchaseModal(row)} className="rounded border px-2 py-1 text-xs">Edit</button>
-                          <button type="button" onClick={() => void removePurchaseReturn(row.pr_id)} className="rounded border border-red-300 px-2 py-1 text-xs text-red-600">Delete</button>
+                          <button type="button" onClick={() => requestDeletePurchaseReturn(row)} className="rounded border border-red-300 px-2 py-1 text-xs text-red-600">Delete</button>
                         </div>
                       </td>
                     </tr>
@@ -378,21 +481,37 @@ const Returns = () => {
         <form onSubmit={(e) => void submitSalesReturn(e)} className="space-y-3">
           <div>
             <label className={labelClass}>Customer *</label>
-            <select className={inputClass} value={salesForm.customerId} required onChange={(e) => setSalesForm((p) => ({ ...p, customerId: e.target.value }))}>
+            <select
+              className={inputClass}
+              value={salesForm.customerId}
+              required
+              onChange={(e) => {
+                const customerId = e.target.value;
+                setSalesForm((p) => ({ ...p, customerId, itemId: '', qty: 1, unitPrice: 0 }));
+                void loadSalesItemsForCustomer(customerId ? Number(customerId) : undefined);
+              }}
+            >
               <option value="">Select customer</option>
               {customers.map((c) => <option key={c.customer_id} value={c.customer_id}>{c.full_name}</option>)}
             </select>
           </div>
           <div>
             <label className={labelClass}>Item *</label>
-            <select className={inputClass} value={salesForm.itemId} required onChange={(e) => {
+            <select className={inputClass} value={salesForm.itemId} required disabled={!salesForm.customerId} onChange={(e) => {
               const id = e.target.value;
-              const sel = items.find((i) => i.item_id === Number(id));
+              const sel = salesItems.find((i) => Number(i.item_id) === Number(id));
               setSalesForm((p) => ({ ...p, itemId: id, unitPrice: sel ? Number(sel.sell_price || 0) : 0 }));
             }}>
-              <option value="">Select item</option>
-              {items.map((i) => <option key={i.item_id} value={i.item_id}>{i.name}</option>)}
+              <option value="">
+                {salesForm.customerId ? 'Select item' : 'Select customer first'}
+              </option>
+              {salesItems.map((i) => <option key={i.item_id} value={i.item_id}>{i.name}</option>)}
             </select>
+            {!!salesForm.customerId && salesItems.length === 0 && (
+              <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                This customer has no sold items available for return.
+              </p>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -401,8 +520,24 @@ const Returns = () => {
             </div>
             <div>
               <label className={labelClass}>Unit Price</label>
-              <input type="number" min={0} step={0.01} className={inputClass} value={salesForm.unitPrice} onChange={(e) => setSalesForm((p) => ({ ...p, unitPrice: Number(e.target.value) }))} />
+              <input
+                type="number"
+                min={0}
+                step={0.01}
+                className={`${inputClass} bg-slate-50 dark:bg-slate-800/70`}
+                value={salesForm.unitPrice}
+                readOnly
+              />
             </div>
+          </div>
+          <div>
+            <label className={labelClass}>Amount</label>
+            <input
+              type="number"
+              className={`${inputClass} bg-slate-50 dark:bg-slate-800/70`}
+              value={Number(salesReturnAmount.toFixed(2))}
+              readOnly
+            />
           </div>
           <div>
             <label className={labelClass}>Reference No</label>
@@ -414,7 +549,7 @@ const Returns = () => {
           </div>
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" onClick={() => setSalesModalOpen(false)} className="rounded-lg border px-4 py-2 text-sm">Cancel</button>
-            <button type="submit" disabled={loading} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white">{editingSalesId ? 'Update Return' : 'Save Return'}</button>
+            <button type="submit" disabled={loading || !salesItems.length} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">{editingSalesId ? 'Update Return' : 'Save Return'}</button>
           </div>
         </form>
       </Modal>
@@ -424,21 +559,37 @@ const Returns = () => {
         <form onSubmit={(e) => void submitPurchaseReturn(e)} className="space-y-3">
           <div>
             <label className={labelClass}>Supplier *</label>
-            <select className={inputClass} value={purchaseForm.supplierId} required onChange={(e) => setPurchaseForm((p) => ({ ...p, supplierId: e.target.value }))}>
+            <select
+              className={inputClass}
+              value={purchaseForm.supplierId}
+              required
+              onChange={(e) => {
+                const supplierId = e.target.value;
+                setPurchaseForm((p) => ({ ...p, supplierId, itemId: '', qty: 1, unitCost: 0 }));
+                void loadPurchaseItemsForSupplier(supplierId ? Number(supplierId) : undefined);
+              }}
+            >
               <option value="">Select supplier</option>
               {suppliers.map((s) => <option key={s.supplier_id} value={s.supplier_id}>{s.supplier_name}</option>)}
             </select>
           </div>
           <div>
             <label className={labelClass}>Item *</label>
-            <select className={inputClass} value={purchaseForm.itemId} required onChange={(e) => {
+            <select className={inputClass} value={purchaseForm.itemId} required disabled={!purchaseForm.supplierId} onChange={(e) => {
               const id = e.target.value;
-              const sel = items.find((i) => i.item_id === Number(id));
+              const sel = purchaseItems.find((i) => Number(i.item_id) === Number(id));
               setPurchaseForm((p) => ({ ...p, itemId: id, unitCost: sel ? Number(sel.cost_price || 0) : 0 }));
             }}>
-              <option value="">Select item</option>
-              {items.map((i) => <option key={i.item_id} value={i.item_id}>{i.name}</option>)}
+              <option value="">
+                {purchaseForm.supplierId ? 'Select item' : 'Select supplier first'}
+              </option>
+              {purchaseItems.map((i) => <option key={i.item_id} value={i.item_id}>{i.name}</option>)}
             </select>
+            {!!purchaseForm.supplierId && purchaseItems.length === 0 && (
+              <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                This supplier has no purchased items available for return.
+              </p>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -447,8 +598,24 @@ const Returns = () => {
             </div>
             <div>
               <label className={labelClass}>Unit Cost</label>
-              <input type="number" min={0} step={0.01} className={inputClass} value={purchaseForm.unitCost} onChange={(e) => setPurchaseForm((p) => ({ ...p, unitCost: Number(e.target.value) }))} />
+              <input
+                type="number"
+                min={0}
+                step={0.01}
+                className={`${inputClass} bg-slate-50 dark:bg-slate-800/70`}
+                value={purchaseForm.unitCost}
+                readOnly
+              />
             </div>
+          </div>
+          <div>
+            <label className={labelClass}>Amount</label>
+            <input
+              type="number"
+              className={`${inputClass} bg-slate-50 dark:bg-slate-800/70`}
+              value={Number(purchaseReturnAmount.toFixed(2))}
+              readOnly
+            />
           </div>
           <div>
             <label className={labelClass}>Reference No</label>
@@ -460,13 +627,20 @@ const Returns = () => {
           </div>
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" onClick={() => setPurchaseModalOpen(false)} className="rounded-lg border px-4 py-2 text-sm">Cancel</button>
-            <button type="submit" disabled={loading} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white">{editingPurchaseId ? 'Update Return' : 'Save Return'}</button>
+            <button type="submit" disabled={loading || !purchaseItems.length} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">{editingPurchaseId ? 'Update Return' : 'Save Return'}</button>
           </div>
         </form>
       </Modal>
 
-      {/* Suppress unused variable warning: salesItemsById used for future line-item expansion */}
-      {salesItemsById && null}
+      <DeleteConfirmModal
+        isOpen={!!deleteTarget}
+        onClose={() => { if (!deletingReturn) setDeleteTarget(null); }}
+        onConfirm={confirmDeleteReturn}
+        title={deleteTarget?.type === 'sales' ? 'Delete Sales Return?' : 'Delete Purchase Return?'}
+        message="This action cannot be undone and will reverse the return record."
+        itemName={deleteTarget?.label}
+        isDeleting={deletingReturn}
+      />
     </div>
   );
 };

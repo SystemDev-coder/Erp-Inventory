@@ -113,7 +113,7 @@ export const createAdjustment = asyncHandler(async (req: AuthRequest, res) => {
     {
       ...input,
       branchId,
-      whId: null,
+      whId: input.whId ?? null,
     },
     req.user
   );

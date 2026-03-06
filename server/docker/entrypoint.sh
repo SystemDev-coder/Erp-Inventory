@@ -9,8 +9,56 @@ DB_SCHEMA="${PGSCHEMA:-ims}"
 MIGRATIONS_DIR="${MIGRATIONS_DIR:-/app/sql}"
 BASE_SCHEMA_FILE="${BASE_SCHEMA_FILE:-Full_complete_scheme.sql}"
 DEMO_SEED_FILE="${DEMO_SEED_FILE:-seed_demo_data.sql}"
-RUN_DEMO_SEED="${RUN_DEMO_SEED:-true}"
+RUN_DEMO_SEED="${RUN_DEMO_SEED:-false}"
 AUTO_RESET_ON_SCHEMA_MISMATCH="${AUTO_RESET_ON_SCHEMA_MISMATCH:-false}"
+NODE_MODULES_DIR="/app/node_modules"
+LOCKFILE_PATH="/app/package-lock.json"
+LOCKFILE_HASH_PATH="${NODE_MODULES_DIR}/.package-lock.sha256"
+
+lockfile_checksum() {
+  file_path="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file_path" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$file_path" | awk '{print $1}'
+  else
+    cksum "$file_path" | awk '{print $1}'
+  fi
+}
+
+ensure_node_dependencies() {
+  need_install=false
+  reason=""
+
+  if [ ! -d "$NODE_MODULES_DIR" ]; then
+    need_install=true
+    reason="node_modules missing"
+  elif [ ! -f "${NODE_MODULES_DIR}/xlsx/package.json" ]; then
+    need_install=true
+    reason="xlsx missing"
+  elif [ -f "$LOCKFILE_PATH" ]; then
+    current_hash=$(lockfile_checksum "$LOCKFILE_PATH")
+    stored_hash=""
+    if [ -f "$LOCKFILE_HASH_PATH" ]; then
+      stored_hash=$(cat "$LOCKFILE_HASH_PATH")
+    fi
+
+    if [ "$current_hash" != "$stored_hash" ]; then
+      need_install=true
+      reason="package-lock changed"
+    fi
+  fi
+
+  if [ "$need_install" = true ]; then
+    echo "Installing server dependencies (${reason})..."
+    npm install
+    if [ -f "$LOCKFILE_PATH" ]; then
+      lockfile_checksum "$LOCKFILE_PATH" > "$LOCKFILE_HASH_PATH"
+    fi
+  fi
+}
+
+ensure_node_dependencies
 
 echo "Waiting for postgres at ${DB_HOST}:${DB_PORT}..."
 until pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" >/dev/null 2>&1; do

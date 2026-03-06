@@ -33,18 +33,18 @@ const DeleteConfirmModal = ({
         </div>
 
         {/* Title */}
-        <h3 className="mb-2 text-xl font-bold text-[#123f5c] dark:text-[#e7f2fb]">
+        <h3 className="mb-2 text-xl font-bold text-[#0a1f44] dark:text-[#f4f8ff]">
           {title}
         </h3>
 
         {/* Message */}
-        <p className="mb-2 text-sm text-[#57748c] dark:text-[#9fc3da]">
+        <p className="mb-2 text-sm text-[#6f86a8] dark:text-[#9fc3da]">
           {message}
         </p>
 
         {/* Item Name */}
         {itemName && (
-          <p className="mb-4 inline-block rounded-lg bg-[#eaf5fb] px-3 py-2 text-sm font-semibold text-[#123f5c] dark:bg-[#1b5a80]/35 dark:text-[#e7f2fb]">
+          <p className="mb-4 inline-block rounded-lg bg-[#eaf5fb] px-3 py-2 text-sm font-semibold text-[#0a1f44] dark:bg-[#102b59]/35 dark:text-[#f4f8ff]">
             {itemName}
           </p>
         )}
@@ -59,7 +59,7 @@ const DeleteConfirmModal = ({
           <button
             onClick={onClose}
             disabled={isDeleting}
-            className="rounded-lg border border-[#b7cde0] bg-white px-6 py-2.5 font-medium text-[#123f5c] transition-colors hover:bg-[#edf5fb] disabled:opacity-50 dark:border-[#2c6287] dark:bg-[#12344c] dark:text-[#e7f2fb] dark:hover:bg-[#1b5a80]/35"
+            className="rounded-lg border border-[#9bb3d5] bg-white px-6 py-2.5 font-medium text-[#0a1f44] transition-colors hover:bg-[#f4f7fd] disabled:opacity-50 dark:border-[#264676] dark:bg-[#10233f] dark:text-[#f4f8ff] dark:hover:bg-[#102b59]/35"
           >
             Cancel
           </button>

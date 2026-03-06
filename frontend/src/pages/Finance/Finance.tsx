@@ -20,6 +20,7 @@ import {
   PayrollRow,
 } from '../../services/finance.service';
 import { Modal } from '../../components/ui/modal/Modal';
+import DeleteConfirmModal from '../../components/ui/modal/DeleteConfirmModal';
 
 const Finance = () => {
   const location = useLocation();
@@ -121,6 +122,8 @@ const [chargePayrollError, setChargePayrollError] = useState('');
 const [isDeletePayrollModalOpen, setIsDeletePayrollModalOpen] = useState(false);
 const [deletePayrollMode, setDeletePayrollMode] = useState<'line' | 'period'>('line');
 const [pendingPayrollLineId, setPendingPayrollLineId] = useState<number | null>(null);
+const [pendingDeleteAccount, setPendingDeleteAccount] = useState<Account | null>(null);
+const [deletingAccount, setDeletingAccount] = useState(false);
 
   const todayDate = () => new Date().toISOString().slice(0, 10);
   const todayDateTimeLocal = () => new Date().toISOString().slice(0, 16);
@@ -542,6 +545,34 @@ const [pendingPayrollLineId, setPendingPayrollLineId] = useState<number | null>(
     }
   };
 
+  const requestDeleteAccount = (row: Account) => {
+    const isZeroBalance = Math.abs(Number(row.balance || 0)) < 0.000001;
+    const isCurrentAsset = (row.account_type || 'asset') === 'asset';
+    if (!isCurrentAsset) {
+      quickError('Only current asset accounts can be deleted.');
+      return;
+    }
+    if (!isZeroBalance) {
+      quickError('Only zero-balance accounts can be deleted.');
+      return;
+    }
+    setPendingDeleteAccount(row);
+  };
+
+  const confirmDeleteAccount = async () => {
+    if (!pendingDeleteAccount) return;
+    setDeletingAccount(true);
+    const res = await accountService.remove(pendingDeleteAccount.acc_id);
+    if (res.success) {
+      showToast('success', 'Finance', 'Account deleted');
+      setPendingDeleteAccount(null);
+      reloadIfDisplayed();
+    } else {
+      quickError(res.error || 'Failed to delete account');
+    }
+    setDeletingAccount(false);
+  };
+
   const submitTransfer = async () => {
     const errs: typeof transferErrors = {};
     if (!transferForm.from_acc_id) errs.from = 'From account required';
@@ -833,7 +864,9 @@ const submitBudgetCharge = async () => {
       content: (
         <div className="space-y-3">
           <div className="flex items-center justify-between gap-3">
-            <span className="text-sm text-slate-600">Manage cash/bank accounts.</span>
+            <span className="text-sm text-slate-600">
+              Manage cash/bank accounts. Delete is available only for zero-balance current accounts.
+            </span>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => void displayFinanceData()}
@@ -855,6 +888,14 @@ const submitBudgetCharge = async () => {
             isLoading={loading}
             searchPlaceholder="Search accounts..."
             onEdit={(row) => openAccountModal(row as Account)}
+            onDelete={(row) => requestDeleteAccount(row as Account)}
+            canDelete={(row) => {
+              const account = row as Account;
+              return (
+                (account.account_type || 'asset') === 'asset' &&
+                Math.abs(Number(account.balance || 0)) < 0.000001
+              );
+            }}
           />
         </div>
       ),
@@ -2075,6 +2116,17 @@ const submitBudgetCharge = async () => {
           </div>
         </div>
       </Modal>
+      <DeleteConfirmModal
+        isOpen={!!pendingDeleteAccount}
+        onClose={() => {
+          if (!deletingAccount) setPendingDeleteAccount(null);
+        }}
+        onConfirm={confirmDeleteAccount}
+        title="Delete Account?"
+        message="This account will be deleted permanently."
+        itemName={pendingDeleteAccount?.name}
+        isDeleting={deletingAccount}
+      />
       <Modal
         isOpen={isAccountModalOpen}
         onClose={() => setIsAccountModalOpen(false)}

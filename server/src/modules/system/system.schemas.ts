@@ -4,14 +4,20 @@ export const createRoleSchema = z.object({
   roleName: z.string().trim().min(2).max(60),
   roleCode: z.string().trim().min(2).max(40).optional(),
   description: z.string().trim().max(255).optional(),
+  monthlySalary: z.coerce.number().min(0).optional(),
 });
 
 export const updateRoleSchema = z.object({
   roleName: z.string().trim().min(2).max(60).optional(),
   roleCode: z.string().trim().min(2).max(40).optional(),
   description: z.string().trim().max(255).optional(),
+  monthlySalary: z.coerce.number().min(0).optional(),
 }).refine(
-  (value) => value.roleName !== undefined || value.roleCode !== undefined || value.description !== undefined,
+  (value) =>
+    value.roleName !== undefined ||
+    value.roleCode !== undefined ||
+    value.description !== undefined ||
+    value.monthlySalary !== undefined,
   { message: 'Provide at least one field to update' }
 );
 

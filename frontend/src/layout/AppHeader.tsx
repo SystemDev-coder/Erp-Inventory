@@ -295,7 +295,7 @@ const AppHeader: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center gap-4 px-3 py-2 lg:px-0 lg:py-0">
-            <span className="hidden rounded-md border border-[#4b7ea2] bg-[#0f4f76] px-2 py-1 text-[11px] font-semibold tracking-wide text-[#dbeaf6] sm:inline-flex">
+            <span className="hidden items-center whitespace-nowrap px-1 text-sm font-extrabold leading-none tracking-wide text-white drop-shadow-[0_1px_1px_rgba(0,0,0,0.35)] sm:inline-flex">
               Version 1.0
             </span>
             <div className="flex items-center gap-2 2xsm:gap-3">

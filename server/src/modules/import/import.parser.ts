@@ -51,7 +51,7 @@ const loadSheetJs = (): SheetJs => {
     return cachedSheetJs;
   } catch (_error) {
     throw ApiError.internal(
-      'Excel parser dependency is missing. Install it with: npm install xlsx (inside server directory)'
+      'Excel parser dependency is missing. Install xlsx, then restart server. Docker: docker compose exec server npm install xlsx'
     );
   }
 };

@@ -5,7 +5,7 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { storeService, Store as StoreType, StoreItem } from '../../services/store.service';
 import { productService, Product } from '../../services/product.service';
 import { Modal } from '../../components/ui/modal/Modal';
-import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
+import { itemLabelWithAvailability } from '../../utils/itemAvailability';
 
 const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const { showToast } = useToast();
@@ -23,7 +23,6 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const [storeModalOpen, setStoreModalOpen] = useState(false);
   const [editingStoreId, setEditingStoreId] = useState<number | null>(null);
   const [formStore, setFormStore] = useState({ storeName: '', storeCode: '', address: '', phone: '' });
-  const [storeToDelete, setStoreToDelete] = useState<StoreType | null>(null);
 
   const loadStores = async () => {
     setLoading(true);
@@ -104,20 +103,6 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
       loadStores();
     } else {
       showToast('error', editingStoreId ? 'Update failed' : 'Create failed', res.error || 'Could not save store');
-    }
-  };
-
-  const confirmDeleteStore = async () => {
-    if (!storeToDelete) return;
-    setLoading(true);
-    const res = await storeService.remove(storeToDelete.store_id);
-    setLoading(false);
-    if (res.success) {
-      showToast('success', 'Store deleted');
-      setStoreToDelete(null);
-      loadStores();
-    } else {
-      showToast('error', 'Delete failed', res.error || 'Could not delete store');
     }
   };
 
@@ -208,12 +193,6 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
               >
                 <Plus className="w-4 h-4" /> New Store
               </button>
-              <button
-                onClick={() => { setExpandedId(null); void loadStores(); }}
-                className="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 rounded-xl text-slate-700 hover:bg-slate-100"
-              >
-                <Pencil className="w-4 h-4" /> Store Management
-              </button>
             </div>
           }
         />
@@ -232,12 +211,6 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
             className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-xl hover:bg-primary-700"
           >
             <Plus className="w-4 h-4" /> New Store
-          </button>
-          <button
-            onClick={() => { setExpandedId(null); void loadStores(); }}
-            className="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 rounded-xl text-slate-700 hover:bg-slate-100"
-          >
-            <Pencil className="w-4 h-4" /> Store Management
           </button>
         </div>
       )}
@@ -270,9 +243,6 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
                   <div className="ml-auto flex items-center gap-2">
                     <button onClick={() => openEditStore(store)} className="p-1.5 rounded-lg border hover:bg-slate-100" title="Edit Store">
                       <Pencil className="w-4 h-4" />
-                    </button>
-                    <button onClick={() => setStoreToDelete(store)} className="p-1.5 rounded-lg border text-red-600 hover:bg-red-50" title="Delete Store">
-                      <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
@@ -370,7 +340,9 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
             <select className={fieldCls} value={addProductId} onChange={(e) => setAddProductId(e.target.value ? Number(e.target.value) : '')}>
               <option value="">Select item</option>
               {products.map((p) => (
-                <option key={p.product_id} value={p.product_id}>{p.name}</option>
+                <option key={p.product_id} value={p.product_id}>
+                  {itemLabelWithAvailability(p.name, p.stock ?? p.quantity ?? p.opening_balance)}
+                </option>
               ))}
             </select>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Quantity</label>
@@ -383,16 +355,6 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
         )}
       </Modal>
 
-      <ConfirmDialog
-        isOpen={!!storeToDelete}
-        onClose={() => setStoreToDelete(null)}
-        onConfirm={confirmDeleteStore}
-        title="Delete Store"
-        message={`Delete store "${storeToDelete?.store_name || ''}"?`}
-        confirmText="Delete"
-        variant="danger"
-        isLoading={loading}
-      />
     </div>
   );
 };

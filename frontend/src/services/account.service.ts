@@ -8,6 +8,7 @@ export interface Account {
   balance: number;
   is_active: boolean;
   account_type?: 'asset' | 'equity' | string;
+  can_delete?: boolean;
 }
 
 export const accountService = {

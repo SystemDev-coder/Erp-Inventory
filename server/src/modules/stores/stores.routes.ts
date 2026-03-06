@@ -6,7 +6,6 @@ import {
   getStore,
   createStore,
   updateStore,
-  deleteStore,
   listStoreItems,
   addStoreItem,
   updateStoreItem,
@@ -23,7 +22,6 @@ router.put('/:id/items/:itemId', requireAnyPerm(['items.update', 'stock.adjust',
 router.delete('/:id/items/:itemId', requireAnyPerm(['items.delete', 'items.update', 'stock.adjust', 'inventory.adjust']), removeStoreItem);
 router.post('/', requireAnyPerm(['items.create', 'stock.adjust', 'inventory.adjust']), createStore);
 router.put('/:id', requireAnyPerm(['items.update', 'stock.adjust', 'inventory.adjust']), updateStore);
-router.delete('/:id', requireAnyPerm(['items.delete', 'stock.adjust', 'inventory.adjust']), deleteStore);
 
 router.get('/:id/items', requireAnyPerm(['items.view', 'stock.view', 'inventory.view']), listStoreItems);
 

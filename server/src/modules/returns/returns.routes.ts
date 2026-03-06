@@ -3,6 +3,8 @@ import { requireAuth } from '../../middlewares/requireAuth';
 import { requireAnyPerm } from '../../middlewares/requirePerm';
 import {
     listReturnItems,
+    listSalesItemsByCustomer,
+    listPurchaseItemsBySupplier,
     listSalesReturns,
     createSalesReturn,
     updateSalesReturn,
@@ -22,6 +24,16 @@ router.get(
     '/items',
     requireAnyPerm(['returns.view', 'sales_returns.view', 'purchase_returns.view']),
     asyncHandler(listReturnItems)
+);
+router.get(
+    '/sales/customer-items',
+    requireAnyPerm(['returns.view', 'sales_returns.view']),
+    asyncHandler(listSalesItemsByCustomer)
+);
+router.get(
+    '/purchases/supplier-items',
+    requireAnyPerm(['returns.view', 'purchase_returns.view']),
+    asyncHandler(listPurchaseItemsBySupplier)
 );
 
 router.get(

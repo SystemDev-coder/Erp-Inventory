@@ -204,6 +204,14 @@ export const API = {
     EXPENSE_BUDGETS: '/api/finance/expenses/budgets',
     EXPENSE_PAYMENTS: '/api/finance/expenses/payments',
     PAYROLL: '/api/finance/payroll',
+    CLOSING_PERIODS: '/api/finance/closing/periods',
+    CLOSING_PERIOD: (closingId: number) => `/api/finance/closing/periods/${closingId}`,
+    CLOSING_PREVIEW: (closingId: number) => `/api/finance/closing/periods/${closingId}/preview`,
+    CLOSING_CLOSE: (closingId: number) => `/api/finance/closing/periods/${closingId}/close`,
+    CLOSING_REOPEN: (closingId: number) => `/api/finance/closing/periods/${closingId}/reopen`,
+    CLOSING_SUMMARY: (closingId: number) => `/api/finance/closing/periods/${closingId}/summary`,
+    CLOSING_RULES: '/api/finance/closing/rules',
+    CLOSING_RUN_SCHEDULED: '/api/finance/closing/run-scheduled',
   },
 
   STORES: {

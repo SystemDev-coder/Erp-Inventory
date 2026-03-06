@@ -9,11 +9,11 @@ import { ApiError } from '../../utils/ApiError';
 
 const fixedAssetCreateSchema = z.object({
   assetName: z.string().trim().min(1, 'Asset name is required'),
-  category: z.string().trim().min(1, 'Category is required'),
   purchaseDate: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'Purchase date must be YYYY-MM-DD'),
   cost: z.coerce.number().positive('Cost must be greater than 0'),
+  category: z.string().trim().optional(),
   status: z.string().trim().optional(),
   branchId: z.coerce.number().int().positive().optional(),
 });
@@ -21,16 +21,13 @@ const fixedAssetCreateSchema = z.object({
 const fixedAssetUpdateSchema = z
   .object({
     assetName: z.string().trim().min(1, 'Asset name is required').optional(),
-    category: z.string().trim().min(1, 'Category is required').optional(),
     purchaseDate: z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/, 'Purchase date must be YYYY-MM-DD')
       .optional(),
     cost: z.coerce.number().positive('Cost must be greater than 0').optional(),
+    category: z.string().trim().optional(),
     status: z.string().trim().optional(),
-    usefulLifeMonths: z.coerce.number().int().positive().optional(),
-    depreciationMethod: z.string().trim().min(1, 'Depreciation method is required').optional(),
-    notes: z.string().optional().nullable(),
   })
   .refine((val) => Object.keys(val).length > 0, {
     message: 'At least one field must be provided',
@@ -40,12 +37,10 @@ export const listFixedAssets = asyncHandler(async (req: AuthRequest, res: Respon
   const scope = await resolveBranchScope(req);
   const search = (req.query.search as string | undefined)?.trim();
   const status = (req.query.status as string | undefined)?.trim();
-  const category = (req.query.category as string | undefined)?.trim();
 
   const assets = await assetsService.listFixedAssets(scope, {
     search: search || undefined,
     status: status || undefined,
-    category: category || undefined,
   });
 
   return ApiResponse.success(res, { assets });
@@ -61,9 +56,6 @@ export const createFixedAsset = asyncHandler(async (req: AuthRequest, res: Respo
       category: input.category,
       purchaseDate: input.purchaseDate,
       cost: input.cost,
-      usefulLifeMonths: 12,
-      depreciationMethod: 'straight_line',
-      notes: null,
       status: input.status || 'active',
       branchId: input.branchId,
     },
@@ -90,9 +82,6 @@ export const updateFixedAsset = asyncHandler(async (req: AuthRequest, res: Respo
       purchaseDate: input.purchaseDate,
       cost: input.cost,
       status: input.status,
-      usefulLifeMonths: input.usefulLifeMonths,
-      depreciationMethod: input.depreciationMethod,
-      notes: input.notes,
     },
     scope
   );

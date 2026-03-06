@@ -16,6 +16,7 @@ export interface SystemRole {
   role_code: string;
   role_name: string;
   description: string | null;
+  monthly_salary: number;
   is_system: boolean;
   permission_count: number;
 }
@@ -106,6 +107,7 @@ export const systemService = {
     roleName: string;
     roleCode?: string;
     description?: string;
+    monthlySalary?: number;
   }): Promise<ApiResponse<{ role: SystemRole }>> {
     return apiClient.post<{ role: SystemRole }>(API.SYSTEM.ROLES, data);
   },
@@ -116,6 +118,7 @@ export const systemService = {
       roleName?: string;
       roleCode?: string;
       description?: string;
+      monthlySalary?: number;
     }
   ): Promise<ApiResponse<{ role: SystemRole }>> {
     return apiClient.put<{ role: SystemRole }>(API.SYSTEM.ROLE(id), data);

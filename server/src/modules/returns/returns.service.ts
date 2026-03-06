@@ -1,5 +1,5 @@
 import { pool } from '../../db/pool';
-import { queryMany } from '../../db/query';
+import { queryMany, queryOne } from '../../db/query';
 import { ApiError } from '../../utils/ApiError';
 import { BranchScope } from '../../utils/branchScope';
 import { PoolClient } from 'pg';
@@ -98,6 +98,7 @@ const canAccessBranch = (scope: BranchScope, branchId: number) =>
     scope.isAdmin || scope.branchIds.includes(branchId);
 
 let cachedSupplierNameColumn: 'name' | 'supplier_name' | null = null;
+let cachedSalesHasDocType: boolean | null = null;
 
 const getSupplierNameColumn = async (): Promise<'name' | 'supplier_name'> => {
     if (cachedSupplierNameColumn) return cachedSupplierNameColumn;
@@ -114,8 +115,49 @@ const getSupplierNameColumn = async (): Promise<'name' | 'supplier_name'> => {
     return cachedSupplierNameColumn;
 };
 
-const getDefaultStoreId = async (client: PoolClient, branchId: number): Promise<number> => {
-    const row = await client.query<{ store_id: number }>(
+const hasSalesDocTypeColumn = async (): Promise<boolean> => {
+    if (cachedSalesHasDocType !== null) return cachedSalesHasDocType;
+    const row = await queryOne<{ has_column: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1
+             FROM information_schema.columns
+            WHERE table_schema = 'ims'
+              AND table_name = 'sales'
+              AND column_name = 'doc_type'
+         ) AS has_column`
+    );
+    cachedSalesHasDocType = Boolean(row?.has_column);
+    return cachedSalesHasDocType;
+};
+
+const resolveStoreForItem = async (
+    client: PoolClient,
+    branchId: number,
+    itemId: number
+): Promise<number> => {
+    const itemStore = await client.query<{ store_id: number | null }>(
+        `SELECT store_id
+           FROM ims.items
+          WHERE item_id = $1
+            AND branch_id = $2
+          LIMIT 1`,
+        [itemId, branchId]
+    );
+
+    const directStoreId = Number(itemStore.rows[0]?.store_id || 0);
+    if (directStoreId > 0) {
+        const scopedStore = await client.query<{ store_id: number }>(
+            `SELECT store_id
+               FROM ims.stores
+              WHERE store_id = $1
+                AND branch_id = $2
+              LIMIT 1`,
+            [directStoreId, branchId]
+        );
+        if (scopedStore.rows[0]) return Number(scopedStore.rows[0].store_id);
+    }
+
+    const fallbackStore = await client.query<{ store_id: number }>(
         `SELECT store_id
            FROM ims.stores
           WHERE branch_id = $1
@@ -123,19 +165,22 @@ const getDefaultStoreId = async (client: PoolClient, branchId: number): Promise<
           LIMIT 1`,
         [branchId]
     );
-    const storeId = Number(row.rows[0]?.store_id || 0);
-    if (!storeId) throw ApiError.badRequest('No store configured for this branch');
+    const storeId = Number(fallbackStore.rows[0]?.store_id || 0);
+    if (!storeId) throw ApiError.badRequest(`No store is configured for item ${itemId}`);
     return storeId;
 };
 
 const applyStoreItemDelta = async (
     client: PoolClient,
-    storeId: number,
-    itemId: number,
-    deltaQty: number,
-    branchId: number
+    params: { branchId: number; itemId: number; deltaQty: number; storeId?: number | null }
 ) => {
+    const { branchId, itemId, deltaQty } = params;
     if (!deltaQty) return;
+    const storeId =
+        Number(params.storeId || 0) > 0
+            ? Number(params.storeId)
+            : await resolveStoreForItem(client, branchId, itemId);
+
     const current = await client.query<{ quantity: string }>(
         `SELECT quantity::text AS quantity
            FROM ims.store_items
@@ -210,6 +255,97 @@ export const returnsService = {
         );
     },
 
+    async listSalesItemsByCustomer(scope: BranchScope, customerId: number): Promise<ReturnItemOption[]> {
+        if (!Number.isFinite(customerId) || customerId <= 0) {
+            throw ApiError.badRequest('Customer is required');
+        }
+        const docTypeFilter = (await hasSalesDocTypeColumn())
+            ? `AND COALESCE(s.doc_type::text, 'sale') <> 'quotation'`
+            : '';
+        const params: any[] = [customerId];
+        let where = `
+            WHERE s.customer_id = $1
+              AND COALESCE(s.status::text, 'posted') <> 'void'
+              ${docTypeFilter}
+        `;
+        if (!scope.isAdmin) {
+            params.push(scope.branchIds);
+            where += ` AND s.branch_id = ANY($${params.length})`;
+        }
+        return queryMany<ReturnItemOption>(
+            `SELECT
+                i.item_id,
+                i.name,
+                i.barcode,
+                COALESCE(i.cost_price, 0)::numeric(14,2) AS cost_price,
+                COALESCE(
+                  MAX(
+                    COALESCE(
+                      NULLIF(si.unit_price, 0),
+                      CASE
+                        WHEN COALESCE(si.quantity, 0) > 0
+                          THEN NULLIF(si.line_total, 0) / si.quantity
+                        ELSE NULL
+                      END
+                    )
+                  ),
+                  i.sell_price,
+                  i.cost_price,
+                  0
+                )::numeric(14,2) AS sell_price
+             FROM ims.sales s
+             JOIN ims.sale_items si ON si.sale_id = s.sale_id
+             JOIN ims.items i ON i.item_id = si.item_id
+             ${where}
+             GROUP BY i.item_id, i.name, i.barcode, i.cost_price, i.sell_price
+             ORDER BY i.name`,
+            params
+        );
+    },
+
+    async listPurchaseItemsBySupplier(scope: BranchScope, supplierId: number): Promise<ReturnItemOption[]> {
+        if (!Number.isFinite(supplierId) || supplierId <= 0) {
+            throw ApiError.badRequest('Supplier is required');
+        }
+        const params: any[] = [supplierId];
+        let where = `
+            WHERE p.supplier_id = $1
+              AND COALESCE(p.status::text, 'received') <> 'void'
+        `;
+        if (!scope.isAdmin) {
+            params.push(scope.branchIds);
+            where += ` AND p.branch_id = ANY($${params.length})`;
+        }
+        return queryMany<ReturnItemOption>(
+            `SELECT
+                i.item_id,
+                i.name,
+                i.barcode,
+                COALESCE(
+                  MAX(
+                    COALESCE(
+                      NULLIF(pi.unit_cost, 0),
+                      CASE
+                        WHEN COALESCE(pi.quantity, 0) > 0
+                          THEN NULLIF(pi.line_total, 0) / pi.quantity
+                        ELSE NULL
+                      END
+                    )
+                  ),
+                  i.cost_price,
+                  0
+                )::numeric(14,2) AS cost_price,
+                COALESCE(i.sell_price, 0)::numeric(14,2) AS sell_price
+             FROM ims.purchases p
+             JOIN ims.purchase_items pi ON pi.purchase_id = p.purchase_id
+             JOIN ims.items i ON i.item_id = pi.item_id
+             ${where}
+             GROUP BY i.item_id, i.name, i.barcode, i.cost_price, i.sell_price
+             ORDER BY i.name`,
+            params
+        );
+    },
+
     async listSalesReturns(scope: BranchScope): Promise<SalesReturn[]> {
         const params: any[] = [];
         let where = '';
@@ -254,19 +390,6 @@ export const returnsService = {
                 throw ApiError.badRequest('Customer is required');
             }
 
-            const defaultStore = await client.query<{ store_id: number }>(
-                `SELECT store_id
-                   FROM ims.stores
-                  WHERE branch_id = $1
-                  ORDER BY store_id
-                  LIMIT 1`,
-                [context.branchId]
-            );
-            const storeId = Number(defaultStore.rows[0]?.store_id || 0);
-            if (!storeId) {
-                throw ApiError.badRequest('No store configured for this branch');
-            }
-
             const customer = await client.query<{ customer_id: number }>(
                 `SELECT customer_id
                    FROM ims.customers
@@ -279,6 +402,9 @@ export const returnsService = {
             }
 
             // Validate items exist in this branch
+            const docTypeFilter = (await hasSalesDocTypeColumn())
+                ? `AND COALESCE(s.doc_type::text, 'sale') <> 'quotation'`
+                : '';
             for (const item of items) {
                 const row = await client.query<{ item_id: number }>(
                     `SELECT item_id FROM ims.items WHERE item_id = $1 AND branch_id = $2 LIMIT 1`,
@@ -286,6 +412,21 @@ export const returnsService = {
                 );
                 if (!row.rows[0]) {
                     throw ApiError.badRequest(`Item #${item.itemId} does not belong to this branch`);
+                }
+                const sold = await client.query<{ sale_id: number }>(
+                    `SELECT s.sale_id
+                       FROM ims.sales s
+                       JOIN ims.sale_items si ON si.sale_id = s.sale_id
+                      WHERE s.branch_id = $1
+                        AND s.customer_id = $2
+                        AND si.item_id = $3
+                        AND COALESCE(s.status::text, 'posted') <> 'void'
+                        ${docTypeFilter}
+                      LIMIT 1`,
+                    [context.branchId, input.customerId, item.itemId]
+                );
+                if (!sold.rows[0]) {
+                    throw ApiError.badRequest(`Item #${item.itemId} was not sold to this customer`);
                 }
             }
 
@@ -323,7 +464,11 @@ export const returnsService = {
                     [context.branchId, sr.sr_id, item.itemId, item.quantity, unitPrice, lineTotal]
                 );
 
-                await applyStoreItemDelta(client, storeId, item.itemId, Number(item.quantity), context.branchId);
+                await applyStoreItemDelta(client, {
+                    branchId: context.branchId,
+                    itemId: item.itemId,
+                    deltaQty: Number(item.quantity),
+                });
             }
 
             await client.query('COMMIT');
@@ -364,15 +509,30 @@ export const returnsService = {
 
             const items = input.items || [];
             if (!items.length) throw ApiError.badRequest('At least one item is required for a return');
+            const docTypeFilter = (await hasSalesDocTypeColumn())
+                ? `AND COALESCE(s.doc_type::text, 'sale') <> 'quotation'`
+                : '';
             for (const item of items) {
                 const row = await client.query<{ item_id: number }>(
                     `SELECT item_id FROM ims.items WHERE item_id = $1 AND branch_id = $2 LIMIT 1`,
                     [item.itemId, current.branch_id]
                 );
                 if (!row.rows[0]) throw ApiError.badRequest(`Item #${item.itemId} does not belong to this branch`);
+                const sold = await client.query<{ sale_id: number }>(
+                    `SELECT s.sale_id
+                       FROM ims.sales s
+                       JOIN ims.sale_items si ON si.sale_id = s.sale_id
+                      WHERE s.branch_id = $1
+                        AND s.customer_id = $2
+                        AND si.item_id = $3
+                        AND COALESCE(s.status::text, 'posted') <> 'void'
+                        ${docTypeFilter}
+                      LIMIT 1`,
+                    [current.branch_id, input.customerId, item.itemId]
+                );
+                if (!sold.rows[0]) throw ApiError.badRequest(`Item #${item.itemId} was not sold to this customer`);
             }
 
-            const storeId = await getDefaultStoreId(client, Number(current.branch_id));
             const oldItemsRes = await client.query<{ item_id: number; quantity: string }>(
                 `SELECT item_id, quantity::text AS quantity
                    FROM ims.sales_return_items
@@ -381,7 +541,11 @@ export const returnsService = {
             );
             const deltas = buildItemDelta(oldItemsRes.rows, items);
             for (const d of deltas) {
-                await applyStoreItemDelta(client, storeId, d.itemId, d.delta, Number(current.branch_id));
+                await applyStoreItemDelta(client, {
+                    branchId: Number(current.branch_id),
+                    itemId: d.itemId,
+                    deltaQty: d.delta,
+                });
             }
 
             const subtotal = items.reduce((s, i) => s + Number(i.quantity) * Number(i.unitPrice || 0), 0);
@@ -449,7 +613,6 @@ export const returnsService = {
             if (!current) throw ApiError.notFound('Sales return not found');
             if (!canAccessBranch(scope, Number(current.branch_id))) throw ApiError.forbidden('Access denied');
 
-            const storeId = await getDefaultStoreId(client, Number(current.branch_id));
             const lines = await client.query<{ item_id: number; quantity: string }>(
                 `SELECT item_id, quantity::text AS quantity
                    FROM ims.sales_return_items
@@ -457,13 +620,11 @@ export const returnsService = {
                 [id]
             );
             for (const line of lines.rows) {
-                await applyStoreItemDelta(
-                    client,
-                    storeId,
-                    Number(line.item_id),
-                    -Number(line.quantity || 0),
-                    Number(current.branch_id)
-                );
+                await applyStoreItemDelta(client, {
+                    branchId: Number(current.branch_id),
+                    itemId: Number(line.item_id),
+                    deltaQty: -Number(line.quantity || 0),
+                });
             }
 
             await client.query(`DELETE FROM ims.sales_returns WHERE sr_id = $1`, [id]);
@@ -521,19 +682,6 @@ export const returnsService = {
                 throw ApiError.badRequest('Supplier is required');
             }
 
-            const defaultStore = await client.query<{ store_id: number }>(
-                `SELECT store_id
-                   FROM ims.stores
-                  WHERE branch_id = $1
-                  ORDER BY store_id
-                  LIMIT 1`,
-                [context.branchId]
-            );
-            const storeId = Number(defaultStore.rows[0]?.store_id || 0);
-            if (!storeId) {
-                throw ApiError.badRequest('No store configured for this branch');
-            }
-
             const supplier = await client.query<{ supplier_id: number }>(
                 `SELECT supplier_id
                    FROM ims.suppliers
@@ -553,6 +701,20 @@ export const returnsService = {
                 );
                 if (!row.rows[0]) {
                     throw ApiError.badRequest(`Item #${item.itemId} does not belong to this branch`);
+                }
+                const purchased = await client.query<{ purchase_id: number }>(
+                    `SELECT p.purchase_id
+                       FROM ims.purchases p
+                       JOIN ims.purchase_items pi ON pi.purchase_id = p.purchase_id
+                      WHERE p.branch_id = $1
+                        AND p.supplier_id = $2
+                        AND pi.item_id = $3
+                        AND COALESCE(p.status::text, 'received') <> 'void'
+                      LIMIT 1`,
+                    [context.branchId, input.supplierId, item.itemId]
+                );
+                if (!purchased.rows[0]) {
+                    throw ApiError.badRequest(`Item #${item.itemId} was not purchased from this supplier`);
                 }
             }
 
@@ -590,7 +752,11 @@ export const returnsService = {
                     [context.branchId, pr.pr_id, item.itemId, item.quantity, unitCost, lineTotal]
                 );
 
-                await applyStoreItemDelta(client, storeId, item.itemId, -Number(item.quantity), context.branchId);
+                await applyStoreItemDelta(client, {
+                    branchId: context.branchId,
+                    itemId: item.itemId,
+                    deltaQty: -Number(item.quantity),
+                });
             }
 
             await client.query('COMMIT');
@@ -629,9 +795,20 @@ export const returnsService = {
                     [item.itemId, current.branch_id]
                 );
                 if (!row.rows[0]) throw ApiError.badRequest(`Item #${item.itemId} does not belong to this branch`);
+                const purchased = await client.query<{ purchase_id: number }>(
+                    `SELECT p.purchase_id
+                       FROM ims.purchases p
+                       JOIN ims.purchase_items pi ON pi.purchase_id = p.purchase_id
+                      WHERE p.branch_id = $1
+                        AND p.supplier_id = $2
+                        AND pi.item_id = $3
+                        AND COALESCE(p.status::text, 'received') <> 'void'
+                      LIMIT 1`,
+                    [current.branch_id, input.supplierId, item.itemId]
+                );
+                if (!purchased.rows[0]) throw ApiError.badRequest(`Item #${item.itemId} was not purchased from this supplier`);
             }
 
-            const storeId = await getDefaultStoreId(client, Number(current.branch_id));
             const oldItemsRes = await client.query<{ item_id: number; quantity: string }>(
                 `SELECT item_id, quantity::text AS quantity
                    FROM ims.purchase_return_items
@@ -640,7 +817,11 @@ export const returnsService = {
             );
             const deltas = buildItemDelta(oldItemsRes.rows, items);
             for (const d of deltas) {
-                await applyStoreItemDelta(client, storeId, d.itemId, -d.delta, Number(current.branch_id));
+                await applyStoreItemDelta(client, {
+                    branchId: Number(current.branch_id),
+                    itemId: d.itemId,
+                    deltaQty: -d.delta,
+                });
             }
 
             const subtotal = items.reduce((s, i) => s + Number(i.quantity) * Number(i.unitCost || 0), 0);
@@ -707,7 +888,6 @@ export const returnsService = {
             if (!current) throw ApiError.notFound('Purchase return not found');
             if (!canAccessBranch(scope, Number(current.branch_id))) throw ApiError.forbidden('Access denied');
 
-            const storeId = await getDefaultStoreId(client, Number(current.branch_id));
             const lines = await client.query<{ item_id: number; quantity: string }>(
                 `SELECT item_id, quantity::text AS quantity
                    FROM ims.purchase_return_items
@@ -715,13 +895,11 @@ export const returnsService = {
                 [id]
             );
             for (const line of lines.rows) {
-                await applyStoreItemDelta(
-                    client,
-                    storeId,
-                    Number(line.item_id),
-                    Number(line.quantity || 0),
-                    Number(current.branch_id)
-                );
+                await applyStoreItemDelta(client, {
+                    branchId: Number(current.branch_id),
+                    itemId: Number(line.item_id),
+                    deltaQty: Number(line.quantity || 0),
+                });
             }
 
             await client.query(`DELETE FROM ims.purchase_returns WHERE pr_id = $1`, [id]);

@@ -15,7 +15,6 @@ interface EmployeeModalProps {
 
 type EmployeeFormData = Omit<EmployeeInput, 'gender' | 'salary_type' | 'shift_type'> & {
   gender?: 'male' | 'female' | '';
-  salary_type?: 'Hourly' | 'Monthly' | '';
   shift_type?: 'Morning' | 'Night' | 'Evening' | '';
 };
 
@@ -33,7 +32,6 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
     address: '',
     role_id: undefined,
     salary: 0,
-    salary_type: '',
     shift_type: '',
     hire_date: new Date().toISOString().split('T')[0],
     gender: '',
@@ -62,7 +60,6 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
         address: employee.address || '',
         role_id: employee.role_id ?? undefined,
         salary: Number(employee.basic_salary) || 0,
-        salary_type: (employee.salary_type || 'Monthly').toString().toLowerCase() === 'hourly' ? 'Hourly' : 'Monthly',
         shift_type: (employee.shift_type as 'Morning' | 'Night' | 'Evening') || 'Morning',
         hire_date: employee.hire_date.split('T')[0],
         gender: (employee.gender as 'male' | 'female') || '',
@@ -74,13 +71,24 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
         address: '',
         role_id: undefined,
         salary: 0,
-        salary_type: '',
         shift_type: '',
         hire_date: new Date().toISOString().split('T')[0],
         gender: '',
       });
     }
   }, [employee, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!formData.role_id) return;
+    const selectedRole = roles.find((role) => Number(role.role_id) === Number(formData.role_id));
+    if (!selectedRole) return;
+    const roleSalary = Number(selectedRole.monthly_salary || 0);
+    setFormData((prev) => ({
+      ...prev,
+      salary: roleSalary,
+    }));
+  }, [formData.role_id, isOpen, roles]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -90,7 +98,7 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
       salary: Number(formData.salary) || 0,
       role_id: formData.role_id != null ? Number(formData.role_id) : undefined,
       gender: formData.gender || undefined,
-      salary_type: formData.salary_type || undefined,
+      salary_type: 'Monthly',
       shift_type: formData.shift_type || undefined,
     };
     await onSubmit(payload);
@@ -200,16 +208,12 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
                 Salary Type
               </label>
-              <select
-                required
-                value={formData.salary_type || ''}
-                onChange={(e) => setFormData({ ...formData, salary_type: e.target.value as 'Hourly' | 'Monthly' })}
-                className="w-full px-4 py-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
-              >
-                <option value="" disabled>Select salary type</option>
-                <option value="Monthly">Monthly</option>
-                <option value="Hourly">Hourly</option>
-              </select>
+              <input
+                type="text"
+                value="Monthly"
+                readOnly
+                className="w-full px-4 py-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white"
+              />
             </div>
 
             <div>
@@ -244,6 +248,7 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
                 className="w-full px-4 py-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
                 placeholder="0.00"
               />
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Auto-filled from role, you can adjust before save</p>
             </div>
 
             <div className="md:col-span-2">

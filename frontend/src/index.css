@@ -41,19 +41,19 @@ layer(base);
   --color-white: #ffffff;
   --color-black: #0b0f1f;
 
-  /* ERP report/sidebar palette */
-  --color-primary-25: #f5fbff;
-  --color-primary-50: #eaf5fb;
-  --color-primary-100: #d6eaf6;
-  --color-primary-200: #b8d7ea;
-  --color-primary-300: #88bad7;
-  --color-primary-400: #4f8fb5;
-  --color-primary-500: #0f4f76; /* report accent */
-  --color-primary-600: #1b5a80;
-  --color-primary-700: #123f5c; /* sidebar/header base */
-  --color-primary-800: #0f334b;
-  --color-primary-900: #0b2739;
-  --color-primary-950: #081b29;
+  /* ERP primary palette (classic blue) */
+  --color-primary-25: #f6f9ff;
+  --color-primary-50: #edf3ff;
+  --color-primary-100: #d8e6ff;
+  --color-primary-200: #b8d0ff;
+  --color-primary-300: #93b6f5;
+  --color-primary-400: #6f97d8;
+  --color-primary-500: #3a6db6;
+  --color-primary-600: #163a72;
+  --color-primary-700: #0f2f62;
+  --color-primary-800: #0b244d;
+  --color-primary-900: #0a1f44;
+  --color-primary-950: #07132d;
 
   /* Brand - mirrors primary */
   --color-brand-25: var(--color-primary-25);
@@ -69,19 +69,19 @@ layer(base);
   --color-brand-900: var(--color-primary-900);
   --color-brand-950: var(--color-primary-950);
 
-  /* Secondary - blue slate (aligned with report palette) */
-  --color-slate-25: #fbfdff;
-  --color-slate-50: #f3f8fc;
-  --color-slate-100: #e4edf5;
-  --color-slate-200: #cedce8;
-  --color-slate-300: #aec3d4;
-  --color-slate-400: #7f9fb8;
-  --color-slate-500: #5b7890;
-  --color-slate-600: #3f5d73;
-  --color-slate-700: #2b4558;
-  --color-slate-800: #1a3448;
-  --color-slate-900: #11283a;
-  --color-slate-950: #081a27;
+  /* Secondary - navy slate */
+  --color-slate-25: #f9fbff;
+  --color-slate-50: #eef3fb;
+  --color-slate-100: #dde6f3;
+  --color-slate-200: #c6d4e6;
+  --color-slate-300: #9fb4ce;
+  --color-slate-400: #738fac;
+  --color-slate-500: #55708f;
+  --color-slate-600: #3e5674;
+  --color-slate-700: #2b405d;
+  --color-slate-800: #1a2d4b;
+  --color-slate-900: #0f1f3e;
+  --color-slate-950: #071330;
 
   /* Success - Emerald */
   --color-success-25: #f0fdf4;
@@ -156,13 +156,13 @@ layer(base);
 
 /* Light & Dark base surfaces */
 body {
-  background: #edf5fb;
-  color: #12344c;
+  background: #f4f7fd;
+  color: #10233f;
 }
 
 .dark body {
-  background: #0b2739;
-  color: #e7f2fb;
+  background: #081b39;
+  color: #f4f8ff;
 }
 
 *::-webkit-scrollbar {
@@ -171,12 +171,12 @@ body {
 }
 
 *::-webkit-scrollbar-thumb {
-  background: #1b5a80;
+  background: #163a72;
   border-radius: 999px;
 }
 
 *::-webkit-scrollbar-track {
-  background: #c8dae8;
+  background: #d8e2f2;
 }
 
 @layer base {
@@ -208,13 +208,13 @@ body {
 
 @layer components {
   .erp-main-shell {
-    background: linear-gradient(180deg, #edf5fb 0%, #e9f2f8 45%, #e4edf6 100%);
-    color: #12344c;
+    background: linear-gradient(180deg, #f4f7fd 0%, #eef3fb 45%, #e8eef9 100%);
+    color: #10233f;
   }
 
   .dark .erp-main-shell {
-    background: linear-gradient(180deg, #0f334b 0%, #0d2f45 45%, #0b2739 100%);
-    color: #e7f2fb;
+    background: linear-gradient(180deg, #0b2448 0%, #0a2142 45%, #081b39 100%);
+    color: #f4f8ff;
   }
 }
 
