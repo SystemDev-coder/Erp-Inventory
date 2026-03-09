@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Upload, X, Image as ImageIcon, Loader } from 'lucide-react';
 import { useToast } from '../ui/toast/Toast';
+import { ConfirmDialog } from '../ui/modal/ConfirmDialog';
 
 interface ImageUploadProps {
   currentImage?: string | null;
@@ -27,6 +28,7 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
   const [preview, setPreview] = useState<string | null>(currentImage || null);
   const [uploading, setUploading] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const aspectClasses = {
@@ -76,11 +78,8 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
     }
   };
 
-  const handleDelete = async () => {
+  const confirmDelete = async () => {
     if (!onDelete) return;
-    
-    if (!confirm('Are you sure you want to delete this image?')) return;
-
     try {
       setDeleting(true);
       await onDelete();
@@ -90,24 +89,31 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
       showToast('error', 'Delete failed', error.message || 'Failed to delete image');
     } finally {
       setDeleting(false);
+      setDeleteConfirmOpen(false);
     }
   };
 
-  return (
-    <div className="space-y-2">
-      <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-        {label}
-      </label>
+  const handleDelete = () => {
+    if (!onDelete) return;
+    setDeleteConfirmOpen(true);
+  };
 
-      <div className={`relative ${aspectClasses[aspectRatio]} w-full ${maxWidthClass} mx-auto overflow-hidden rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 transition-all`}>
-        {preview ? (
-          <>
-            {/* Image Preview */}
-            <img
-              src={preview}
-              alt="Preview"
-              className="w-full h-full object-cover"
-            />
+  return (
+    <>
+      <div className="space-y-2">
+        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+          {label}
+        </label>
+
+        <div className={`relative ${aspectClasses[aspectRatio]} w-full ${maxWidthClass} mx-auto overflow-hidden rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 transition-all`}>
+          {preview ? (
+            <>
+              {/* Image Preview */}
+              <img
+                src={preview}
+                alt="Preview"
+                className="w-full h-full object-cover"
+              />
             
             {/* Overlay on hover */}
             <div className="absolute inset-0 bg-black/50 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
@@ -163,19 +169,35 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
                 </div>
               </>
             )}
-          </button>
-        )}
+            </button>
+          )}
 
-        {/* Hidden file input */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          onChange={handleFileSelect}
-          disabled={disabled || uploading || deleting}
-          className="hidden"
-        />
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleFileSelect}
+            disabled={disabled || uploading || deleting}
+            className="hidden"
+          />
+        </div>
       </div>
-    </div>
+      <ConfirmDialog
+        isOpen={deleteConfirmOpen}
+        onClose={() => {
+          if (!deleting) setDeleteConfirmOpen(false);
+        }}
+        onConfirm={() => {
+          void confirmDelete();
+        }}
+        title="Delete Image?"
+        message="Are you sure you want to delete this image?"
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="danger"
+        isLoading={deleting}
+      />
+    </>
   );
 };

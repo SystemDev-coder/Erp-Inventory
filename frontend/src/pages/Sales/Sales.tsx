@@ -141,6 +141,10 @@ const Sales = () => {
   const [hasLoaded, setHasLoaded] = useState(false);
   const [voidOpen, setVoidOpen] = useState(false);
   const [saleToVoid, setSaleToVoid] = useState<Sale | null>(null);
+  const [convertOpen, setConvertOpen] = useState(false);
+  const [saleToConvert, setSaleToConvert] = useState<Sale | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [saleToDelete, setSaleToDelete] = useState<Sale | null>(null);
 
   const loadSales = useCallback(async () => {
     setLoading(true);
@@ -228,35 +232,41 @@ const Sales = () => {
     setVoidOpen(false);
   }, [loadSales, saleToVoid, showToast]);
 
-  const handleConvertQuotation = useCallback(
-    async (sale: Sale) => {
-      const ok = window.confirm(`Convert quotation #S-${sale.sale_id} to invoice?`);
-      if (!ok) return;
-      const res = await salesService.convertQuotation(sale.sale_id, { status: 'unpaid' });
-      if (res.success) {
-        showToast('success', 'Sales', 'Quotation converted to invoice');
-        await loadSales();
-      } else {
-        showToast('error', 'Sales', res.error || 'Failed to convert quotation');
-      }
-    },
-    [loadSales, showToast]
-  );
+  const confirmConvertQuotation = useCallback(async () => {
+    if (!saleToConvert) return;
+    const res = await salesService.convertQuotation(saleToConvert.sale_id, { status: 'unpaid' });
+    if (res.success) {
+      showToast('success', 'Sales', 'Quotation converted to invoice');
+      await loadSales();
+    } else {
+      showToast('error', 'Sales', res.error || 'Failed to convert quotation');
+    }
+    setSaleToConvert(null);
+    setConvertOpen(false);
+  }, [loadSales, saleToConvert, showToast]);
 
-  const handleDelete = useCallback(
-    async (sale: Sale) => {
-      const ok = window.confirm(`Delete #S-${sale.sale_id}? This cannot be undone.`);
-      if (!ok) return;
-      const res = await salesService.remove(sale.sale_id);
-      if (res.success) {
-        showToast('success', 'Sales', 'Document deleted');
-        await loadSales();
-      } else {
-        showToast('error', 'Sales', res.error || 'Delete failed');
-      }
-    },
-    [loadSales, showToast]
-  );
+  const handleConvertQuotation = useCallback((sale: Sale) => {
+    setSaleToConvert(sale);
+    setConvertOpen(true);
+  }, []);
+
+  const confirmDelete = useCallback(async () => {
+    if (!saleToDelete) return;
+    const res = await salesService.remove(saleToDelete.sale_id);
+    if (res.success) {
+      showToast('success', 'Sales', 'Document deleted');
+      await loadSales();
+    } else {
+      showToast('error', 'Sales', res.error || 'Delete failed');
+    }
+    setSaleToDelete(null);
+    setDeleteOpen(false);
+  }, [loadSales, saleToDelete, showToast]);
+
+  const handleDelete = useCallback((sale: Sale) => {
+    setSaleToDelete(sale);
+    setDeleteOpen(true);
+  }, []);
 
   const columns: ColumnDef<Sale>[] = useMemo(
     () => [
@@ -428,6 +438,48 @@ const Sales = () => {
         confirmText="Void Document"
         cancelText="Cancel"
         variant="warning"
+        isLoading={loading}
+      />
+
+      <ConfirmDialog
+        isOpen={convertOpen}
+        onClose={() => {
+          setConvertOpen(false);
+          setSaleToConvert(null);
+        }}
+        onConfirm={() => {
+          void confirmConvertQuotation();
+        }}
+        title="Convert Quotation?"
+        message={
+          saleToConvert
+            ? `Convert quotation #S-${saleToConvert.sale_id} to invoice?`
+            : 'Convert this quotation to invoice?'
+        }
+        confirmText="Convert"
+        cancelText="Cancel"
+        variant="info"
+        isLoading={loading}
+      />
+
+      <ConfirmDialog
+        isOpen={deleteOpen}
+        onClose={() => {
+          setDeleteOpen(false);
+          setSaleToDelete(null);
+        }}
+        onConfirm={() => {
+          void confirmDelete();
+        }}
+        title="Delete Document?"
+        message={
+          saleToDelete
+            ? `Delete #S-${saleToDelete.sale_id}? This cannot be undone.`
+            : 'This action cannot be undone.'
+        }
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="danger"
         isLoading={loading}
       />
     </div>

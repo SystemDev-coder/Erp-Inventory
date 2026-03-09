@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Lock, LockOpen, RefreshCcw, Trash2 } from 'lucide-react';
 import { Modal } from '../../components/ui/modal/Modal';
+import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import Badge from '../../components/ui/badge/Badge';
 import { shiftService, Shift } from '../../services/shift.service';
 import { useToast } from '../../components/ui/toast/Toast';
@@ -19,6 +20,8 @@ const ShiftModal: React.FC<ShiftModalProps> = ({ isOpen, onClose }) => {
   const [openingNote, setOpeningNote] = useState('');
   const [closeCashByShift, setCloseCashByShift] = useState<Record<number, number>>({});
   const [closeNoteByShift, setCloseNoteByShift] = useState<Record<number, string>>({});
+  const [voidConfirmOpen, setVoidConfirmOpen] = useState(false);
+  const [shiftToVoid, setShiftToVoid] = useState<Shift | null>(null);
 
   const openShifts = useMemo(
     () => shifts.filter((shift) => shift.status === 'open'),
@@ -92,10 +95,15 @@ const ShiftModal: React.FC<ShiftModalProps> = ({ isOpen, onClose }) => {
   };
 
   const handleVoidShift = async (shift: Shift) => {
-    if (!confirm('Void this shift?')) return;
+    setShiftToVoid(shift);
+    setVoidConfirmOpen(true);
+  };
+
+  const confirmVoidShift = async () => {
+    if (!shiftToVoid) return;
     setSubmitting(true);
     try {
-      const response = await shiftService.void(shift.shift_id);
+      const response = await shiftService.void(shiftToVoid.shift_id);
       if (response.success) {
         showToast('success', 'Shift', 'Shift voided');
         loadShifts();
@@ -106,6 +114,8 @@ const ShiftModal: React.FC<ShiftModalProps> = ({ isOpen, onClose }) => {
       showToast('error', 'Shift', 'Failed to void shift');
     } finally {
       setSubmitting(false);
+      setShiftToVoid(null);
+      setVoidConfirmOpen(false);
     }
   };
 
@@ -278,6 +288,28 @@ const ShiftModal: React.FC<ShiftModalProps> = ({ isOpen, onClose }) => {
           </button>
         </div>
       </div>
+      <ConfirmDialog
+        isOpen={voidConfirmOpen}
+        onClose={() => {
+          if (!submitting) {
+            setVoidConfirmOpen(false);
+            setShiftToVoid(null);
+          }
+        }}
+        onConfirm={() => {
+          void confirmVoidShift();
+        }}
+        title="Void Shift?"
+        message={
+          shiftToVoid
+            ? `Void shift #${shiftToVoid.shift_id}? This cannot be undone.`
+            : 'Void this shift?'
+        }
+        confirmText="Void Shift"
+        cancelText="Cancel"
+        variant="danger"
+        isLoading={submitting}
+      />
     </Modal>
   );
 };

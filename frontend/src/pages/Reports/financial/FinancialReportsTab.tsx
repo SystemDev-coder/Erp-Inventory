@@ -18,18 +18,18 @@ type FinancialCardId =
   | 'account-statement'
   | 'trial-balance';
 
-const financialCards: Array<{ id: FinancialCardId; title: string; hint: string }> = [
-  { id: 'income-statement', title: 'Income Statement', hint: 'Between two dates' },
-  { id: 'balance-sheet', title: 'Balance Sheet', hint: 'As of selected date' },
-  { id: 'cash-flow', title: 'Cash Flow Statement', hint: 'Between two dates' },
-  { id: 'account-balances', title: 'Account Balances', hint: 'Dropdown + Show / All' },
-  { id: 'expense-summary', title: 'Expense Summary', hint: 'Between two dates' },
-  { id: 'customer-receipts', title: 'Customer Receipts', hint: 'Date range + Show / All' },
-  { id: 'supplier-payments', title: 'Supplier Payments', hint: 'Date range + Show / All' },
-  { id: 'accounts-receivable', title: 'Accounts Receivable', hint: 'Between two dates' },
-  { id: 'accounts-payable', title: 'Accounts Payable', hint: 'Between two dates' },
-  { id: 'account-statement', title: 'Account Statement', hint: 'Date range + Show / All' },
-  { id: 'trial-balance', title: 'Trial Balance', hint: 'Between two dates' },
+const financialCards: Array<{ id: FinancialCardId; title: string }> = [
+  { id: 'income-statement', title: 'Income Statement' },
+  { id: 'balance-sheet', title: 'Balance Sheet' },
+  { id: 'cash-flow', title: 'Cash Flow Statement' },
+  { id: 'account-balances', title: 'Account Balances' },
+  { id: 'expense-summary', title: 'Expense Summary' },
+  { id: 'customer-receipts', title: 'Customer Receipts' },
+  { id: 'supplier-payments', title: 'Supplier Payments' },
+  { id: 'accounts-receivable', title: 'Accounts Receivable' },
+  { id: 'accounts-payable', title: 'Accounts Payable' },
+  { id: 'account-statement', title: 'Account Statement' },
+  { id: 'trial-balance', title: 'Trial Balance' },
 ];
 
 const statementColumns: ReportColumn<Record<string, unknown>>[] = [
@@ -65,7 +65,6 @@ const customerReceiptsColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'amount', header: 'Amount', align: 'right', render: (row) => formatCurrency(row.amount) },
   { key: 'payment_method', header: 'Method' },
   { key: 'reference_no', header: 'Reference' },
-  { key: 'note', header: 'Note' },
 ];
 
 const supplierPaymentsColumns: ReportColumn<Record<string, unknown>>[] = [
@@ -76,7 +75,6 @@ const supplierPaymentsColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'account_name', header: 'Account' },
   { key: 'amount_paid', header: 'Amount', align: 'right', render: (row) => formatCurrency(row.amount_paid) },
   { key: 'reference_no', header: 'Reference' },
-  { key: 'note', header: 'Note' },
 ];
 
 const accountsReceivableColumns: ReportColumn<Record<string, unknown>>[] = [
@@ -111,7 +109,6 @@ const accountStatementColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'debit', header: 'Debit', align: 'right', render: (row) => formatCurrency(row.debit) },
   { key: 'credit', header: 'Credit', align: 'right', render: (row) => formatCurrency(row.credit) },
   { key: 'running_balance', header: 'Running Balance', align: 'right', render: (row) => formatCurrency(row.running_balance) },
-  { key: 'note', header: 'Note' },
 ];
 
 const trialBalanceColumns: ReportColumn<Record<string, unknown>>[] = [
@@ -462,6 +459,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
         title: 'Trial Balance',
         subtitle: `${formatDateOnly(trialBalanceRange.fromDate)} - ${formatDateOnly(trialBalanceRange.toDate)}`,
         fileName: 'trial-balance',
+        variant: 'trial-balance',
         data: rows,
         columns: trialBalanceColumns,
         tableTotals: {
@@ -804,7 +802,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
     );
   };
 
-  const renderCard = (card: { id: FinancialCardId; title: string; hint: string }, index: number) => {
+  const renderCard = (card: { id: FinancialCardId; title: string }, index: number) => {
     const cardKey = `${card.id}::${index}`;
     const isOpen = expandedCardKey === cardKey;
     return (
@@ -818,7 +816,6 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
         >
           <div>
             <p className="text-xl font-semibold leading-tight">{card.title}</p>
-            <p className="mt-1 text-xs font-medium text-white/85">{card.hint}</p>
           </div>
           <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
         </button>

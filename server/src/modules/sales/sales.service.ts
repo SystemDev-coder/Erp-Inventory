@@ -189,11 +189,12 @@ const resolveTaxRate = async (
 const normalizePayment = (input: {
   total: number;
   docType: SaleDocType;
+  saleType: 'cash' | 'credit';
   status: SaleStatus;
   payAccId?: number | null;
   paidAmount?: number;
 }) => {
-  if (input.docType === 'quotation' || input.status === 'void') {
+  if (input.docType === 'quotation' || input.saleType === 'credit' || input.status === 'void') {
     return { payAccId: null, paidAmount: 0 };
   }
 
@@ -725,15 +726,18 @@ export const salesService = {
       const totalWithTax = taxableBase + taxAmount;
 
       const docType: SaleDocType = input.docType || 'sale';
-      const status: SaleStatus = input.status || (docType === 'quotation' ? 'unpaid' : 'paid');
-      const shouldApplyStock = canApplyStock(docType, status);
+      const requestedStatus: SaleStatus = input.status || (docType === 'quotation' ? 'unpaid' : 'paid');
       const saleType: 'cash' | 'credit' =
         docType === 'quotation'
           ? 'credit'
-          : input.saleType || (status === 'unpaid' ? 'credit' : 'cash');
+          : input.saleType || (requestedStatus === 'unpaid' ? 'credit' : 'cash');
+      const status: SaleStatus =
+        saleType === 'credit' && requestedStatus !== 'void' ? 'unpaid' : requestedStatus;
+      const shouldApplyStock = canApplyStock(docType, status);
       const payment = normalizePayment({
         total: totalWithTax,
         docType,
+        saleType,
         status,
         payAccId: input.payFromAccId,
         paidAmount: input.paidAmount,
@@ -881,11 +885,13 @@ export const salesService = {
       }
 
       const nextDocType = (input.docType || current.doc_type || 'sale') as SaleDocType;
-      const nextStatus = (input.status || current.status || 'paid') as SaleStatus;
+      const requestedNextStatus = (input.status || current.status || 'paid') as SaleStatus;
       const nextSaleType =
         (input.saleType ||
           current.sale_type ||
-          (nextStatus === 'unpaid' ? 'credit' : 'cash')) as 'cash' | 'credit';
+          (requestedNextStatus === 'unpaid' ? 'credit' : 'cash')) as 'cash' | 'credit';
+      const nextStatus: SaleStatus =
+        nextSaleType === 'credit' && requestedNextStatus !== 'void' ? 'unpaid' : requestedNextStatus;
       const nextQuoteValidUntil =
         input.quoteValidUntil === undefined ? current.quote_valid_until : input.quoteValidUntil;
       const nextStoreId = input.storeId === undefined ? null : input.storeId;
@@ -909,6 +915,7 @@ export const salesService = {
         ? normalizePayment({
             total: totalWithTax,
             docType: nextDocType,
+            saleType: nextSaleType,
             status: nextStatus,
             payAccId:
               input.payFromAccId === undefined ? current.pay_acc_id : input.payFromAccId,

@@ -11,7 +11,7 @@ export type ModalReportState = {
   filters: Record<string, string | number>;
   totals?: ReportTotalItem[];
   tableTotals?: ReportTableTotals;
-  variant?: 'default' | 'income-statement' | 'balance-sheet' | 'cash-flow-statement';
+  variant?: 'default' | 'income-statement' | 'balance-sheet' | 'cash-flow-statement' | 'trial-balance';
 };
 
 export type DateRange = {

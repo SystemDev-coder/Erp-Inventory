@@ -449,43 +449,6 @@ export class DashboardService {
       });
     }
 
-    if (hasPermission(permissions, 'stock.view')) {
-      const rows = await queryMany<{ label: string; qty: string }>(
-        `WITH days AS (
-           SELECT generate_series(
-             CURRENT_DATE - INTERVAL '13 days',
-             CURRENT_DATE,
-             INTERVAL '1 day'
-           )::date AS day
-         ),
-         moves AS (
-           SELECT date_trunc('day', move_date)::date AS day,
-                  COALESCE(SUM(qty_in - qty_out), 0) AS qty
-             FROM ims.inventory_movements
-            WHERE branch_id = $1
-              AND move_date >= CURRENT_DATE - INTERVAL '13 days'
-            GROUP BY date_trunc('day', move_date)::date
-         )
-         SELECT to_char(d.day, 'YYYY-MM-DD') AS label,
-                COALESCE(m.qty, 0)::text AS qty
-           FROM days d
-           LEFT JOIN moves m ON m.day = d.day
-          ORDER BY d.day`,
-        [branchId]
-      );
-
-      const labels = rows.map((row) => row.label);
-      const data = rows.map((row) => Number(row.qty || 0));
-
-      charts.push({
-        id: 'stock-14d',
-        name: 'Stock Movement (14 days)',
-        type: 'line',
-        labels,
-        series: [{ name: 'Units', data }],
-      });
-    }
-
     return charts;
   }
 

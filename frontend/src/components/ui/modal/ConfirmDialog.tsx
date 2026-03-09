@@ -32,6 +32,8 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
     isLoading = false,
     hideCancel = false,
 }) => {
+    const MODAL_Z_INDEX = 2147483000;
+
     useEffect(() => {
         if (!isOpen) return;
         const prevOverflow = document.body.style.overflow;
@@ -84,7 +86,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
     };
 
     return createPortal(
-        <div className="fixed inset-0 z-[9999] overflow-y-auto" style={{ zIndex: 2147483647 }}>
+        <div className="fixed inset-0 z-[9999] overflow-y-auto" style={{ zIndex: MODAL_Z_INDEX }}>
             {/* Backdrop */}
             <div
                 className="fixed inset-0 bg-[#0c2235]/70 backdrop-blur-sm transition-opacity animate-[fadeIn_200ms_ease-out]"

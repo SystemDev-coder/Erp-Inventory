@@ -15,6 +15,7 @@ export const listNotifications = asyncHandler(async (req: AuthRequest, res: Resp
   const query = notificationsQuerySchema.parse(req.query);
   const data = await notificationsService.list({
     userId: req.user.userId,
+    branchId: req.user.branchId,
     limit: query.limit,
     offset: query.offset,
     unreadOnly: query.unreadOnly,

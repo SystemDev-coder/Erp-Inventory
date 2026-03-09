@@ -160,8 +160,10 @@ const Dashboard = () => {
 
   const orderedCharts = useMemo(() => {
     if (!data?.charts) return [];
-    const order = ['income-trend-12m', 'sales-6m', 'stock-14d'];
-    return [...data.charts].sort((a, b) => {
+    const order = ['income-trend-12m', 'sales-6m'];
+    return [...data.charts]
+      .filter((chart) => chart.id !== 'stock-14d')
+      .sort((a, b) => {
       const aIndex = order.indexOf(a.id);
       const bIndex = order.indexOf(b.id);
       return (aIndex === -1 ? 99 : aIndex) - (bIndex === -1 ? 99 : bIndex);
@@ -175,12 +177,10 @@ const Dashboard = () => {
       ? {
           'income-trend-12m': { base: '#4de0a3', soft: '#4de0a3' },
           'sales-6m': { base: '#75c7f3', soft: '#75c7f3' },
-          'stock-14d': { base: '#b6beff', soft: '#b6beff' },
         }
       : {
           'income-trend-12m': { base: '#0b7f5a', soft: '#6fc9a6' },
           'sales-6m': { base: '#0e527b', soft: '#6aa9cd' },
-          'stock-14d': { base: '#4056ba', soft: '#93a0ef' },
         };
 
     const axisColor = isDark ? '#d0e6f5' : '#274a61';
@@ -284,7 +284,6 @@ const Dashboard = () => {
 
   const getChartSubtitle = (chartId: string) => {
     if (chartId === 'income-trend-12m') return 'Monthly income trend for the last 12 months';
-    if (chartId === 'stock-14d') return 'Daily net stock movement for the last 14 days';
     return 'Sales totals for the last 6 months';
   };
 

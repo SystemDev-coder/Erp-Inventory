@@ -44,6 +44,7 @@ export const PayrollModal: React.FC<PayrollModalProps> = ({
     year: currentYear,
     includeInactive: false,
   });
+  const [formError, setFormError] = useState('');
 
   // Active employees for payroll
   const activeEmployees = employees.filter(e => e.status === 'active');
@@ -78,9 +79,10 @@ export const PayrollModal: React.FC<PayrollModalProps> = ({
     e.preventDefault();
     
     if (formData.payrollType === 'specific' && !formData.employeeId) {
-      alert('Please select an employee');
+      setFormError('Please select an employee');
       return;
     }
+    setFormError('');
 
     const monthStr = formData.month.toString().padStart(2, '0');
     const payrollData: PayrollData = {
@@ -105,6 +107,7 @@ export const PayrollModal: React.FC<PayrollModalProps> = ({
         year: currentYear,
         includeInactive: false,
       });
+      setFormError('');
     }
   }, [isOpen]);
 
@@ -143,7 +146,10 @@ export const PayrollModal: React.FC<PayrollModalProps> = ({
             <div className="grid grid-cols-2 gap-4">
               <button
                 type="button"
-                onClick={() => setFormData({ ...formData, payrollType: 'all', employeeId: '' })}
+                onClick={() => {
+                  setFormData({ ...formData, payrollType: 'all', employeeId: '' });
+                  setFormError('');
+                }}
                 className={`p-4 rounded-xl border-2 transition-all ${
                   formData.payrollType === 'all'
                     ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
@@ -161,7 +167,10 @@ export const PayrollModal: React.FC<PayrollModalProps> = ({
 
               <button
                 type="button"
-                onClick={() => setFormData({ ...formData, payrollType: 'specific' })}
+                onClick={() => {
+                  setFormData({ ...formData, payrollType: 'specific' });
+                  setFormError('');
+                }}
                 className={`p-4 rounded-xl border-2 transition-all ${
                   formData.payrollType === 'specific'
                     ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
@@ -190,10 +199,13 @@ export const PayrollModal: React.FC<PayrollModalProps> = ({
                 required
                 value={formData.employeeId}
                 onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    employeeId: e.target.value ? Number(e.target.value) : '',
-                  })
+                  {
+                    setFormData({
+                      ...formData,
+                      employeeId: e.target.value ? Number(e.target.value) : '',
+                    });
+                    if (formError) setFormError('');
+                  }
                 }
                 className="w-full px-4 py-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
               >
@@ -221,6 +233,7 @@ export const PayrollModal: React.FC<PayrollModalProps> = ({
                   </div>
                 </div>
               )}
+              {formError && <p className="mt-2 text-xs text-rose-500">{formError}</p>}
             </div>
           )}
 

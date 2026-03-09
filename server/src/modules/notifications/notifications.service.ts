@@ -18,13 +18,111 @@ export interface NotificationRow {
 
 interface NotificationListInput {
   userId: number;
+  branchId?: number;
   limit: number;
   offset: number;
   unreadOnly?: boolean;
 }
 
+const lowStockRowsSql = `
+  SELECT
+    i.item_id AS product_id,
+    i.name AS item_name,
+    CASE
+      WHEN COALESCE(st.row_count, 0) = 0 THEN COALESCE(i.opening_balance, 0)
+      ELSE COALESCE(st.qty, 0)
+    END::double precision AS qty,
+    GREATEST(COALESCE(NULLIF(i.stock_alert, 0), 5), 1)::double precision AS threshold
+  FROM ims.items i
+  LEFT JOIN (
+    SELECT
+      s.branch_id,
+      si.product_id AS item_id,
+      COALESCE(SUM(si.quantity), 0)::numeric(14,3) AS qty,
+      COUNT(*)::int AS row_count
+    FROM ims.store_items si
+    JOIN ims.stores s ON s.store_id = si.store_id
+    GROUP BY s.branch_id, si.product_id
+  ) st
+    ON st.item_id = i.item_id
+   AND st.branch_id = i.branch_id
+  WHERE i.branch_id = $1
+    AND i.is_active = TRUE
+    AND (
+      CASE
+        WHEN COALESCE(st.row_count, 0) = 0 THEN COALESCE(i.opening_balance, 0)
+        ELSE COALESCE(st.qty, 0)
+      END
+    ) <= GREATEST(COALESCE(NULLIF(i.stock_alert, 0), 5), 1)
+`;
+
+const ensureLowStockNotifications = async (branchId: number, userId: number) => {
+  if (!branchId || !userId) return;
+
+  await query(
+    `WITH low_stock AS (${lowStockRowsSql})
+     INSERT INTO ims.notifications (
+       branch_id,
+       user_id,
+       created_by,
+       title,
+       message,
+       category,
+       link,
+       meta
+     )
+     SELECT
+       $1,
+       $2,
+       NULL,
+       'Low Stock: ' || ls.item_name,
+       ls.item_name || ' is low in stock (' || ls.qty::text || ' left, threshold ' || ls.threshold::text || ').',
+       'inventory',
+       '/stock-management/items',
+       jsonb_build_object(
+         'type', 'low_stock',
+         'product_id', ls.product_id,
+         'branch_id', $1,
+         'current_qty', ls.qty,
+         'threshold', ls.threshold
+       )
+     FROM low_stock ls
+     WHERE NOT EXISTS (
+       SELECT 1
+       FROM ims.notifications n
+       WHERE n.user_id = $2
+         AND COALESCE(n.is_deleted, FALSE) = FALSE
+         AND COALESCE(n.meta->>'type', '') = 'low_stock'
+         AND COALESCE(n.meta->>'product_id', '') = ls.product_id::text
+         AND COALESCE(n.meta->>'branch_id', '') = $1::text
+     )`,
+    [branchId, userId]
+  );
+
+  await query(
+    `WITH low_stock AS (${lowStockRowsSql})
+     UPDATE ims.notifications n
+        SET is_deleted = TRUE,
+            deleted_at = NOW()
+      WHERE n.user_id = $2
+        AND n.branch_id = $1
+        AND COALESCE(n.is_deleted, FALSE) = FALSE
+        AND COALESCE(n.meta->>'type', '') = 'low_stock'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM low_stock ls
+          WHERE ls.product_id::text = COALESCE(n.meta->>'product_id', '')
+        )`,
+    [branchId, userId]
+  );
+};
+
 export const notificationsService = {
   async list(input: NotificationListInput) {
+    if (input.branchId) {
+      await ensureLowStockNotifications(input.branchId, input.userId);
+    }
+
     const whereClauses = ['n.user_id = $1', 'COALESCE(n.is_deleted, FALSE) = FALSE'];
     if (input.unreadOnly) {
       whereClauses.push('n.is_read = FALSE');

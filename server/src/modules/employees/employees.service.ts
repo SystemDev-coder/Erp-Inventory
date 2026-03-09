@@ -297,6 +297,7 @@ export const employeesService = {
     const updates: string[] = [];
     const values: any[] = [];
     let paramCount = 1;
+    let salaryTypeSet = false;
 
     if (input.name !== undefined) {
       updates.push(`full_name = $${paramCount++}`);
@@ -325,6 +326,7 @@ export const employeesService = {
     if (input.salary_type !== undefined) {
       updates.push(`salary_type = $${paramCount++}`);
       values.push('Monthly');
+      salaryTypeSet = true;
     }
     if (input.status !== undefined) {
       updates.push(`status = $${paramCount++}::ims.employment_status_enum`);
@@ -346,8 +348,9 @@ export const employeesService = {
 
     // Update salary if needed
     if (shouldUpdateSalary && effectiveSalary !== undefined && effectiveSalary >= 0) {
-      if (input.salary_type === undefined || input.role_id !== undefined) {
+      if (!salaryTypeSet) {
         updates.push(`salary_type = 'Monthly'`);
+        salaryTypeSet = true;
       }
       updates.push(`salary_amount = $${paramCount++}`);
       values.push(effectiveSalary);
@@ -429,23 +432,70 @@ export const employeesService = {
         [employee.effective_branch_id, salaryTypeName, salaryBaseType]
       );
       if (salType) {
-        await queryOne(
-          `UPDATE ims.employee_salary SET is_active = FALSE, end_date = CURRENT_DATE
-           WHERE emp_id = $1 AND is_active = TRUE`,
+        const activeSalary = await queryOne<{
+          emp_salary_id: number;
+          sal_type_id: number | null;
+          basic_salary: number;
+          start_date: string;
+        }>(
+          `SELECT
+             emp_salary_id,
+             sal_type_id,
+             COALESCE(basic_salary, 0)::double precision AS basic_salary,
+             start_date::text AS start_date
+           FROM ims.employee_salary
+           WHERE emp_id = $1
+             AND is_active = TRUE
+           ORDER BY start_date DESC, emp_salary_id DESC
+           LIMIT 1`,
           [id]
         );
-        if (employeeSalaryHasBranch) {
-          await queryOne(
-            `INSERT INTO ims.employee_salary (branch_id, emp_id, sal_type_id, basic_salary, start_date)
-             VALUES ($1, $2, $3, $4, CURRENT_DATE)`,
-            [employee.effective_branch_id, id, salType.sal_type_id, effectiveSalary]
-          );
-        } else {
-          await queryOne(
-            `INSERT INTO ims.employee_salary (emp_id, sal_type_id, basic_salary, start_date)
-             VALUES ($1, $2, $3, CURRENT_DATE)`,
-            [id, salType.sal_type_id, effectiveSalary]
-          );
+
+        const sameTypeAndAmount =
+          activeSalary &&
+          Number(activeSalary.sal_type_id || 0) === Number(salType.sal_type_id || 0) &&
+          Math.abs(Number(activeSalary.basic_salary || 0) - Number(effectiveSalary || 0)) < 0.005;
+
+        if (!sameTypeAndAmount) {
+          const updatedTodaySalary = activeSalary
+            ? await queryOne<{ emp_salary_id: number }>(
+                `UPDATE ims.employee_salary
+                    SET sal_type_id = $1,
+                        basic_salary = $2,
+                        start_date = CURRENT_DATE,
+                        end_date = NULL,
+                        is_active = TRUE
+                  WHERE emp_salary_id = $3
+                    AND start_date = CURRENT_DATE
+                RETURNING emp_salary_id`,
+                [salType.sal_type_id, effectiveSalary, activeSalary.emp_salary_id]
+              )
+            : null;
+
+          if (!updatedTodaySalary) {
+            await queryOne(
+              `UPDATE ims.employee_salary
+                  SET is_active = FALSE,
+                      end_date = CURRENT_DATE
+                WHERE emp_id = $1
+                  AND is_active = TRUE`,
+              [id]
+            );
+
+            if (employeeSalaryHasBranch) {
+              await queryOne(
+                `INSERT INTO ims.employee_salary (branch_id, emp_id, sal_type_id, basic_salary, start_date)
+                 VALUES ($1, $2, $3, $4, CURRENT_DATE)`,
+                [employee.effective_branch_id, id, salType.sal_type_id, effectiveSalary]
+              );
+            } else {
+              await queryOne(
+                `INSERT INTO ims.employee_salary (emp_id, sal_type_id, basic_salary, start_date)
+                 VALUES ($1, $2, $3, CURRENT_DATE)`,
+                [id, salType.sal_type_id, effectiveSalary]
+              );
+            }
+          }
         }
       }
     }

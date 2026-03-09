@@ -1264,7 +1264,7 @@ export const inventoryService = {
   },
 
   async listInventoryTransactions(filters: any) {
-    const { storeId, itemId, transactionType, status, page, limit, branchIds } = filters;
+    const { storeId, itemId, transactionType, status, fromDate, toDate, page, limit, branchIds } = filters;
     const movementHasSoftDelete = await hasInventoryMovementSoftDelete();
     const stockAdjustmentTableExists = await hasStockAdjustmentTable();
     const salesHasPaidAmount = await hasSalesPaidAmountColumn();
@@ -1293,6 +1293,14 @@ export const inventoryService = {
     if (status) {
       params.push(String(status).toUpperCase());
       where.push(`UPPER(t.status) = $${params.length}`);
+    }
+    if (fromDate) {
+      params.push(fromDate);
+      where.push(`t.transaction_date::date >= $${params.length}::date`);
+    }
+    if (toDate) {
+      params.push(toDate);
+      where.push(`t.transaction_date::date <= $${params.length}::date`);
     }
 
     const offset = (page - 1) * limit;

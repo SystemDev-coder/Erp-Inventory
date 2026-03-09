@@ -91,6 +91,8 @@ export interface ExpenseCharge {
   created_by?: string | null;
   payment_count?: number;
   paid_sum?: number;
+  open_balance?: number;
+  payment_status?: 'unpaid' | 'partial' | 'paid';
   is_budget?: number;
 }
 

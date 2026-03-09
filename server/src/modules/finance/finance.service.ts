@@ -1144,11 +1144,24 @@ export const financeService = {
               COALESCE(e.name, 'Expense '||e.exp_id) AS expense_name,
               COALESCE(u.full_name, u.name) AS created_by,
               c.branch_id,
-              COALESCE((SELECT COUNT(*) FROM ims.expense_payments p WHERE p.exp_ch_id = c.charge_id),0) AS payment_count,
-              COALESCE((SELECT SUM(amount_paid) FROM ims.expense_payments p WHERE p.exp_ch_id = c.charge_id),0) AS paid_sum
+              COALESCE(pay.payment_count,0) AS payment_count,
+              COALESCE(pay.paid_sum,0) AS paid_sum,
+              GREATEST(COALESCE(c.amount, 0) - COALESCE(pay.paid_sum, 0), 0)::double precision AS open_balance,
+              CASE
+                WHEN COALESCE(pay.paid_sum, 0) <= 0 THEN 'unpaid'
+                WHEN COALESCE(pay.paid_sum, 0) + 0.000001 < COALESCE(c.amount, 0) THEN 'partial'
+                ELSE 'paid'
+              END AS payment_status
          FROM ims.expense_charges c
          JOIN ims.expenses e ON e.exp_id = c.exp_id
          JOIN ims.users u   ON u.user_id = c.user_id
+         LEFT JOIN LATERAL (
+           SELECT
+             COUNT(*)::int AS payment_count,
+             COALESCE(SUM(p.amount_paid), 0)::double precision AS paid_sum
+           FROM ims.expense_payments p
+           WHERE p.exp_ch_id = c.charge_id
+         ) pay ON TRUE
         ${where}
         ORDER BY c.charge_date DESC
         LIMIT 200`,
@@ -1162,7 +1175,16 @@ export const financeService = {
       `INSERT INTO ims.expense_charges
          (branch_id, exp_id, charge_date, reg_date, amount, ref_table, ref_id, note, user_id)
        VALUES ($1,$2,COALESCE($3,NOW()),COALESCE($4,$3,NOW()),$5,$6,$7,$8,$9)
-       RETURNING charge_id AS exp_ch_id, charge_date AS exp_date, reg_date, amount, exp_id, branch_id, note`,
+       RETURNING
+         charge_id AS exp_ch_id,
+         charge_date AS exp_date,
+         reg_date,
+         amount,
+         exp_id,
+         branch_id,
+         note,
+         amount::double precision AS open_balance,
+         'unpaid'::text AS payment_status`,
       [
         branchId,
         input.expId,
@@ -1179,6 +1201,21 @@ export const financeService = {
   },
 
   async updateExpenseCharge(id: number, input: Partial<ExpenseChargeInput>, scope: BranchScope, userId: number) {
+    if (input.amount !== undefined) {
+      const paid = await queryOne<{ paid_sum: number }>(
+        `SELECT COALESCE(SUM(amount_paid), 0)::double precision AS paid_sum
+           FROM ims.expense_payments
+          WHERE exp_ch_id = $1`,
+        [id]
+      );
+      const alreadyPaid = Number(paid?.paid_sum || 0);
+      if (Number(input.amount) + 0.000001 < alreadyPaid) {
+        throw ApiError.badRequest(
+          `Amount cannot be less than paid amount (${alreadyPaid.toFixed(2)})`
+        );
+      }
+    }
+
     const sets: string[] = [];
     const params: any[] = [];
     if (input.expId !== undefined) {
@@ -1218,7 +1255,34 @@ export const financeService = {
       `UPDATE ims.expense_charges
           SET ${sets.join(', ')}, user_id = ${userId}
         ${where}
-        RETURNING charge_id AS exp_ch_id, charge_date AS exp_date, amount, exp_id, branch_id, note`,
+        RETURNING
+          charge_id AS exp_ch_id,
+          charge_date AS exp_date,
+          amount,
+          exp_id,
+          branch_id,
+          note,
+          GREATEST(
+            COALESCE(amount, 0) - (
+              SELECT COALESCE(SUM(p.amount_paid), 0)
+              FROM ims.expense_payments p
+              WHERE p.exp_ch_id = charge_id
+            ),
+            0
+          )::double precision AS open_balance,
+          CASE
+            WHEN (
+              SELECT COALESCE(SUM(p.amount_paid), 0)
+              FROM ims.expense_payments p
+              WHERE p.exp_ch_id = charge_id
+            ) <= 0 THEN 'unpaid'
+            WHEN (
+              SELECT COALESCE(SUM(p.amount_paid), 0)
+              FROM ims.expense_payments p
+              WHERE p.exp_ch_id = charge_id
+            ) + 0.000001 < amount THEN 'partial'
+            ELSE 'paid'
+          END AS payment_status`,
       params
     );
     return charge;
@@ -1290,7 +1354,22 @@ export const financeService = {
     if (!charge) throw ApiError.notFound('Expense charge not found');
     assertBranchAccess(scope, charge.branch_id);
     const branchId = input.branchId && input.branchId !== charge.branch_id ? (() => { throw ApiError.badRequest('Branch mismatch'); })() : charge.branch_id;
-    const amount = input.amount ?? charge.amount;
+    const paid = await queryOne<{ paid_sum: number }>(
+      `SELECT COALESCE(SUM(amount_paid), 0)::double precision AS paid_sum
+         FROM ims.expense_payments
+        WHERE exp_ch_id = $1`,
+      [charge.charge_id]
+    );
+    const paidSoFar = Number(paid?.paid_sum || 0);
+    const remaining = Math.max(Number(charge.amount || 0) - paidSoFar, 0);
+    if (remaining <= 0) {
+      throw ApiError.badRequest('This expense is already fully paid');
+    }
+
+    const amount = input.amount !== undefined ? Number(input.amount) : remaining;
+    if (amount > remaining + 0.000001) {
+      throw ApiError.badRequest(`Amount exceeds open balance (${remaining.toFixed(2)})`);
+    }
     const payDate = input.payDate || null;
     const ref = input.referenceNo || null;
     const note = input.note || null;

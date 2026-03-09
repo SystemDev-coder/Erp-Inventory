@@ -14,7 +14,7 @@ import StoresPage from '../Stock/StoresPage';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
 
 type ProductForm = Partial<Product>;
-type TxCategory = 'adjustment' | 'paid' | 'sales' | 'damage';
+type TxCategory = 'adjustment' | 'paid' | 'sales' | 'cancelled';
 
 const defaultProductForm: ProductForm = {
   name: '',
@@ -36,7 +36,7 @@ const txLabel: Record<TxCategory, string> = {
   adjustment: 'Adjustment',
   paid: 'Paid',
   sales: 'Sales',
-  damage: 'Damage',
+  cancelled: 'Canceled Items',
 };
 
 const Products = () => {
@@ -44,8 +44,15 @@ const Products = () => {
 
   const [loading, setLoading] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
+  const [stateProducts, setStateProducts] = useState<Product[]>([]);
   const [transactions, setTransactions] = useState<InventoryTransactionRow[]>([]);
   const [txCategory, setTxCategory] = useState<TxCategory>('adjustment');
+  const [txFromDate, setTxFromDate] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    return d.toISOString().slice(0, 10);
+  });
+  const [txToDate, setTxToDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
 
   const [itemModalOpen, setItemModalOpen] = useState(false);
   const [stateModalOpen, setStateModalOpen] = useState(false);
@@ -56,7 +63,7 @@ const Products = () => {
   const [stores, setStores] = useState<StoreType[]>([]);
   const [stateForm, setStateForm] = useState<{ product_id?: number; status: 'active' | 'inactive' }>({
     product_id: undefined,
-    status: 'active',
+    status: 'inactive',
   });
 
   const [itemToDelete, setItemToDelete] = useState<Product | null>(null);
@@ -82,14 +89,35 @@ const Products = () => {
   };
 
   const loadTransactions = async (category: TxCategory = txCategory) => {
+    if (txFromDate && txToDate && txFromDate > txToDate) {
+      showToast('error', 'Inventory Transaction', 'From date cannot be after To date');
+      return;
+    }
     setLoading(true);
-    const res = await inventoryService.listTransactions({
+    const query: Record<string, unknown> = {
       limit: 200,
       page: 1,
-      transactionType: category.toUpperCase(),
-    });
+      fromDate: txFromDate || undefined,
+      toDate: txToDate || undefined,
+    };
+    if (category === 'cancelled') query.status = 'CANCELLED';
+    else query.transactionType = category.toUpperCase();
+    const res = await inventoryService.listTransactions(query);
     if (res.success && res.data?.rows) setTransactions(res.data.rows as InventoryTransactionRow[]);
     else showToast('error', 'Inventory Transaction', res.error || 'Failed to load transactions');
+    setLoading(false);
+  };
+
+  const loadInactiveStateItems = async () => {
+    setLoading(true);
+    await resolveStores();
+    const res = await productService.list({ includeInactive: true, limit: 500 });
+    if (res.success && res.data?.products) {
+      const onlyInactive = res.data.products.filter((item) => !item.is_active || String(item.status).toLowerCase() === 'inactive');
+      setStateProducts(onlyInactive);
+    } else {
+      showToast('error', 'Items State', res.error || 'Failed to load inactive items');
+    }
     setLoading(false);
   };
 
@@ -176,6 +204,7 @@ const Products = () => {
     if (res.success) {
       showToast('success', 'Item State', 'Item state updated');
       setStateModalOpen(false);
+      await loadInactiveStateItems();
       await loadProducts();
     } else {
       showToast('error', 'Item State', res.error || 'Failed to update item state');
@@ -254,7 +283,7 @@ const Products = () => {
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
             <div className="flex items-center gap-2">
-              {(['adjustment', 'paid', 'sales', 'damage'] as TxCategory[]).map((key) => (
+              {(['adjustment', 'paid', 'sales', 'cancelled'] as TxCategory[]).map((key) => (
                 <button
                   key={key}
                   type="button"
@@ -268,8 +297,26 @@ const Products = () => {
                 </button>
               ))}
             </div>
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={() => void loadTransactions()} className="rounded-lg border px-3 py-2 text-sm">Display</button>
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="space-y-1 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                <span>From Date</span>
+                <input
+                  type="date"
+                  value={txFromDate}
+                  onChange={(event) => setTxFromDate(event.target.value)}
+                  className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900"
+                />
+              </label>
+              <label className="space-y-1 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                <span>To Date</span>
+                <input
+                  type="date"
+                  value={txToDate}
+                  onChange={(event) => setTxToDate(event.target.value)}
+                  className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900"
+                />
+              </label>
+              <button type="button" onClick={() => void loadTransactions()} className="h-10 rounded-lg border px-3 text-sm">Display</button>
             </div>
           </div>
           <DataTable data={filteredTransactions} columns={txColumns} isLoading={loading} searchPlaceholder="Search transactions..." />
@@ -283,11 +330,11 @@ const Products = () => {
       content: (
         <div className="space-y-2">
           <div className="flex items-center justify-end gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
-            <button type="button" onClick={loadProducts} className="rounded-lg border px-3 py-2 text-sm">Display</button>
+            <button type="button" onClick={loadInactiveStateItems} className="rounded-lg border px-3 py-2 text-sm">Display</button>
             <button
               type="button"
               onClick={() => {
-                setStateForm({ product_id: undefined, status: 'active' });
+                setStateForm({ product_id: undefined, status: 'inactive' });
                 setStateModalOpen(true);
               }}
               className="rounded-lg bg-primary-600 px-3 py-2 text-sm text-white"
@@ -295,7 +342,7 @@ const Products = () => {
               + Set State
             </button>
           </div>
-          <DataTable data={products} columns={stateColumns} isLoading={loading} searchPlaceholder="Search item state..." />
+          <DataTable data={stateProducts} columns={stateColumns} isLoading={loading} searchPlaceholder="Search inactive item..." />
         </div>
       ),
     },

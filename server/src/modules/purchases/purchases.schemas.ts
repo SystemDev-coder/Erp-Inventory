@@ -16,6 +16,7 @@ export const purchaseSchema = z.object({
   storeId: z.coerce.number().int().positive().optional(),
   supplierId: z.coerce.number().int().positive().optional().nullable(),
   purchaseDate: z.string().optional(),
+  purchaseType: z.enum(['cash', 'credit']).default('cash').optional(),
   subtotal: z.coerce.number().nonnegative().default(0),
   discount: z.coerce.number().nonnegative().default(0),
   total: z.coerce.number().nonnegative().default(0),

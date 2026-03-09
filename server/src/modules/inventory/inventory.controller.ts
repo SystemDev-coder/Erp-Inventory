@@ -25,7 +25,7 @@ import { assertBranchAccess, resolveBranchScope } from '../../utils/branchScope'
 
 const sanitizeQuery = (query: any) => {
   const cleaned: Record<string, any> = { ...query };
-  ['branchId', 'whId', 'productId', 'itemId', 'includeInactive'].forEach((k) => {
+  ['branchId', 'whId', 'productId', 'itemId', 'includeInactive', 'transactionType', 'status', 'fromDate', 'toDate'].forEach((k) => {
     if (
       cleaned[k] === undefined ||
       cleaned[k] === null ||

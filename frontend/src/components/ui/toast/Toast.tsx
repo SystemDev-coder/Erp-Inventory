@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 import { Snackbar, Alert, AlertTitle } from '@mui/material';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
+import { createPortal } from 'react-dom';
 
 type ToastType = 'success' | 'error' | 'info' | 'warning';
 
@@ -34,6 +35,7 @@ const theme = createTheme({
 
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const TOAST_Z_INDEX = 2147483647;
 
   const showToast = useCallback((type: ToastType, title: string, message?: string) => {
     const id = Math.random().toString(36).substr(2, 9);
@@ -53,13 +55,15 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
-      <ThemeProvider theme={theme}>
+      {typeof document !== 'undefined' &&
+        createPortal(
+          <ThemeProvider theme={theme}>
         <div
           style={{
             position: 'fixed',
             top: '80px',
             right: '16px',
-            zIndex: 2147483647, // sit above any modal/backdrop
+            zIndex: TOAST_Z_INDEX, // keep toast above any modal/backdrop
             pointerEvents: 'none',
           }}
         >
@@ -73,7 +77,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 marginBottom: index > 0 ? '8px' : '0',
                 transform: 'none',
                 top: `${index * 60}px`,
-                zIndex: 2147483647,
+                zIndex: TOAST_Z_INDEX,
                 pointerEvents: 'none',
               }}
             >
@@ -83,7 +87,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 variant="filled"
                 sx={{
                   pointerEvents: 'auto',
-                  zIndex: 2147483647,
+                  zIndex: TOAST_Z_INDEX,
                   width: '100%',
                   minWidth: '280px',
                   maxWidth: '320px',
@@ -112,7 +116,9 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             </Snackbar>
           ))}
         </div>
-      </ThemeProvider>
+          </ThemeProvider>,
+          document.body
+        )}
     </ToastContext.Provider>
   );
 };

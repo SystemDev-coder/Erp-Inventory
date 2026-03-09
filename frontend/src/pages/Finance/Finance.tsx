@@ -99,6 +99,9 @@ const [isChargeModalOpen, setIsChargeModalOpen] = useState(false);
 const [editingChargeId, setEditingChargeId] = useState<number | null>(null);
 const [chargeForm, setChargeForm] = useState<{ exp_id?: number; amount?: number; note?: string; exp_date?: string; reg_date?: string }>({});
 const [chargeErrors, setChargeErrors] = useState<{ exp?: string; amount?: string }>({});
+const [isOpeningChargeModalOpen, setIsOpeningChargeModalOpen] = useState(false);
+const [openingChargeForm, setOpeningChargeForm] = useState<{ exp_id?: number; amount?: number; note?: string; exp_date?: string }>({});
+const [openingChargeErrors, setOpeningChargeErrors] = useState<{ exp?: string; amount?: string }>({});
 
 const [isPayChargeModalOpen, setIsPayChargeModalOpen] = useState(false);
 const [isEditingPayment, setIsEditingPayment] = useState(false);
@@ -124,6 +127,8 @@ const [deletePayrollMode, setDeletePayrollMode] = useState<'line' | 'period'>('l
 const [pendingPayrollLineId, setPendingPayrollLineId] = useState<number | null>(null);
 const [pendingDeleteAccount, setPendingDeleteAccount] = useState<Account | null>(null);
 const [deletingAccount, setDeletingAccount] = useState(false);
+const [pendingDeleteBudget, setPendingDeleteBudget] = useState<ExpenseBudget | null>(null);
+const [deletingBudget, setDeletingBudget] = useState(false);
 
   const todayDate = () => new Date().toISOString().slice(0, 10);
   const todayDateTimeLocal = () => new Date().toISOString().slice(0, 16);
@@ -136,6 +141,25 @@ const [deletingAccount, setDeletingAccount] = useState(false);
 
   const fieldClass =
     'w-full rounded border px-3 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 border-slate-200 dark:border-slate-700';
+
+  const selectedPayCharge = expenseCharges.find((charge) => charge.exp_ch_id === payChargeForm.exp_ch_id);
+  const selectedPayChargeOpenBalance = selectedPayCharge
+    ? selectedPayCharge.open_balance !== undefined
+      ? Number(selectedPayCharge.open_balance || 0)
+      : Math.max(0, Number(selectedPayCharge.amount || 0) - Number(selectedPayCharge.paid_sum || 0))
+    : 0;
+
+  const dynamicExpenseOpenBalance = useMemo(
+    () =>
+      expenseCharges.reduce((sum, charge) => {
+        const open =
+          charge.open_balance !== undefined
+            ? Number(charge.open_balance || 0)
+            : Math.max(0, Number(charge.amount || 0) - Number(charge.paid_sum || 0));
+        return sum + open;
+      }, 0),
+    [expenseCharges]
+  );
 
   const accountColumns: ColumnDef<Account>[] = useMemo(
     () => [
@@ -208,12 +232,38 @@ const [deletingAccount, setDeletingAccount] = useState(false);
           ),
       },
       {
-        id: 'remaining',
-        header: 'Remaining',
+        id: 'open_balance',
+        header: 'Open Balance',
         cell: ({ row }) => {
-          const paid = Number(row.original.paid_sum || 0);
-          const remaining = Math.max(0, Number(row.original.amount || 0) - paid);
-          return `$${remaining.toFixed(2)}`;
+          const openBalance =
+            row.original.open_balance !== undefined
+              ? Number(row.original.open_balance || 0)
+              : Math.max(0, Number(row.original.amount || 0) - Number(row.original.paid_sum || 0));
+          return `$${openBalance.toFixed(2)}`;
+        },
+      },
+      {
+        id: 'payment_status',
+        header: 'Status',
+        cell: ({ row }) => {
+          const status = row.original.payment_status
+            ? String(row.original.payment_status)
+            : Number(row.original.paid_sum || 0) <= 0
+            ? 'unpaid'
+            : Number(row.original.paid_sum || 0) + 0.000001 < Number(row.original.amount || 0)
+            ? 'partial'
+            : 'paid';
+          const cls =
+            status === 'paid'
+              ? 'bg-emerald-100 text-emerald-700'
+              : status === 'partial'
+              ? 'bg-amber-100 text-amber-700'
+              : 'bg-rose-100 text-rose-700';
+          return (
+            <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${cls}`}>
+              {status}
+            </span>
+          );
         },
       },
       { accessorKey: 'created_by', header: 'By', cell: ({ row }) => row.original.created_by || '-' },
@@ -228,8 +278,10 @@ const [deletingAccount, setDeletingAccount] = useState(false);
                 aria-label="Full payment"
                 onClick={() => {
                   const ch = row.original;
-                  const paid = Number(ch.paid_sum || 0);
-                  const remaining = Math.max(0, Number(ch.amount || 0) - paid);
+                  const remaining =
+                    ch.open_balance !== undefined
+                      ? Number(ch.open_balance || 0)
+                      : Math.max(0, Number(ch.amount || 0) - Number(ch.paid_sum || 0));
                   setIsEditingPayment(false);
                   setPayChargeForm({
                     exp_ch_id: ch.exp_ch_id,
@@ -241,9 +293,9 @@ const [deletingAccount, setDeletingAccount] = useState(false);
                   });
                   setIsPayChargeModalOpen(true);
                 }}
-                disabled={Number(row.original.amount || 0) - Number(row.original.paid_sum || 0) <= 0}
+                disabled={Number(row.original.open_balance ?? (Number(row.original.amount || 0) - Number(row.original.paid_sum || 0))) <= 0}
               >
-                {Number(row.original.amount || 0) - Number(row.original.paid_sum || 0) <= 0 ? 'Paid' : 'Full Payment'}
+                {Number(row.original.open_balance ?? (Number(row.original.amount || 0) - Number(row.original.paid_sum || 0))) <= 0 ? 'Paid' : 'Full Payment'}
               </button>
             )}
             {!!row.original.exp_id && (
@@ -325,15 +377,8 @@ const [deletingAccount, setDeletingAccount] = useState(false);
             <button
               className="p-2 text-slate-600 hover:text-red-600"
               aria-label="Delete budget"
-              onClick={async () => {
-                if (!confirm('Delete this budget?')) return;
-                const res = await financeService.deleteExpenseBudget(row.original.budget_id);
-                if (res.success) {
-                  showToast('success', 'Finance', 'Budget deleted');
-                  loadAll();
-                } else {
-                  quickError(res.error || 'Delete failed');
-                }
+              onClick={() => {
+                setPendingDeleteBudget(row.original);
               }}
             >
               <Trash className="h-5 w-5" />
@@ -573,6 +618,20 @@ const [deletingAccount, setDeletingAccount] = useState(false);
     setDeletingAccount(false);
   };
 
+  const confirmDeleteBudget = async () => {
+    if (!pendingDeleteBudget) return;
+    setDeletingBudget(true);
+    const res = await financeService.deleteExpenseBudget(pendingDeleteBudget.budget_id);
+    if (res.success) {
+      showToast('success', 'Finance', 'Budget deleted');
+      setPendingDeleteBudget(null);
+      reloadIfDisplayed();
+    } else {
+      quickError(res.error || 'Delete failed');
+    }
+    setDeletingBudget(false);
+  };
+
   const submitTransfer = async () => {
     const errs: typeof transferErrors = {};
     if (!transferForm.from_acc_id) errs.from = 'From account required';
@@ -695,11 +754,55 @@ const [deletingAccount, setDeletingAccount] = useState(false);
     } else quickError(res.error || 'Charge failed');
   };
 
+  const submitOpeningCharge = async () => {
+    const errs: typeof openingChargeErrors = {};
+    if (!openingChargeForm.exp_id) errs.exp = 'Expense is required';
+    if (openingChargeForm.amount === undefined || Number(openingChargeForm.amount) <= 0) {
+      errs.amount = 'Opening balance must be greater than 0';
+    }
+    setOpeningChargeErrors(errs);
+    if (Object.keys(errs).length) return;
+
+    const resolvedDate = openingChargeForm.exp_date || todayDate();
+    const openingNote = openingChargeForm.note?.trim();
+    const note = openingNote ? `[OPENING BALANCE] ${openingNote}` : '[OPENING BALANCE]';
+
+    const res = await financeService.createExpenseCharge({
+      exp_id: openingChargeForm.exp_id,
+      amount: Number(openingChargeForm.amount),
+      note,
+      exp_date: resolvedDate,
+      reg_date: resolvedDate,
+    });
+
+    if (res.success) {
+      showToast('success', 'Finance', 'Opening balance expense created');
+      setOpeningChargeForm({});
+      setOpeningChargeErrors({});
+      setIsOpeningChargeModalOpen(false);
+      loadAll();
+    } else {
+      quickError(res.error || 'Opening balance charge failed');
+    }
+  };
+
   const submitPayCharge = async () => {
     const errs: typeof payErrors = {};
     if (!payChargeForm.exp_ch_id) errs.acc = 'Select a charge';
     if (!payChargeForm.acc_id) errs.acc = 'Account required';
     if (!payChargeForm.amount || payChargeForm.amount <= 0) errs.amount = 'Amount must be greater than 0';
+    if (payChargeForm.exp_ch_id && payChargeForm.amount && payChargeForm.amount > 0) {
+      const charge = expenseCharges.find((c) => c.exp_ch_id === payChargeForm.exp_ch_id);
+      if (charge) {
+        const openBalance =
+          charge.open_balance !== undefined
+            ? Number(charge.open_balance || 0)
+            : Math.max(0, Number(charge.amount || 0) - Number(charge.paid_sum || 0));
+        if (Number(payChargeForm.amount) > openBalance + 0.000001) {
+          errs.amount = `Amount exceeds open balance ($${openBalance.toFixed(2)})`;
+        }
+      }
+    }
     setPayErrors(errs);
     if (Object.keys(errs).length) return;
     const res = await financeService.createExpensePayment({
@@ -1174,7 +1277,31 @@ const submitBudgetCharge = async () => {
               >
                 <Plus className="h-4 w-4" /> New Charge
               </button>
+              <button
+                onClick={() => {
+                  setOpeningChargeForm({
+                    exp_id: expenses[0]?.exp_id,
+                    amount: undefined,
+                    note: '',
+                    exp_date: todayDate(),
+                  });
+                  setOpeningChargeErrors({});
+                  setIsOpeningChargeModalOpen(true);
+                }}
+                className="inline-flex items-center gap-2 rounded-full bg-amber-600 px-3 py-2 text-sm text-white"
+              >
+                <Plus className="h-4 w-4" /> Opening Balance
+              </button>
             </div>
+          </div>
+          <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-4 py-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+              Dynamic Open Balance
+            </p>
+            <p className="mt-1 text-2xl font-bold text-amber-900">
+              ${Number(dynamicExpenseOpenBalance || 0).toFixed(2)}
+            </p>
+            <p className="mt-1 text-xs text-amber-800">Total unpaid expense charges.</p>
           </div>
           <DataTable
             data={expenseCharges}
@@ -1628,6 +1755,72 @@ const submitBudgetCharge = async () => {
         </div>
       </Modal>
 
+      <Modal
+        isOpen={isOpeningChargeModalOpen}
+        onClose={() => setIsOpeningChargeModalOpen(false)}
+        title="Opening Balance Expense"
+        size="md"
+      >
+        <div className="space-y-4 text-slate-900 dark:text-slate-100">
+          <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            Use this once to register unpaid expense balance brought from before this period.
+          </p>
+          <label className="text-sm">
+            <span className="mb-1 block font-medium">Expense</span>
+            <select
+              className={fieldClass}
+              value={openingChargeForm.exp_id ?? ''}
+              onChange={(e) => setOpeningChargeForm({ ...openingChargeForm, exp_id: Number(e.target.value) })}
+            >
+              <option value="">Select</option>
+              {expenses.map((ex) => (
+                <option key={ex.exp_id} value={ex.exp_id}>
+                  {ex.name}
+                </option>
+              ))}
+            </select>
+            {openingChargeErrors.exp && <p className="mt-1 text-xs text-red-500">{openingChargeErrors.exp}</p>}
+          </label>
+          <label className="text-sm">
+            <span className="mb-1 block font-medium">Opening Date</span>
+            <input
+              type="date"
+              className={fieldClass}
+              value={openingChargeForm.exp_date || ''}
+              onChange={(e) => setOpeningChargeForm({ ...openingChargeForm, exp_date: e.target.value })}
+            />
+          </label>
+          <label className="text-sm">
+            <span className="mb-1 block font-medium">Opening Balance Amount</span>
+            <input
+              type="number"
+              step="0.01"
+              className={fieldClass}
+              value={openingChargeForm.amount ?? ''}
+              onChange={(e) => setOpeningChargeForm({ ...openingChargeForm, amount: Number(e.target.value) })}
+            />
+            {openingChargeErrors.amount && <p className="mt-1 text-xs text-red-500">{openingChargeErrors.amount}</p>}
+          </label>
+          <label className="text-sm">
+            <span className="mb-1 block font-medium">Note (optional)</span>
+            <textarea
+              className={fieldClass}
+              value={openingChargeForm.note || ''}
+              onChange={(e) => setOpeningChargeForm({ ...openingChargeForm, note: e.target.value })}
+              placeholder="e.g. Rent unpaid from previous month"
+            />
+          </label>
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={() => setIsOpeningChargeModalOpen(false)} className="rounded border px-4 py-2">
+              Cancel
+            </button>
+            <button type="button" onClick={submitOpeningCharge} className="rounded bg-amber-600 px-4 py-2 text-white">
+              Create Opening Balance
+            </button>
+          </div>
+        </div>
+      </Modal>
+
       <Modal isOpen={isPayChargeModalOpen} onClose={() => setIsPayChargeModalOpen(false)} title={isEditingPayment ? 'Edit Expense Payment' : 'Pay Expense Charge'} size="sm">
         <div className="space-y-4 text-slate-900 dark:text-slate-100">
           <label className="text-sm">
@@ -1646,6 +1839,11 @@ const submitBudgetCharge = async () => {
             </select>
             {payErrors.acc && <p className="mt-1 text-xs text-red-500">{payErrors.acc}</p>}
           </label>
+          {!!payChargeForm.exp_ch_id && (
+            <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+              Open Balance: <span className="font-semibold">${selectedPayChargeOpenBalance.toFixed(2)}</span>
+            </div>
+          )}
           <label className="text-sm">
             <span className="mb-1 block font-medium">Pay Date</span>
             <input
@@ -2126,6 +2324,17 @@ const submitBudgetCharge = async () => {
         message="This account will be deleted permanently."
         itemName={pendingDeleteAccount?.name}
         isDeleting={deletingAccount}
+      />
+      <DeleteConfirmModal
+        isOpen={!!pendingDeleteBudget}
+        onClose={() => {
+          if (!deletingBudget) setPendingDeleteBudget(null);
+        }}
+        onConfirm={confirmDeleteBudget}
+        title="Delete Budget?"
+        message="This budget will be deleted permanently."
+        itemName={pendingDeleteBudget?.expense_name}
+        isDeleting={deletingBudget}
       />
       <Modal
         isOpen={isAccountModalOpen}

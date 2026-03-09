@@ -278,8 +278,18 @@ export const inventoryTransactionListSchema = z.object({
   itemId: optionalPositiveInt,
   transactionType: z.enum(['ADJUSTMENT', 'PAID', 'SALES', 'DAMAGE']).optional(),
   status: z.enum(['POSTED', 'PENDING', 'CANCELLED']).optional(),
+  fromDate: dateStringSchema.optional(),
+  toDate: dateStringSchema.optional(),
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(200).default(100),
+}).superRefine((value, ctx) => {
+  if (value.fromDate && value.toDate && value.fromDate > value.toDate) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'fromDate cannot be after toDate',
+      path: ['fromDate'],
+    });
+  }
 });
 
 export const inventoryTransactionSchema = z.object({

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Modal } from '../../components/ui/modal/Modal';
+import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { Calendar, Clock, FileText, Check, X } from 'lucide-react';
 import { scheduleService, Schedule, ScheduleInput } from '../../services/schedule.service';
 import { employeeService, Employee } from '../../services/employee.service';
@@ -18,6 +19,9 @@ const ScheduleModal = ({ isOpen, onClose, selectedEmployee }: Props) => {
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedEmpId, setSelectedEmpId] = useState<number | ''>('');
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [pendingDeleteScheduleId, setPendingDeleteScheduleId] = useState<number | null>(null);
+  const [deletingSchedule, setDeletingSchedule] = useState(false);
   
   // Form state
   const [formData, setFormData] = useState<ScheduleInput>({
@@ -116,11 +120,11 @@ const ScheduleModal = ({ isOpen, onClose, selectedEmployee }: Props) => {
     }
   };
 
-  const handleDelete = async (scheduleId: number) => {
-    if (!confirm('Are you sure you want to delete this schedule?')) return;
-    
+  const confirmDeleteSchedule = async () => {
+    if (!pendingDeleteScheduleId) return;
+    setDeletingSchedule(true);
     try {
-      const response = await scheduleService.delete(scheduleId);
+      const response = await scheduleService.delete(pendingDeleteScheduleId);
       if (response.success) {
         showToast('success', 'Success', 'Schedule deleted');
         fetchSchedules(selectedEmpId ? Number(selectedEmpId) : undefined);
@@ -129,7 +133,16 @@ const ScheduleModal = ({ isOpen, onClose, selectedEmployee }: Props) => {
       }
     } catch (error: any) {
       showToast('error', 'Error', error.message || 'Failed to delete schedule');
+    } finally {
+      setDeletingSchedule(false);
+      setPendingDeleteScheduleId(null);
+      setDeleteConfirmOpen(false);
     }
+  };
+
+  const handleDelete = (scheduleId: number) => {
+    setPendingDeleteScheduleId(scheduleId);
+    setDeleteConfirmOpen(true);
   };
 
   const getStatusColor = (status: string): 'success' | 'warning' | 'error' | 'info' | 'light' => {
@@ -373,6 +386,24 @@ const ScheduleModal = ({ isOpen, onClose, selectedEmployee }: Props) => {
           </button>
         </div>
       </div>
+      <ConfirmDialog
+        isOpen={deleteConfirmOpen}
+        onClose={() => {
+          if (!deletingSchedule) {
+            setDeleteConfirmOpen(false);
+            setPendingDeleteScheduleId(null);
+          }
+        }}
+        onConfirm={() => {
+          void confirmDeleteSchedule();
+        }}
+        title="Delete Schedule?"
+        message="Are you sure you want to delete this schedule?"
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="danger"
+        isLoading={deletingSchedule}
+      />
     </Modal>
   );
 };

@@ -2,7 +2,7 @@
 import { FileSpreadsheet, Printer } from "lucide-react";
 import { Modal } from "../ui/modal/Modal";
 
-const BORDER_COLOR = "#111111";
+const BORDER_COLOR = "#0f172a";
 
 // Column and props definitions
 export type ReportColumn<T> = {
@@ -40,7 +40,7 @@ type ReportModalProps<T> = {
   filters?: Record<string, string | number>;
   totals?: ReportTotalItem[];
   tableTotals?: ReportTableTotals;
-  variant?: "default" | "income-statement" | "balance-sheet" | "cash-flow-statement";
+  variant?: "default" | "income-statement" | "balance-sheet" | "cash-flow-statement" | "trial-balance";
   generatedAt?: string;
   fileName?: string;
   enablePdf?: boolean;
@@ -83,6 +83,12 @@ const formatStatementCurrency = (value: number) => {
   return value < 0 ? `($${absolute})` : `$${absolute}`;
 };
 
+const formatTrialAmount = (value: number) =>
+  Math.abs(value).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
 export function ReportModal<T extends Record<string, any>>({
   isOpen,
   onClose,
@@ -112,6 +118,12 @@ export function ReportModal<T extends Record<string, any>>({
   const isIncomeStatement = variant === "income-statement";
   const isBalanceSheet = variant === "balance-sheet";
   const isCashFlowStatement = variant === "cash-flow-statement";
+  const isTrialBalance = variant === "trial-balance";
+  const reportSurfaceWidth = isTrialBalance
+    ? "740px"
+    : isIncomeStatement || isBalanceSheet || isCashFlowStatement
+    ? "780px"
+    : "820px";
 
   const statementData = useMemo(() => {
     if (!isIncomeStatement) return null;
@@ -174,78 +186,105 @@ export function ReportModal<T extends Record<string, any>>({
   const balanceSheetData = useMemo(() => {
     if (!isBalanceSheet) return null;
 
+    const normalizeSection = (value: string) =>
+      value
+        .toLowerCase()
+        .replace(/[_-]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
     const rows = data.map((row) => ({
-      section: String((row as Record<string, unknown>).section || "").toLowerCase(),
+      section: String((row as Record<string, unknown>).section || ""),
       lineItem: String((row as Record<string, unknown>).line_item || ""),
       amount: Number((row as Record<string, unknown>).amount || 0),
       rowType: String((row as Record<string, unknown>).row_type || ""),
     }));
 
+    const detailRows = rows.filter((row) => row.rowType === "detail");
+    const totalRows = rows.filter((row) => row.rowType === "total");
+
+    const bySection = (sectionKeys: string[], rowType: "detail" | "total") => {
+      const source = rowType === "detail" ? detailRows : totalRows;
+      return source.filter((row) => sectionKeys.includes(normalizeSection(row.section)));
+    };
+
+    const sumAmount = (sourceRows: Array<{ amount: number }>) =>
+      sourceRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+
     const currentAssets = rows.filter(
-      (row) => row.section.includes("current assets") && row.rowType === "detail"
+      (row) =>
+        normalizeSection(row.section) === "current assets" &&
+        row.rowType === "detail"
     );
     const nonCurrentAssets = rows.filter(
       (row) =>
-        (row.section.includes("non-current assets") || row.section.includes("fixed assets")) &&
+        ["non current assets", "fixed assets"].includes(normalizeSection(row.section)) &&
         row.rowType === "detail"
     );
     const currentLiabilities = rows.filter(
-      (row) => row.section.includes("current liabilities") && row.rowType === "detail"
+      (row) =>
+        normalizeSection(row.section) === "current liabilities" &&
+        row.rowType === "detail"
     );
     const nonCurrentLiabilities = rows.filter(
-      (row) => row.section.includes("non-current liabilities") && row.rowType === "detail"
+      (row) => normalizeSection(row.section) === "non current liabilities" && row.rowType === "detail"
     );
     const equity = rows.filter(
       (row) =>
-        row.section === "equity" &&
+        normalizeSection(row.section) === "equity" &&
         row.rowType === "detail" &&
         !/(net profit|net loss|net income)/i.test(row.lineItem)
     );
 
-    const currentAssetsTotalRow = rows.find((row) => row.lineItem.toLowerCase().includes("total current assets"));
-    const currentLiabilitiesTotalRow = rows.find((row) =>
+    const currentAssetsTotalRow = bySection(["current assets"], "total").find((row) =>
+      row.lineItem.toLowerCase().includes("total current assets")
+    );
+    const currentLiabilitiesTotalRow = bySection(["current liabilities"], "total").find((row) =>
       row.lineItem.toLowerCase().includes("total current liabilities")
     );
 
-    const totalAssetsRow = rows.find(
+    const totalAssetsRow = totalRows.find(
       (row) =>
         row.lineItem.toLowerCase().includes("total assets") &&
         !row.lineItem.toLowerCase().includes("current")
     );
-    const totalLiabilitiesRow = rows.find(
+    const totalLiabilitiesRow = totalRows.find(
       (row) =>
         row.lineItem.toLowerCase().includes("total liabilities") &&
         !row.lineItem.toLowerCase().includes("+")
     );
-    const totalEquityRow = rows.find((row) => {
+    const totalEquityRow = totalRows.find((row) => {
       const key = row.lineItem.toLowerCase();
       return key.includes("retained equity") || key.includes("total equity") || key.includes("total owners equity");
     });
-    const retainedEarningsRow = rows.find((row) => row.lineItem.toLowerCase().includes("retained earnings"));
-    const netResultRow = rows.find((row) =>
+    const retainedEarningsRow = detailRows.find((row) => row.lineItem.toLowerCase().includes("retained earnings"));
+    const netResultRow = detailRows.find((row) =>
       /(net profit|net loss|net income)/i.test(row.lineItem)
     );
-    const totalLiabilitiesEquityRow = rows.find((row) => {
+    const totalLiabilitiesEquityRow = totalRows.find((row) => {
       const key = row.lineItem.toLowerCase();
       return key.includes("total liabilities + equity") || key.includes("total liabilities + owners equity");
     });
 
     const currentAssetsTotal =
-      currentAssetsTotalRow?.amount ?? currentAssets.reduce((sum, row) => sum + row.amount, 0);
+      currentAssetsTotalRow?.amount ?? sumAmount(currentAssets);
     const nonCurrentAssetsTotal =
-      rows.find((row) => {
+      totalRows.find((row) => {
         const key = row.lineItem.toLowerCase();
         return key.includes("total non-current assets") || key.includes("total fixed assets");
       })?.amount ??
-      nonCurrentAssets.reduce((sum, row) => sum + row.amount, 0);
+      sumAmount(nonCurrentAssets);
     const currentLiabilitiesTotal =
-      currentLiabilitiesTotalRow?.amount ?? currentLiabilities.reduce((sum, row) => sum + row.amount, 0);
+      currentLiabilitiesTotalRow?.amount ?? sumAmount(currentLiabilities);
     const nonCurrentLiabilitiesTotal =
-      rows.find((row) => row.lineItem.toLowerCase().includes("total non-current liabilities"))?.amount ??
-      nonCurrentLiabilities.reduce((sum, row) => sum + row.amount, 0);
+      totalRows.find((row) => row.lineItem.toLowerCase().includes("total non-current liabilities"))?.amount ??
+      sumAmount(nonCurrentLiabilities);
     const totalAssets = totalAssetsRow?.amount ?? currentAssetsTotal + nonCurrentAssetsTotal;
     const totalLiabilities = totalLiabilitiesRow?.amount ?? currentLiabilitiesTotal + nonCurrentLiabilitiesTotal;
-    const totalEquity = totalEquityRow?.amount ?? totalAssets - totalLiabilities;
+    const equityDetailTotal = sumAmount(equity);
+    const totalEquity =
+      totalEquityRow?.amount ??
+      (equity.length > 0 ? equityDetailTotal : (totalLiabilitiesEquityRow?.amount ?? totalAssets) - totalLiabilities);
     const totalLiabilitiesEquity = totalLiabilitiesEquityRow?.amount ?? totalLiabilities + totalEquity;
     const netResultAmount = netResultRow?.amount ?? totalEquity;
     const retainedEarnings = retainedEarningsRow?.amount ?? netResultAmount;
@@ -269,6 +308,30 @@ export function ReportModal<T extends Record<string, any>>({
       balanceDelta,
     };
   }, [isBalanceSheet, data]);
+
+  const trialBalanceData = useMemo(() => {
+    if (!isTrialBalance) return null;
+
+    const rows = data.map((row) => ({
+      accountName: String((row as Record<string, unknown>).account_name || ""),
+      closingDebit: Number((row as Record<string, unknown>).closing_debit || 0),
+      closingCredit: Number((row as Record<string, unknown>).closing_credit || 0),
+    }));
+
+    const totalClosingDebit = rows.reduce((sum, row) => sum + row.closingDebit, 0);
+    const totalClosingCredit = rows.reduce((sum, row) => sum + row.closingCredit, 0);
+    const difference = totalClosingDebit - totalClosingCredit;
+
+    return {
+      rows,
+      totals: {
+        totalClosingDebit,
+        totalClosingCredit,
+        difference,
+        balanced: Math.abs(difference) <= 0.005,
+      },
+    };
+  }, [isTrialBalance, data]);
 
   const periodLabel = useMemo(() => {
     const fromDate = filters?.["From Date"];
@@ -359,7 +422,8 @@ export function ReportModal<T extends Record<string, any>>({
     doc.open();
     doc.write(
       `<!doctype html><html><head>${styles}<style>
-        body { margin: 18px; padding: 0; background: #ffffff; color: #0f172a; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        body { margin: 14px; padding: 0; background: #ffffff; color: #0f172a; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        #report-print-area { width: 100% !important; max-width: 178mm !important; margin: 0 auto !important; box-shadow: none !important; border: none !important; }
       </style></head><body>${contentNode.outerHTML}</body></html>`
     );
     doc.close();
@@ -472,10 +536,8 @@ export function ReportModal<T extends Record<string, any>>({
         <div
           ref={printRef}
           id="report-print-area"
-          className={`mx-auto rounded-lg border border-zinc-300 bg-white text-black shadow-sm ${
-            isIncomeStatement || isBalanceSheet || isCashFlowStatement ? "max-w-3xl" : "max-w-5xl"
-          }`}
-          style={{ pageBreakInside: "avoid" }}
+          className="mx-auto bg-white text-black"
+          style={{ pageBreakInside: "avoid", width: "100%", maxWidth: reportSurfaceWidth }}
         >
           {isIncomeStatement && statementData ? (
             <div
@@ -523,22 +585,22 @@ export function ReportModal<T extends Record<string, any>>({
             </div>
           ) : isBalanceSheet && balanceSheetData ? (
             <div
-              className="px-10 py-9 text-slate-900"
+              className="px-8 py-8 text-slate-900"
               style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}
             >
-              <div className="space-y-0.5">
-                <h2 className="text-[14px] font-bold leading-none text-[#1164a1]">Balance Sheet</h2>
-                <p className="text-[14px] text-slate-500">{companyInfo?.name || "Business Name"}</p>
+              <div className="space-y-0.5 leading-tight">
+                <h2 className="text-[30px] font-semibold text-[#1976bc]">Balance Sheet</h2>
+                <p className="text-[15px] text-slate-500">{companyInfo?.name || "Business Name"}</p>
                 <p className="text-[14px] text-slate-500">{balanceSheetDateLabel || `As of ${reportDate}`}</p>
               </div>
 
-              <div className="mx-auto mt-9 max-w-2xl space-y-8 text-[15px]">
+              <div className="mx-auto mt-8 max-w-3xl space-y-7 text-[14px]">
                 <section>
                   <div className="mb-2 flex items-end justify-between border-b-2 border-[#2c90c8] pb-1 text-black">
-                    <h3 className="text-[14px] font-bold leading-none text-[#1164a1]">Assets</h3>
-                    <span className="text-[13px] font-semibold">{balanceSheetShortDate}</span>
+                    <h3 className="text-[24px] font-semibold leading-none text-[#1e4f8f]">Assets</h3>
+                    <span className="text-[13px] font-semibold text-slate-600">{balanceSheetShortDate}</span>
                   </div>
-                  <div className="mb-1 text-[16px] font-semibold text-slate-700">Current Assets</div>
+                  <div className="mb-1 text-[22px] font-semibold text-slate-700">Current Assets</div>
                   <div className="space-y-0.5">
                     {balanceSheetData.currentAssets.map((row, index) => (
                       <div key={`${row.lineItem}-${index}`} className="flex justify-between gap-4 border-b border-slate-200 py-1.5">
@@ -553,7 +615,7 @@ export function ReportModal<T extends Record<string, any>>({
                   </div>
                   {balanceSheetData.nonCurrentAssets.length > 0 && (
                     <>
-                      <div className="mb-1 mt-5 text-[16px] font-semibold text-slate-700">Fixed Assets</div>
+                      <div className="mb-1 mt-5 text-[22px] font-semibold text-slate-700">Fixed Assets</div>
                       <div className="space-y-0.5">
                         {balanceSheetData.nonCurrentAssets.map((row, index) => (
                           <div key={`${row.lineItem}-${index}`} className="flex justify-between gap-4 border-b border-slate-200 py-1.5">
@@ -568,7 +630,7 @@ export function ReportModal<T extends Record<string, any>>({
                       </div>
                     </>
                   )}
-                  <div className="mt-5 flex justify-between border-t border-slate-300 pt-2 text-[18px] font-semibold">
+                  <div className="mt-5 flex justify-between border-t border-slate-300 pt-2 text-[20px] font-semibold">
                     <span>Total Assets</span>
                     <span className="tabular-nums">{formatStatementCurrency(balanceSheetData.totalAssets)}</span>
                   </div>
@@ -576,10 +638,10 @@ export function ReportModal<T extends Record<string, any>>({
 
                 <section>
                   <div className="mb-2 flex items-end justify-between border-b-2 border-[#2c90c8] pb-1 text-black">
-                    <h3 className="text-[14px] font-bold leading-none text-[#1164a1]">Liabilities + Equity</h3>
-                    <span className="text-[13px] font-semibold">{balanceSheetShortDate}</span>
+                    <h3 className="text-[24px] font-semibold leading-none text-[#1e4f8f]">Liabilities + Equity</h3>
+                    <span className="text-[13px] font-semibold text-slate-600">{balanceSheetShortDate}</span>
                   </div>
-                  <div className="mb-1 text-[16px] font-semibold text-slate-700">Current Liabilities</div>
+                  <div className="mb-1 text-[22px] font-semibold text-slate-700">Current Liabilities</div>
                   <div className="space-y-0.5">
                     {balanceSheetData.currentLiabilities.map((row, index) => (
                       <div key={`${row.lineItem}-${index}`} className="flex justify-between gap-4 border-b border-slate-200 py-1.5">
@@ -594,7 +656,7 @@ export function ReportModal<T extends Record<string, any>>({
                   </div>
                   {balanceSheetData.nonCurrentLiabilities.length > 0 && (
                     <>
-                      <div className="mb-1 mt-5 text-[16px] font-semibold text-slate-700">Non-Current Liabilities</div>
+                      <div className="mb-1 mt-5 text-[22px] font-semibold text-slate-700">Non-Current Liabilities</div>
                       <div className="space-y-0.5">
                         {balanceSheetData.nonCurrentLiabilities.map((row, index) => (
                           <div key={`${row.lineItem}-${index}`} className="flex justify-between gap-4 border-b border-slate-200 py-1.5">
@@ -612,7 +674,7 @@ export function ReportModal<T extends Record<string, any>>({
                 </section>
 
                 <section>
-                  <div className="mb-1 text-[16px] font-semibold text-slate-700">Equity</div>
+                  <div className="mb-1 text-[22px] font-semibold text-slate-700">Equity</div>
                   <div className="space-y-0.5">
                     {(balanceSheetData.equity.length
                       ? balanceSheetData.equity
@@ -635,46 +697,46 @@ export function ReportModal<T extends Record<string, any>>({
                     <span>Total Liabilities</span>
                     <span className="tabular-nums">{formatStatementCurrency(balanceSheetData.totalLiabilities)}</span>
                   </div>
-                  <div className="flex justify-between border-t border-slate-300 pt-3 text-[18px] font-semibold leading-tight">
+                  <div className="flex justify-between border-t border-slate-300 pt-3 text-[20px] font-semibold leading-tight">
                     <span>Total Liabilities + Owners Equity</span>
                     <span className="tabular-nums">{formatStatementCurrency(balanceSheetData.totalLiabilitiesEquity)}</span>
                   </div>
-                  <div className="mt-2 flex justify-between text-[14px] text-black">
-                    <span>Balance Check</span>
-                    <span className="tabular-nums">{formatStatementCurrency(balanceSheetData.balanceDelta)}</span>
-                  </div>
+                  {Math.abs(balanceSheetData.balanceDelta) > 0.005 && (
+                    <div className="mt-2 text-right text-[12px] font-semibold text-red-700">
+                      Difference: {formatStatementCurrency(balanceSheetData.balanceDelta)}
+                    </div>
+                  )}
                 </section>
               </div>
             </div>
           ) : isCashFlowStatement && cashFlowData ? (
             <div
-              className="overflow-hidden rounded-[24px] border border-zinc-300 bg-white text-slate-900"
+              className="overflow-hidden rounded-[24px] border border-zinc-300 text-slate-900"
               style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}
             >
-              <div className="bg-black px-8 py-6 text-center text-white">
+              <div className="border-b border-zinc-300 px-8 py-6 text-center text-slate-900">
                 <h2 className="text-[47px] font-semibold leading-tight">Cash Flow Statement</h2>
                 {cashFlowPeriodLabel && <p className="mt-1 text-[16px]">{cashFlowPeriodLabel}</p>}
               </div>
-              <div className="h-2 bg-zinc-200" />
 
-              <div className="bg-white px-0 py-0">
+              <div className="px-0 py-0">
                 {cashFlowData.sections.map((section) => (
                   <section key={section.section} className="border-b border-slate-200">
-                    <div className="bg-zinc-100 px-6 py-2 text-[16px] font-semibold text-black">{section.section}</div>
+                    <div className="px-6 py-2 text-[16px] font-semibold text-black">{section.section}</div>
                     <table className="w-full border-collapse">
                       <tbody>
                         {section.rows.map((row, index) => (
                           <tr key={`${section.section}-${row.lineItem}-${index}`}>
                             <td
                               className={`border-b border-slate-100 px-6 py-2 text-[15px] ${
-                                row.rowType === "total" ? "bg-zinc-100 font-semibold" : "bg-white"
+                                row.rowType === "total" ? "font-semibold" : ""
                               }`}
                             >
                               {row.lineItem}
                             </td>
                             <td
                               className={`w-44 border-b border-slate-100 px-6 py-2 text-right text-[15px] tabular-nums ${
-                                row.rowType === "total" ? "bg-zinc-100 font-semibold" : "bg-white"
+                                row.rowType === "total" ? "font-semibold" : ""
                               }`}
                             >
                               {formatStatementAmount(row.amount)}
@@ -693,10 +755,10 @@ export function ReportModal<T extends Record<string, any>>({
                       return (
                         <div
                           key={`summary-${row.lineItem}-${index}`}
-                          className={`flex items-center justify-between rounded-sm px-4 py-2 text-[15px] ${
+                          className={`flex items-center justify-between px-4 py-2 text-[15px] ${
                             isMainTotal
-                              ? "bg-black font-semibold text-white"
-                              : "bg-zinc-100 font-semibold text-slate-900"
+                              ? "border-t border-b border-slate-300 font-semibold text-slate-900"
+                              : "border-b border-slate-200 font-semibold text-slate-900"
                           }`}
                         >
                           <span>{row.lineItem}</span>
@@ -707,6 +769,54 @@ export function ReportModal<T extends Record<string, any>>({
                   </div>
                 )}
               </div>
+            </div>
+          ) : isTrialBalance && trialBalanceData ? (
+            <div className="px-6 pb-6 pt-5 text-slate-900" style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}>
+              <div className="mb-4 text-center">
+                <h2 className="text-[26px] font-semibold leading-tight">Trial Balance</h2>
+                <p className="text-[14px] text-slate-600">{subtitle || periodLabel || ""}</p>
+              </div>
+
+              <div className="overflow-hidden rounded-md">
+                <table className="w-full border-collapse text-[12px]">
+                  <thead>
+                    <tr className="text-zinc-900">
+                      <th className="border-b border-slate-300 px-2 py-2 text-left font-semibold">Particulars</th>
+                      <th className="border-b border-slate-300 px-2 py-2 text-center font-semibold">Dr. Balance</th>
+                      <th className="border-b border-slate-300 px-2 py-2 text-center font-semibold">Cr. Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {trialBalanceData.rows.map((row, index) => (
+                      <tr key={`${row.accountName}-${index}`}>
+                        <td className="border-b border-slate-200 px-2 py-1.5">{row.accountName}</td>
+                        <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">
+                          {row.closingDebit ? formatTrialAmount(row.closingDebit) : ""}
+                        </td>
+                        <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">
+                          {row.closingCredit ? formatTrialAmount(row.closingCredit) : ""}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr className="font-bold text-slate-900">
+                      <td className="border-t border-slate-300 px-2 py-2 text-center">
+                        Total
+                      </td>
+                      <td className="border-t border-slate-300 px-2 py-2 text-right tabular-nums">
+                        {formatTrialAmount(trialBalanceData.totals.totalClosingDebit)}
+                      </td>
+                      <td className="border-t border-slate-300 px-2 py-2 text-right tabular-nums">
+                        {formatTrialAmount(trialBalanceData.totals.totalClosingCredit)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              {!trialBalanceData.totals.balanced && (
+                <div className="mt-2 border border-red-200 px-3 py-2 text-[12px] font-semibold text-red-700">
+                  Trial Balance is not balanced. Difference: {formatTrialAmount(trialBalanceData.totals.difference)}
+                </div>
+              )}
             </div>
           ) : (
             <>
@@ -748,7 +858,7 @@ export function ReportModal<T extends Record<string, any>>({
                           <th
                             key={col.header}
                             style={{
-                              border: `1px solid ${BORDER_COLOR}`,
+                              borderBottom: `1px solid ${BORDER_COLOR}`,
                               padding: "10px 8px",
                               textAlign: col.align ?? "left",
                               background: "#ffffff",
@@ -770,7 +880,7 @@ export function ReportModal<T extends Record<string, any>>({
                             <td
                               key={col.header}
                               style={{
-                                border: `1px solid ${BORDER_COLOR}`,
+                                borderBottom: "1px solid #d4d4d8",
                                 padding: "8px 6px",
                                 textAlign: col.align ?? "left",
                                 fontSize: "12px",
@@ -792,13 +902,13 @@ export function ReportModal<T extends Record<string, any>>({
                               <td
                                 key={`total-${col.header}`}
                                 style={{
-                                  border: `1px solid ${BORDER_COLOR}`,
+                                  borderTop: `1px solid ${BORDER_COLOR}`,
                                   padding: "9px 6px",
                                   textAlign: isFirstColumn ? "left" : col.align ?? "left",
                                   fontSize: "12px",
                                   lineHeight: 1.4,
-                                  background: "#111111",
-                                  color: "#ffffff",
+                                  background: "#f4f4f5",
+                                  color: "#0f172a",
                                   fontWeight: 700,
                                 }}
                               >
@@ -812,7 +922,7 @@ export function ReportModal<T extends Record<string, any>>({
                         <tr>
                           <td
                             colSpan={columns.length}
-                            style={{ border: `1px solid ${BORDER_COLOR}`, padding: "16px", textAlign: "center", color: "#94a3b8" }}
+                            style={{ borderBottom: `1px solid ${BORDER_COLOR}`, padding: "16px", textAlign: "center", color: "#94a3b8" }}
                           >
                             No records to show.
                           </td>

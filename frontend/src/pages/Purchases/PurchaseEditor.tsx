@@ -59,6 +59,7 @@ const PurchaseEditor = () => {
 
   const [form, setForm] = useState({
     supplier_id: '' as number | '',
+    purchase_type: 'cash' as 'cash' | 'credit',
     acc_id: '' as number | '',
     paid_amount: 0,
     purchase_date: new Date().toISOString().slice(0, 10),
@@ -123,6 +124,7 @@ const PurchaseEditor = () => {
       const p = res.data.purchase;
         setForm({
           supplier_id: p.supplier_id ?? '',
+          purchase_type: (p.purchase_type as 'cash' | 'credit') || 'cash',
           purchase_date: p.purchase_date.slice(0, 10),
           subtotal: Number(p.subtotal || 0),
           discount: Number(p.discount || 0),
@@ -163,6 +165,11 @@ const PurchaseEditor = () => {
   useEffect(() => {
     if (productPickerOpen) loadProducts(productSearch);
   }, [productPickerOpen, productSearch]);
+
+  const effectivePurchaseType: 'cash' | 'credit' = form.purchase_type;
+  const effectiveStatus: 'received' | 'partial' | 'unpaid' | 'void' =
+    effectivePurchaseType === 'credit' && form.status !== 'void' ? 'unpaid' : form.status;
+  const shouldShowPaymentAccount = effectiveStatus !== 'void' && effectiveStatus !== 'unpaid' && effectivePurchaseType !== 'credit';
 
   const handleSelectProduct = (p: Product) => {
     const existingIdx = lineItems.findIndex((li) => Number(li.product_id) === p.product_id);
@@ -239,36 +246,37 @@ const PurchaseEditor = () => {
       showToast('error', 'Add items', 'A purchase needs at least one line');
       return;
     }
-    if (form.status !== 'void' && form.status !== 'unpaid' && !form.acc_id) {
+    if (shouldShowPaymentAccount && !form.acc_id) {
       showToast('error', 'Account required', 'Select account for paid amount');
       return;
     }
-    if (form.status === 'partial' && Number(form.paid_amount || 0) <= 0) {
+    if (effectiveStatus === 'partial' && Number(form.paid_amount || 0) <= 0) {
       showToast('error', 'Paid amount required', 'Enter partial amount paid');
       return;
     }
     recalcTotals(lineItems, form.discount);
     setLoading(true);
     const paidAmount =
-      form.status === 'void'
+      effectiveStatus === 'void'
         ? undefined
-        : form.status === 'unpaid'
+        : effectiveStatus === 'unpaid' || effectivePurchaseType === 'credit'
         ? 0
-        : form.status === 'partial'
+        : effectiveStatus === 'partial'
         ? Number(form.paid_amount || 0)
         : Number(form.total || 0);
     const payload = {
       supplierId: supplierId ? Number(supplierId) : null,
       purchaseDate: form.purchase_date,
+      purchaseType: effectivePurchaseType,
       subtotal: Number(form.subtotal),
       discount: Number(form.discount),
       total: Number(form.total),
-      status: form.status,
+      status: effectiveStatus,
       note: form.note,
       items: preparedItems,
       // Inline payment info: optional, will update supplier remaining balance and account
       payFromAccId:
-        form.status === 'void' || form.status === 'unpaid' || !form.acc_id
+        !shouldShowPaymentAccount || !form.acc_id
           ? undefined
           : Number(form.acc_id),
       paidAmount,
@@ -436,7 +444,30 @@ const PurchaseEditor = () => {
           />
         </label>
 
-        {form.status !== 'void' && (
+        <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+          Purchase Type
+          <select
+            className={fieldCls}
+            value={effectivePurchaseType}
+            onChange={(e) =>
+              setForm((prev) => {
+                const nextType = e.target.value as 'cash' | 'credit';
+                return {
+                  ...prev,
+                  purchase_type: nextType,
+                  status: nextType === 'credit' ? 'unpaid' : prev.status === 'unpaid' ? 'received' : prev.status,
+                  acc_id: nextType === 'credit' ? '' : prev.acc_id,
+                  paid_amount: nextType === 'credit' ? 0 : prev.paid_amount,
+                };
+              })
+            }
+          >
+            <option value="cash">Cash</option>
+            <option value="credit">Credit</option>
+          </select>
+        </label>
+
+        {shouldShowPaymentAccount && (
           <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
             Pay from Account
             <select
@@ -458,7 +489,7 @@ const PurchaseEditor = () => {
           Status
           <select
             className={fieldCls}
-            value={form.status}
+            value={effectiveStatus}
             onChange={(e) => {
               const nextStatus = e.target.value as any;
               setForm((prev) => ({
@@ -468,6 +499,7 @@ const PurchaseEditor = () => {
                 acc_id: nextStatus === 'void' ? '' : prev.acc_id,
               }));
             }}
+            disabled={effectivePurchaseType === 'credit'}
           >
             <option value="received">Received</option>
             <option value="partial">Incomplete</option>
@@ -476,7 +508,7 @@ const PurchaseEditor = () => {
           </select>
         </label>
 
-        {form.status === 'partial' && (
+        {effectiveStatus === 'partial' && shouldShowPaymentAccount && (
           <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
             Partial Amount Paid
             <input

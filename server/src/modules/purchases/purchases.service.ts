@@ -715,7 +715,13 @@ export const purchasesService = {
       if (subtotal < 0 || discount < 0 || total < 0) {
         throw ApiError.badRequest('Purchase amounts cannot be negative');
       }
-      const status: PurchaseStatus = (input.status || 'received') as PurchaseStatus;
+      const requestedStatus: PurchaseStatus = (input.status || 'received') as PurchaseStatus;
+      const purchaseType: 'cash' | 'credit' =
+        (input.purchaseType || (requestedStatus === 'unpaid' ? 'credit' : 'cash')) as
+          | 'cash'
+          | 'credit';
+      const status: PurchaseStatus =
+        purchaseType === 'credit' && requestedStatus !== 'void' ? 'unpaid' : requestedStatus;
       const storeId = await resolvePurchaseStoreId(client, {
         branchId: context.branchId,
         storeId: input.storeId ?? null,
@@ -724,8 +730,8 @@ export const purchasesService = {
       const purchaseResult = await client.query<Purchase>(
       `INSERT INTO ims.purchases (
          branch_id, store_id, user_id, supplier_id, fx_rate,
-         purchase_date, subtotal, discount, total, status, note
-       ) VALUES ($1, $2, $3, $4, $5, COALESCE($6, NOW()), $7, $8, $9, $10, $11)
+         purchase_date, purchase_type, subtotal, discount, total, status, note
+       ) VALUES ($1, $2, $3, $4, $5, COALESCE($6, NOW()), $7, $8, $9, $10, $11, $12)
        RETURNING *`,
       [
         context.branchId,
@@ -734,6 +740,7 @@ export const purchasesService = {
         effectiveSupplierId,
         input.fxRate || 1,
         input.purchaseDate || null,
+        purchaseType,
         subtotal,
         discount,
         total,
@@ -786,7 +793,7 @@ export const purchasesService = {
 
       const paidAmountRaw = Number(input.paidAmount || 0);
       const payFromAccId = input.payFromAccId;
-      if (payFromAccId && paidAmountRaw > 0 && status !== 'void') {
+      if (payFromAccId && paidAmountRaw > 0 && status !== 'void' && purchaseType !== 'credit') {
         const paidAmount = Math.min(paidAmountRaw, total);
         if (paidAmount > 0) {
           await applyPurchasePayment(client, {
@@ -833,6 +840,7 @@ export const purchasesService = {
         store_id: number | null;
         supplier_id: number | null;
         purchase_date: string;
+        purchase_type: 'cash' | 'credit';
         subtotal: string;
         discount: string;
         total: string;
@@ -840,7 +848,7 @@ export const purchasesService = {
         fx_rate: string;
         note: string | null;
       }>(
-        `SELECT purchase_id, branch_id, user_id, store_id, supplier_id, purchase_date, subtotal, discount, total, status, fx_rate, note
+        `SELECT purchase_id, branch_id, user_id, store_id, supplier_id, purchase_date, purchase_type, subtotal, discount, total, status, fx_rate, note
            FROM ims.purchases
           WHERE purchase_id = $1
           FOR UPDATE`,
@@ -906,7 +914,13 @@ export const purchasesService = {
           })
         : null;
 
-      const nextStatus: PurchaseStatus = (input.status ?? current.status ?? 'received') as PurchaseStatus;
+      const requestedNextStatus: PurchaseStatus = (input.status ?? current.status ?? 'received') as PurchaseStatus;
+      const nextPurchaseType: 'cash' | 'credit' =
+        ((input.purchaseType as 'cash' | 'credit' | undefined) ||
+          (current.purchase_type as 'cash' | 'credit' | undefined) ||
+          (requestedNextStatus === 'unpaid' ? 'credit' : 'cash')) as 'cash' | 'credit';
+      const nextStatus: PurchaseStatus =
+        nextPurchaseType === 'credit' && requestedNextStatus !== 'void' ? 'unpaid' : requestedNextStatus;
       const oldStockApplied = current.status !== 'void';
       const newStockApplied = nextStatus !== 'void';
       let storeId = current.store_id ? Number(current.store_id) : null;
@@ -1020,7 +1034,7 @@ export const purchasesService = {
       }
 
       const paidAmountRaw = Number(input.paidAmount || 0);
-      if (input.payFromAccId && paidAmountRaw > 0 && nextStatus !== 'void') {
+      if (input.payFromAccId && paidAmountRaw > 0 && nextStatus !== 'void' && nextPurchaseType !== 'credit') {
         const paidAmount = Math.min(paidAmountRaw, nextTotal);
         if (paidAmount > 0) {
           await applyPurchasePayment(client, {
@@ -1039,18 +1053,20 @@ export const purchasesService = {
         `UPDATE ims.purchases
             SET supplier_id = $2,
                 purchase_date = COALESCE($3::timestamptz, purchase_date),
-                subtotal = $4,
-                discount = $5,
-                total = $6,
-                status = $7,
-                fx_rate = $8,
-                note = $9,
-                store_id = COALESCE($10, store_id)
+                purchase_type = $4,
+                subtotal = $5,
+                discount = $6,
+                total = $7,
+                status = $8,
+                fx_rate = $9,
+                note = $10,
+                store_id = COALESCE($11, store_id)
           WHERE purchase_id = $1`,
         [
           id,
           nextSupplierId,
           input.purchaseDate || null,
+          nextPurchaseType,
           computedSubtotal,
           nextDiscount,
           nextTotal,

@@ -190,19 +190,18 @@ const SaleCreate = () => {
   };
 
   const effectiveDocType = saleForm.doc_type;
-  const effectiveStatus: SaleStatus = effectiveDocType === 'quotation'
-    ? 'unpaid'
-    : isDebt
-    ? 'unpaid'
-    : saleForm.status;
   const effectiveSaleType: 'cash' | 'credit' = effectiveDocType === 'quotation'
     ? 'credit'
     : isDebt
     ? 'credit'
     : saleForm.sale_type;
+  const effectiveStatus: SaleStatus = effectiveDocType === 'quotation' || effectiveSaleType === 'credit'
+    ? 'unpaid'
+    : saleForm.status;
 
   const shouldShowAccount =
     effectiveDocType !== 'quotation' &&
+    effectiveSaleType !== 'credit' &&
     effectiveStatus !== 'void' &&
     effectiveStatus !== 'unpaid';
 
@@ -407,7 +406,7 @@ const SaleCreate = () => {
                   status: e.target.value as SaleStatus,
                 }))
               }
-              disabled={loading || saleForm.doc_type === 'quotation' || isDebt}
+              disabled={loading || saleForm.doc_type === 'quotation' || effectiveSaleType === 'credit'}
             >
               <option value="paid">Paid</option>
               <option value="partial">Partial</option>
@@ -425,7 +424,16 @@ const SaleCreate = () => {
               className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
               value={effectiveSaleType}
               onChange={(e) =>
-                setSaleForm((prev) => ({ ...prev, sale_type: e.target.value as 'cash' | 'credit' }))
+                setSaleForm((prev) => {
+                  const nextType = e.target.value as 'cash' | 'credit';
+                  return {
+                    ...prev,
+                    sale_type: nextType,
+                    status: nextType === 'credit' ? 'unpaid' : prev.status === 'unpaid' ? 'paid' : prev.status,
+                    acc_id: nextType === 'credit' ? '' : prev.acc_id,
+                    paid_amount: nextType === 'credit' ? 0 : prev.paid_amount,
+                  };
+                })
               }
               disabled={loading || saleForm.doc_type === 'quotation' || isDebt}
             >
