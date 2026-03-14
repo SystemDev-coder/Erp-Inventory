@@ -1,11 +1,12 @@
 import { useCallback, useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
-import { Ban, Edit3, FileCheck2, Printer, Trash2 } from 'lucide-react';
+import { Ban, Edit3, FileCheck2, FileText, Printer, ReceiptText, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { PageHeader, TabActionToolbar } from '../../components/ui/layout';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { DataTable } from '../../components/ui/table/DataTable';
 import Badge from '../../components/ui/badge/Badge';
+import { Tabs } from '../../components/ui/tabs/Tabs';
 import { useToast } from '../../components/ui/toast/Toast';
 import { Sale, SaleItem, salesService } from '../../services/sales.service';
 import { settingsService } from '../../services/settings.service';
@@ -20,6 +21,13 @@ const escapeHtml = (value: string) =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+
+const getDocRef = (sale: Pick<Sale, 'sale_id' | 'doc_type'>) => {
+  const docType = sale.doc_type || 'sale';
+  if (docType === 'quotation') return `Q-${sale.sale_id}`;
+  if (docType === 'invoice') return `INV-${sale.sale_id}`;
+  return `S-${sale.sale_id}`;
+};
 
 type PrintCompany = {
   name: string;
@@ -39,9 +47,12 @@ export const buildPrintableDocument = (
   company: PrintCompany,
   customer: PrintCustomer
 ) => {
-  const isQuote = sale.doc_type === 'quotation';
-  const docLabel = isQuote ? 'Quotation' : 'Invoice';
-  const docNo = isQuote ? `Q-${sale.sale_id}` : `S-${sale.sale_id}`;
+  const docType = sale.doc_type || 'sale';
+  const isQuote = docType === 'quotation';
+  const isInvoice = docType === 'invoice';
+  const docLabel = isQuote ? 'Quotation' : isInvoice ? 'Invoice' : 'Sale';
+  const docNo = isQuote ? `Q-${sale.sale_id}` : isInvoice ? `INV-${sale.sale_id}` : `S-${sale.sale_id}`;
+  const brandSubtitle = isQuote ? 'Price Quotation' : isInvoice ? 'Sales Invoice' : 'Sales Document';
   const date = new Date(sale.sale_date).toLocaleDateString();
   const quoteValidUntil = sale.quote_valid_until ? new Date(sale.quote_valid_until).toLocaleDateString() : '';
   const totalAmount = Number(sale.total || 0);
@@ -53,6 +64,23 @@ export const buildPrintableDocument = (
       : Math.min(Number(sale.paid_amount || 0), totalAmount);
   const balance = Math.max(totalAmount - paidAmount, 0);
   const themeClass = isQuote ? 'quote' : 'invoice';
+  const note = (sale.note || '').trim();
+  const invoiceStampLabel =
+    isQuote || sale.status === 'void'
+      ? ''
+      : sale.status === 'paid'
+      ? 'PAID'
+      : sale.status === 'partial'
+      ? 'PARTIAL'
+      : 'DUE';
+  const invoiceStampClass =
+    invoiceStampLabel === 'PAID'
+      ? 'paid'
+      : invoiceStampLabel === 'PARTIAL'
+      ? 'partial'
+      : invoiceStampLabel === 'DUE'
+      ? 'due'
+      : '';
 
   return `
     <!doctype html>
@@ -68,8 +96,13 @@ export const buildPrintableDocument = (
           body.invoice { --accent: #1e3a8a; --accent-soft: #e0e7ff; --accent-dark: #1e3a8a; --accent-ink:#111827; --header-bg:#1e3a8a; --border:#c7d2fe; }
           body.quote { --accent: #7c3aed; --accent-soft: #ede9fe; --accent-dark: #6d28d9; --accent-ink:#6d28d9; --header-bg:#6d28d9; --border:#ddd6fe; }
           .page { padding: 10px 16px 12px; }
-          .sheet { border:1px solid var(--border); border-radius:16px; padding:16px; }
+          .sheet { position:relative; border:1px solid var(--border); border-radius:16px; padding:16px; }
+          body.quote .sheet { border-style:dashed; }
           .watermark { position:absolute; top:80px; right:24px; font-size:52px; font-weight:800; letter-spacing:0.18em; color:rgba(148,163,184,0.12); transform:rotate(-10deg); pointer-events:none; }
+          .stamp { position:absolute; top:18px; right:18px; padding:6px 10px; border:3px solid; border-radius:10px; font-size:13px; font-weight:800; letter-spacing:0.22em; transform:rotate(10deg); text-transform:uppercase; opacity:0.86; }
+          .stamp.paid { border-color:#10b981; color:#10b981; }
+          .stamp.partial { border-color:#f59e0b; color:#f59e0b; }
+          .stamp.due { border-color:#ef4444; color:#ef4444; }
           .hero { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; }
           .brand { display:flex; align-items:center; gap:12px; }
           .logo { width:42px; height:42px; object-fit:contain; border-radius:10px; }
@@ -82,6 +115,11 @@ export const buildPrintableDocument = (
           .doc-meta b { color:#0f172a; }
           .accent-line { height:4px; background:var(--accent); border-radius:999px; margin:12px 0 6px; }
           .pill { display:inline-flex; background:var(--accent-soft); color:#0f172a; padding:4px 10px; border-radius:999px; font-size:9px; letter-spacing:0.16em; text-transform:uppercase; }
+          .flags { margin-top:10px; display:flex; flex-wrap:wrap; gap:8px; }
+          .notice { margin-top:10px; border:1px dashed var(--border); background:#ffffff; padding:10px 12px; border-radius:12px; font-size:10px; color:#475569; }
+          .notice b { color:#0f172a; }
+          .note-box { margin-top:10px; border:1px solid var(--border); background:#ffffff; padding:10px 12px; border-radius:12px; font-size:10.5px; color:#475569; }
+          .note-box b { color:#0f172a; }
           .info-grid { display:grid; grid-template-columns: 1.1fr 1fr; gap:12px; margin-top:10px; }
           .box { border:1px solid var(--border); padding:10px 12px; border-radius:12px; background:#ffffff; }
           .box h4 { margin:0 0 6px; font-size:9px; letter-spacing:0.2em; text-transform:uppercase; color:#64748b; }
@@ -109,13 +147,14 @@ export const buildPrintableDocument = (
       <body class="${themeClass}">
         <div class="page">
           <div class="sheet">
-            ${isQuote ? '<div class="watermark">QUOTATION</div>' : '<div class="watermark">INVOICE</div>'}
+            <div class="watermark">${escapeHtml((docLabel || 'Document').toUpperCase())}</div>
+            ${invoiceStampLabel ? `<div class="stamp ${invoiceStampClass}">${escapeHtml(invoiceStampLabel)}</div>` : ''}
             <div class="hero">
               <div class="brand">
                 ${company.logoUrl ? `<img class="logo" src="${escapeHtml(company.logoUrl)}" alt="Logo" />` : ''}
                 <div>
                   <div class="brand-name">${escapeHtml(company.name || 'My Inventory ERP')}</div>
-                  <div class="brand-sub">Business Document</div>
+                  <div class="brand-sub">${escapeHtml(brandSubtitle)}</div>
                 </div>
               </div>
               <div class="doc-card">
@@ -129,15 +168,31 @@ export const buildPrintableDocument = (
             </div>
 
             <div class="accent-line"></div>
+            <div class="flags">
+              ${
+                isQuote && quoteValidUntil
+                  ? `<div class="pill">Valid until ${escapeHtml(quoteValidUntil)}</div>`
+                  : ''
+              }
+              ${!isQuote && balance > 0 ? `<div class="pill">Balance due ${escapeHtml(formatMoney(balance))}</div>` : ''}
+              ${!isQuote && balance === 0 && sale.status === 'paid' ? `<div class="pill">Paid in full</div>` : ''}
+            </div>
+
             ${
-              isQuote && quoteValidUntil
-                ? `<div class="pill">Valid until ${escapeHtml(quoteValidUntil)}</div>`
+              isQuote
+                ? `<div class="notice"><b>Quotation only.</b> This document does not reserve stock or post any sale until converted to an invoice.</div>`
+                : ''
+            }
+
+            ${
+              note
+                ? `<div class="note-box"><b>Note:</b> ${escapeHtml(note)}</div>`
                 : ''
             }
 
             <div class="info-grid">
               <div class="box">
-                <h4>${isQuote ? 'Quotation to' : 'Invoice to'}</h4>
+                <h4>${escapeHtml(docLabel)} to</h4>
                 <p class="name">${escapeHtml(customer.name || 'Walking Customer')}</p>
                 ${customer.address ? `<p>${escapeHtml(String(customer.address))}</p>` : ''}
                 ${customer.phone ? `<p>Phone: ${escapeHtml(String(customer.phone))}</p>` : ''}
@@ -194,8 +249,8 @@ export const buildPrintableDocument = (
           ${sale.status === 'void' ? '<div class="void">VOIDED DOCUMENT</div>' : ''}
 
             <div class="signatures">
-              <div>Authorized Sign: ____________________</div>
-              <div>Client Sign: ____________________</div>
+              <div>${isQuote ? 'Prepared By' : 'Authorized Sign'}: ____________________</div>
+              <div>${isQuote ? 'Customer Acceptance' : 'Client Sign'}: ____________________</div>
             </div>
 
             <div class="footer">
@@ -369,7 +424,7 @@ const Sales = () => {
       {
         accessorKey: 'sale_id',
         header: 'Doc #',
-        cell: ({ row }) => `S-${row.original.sale_id}`,
+        cell: ({ row }) => getDocRef(row.original),
       },
       {
         accessorKey: 'sale_date',
@@ -379,11 +434,15 @@ const Sales = () => {
       {
         accessorKey: 'doc_type',
         header: 'Document',
-        cell: ({ row }) => (
-          <span className="capitalize font-medium text-slate-700 dark:text-slate-200">
-            {row.original.doc_type}
-          </span>
-        ),
+        cell: ({ row }) => {
+          const docType = row.original.doc_type || 'sale';
+          const color = docType === 'quotation' ? 'primary' : docType === 'invoice' ? 'info' : 'dark';
+          return (
+            <Badge color={color} variant="light">
+              {docType}
+            </Badge>
+          );
+        },
       },
       {
         accessorKey: 'customer_name',
@@ -426,7 +485,13 @@ const Sales = () => {
                 type="button"
                 onClick={() => void printSaleInvoice(sale)}
                 className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-300 dark:hover:bg-indigo-900/30"
-                title={sale.doc_type === 'quotation' ? 'Print quotation' : 'Print invoice'}
+                title={
+                  (sale.doc_type || 'sale') === 'quotation'
+                    ? 'Print quotation'
+                    : (sale.doc_type || 'sale') === 'invoice'
+                    ? 'Print invoice'
+                    : 'Print sale'
+                }
               >
                 <Printer className="h-3.5 w-3.5" />
                 Print
@@ -490,35 +555,79 @@ const Sales = () => {
     [handleConvertQuotation, handleDelete, navigate, printSaleInvoice]
   );
 
+  const salesDocs = useMemo(() => {
+    return sales.filter((row) => (row.doc_type || 'sale') !== 'quotation');
+  }, [sales]);
+
+  const quotationDocs = useMemo(() => {
+    return sales.filter((row) => (row.doc_type || 'sale') === 'quotation');
+  }, [sales]);
+
   return (
     <div>
       <PageHeader
         title="Sales Management"
-        description="Manage all sales documents in one table and print invoice directly from actions."
+        description="Manage sales/invoices and quotations in separate tabs and print directly from actions."
       />
 
-      <div className="space-y-2">
-        <TabActionToolbar
-          title="Sales Documents"
-          primaryAction={{ label: 'New Sale', onClick: () => navigate('/sales/new?docType=sale') }}
-          onDisplay={() => void loadSales()}
-          displayLoading={loading}
-        />
-        <DataTable
-          data={sales}
-          columns={columns}
-          isLoading={loading}
-          searchPlaceholder="Search by customer or note..."
-        />
-        {!loading && !hasLoaded && (
-          <div className="text-sm text-slate-500 px-1">
-            Click Display to load data.
-          </div>
-        )}
-        {!loading && hasLoaded && sales.length === 0 && (
-          <div className="text-sm text-slate-500 px-1">No data found for the selected filters.</div>
-        )}
-      </div>
+      <Tabs
+        defaultTab="sales"
+        tabs={[
+          {
+            id: 'sales',
+            label: 'Sales',
+            icon: ReceiptText,
+            badge: hasLoaded ? salesDocs.length : undefined,
+            content: (
+              <div className="space-y-2">
+                <TabActionToolbar
+                  title="Sales Documents"
+                  primaryAction={{ label: 'New Sale', onClick: () => navigate('/sales/new?docType=sale') }}
+                  secondaryAction={{ label: 'New Invoice', onClick: () => navigate('/sales/new?docType=invoice') }}
+                  onDisplay={() => void loadSales()}
+                  displayLoading={loading}
+                />
+                <DataTable
+                  data={salesDocs}
+                  columns={columns}
+                  isLoading={loading}
+                  searchPlaceholder="Search by customer or note..."
+                />
+                {!loading && !hasLoaded && <div className="text-sm text-slate-500 px-1">Click Display to load data.</div>}
+                {!loading && hasLoaded && salesDocs.length === 0 && (
+                  <div className="text-sm text-slate-500 px-1">No sales/invoices found.</div>
+                )}
+              </div>
+            ),
+          },
+          {
+            id: 'quotations',
+            label: 'Quotations',
+            icon: FileText,
+            badge: hasLoaded ? quotationDocs.length : undefined,
+            content: (
+              <div className="space-y-2">
+                <TabActionToolbar
+                  title="Quotations"
+                  primaryAction={{ label: 'New Quotation', onClick: () => navigate('/sales/new?docType=quotation') }}
+                  onDisplay={() => void loadSales()}
+                  displayLoading={loading}
+                />
+                <DataTable
+                  data={quotationDocs}
+                  columns={columns}
+                  isLoading={loading}
+                  searchPlaceholder="Search quotations by customer or note..."
+                />
+                {!loading && !hasLoaded && <div className="text-sm text-slate-500 px-1">Click Display to load data.</div>}
+                {!loading && hasLoaded && quotationDocs.length === 0 && (
+                  <div className="text-sm text-slate-500 px-1">No quotations found.</div>
+                )}
+              </div>
+            ),
+          },
+        ]}
+      />
 
       <ConfirmDialog
         isOpen={voidOpen}
@@ -532,7 +641,11 @@ const Sales = () => {
         title="Void Sale Document?"
         message={
           saleToVoid
-            ? `Void #S-${saleToVoid.sale_id}? This will reverse stock/account effects for this sale.`
+            ? `Void #${getDocRef(saleToVoid)}? ${
+                saleToVoid.doc_type === 'quotation'
+                  ? 'Quotations do not post stock/accounts.'
+                  : 'This will reverse stock/account effects for this sale.'
+              }`
             : 'Are you sure you want to void this sale?'
         }
         confirmText="Void Document"
@@ -553,7 +666,7 @@ const Sales = () => {
         title="Convert Quotation?"
         message={
           saleToConvert
-            ? `Convert quotation #S-${saleToConvert.sale_id} to invoice?`
+            ? `Convert quotation #${getDocRef(saleToConvert)} to invoice?`
             : 'Convert this quotation to invoice?'
         }
         confirmText="Convert"
@@ -574,7 +687,7 @@ const Sales = () => {
         title="Delete Document?"
         message={
           saleToDelete
-            ? `Delete #S-${saleToDelete.sale_id}? This cannot be undone.`
+            ? `Delete #${getDocRef(saleToDelete)}? This cannot be undone.`
             : 'This action cannot be undone.'
         }
         confirmText="Delete"

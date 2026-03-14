@@ -5,6 +5,8 @@ export interface ReportOption {
   label: string;
 }
 
+const nonQuotationSalesWhere = `COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'`;
+
 export interface DailySalesRow {
   sale_id: number;
   sale_date: string;
@@ -103,6 +105,7 @@ export const salesReportsService = {
       WHERE s.branch_id = $1
         AND s.sale_date::date = CURRENT_DATE
         AND s.status <> 'void'
+        AND ${nonQuotationSalesWhere}
       ORDER BY s.sale_date ASC, s.sale_id ASC`,
       [branchId]
     );
@@ -110,7 +113,7 @@ export const salesReportsService = {
 
   async getSalesByCustomer(branchId: number, customerId?: number): Promise<SalesByCustomerRow[]> {
     const params: Array<number> = [branchId];
-    const filters: string[] = ['s.branch_id = $1', `s.status <> 'void'`];
+    const filters: string[] = ['s.branch_id = $1', `s.status <> 'void'`, nonQuotationSalesWhere];
 
     if (customerId) {
       params.push(customerId);
@@ -137,7 +140,7 @@ export const salesReportsService = {
 
   async getSalesByProduct(branchId: number, productId?: number): Promise<SalesByProductRow[]> {
     const params: Array<number> = [branchId];
-    const filters: string[] = ['s.branch_id = $1', `s.status <> 'void'`];
+    const filters: string[] = ['s.branch_id = $1', `s.status <> 'void'`, nonQuotationSalesWhere];
 
     if (productId) {
       params.push(productId);
@@ -171,8 +174,8 @@ export const salesReportsService = {
        FROM sale_item_map m
        JOIN ims.sales s ON s.sale_id = m.sale_id
        JOIN ims.items i ON i.item_id = m.item_id
-       LEFT JOIN ims.customers c ON c.customer_id = s.customer_id
-       LEFT JOIN ims.users u ON u.user_id = s.user_id
+      LEFT JOIN ims.customers c ON c.customer_id = s.customer_id
+      LEFT JOIN ims.users u ON u.user_id = s.user_id
       WHERE ${filters.join(' AND ')}
       ORDER BY s.sale_date ASC, s.sale_id ASC, i.item_id ASC
       LIMIT 2000`,
@@ -204,6 +207,7 @@ export const salesReportsService = {
        JOIN ims.items i ON i.item_id = m.item_id
       WHERE s.branch_id = $1
         AND s.status <> 'void'
+        AND ${nonQuotationSalesWhere}
         AND s.sale_date::date BETWEEN $2::date AND $3::date
       GROUP BY i.item_id, i.name
       HAVING COALESCE(SUM(m.quantity), 0) > 0
@@ -244,6 +248,7 @@ export const salesReportsService = {
          FROM ims.sales s
         WHERE s.branch_id = $1
           AND s.status <> 'void'
+          AND ${nonQuotationSalesWhere}
           AND s.sale_date::date BETWEEN $2::date AND $3::date
         GROUP BY s.user_id
        ),

@@ -177,19 +177,21 @@ export class DashboardService {
         [branchId]
       ),
       queryOne<{ total: string }>(
-        `SELECT COALESCE(SUM(total), 0)::text AS total
-           FROM ims.sales
-          WHERE branch_id = $1
-            AND status <> 'void'
-            AND sale_date::date = CURRENT_DATE`,
+        `SELECT COALESCE(SUM(s.total), 0)::text AS total
+           FROM ims.sales s
+          WHERE s.branch_id = $1
+            AND s.status <> 'void'
+            AND s.sale_date::date = CURRENT_DATE
+            AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'`,
         [branchId]
       ),
       queryOne<{ total: string }>(
-        `SELECT COALESCE(SUM(total), 0)::text AS total
-           FROM ims.sales
-          WHERE branch_id = $1
-            AND status <> 'void'
-            AND sale_date >= date_trunc('month', CURRENT_DATE)`,
+        `SELECT COALESCE(SUM(s.total), 0)::text AS total
+           FROM ims.sales s
+          WHERE s.branch_id = $1
+            AND s.status <> 'void'
+            AND s.sale_date >= date_trunc('month', CURRENT_DATE)
+            AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'`,
         [branchId]
       ),
       queryOne<{ total: string }>(
@@ -387,12 +389,13 @@ export class DashboardService {
            ) AS month_start
          ),
          sales AS (
-           SELECT date_trunc('month', sale_date) AS month_start,
-                  COALESCE(SUM(total), 0) AS total
-             FROM ims.sales
-            WHERE branch_id = $1
-              AND status <> 'void'
-            GROUP BY date_trunc('month', sale_date)
+           SELECT date_trunc('month', s.sale_date) AS month_start,
+                  COALESCE(SUM(s.total), 0) AS total
+             FROM ims.sales s
+            WHERE s.branch_id = $1
+              AND s.status <> 'void'
+              AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
+            GROUP BY date_trunc('month', s.sale_date)
          )
          SELECT to_char(m.month_start, 'YYYY-MM') AS label,
                 COALESCE(s.total, 0)::text AS total
@@ -422,12 +425,13 @@ export class DashboardService {
            ) AS month_start
          ),
          sales AS (
-           SELECT date_trunc('month', sale_date) AS month_start,
-                  COALESCE(SUM(total), 0) AS income
-             FROM ims.sales
-            WHERE branch_id = $1
-              AND status <> 'void'
-            GROUP BY date_trunc('month', sale_date)
+           SELECT date_trunc('month', s.sale_date) AS month_start,
+                  COALESCE(SUM(s.total), 0) AS income
+             FROM ims.sales s
+            WHERE s.branch_id = $1
+              AND s.status <> 'void'
+              AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
+            GROUP BY date_trunc('month', s.sale_date)
          )
          SELECT to_char(m.month_start, 'YYYY-MM') AS label,
                 COALESCE(s.income, 0)::text AS income
@@ -465,10 +469,11 @@ export class DashboardService {
         sale_date: string;
         status: string;
       }>(
-        `SELECT sale_id, total::text, sale_date::text, status::text
-           FROM ims.sales
-          WHERE branch_id = $1
-          ORDER BY sale_date DESC
+        `SELECT s.sale_id, s.total::text, s.sale_date::text, s.status::text
+           FROM ims.sales s
+          WHERE s.branch_id = $1
+            AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
+          ORDER BY s.sale_date DESC
           LIMIT 5`,
         [branchId]
       );

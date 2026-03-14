@@ -31,6 +31,10 @@ IF NOT EXISTS (SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespa
 CREATE TYPE ims.sale_status_enum AS ENUM ('paid','partial','unpaid','void');
 END IF;
 
+IF NOT EXISTS (SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace WHERE t.typname='sale_doc_type_enum' AND n.nspname='ims') THEN
+CREATE TYPE ims.sale_doc_type_enum AS ENUM ('sale','invoice','quotation');
+END IF;
+
 IF NOT EXISTS (SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace WHERE t.typname='purchase_type_enum' AND n.nspname='ims') THEN
 CREATE TYPE ims.purchase_type_enum AS ENUM ('cash','credit');
 END IF;
@@ -559,6 +563,8 @@ customer_id BIGINT REFERENCES ims.customers(customer_id) ON UPDATE CASCADE ON DE
 tax_id      BIGINT REFERENCES ims.taxes(tax_id) ON UPDATE CASCADE ON DELETE SET NULL,
 sale_date   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 sale_type   ims.sale_type_enum NOT NULL DEFAULT 'cash',
+doc_type    ims.sale_doc_type_enum NOT NULL DEFAULT 'sale',
+quote_valid_until DATE,
 subtotal    NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (subtotal >= 0),
 discount    NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (discount >= 0),
 tax_amount  NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (tax_amount >= 0),
@@ -566,6 +572,32 @@ total       NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (total >= 0),
 status      ims.sale_status_enum NOT NULL DEFAULT 'paid',
 note        TEXT
 );
+
+-- Migration: Sales document types (sale/invoice/quotation)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM information_schema.columns
+     WHERE table_schema = 'ims'
+       AND table_name = 'sales'
+       AND column_name = 'doc_type'
+  ) THEN
+    ALTER TABLE ims.sales
+      ADD COLUMN doc_type ims.sale_doc_type_enum NOT NULL DEFAULT 'sale';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+      FROM information_schema.columns
+     WHERE table_schema = 'ims'
+       AND table_name = 'sales'
+       AND column_name = 'quote_valid_until'
+  ) THEN
+    ALTER TABLE ims.sales
+      ADD COLUMN quote_valid_until DATE;
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS ims.stock_adjustment (
     adjustment_id BIGSERIAL PRIMARY KEY,

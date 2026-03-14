@@ -3,6 +3,7 @@ import { FileSpreadsheet, Printer } from "lucide-react";
 import { Modal } from "../ui/modal/Modal";
 
 const BORDER_COLOR = "#0f172a";
+const REPORT_SURFACE_MAX_WIDTH = "178mm";
 
 // Column and props definitions
 export type ReportColumn<T> = {
@@ -136,11 +137,7 @@ export function ReportModal<T extends Record<string, any>>({
   const isBalanceSheet = variant === "balance-sheet";
   const isCashFlowStatement = variant === "cash-flow-statement";
   const isTrialBalance = variant === "trial-balance";
-  const reportSurfaceWidth = isTrialBalance
-    ? "740px"
-    : isIncomeStatement || isBalanceSheet || isCashFlowStatement
-    ? "780px"
-    : "820px";
+  const reportSurfaceWidth = REPORT_SURFACE_MAX_WIDTH;
 
   const statementData = useMemo(() => {
     if (!isIncomeStatement) return null;
@@ -440,7 +437,7 @@ export function ReportModal<T extends Record<string, any>>({
       `<!doctype html><html><head><title></title>${styles}<style>
         @page { size: A4; margin: 10mm; }
         body { margin: 0; padding: 0; background: #ffffff; color: #0f172a; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-        #report-print-area { width: 100% !important; max-width: 178mm !important; margin: 0 auto !important; box-shadow: none !important; border: none !important; }
+        #report-print-area { width: 100% !important; max-width: ${REPORT_SURFACE_MAX_WIDTH} !important; margin: 0 auto !important; box-shadow: none !important; border: none !important; }
       </style></head><body>${contentNode.outerHTML}</body></html>`
     );
     doc.close();
@@ -516,7 +513,7 @@ export function ReportModal<T extends Record<string, any>>({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Report Preview" size="2xl" resizable centerTitle>
+    <Modal isOpen={isOpen} onClose={onClose} title="Report Preview" size="lg" resizable centerTitle>
       <div className="space-y-4">
         {/* Screen controls (hidden on print) */}
         <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3 rounded-2xl border border-slate-200 bg-white px-6 py-4 text-black shadow-sm print:hidden dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100">

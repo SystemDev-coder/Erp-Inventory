@@ -6,7 +6,7 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { accountService, Account } from '../../services/account.service';
 import { customerService, Customer } from '../../services/customer.service';
 import { inventoryService, InventoryItem } from '../../services/inventory.service';
-import { Sale, SaleDocType, SaleItem, SaleStatus, salesService } from '../../services/sales.service';
+import { SaleDocType, SaleItem, SaleStatus, salesService } from '../../services/sales.service';
 import { settingsService } from '../../services/settings.service';
 import { formatAvailableQty, itemLabelWithAvailability } from '../../utils/itemAvailability';
 import { buildPrintableDocument } from './Sales';
@@ -201,6 +201,14 @@ const SaleCreate = () => {
     ? 'unpaid'
     : saleForm.status;
 
+  const headerDocLabel =
+    effectiveDocType === 'quotation' ? 'Quotation' : effectiveDocType === 'invoice' ? 'Invoice' : 'Sale';
+  const headerTitle = isEditing ? `Edit ${headerDocLabel}` : `New ${headerDocLabel}`;
+  const headerDescription =
+    effectiveDocType === 'quotation'
+      ? 'Create or edit quotation documents.'
+      : 'Create or edit sale and invoice documents.';
+
   const shouldShowAccount =
     effectiveDocType !== 'quotation' &&
     effectiveSaleType !== 'credit' &&
@@ -295,91 +303,6 @@ const SaleCreate = () => {
       return;
     }
 
-    if (effectiveDocType === 'quotation') {
-      try {
-        setSubmitting(true);
-        const [companyRes, customerRes] = await Promise.all([
-          settingsService.getCompany(),
-          saleForm.customer_id ? customerService.get(Number(saleForm.customer_id)) : Promise.resolve(null as any),
-        ]);
-
-        const company = {
-          name: companyRes?.data?.company?.company_name || 'My Inventory ERP',
-          phone: companyRes?.data?.company?.phone || null,
-          logoUrl: companyRes?.data?.company?.logo_img || null,
-        };
-
-        const customer = {
-          name: saleForm.customer_id
-            ? customers.find((c) => c.customer_id === Number(saleForm.customer_id))?.full_name || 'Customer'
-            : 'Walking Customer',
-          phone:
-            customerRes && customerRes.success && customerRes.data?.customer?.phone
-              ? customerRes.data.customer.phone
-              : null,
-          address:
-            customerRes && customerRes.success && customerRes.data?.customer?.address
-              ? customerRes.data.customer.address
-              : null,
-        };
-
-        const draftId = Number(String(Date.now()).slice(-6));
-        const draftSale: Sale = {
-          sale_id: draftId,
-          branch_id: 0,
-          wh_id: null,
-          user_id: 0,
-          customer_id: saleForm.customer_id ? Number(saleForm.customer_id) : null,
-          customer_name: customer.name,
-          sale_date: saleForm.sale_date,
-          sale_type: 'credit',
-          doc_type: 'quotation',
-          quote_valid_until: saleForm.quote_valid_until || null,
-          subtotal: Number(saleForm.subtotal || 0),
-          discount: Number(saleForm.discount || 0),
-          total: Number(saleForm.total || 0),
-          status: 'unpaid',
-          note: saleForm.note || '',
-          paid_amount: 0,
-          tax_amount: Number(saleForm.tax_amount || 0),
-        };
-
-        const printItems: SaleItem[] = validItems.map((line) => {
-          const option = itemOptions.find((item) => item.item_id === Number(line.item_id));
-          const qty = Number(line.quantity || 0);
-          const unitPrice = Number(line.unit_price || option?.unit_price || 0);
-          return {
-            item_id: Number(line.item_id),
-            item_name: option?.item_name || undefined,
-            quantity: qty,
-            unit_price: unitPrice,
-            line_total: qty * unitPrice,
-          };
-        });
-
-        const html = buildPrintableDocument(draftSale, printItems, company, customer);
-        printHtmlDocument(html);
-        showToast('success', 'Quotation', 'Quotation printed');
-        navigate('/sales');
-      } catch (error) {
-        console.error('Quotation print error:', error);
-        showToast('error', 'Quotation', 'Failed to print quotation');
-      } finally {
-        setSubmitting(false);
-      }
-      return;
-    }
-
-    if (shouldShowAccount && !saleForm.acc_id) {
-      showToast('error', 'Sales', 'Select account for received payment');
-      return;
-    }
-
-    if (effectiveStatus === 'partial' && Number(saleForm.paid_amount || 0) <= 0) {
-      showToast('error', 'Sales', 'Enter paid amount for partial payment');
-      return;
-    }
-
     const payload = {
       customerId: saleForm.customer_id || undefined,
       saleDate: saleForm.sale_date,
@@ -410,6 +333,84 @@ const SaleCreate = () => {
         : undefined,
     };
 
+    if (effectiveDocType === 'quotation') {
+      setSubmitting(true);
+      try {
+        const [companyRes, customerRes, saleRes] = await Promise.all([
+          settingsService.getCompany(),
+          saleForm.customer_id ? customerService.get(Number(saleForm.customer_id)) : Promise.resolve(null as any),
+          isEditing && editId
+            ? salesService.update(editId, payload)
+            : salesService.create(payload),
+        ]);
+
+        if (!saleRes.success || !saleRes.data?.sale) {
+          showToast('error', 'Quotation', saleRes.error || 'Failed to save quotation');
+          return;
+        }
+
+        const company = {
+          name: companyRes?.data?.company?.company_name || 'My Inventory ERP',
+          phone: companyRes?.data?.company?.phone || null,
+          logoUrl: companyRes?.data?.company?.logo_img || null,
+        };
+
+        const customer = {
+          name: saleForm.customer_id
+            ? customers.find((c) => c.customer_id === Number(saleForm.customer_id))?.full_name || 'Customer'
+            : 'Walking Customer',
+          phone:
+            customerRes && customerRes.success && customerRes.data?.customer?.phone
+              ? customerRes.data.customer.phone
+              : null,
+          address:
+            customerRes && customerRes.success && customerRes.data?.customer?.address
+              ? customerRes.data.customer.address
+              : null,
+        };
+
+        const savedSale = saleRes.data.sale;
+
+        const printItems: SaleItem[] = validItems.map((line) => {
+          const option = itemOptions.find((item) => item.item_id === Number(line.item_id));
+          const qty = Number(line.quantity || 0);
+          const unitPrice = Number(line.unit_price || option?.unit_price || 0);
+          return {
+            item_id: Number(line.item_id),
+            item_name: option?.item_name || undefined,
+            quantity: qty,
+            unit_price: unitPrice,
+            line_total: qty * unitPrice,
+          };
+        });
+
+        const html = buildPrintableDocument(savedSale, printItems, company, customer);
+        printHtmlDocument(html);
+        showToast(
+          'success',
+          'Quotation',
+          isEditing ? 'Quotation updated and printed' : 'Quotation saved and printed'
+        );
+        navigate('/sales');
+      } catch (error) {
+        console.error('Quotation save error:', error);
+        showToast('error', 'Quotation', 'Failed to save quotation');
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+
+    if (shouldShowAccount && !saleForm.acc_id) {
+      showToast('error', 'Sales', 'Select account for received payment');
+      return;
+    }
+
+    if (effectiveStatus === 'partial' && Number(saleForm.paid_amount || 0) <= 0) {
+      showToast('error', 'Sales', 'Enter paid amount for partial payment');
+      return;
+    }
+
     setSubmitting(true);
     const res = isEditing && editId
       ? await salesService.update(editId, payload)
@@ -427,8 +428,8 @@ const SaleCreate = () => {
   return (
     <div>
       <PageHeader
-        title={isEditing ? 'Edit Sales Document' : 'New Sales Document'}
-        description="Create or edit sale, invoice, and quotation documents."
+        title={headerTitle}
+        description={headerDescription}
         actions={
           <button
             onClick={() => navigate('/sales')}
@@ -443,27 +444,30 @@ const SaleCreate = () => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
             Document Type
-            <select
-              className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
-              value={saleForm.doc_type}
-              onChange={(e) => {
-                const nextDoc = e.target.value as SaleDocType;
-                setIsDebt(false);
-                setSaleForm((prev) => ({
-                  ...prev,
-                  doc_type: nextDoc,
-                  sale_type: nextDoc === 'quotation' ? 'credit' : prev.sale_type,
-                  status: nextDoc === 'quotation' ? 'unpaid' : prev.status,
-                  acc_id: nextDoc === 'quotation' ? '' : prev.acc_id,
-                  paid_amount: nextDoc === 'quotation' ? 0 : prev.paid_amount,
-                }));
-              }}
-              disabled={loading}
-            >
-              <option value="sale">Sale</option>
-              <option value="invoice">Invoice</option>
-              <option value="quotation">Quotation</option>
-            </select>
+            {effectiveDocType === 'quotation' ? (
+              <input
+                className="rounded-lg border px-3 py-2 bg-slate-50 dark:bg-slate-800 border-slate-300 dark:border-slate-700"
+                value="Quotation"
+                disabled
+              />
+            ) : (
+              <select
+                className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
+                value={saleForm.doc_type}
+                onChange={(e) => {
+                  const nextDoc = e.target.value as SaleDocType;
+                  setIsDebt(false);
+                  setSaleForm((prev) => ({
+                    ...prev,
+                    doc_type: nextDoc,
+                  }));
+                }}
+                disabled={loading}
+              >
+                <option value="sale">Sale</option>
+                <option value="invoice">Invoice</option>
+              </select>
+            )}
           </label>
 
           <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
@@ -477,7 +481,7 @@ const SaleCreate = () => {
             />
           </label>
 
-          {saleForm.doc_type === 'quotation' && (
+          {effectiveDocType === 'quotation' && (
             <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
               Quote Valid Until
               <input
