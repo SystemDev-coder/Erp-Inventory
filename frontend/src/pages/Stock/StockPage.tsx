@@ -186,18 +186,18 @@ const StockPage = () => {
       cell: ({ row }) => {
         const breakdown = row.original.warehouse_breakdown || [];
         if (!breakdown.length) return '-';
-        return breakdown.map((w) => `${w.wh_name}: ${Number(w.quantity || 0).toFixed(3)}`).join(', ');
+        return breakdown.map((w) => `${w.wh_name}: ${Number(w.quantity || 0).toFixed(0)}`).join(', ');
       },
     },
     {
       accessorKey: 'branch_qty',
       header: 'Branch Qty',
-      cell: ({ row }) => Number(row.original.branch_qty || 0).toFixed(3),
+      cell: ({ row }) => Number(row.original.branch_qty || 0).toFixed(0),
     },
     {
       accessorKey: 'total_qty',
       header: 'Total Qty',
-      cell: ({ row }) => Number(row.original.total_qty || 0).toFixed(3),
+      cell: ({ row }) => Number(row.original.total_qty || 0).toFixed(0),
     },
     {
       accessorKey: 'cost_price',
@@ -572,7 +572,7 @@ const StockPage = () => {
       )}
 
       <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900"><p className="text-xs uppercase text-slate-500">Total Qty</p><p className="text-2xl font-semibold">{stockSummary.totalQty.toFixed(3)}</p></div>
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900"><p className="text-xs uppercase text-slate-500">Total Qty</p><p className="text-2xl font-semibold">{stockSummary.totalQty.toFixed(0)}</p></div>
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900"><p className="text-xs uppercase text-slate-500">Stock Value</p><p className="text-2xl font-semibold">${stockSummary.totalValue.toFixed(2)}</p></div>
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900"><p className="text-xs uppercase text-slate-500">Low Stock Items</p><p className="text-2xl font-semibold text-red-600">{stockSummary.lowStockCount}</p></div>
       </div>

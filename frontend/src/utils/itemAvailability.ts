@@ -1,7 +1,7 @@
 export const formatAvailableQty = (qty?: number | null): string => {
   if (qty === undefined || qty === null || Number.isNaN(Number(qty))) return '0';
   return Number(qty)
-    .toFixed(3)
+    .toFixed(0)
     .replace(/\.?0+$/, '');
 };
 

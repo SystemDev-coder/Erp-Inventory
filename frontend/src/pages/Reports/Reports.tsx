@@ -24,6 +24,7 @@ export default function Reports() {
   const [activeTab, setActiveTab] = useState<TabId>('sales');
   const [companyInfo, setCompanyInfo] = useState<{
     name?: string;
+    logoUrl?: string;
     manager?: string;
     phone?: string;
     updatedAt?: string;
@@ -37,6 +38,7 @@ export default function Reports() {
       const company = response.data.company;
       setCompanyInfo({
         name: company.company_name || undefined,
+        logoUrl: company.logo_img || undefined,
         manager: company.manager_name || undefined,
         phone: company.phone || undefined,
         updatedAt: company.updated_at ? new Date(company.updated_at).toLocaleString() : undefined,
@@ -57,10 +59,6 @@ export default function Reports() {
             <p className="text-[11px] uppercase tracking-[0.35em] text-zinc-500">Inventory ERP</p>
             <h1 className="text-3xl font-bold leading-tight">Reports Control Center</h1>
             <p className="mt-1 text-sm text-zinc-700">Reports are organized by module tabs. Open any card to preview, print, or export.</p>
-          </div>
-          <div className="rounded-xl border border-zinc-300 bg-white px-4 py-3">
-            <div className="text-xs uppercase tracking-wide text-zinc-500">Categories</div>
-            <div className="text-2xl font-bold leading-none">{reportTabs.length}</div>
           </div>
         </div>
       </div>

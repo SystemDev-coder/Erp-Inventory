@@ -8,12 +8,26 @@ import {
     UpdatePurchaseReturnInput,
 } from './returns.service';
 import { resolveBranchScope } from '../../utils/branchScope';
+import { ApiError } from '../../utils/ApiError';
 
 // GET /api/returns/sales
 export const listSalesReturns = async (req: AuthRequest, res: Response): Promise<void> => {
     const scope = await resolveBranchScope(req);
     const rows = await returnsService.listSalesReturns(scope);
     res.json({ success: true, data: { rows } });
+};
+
+export const getSalesReturn = async (req: AuthRequest, res: Response): Promise<void> => {
+    const scope = await resolveBranchScope(req);
+    const row = await returnsService.getSalesReturn(scope, Number(req.params.id));
+    if (!row) throw ApiError.notFound('Sales return not found');
+    res.json({ success: true, data: { return: row } });
+};
+
+export const listSalesReturnItems = async (req: AuthRequest, res: Response): Promise<void> => {
+    const scope = await resolveBranchScope(req);
+    const items = await returnsService.listSalesReturnItems(scope, Number(req.params.id));
+    res.json({ success: true, data: { items } });
 };
 
 export const listReturnItems = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -66,6 +80,19 @@ export const listPurchaseReturns = async (req: AuthRequest, res: Response): Prom
     const scope = await resolveBranchScope(req);
     const rows = await returnsService.listPurchaseReturns(scope);
     res.json({ success: true, data: { rows } });
+};
+
+export const getPurchaseReturn = async (req: AuthRequest, res: Response): Promise<void> => {
+    const scope = await resolveBranchScope(req);
+    const row = await returnsService.getPurchaseReturn(scope, Number(req.params.id));
+    if (!row) throw ApiError.notFound('Purchase return not found');
+    res.json({ success: true, data: { return: row } });
+};
+
+export const listPurchaseReturnItems = async (req: AuthRequest, res: Response): Promise<void> => {
+    const scope = await resolveBranchScope(req);
+    const items = await returnsService.listPurchaseReturnItems(scope, Number(req.params.id));
+    res.json({ success: true, data: { items } });
 };
 
 // POST /api/returns/purchases

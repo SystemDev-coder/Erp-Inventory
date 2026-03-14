@@ -111,7 +111,7 @@ export const purchaseReportsService = {
            FROM ims.suppliers
           WHERE branch_id = $1
             AND is_active = TRUE
-          ORDER BY name`,
+          ORDER BY supplier_id ASC`,
         [branchId]
       ),
       queryMany<PurchaseReportOption>(
@@ -119,7 +119,7 @@ export const purchaseReportsService = {
            FROM ims.items
           WHERE branch_id = $1
             AND is_active = TRUE
-          ORDER BY name`,
+          ORDER BY item_id ASC`,
         [branchId]
       ),
     ]);
@@ -161,7 +161,7 @@ export const purchaseReportsService = {
        LEFT JOIN ims.stores st ON st.store_id = p.store_id
       WHERE p.branch_id = $1
         AND p.purchase_date::date BETWEEN $2::date AND $3::date
-      ORDER BY p.purchase_date DESC, p.purchase_id DESC`,
+      ORDER BY p.purchase_date ASC, p.purchase_id ASC`,
       [branchId, fromDate, toDate]
     );
   },
@@ -192,7 +192,7 @@ export const purchaseReportsService = {
        LEFT JOIN ims.users u ON u.user_id = p.user_id
        LEFT JOIN ims.stores st ON st.store_id = p.store_id
       WHERE ${filters.join(' AND ')}
-      ORDER BY p.purchase_date DESC, p.purchase_id DESC
+      ORDER BY p.purchase_date ASC, p.purchase_id ASC
       LIMIT 2000`,
       params
     );
@@ -214,7 +214,7 @@ export const purchaseReportsService = {
        LEFT JOIN ims.users u ON u.user_id = pr.user_id
       WHERE pr.branch_id = $1
         AND pr.return_date::date BETWEEN $2::date AND $3::date
-      ORDER BY pr.return_date DESC, pr.pr_id DESC`,
+      ORDER BY pr.return_date ASC, pr.pr_id ASC`,
       [branchId, fromDate, toDate]
     );
   },
@@ -247,7 +247,7 @@ export const purchaseReportsService = {
        LEFT JOIN ims.suppliers s ON s.supplier_id = p.supplier_id
       WHERE p.branch_id = $1
         AND p.purchase_date::date BETWEEN $2::date AND $3::date
-      ORDER BY p.purchase_date DESC, p.purchase_id DESC`,
+      ORDER BY p.purchase_date ASC, p.purchase_id ASC`,
       [branchId, fromDate, toDate]
     );
   },
@@ -324,8 +324,8 @@ export const purchaseReportsService = {
              ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
            )::double precision AS running_balance,
          u.note
-       FROM unioned u
-      ORDER BY u.entry_date DESC, u.sup_ledger_id DESC
+        FROM unioned u
+      ORDER BY u.entry_date ASC, u.sup_ledger_id ASC
       LIMIT 4000`,
       params
     );
@@ -349,7 +349,7 @@ export const purchaseReportsService = {
       WHERE p.branch_id = $1
         AND p.purchase_date::date BETWEEN $2::date AND $3::date
       GROUP BY p.purchase_id, p.purchase_date, s.name, p.subtotal, p.discount, p.total, p.status
-      ORDER BY p.purchase_date DESC, p.purchase_id DESC`,
+      ORDER BY p.purchase_date ASC, p.purchase_id ASC`,
       [branchId, fromDate, toDate]
     );
   },

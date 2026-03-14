@@ -240,11 +240,11 @@ const getProductSql = (stockAlertExpr: string, storeIdExpr = 'NULL::bigint') => 
     CASE
       WHEN COALESCE(sq.row_count, 0) = 0 THEN COALESCE(i.opening_balance, 0)
       ELSE COALESCE(sq.qty, 0)
-    END::numeric(14,3) AS quantity,
+    END::int AS quantity,
     CASE
       WHEN COALESCE(sq.row_count, 0) = 0 THEN COALESCE(i.opening_balance, 0)
       ELSE COALESCE(sq.qty, 0)
-    END::numeric(14,3) AS stock,
+    END::int AS stock,
     i.opening_balance,
     i.is_active,
     CASE WHEN i.is_active THEN 'active' ELSE 'inactive' END AS status,
@@ -255,20 +255,15 @@ const getProductSql = (stockAlertExpr: string, storeIdExpr = 'NULL::bigint') => 
   LEFT JOIN ims.stores s ON s.store_id = i.store_id
   LEFT JOIN LATERAL (
     SELECT
-      COALESCE(SUM(si.quantity), 0)::numeric(14,3) AS qty,
+      COALESCE(SUM(si.quantity), 0)::int AS qty,
       COUNT(*)::int AS row_count
       FROM ims.store_items si
+      JOIN ims.stores s2 ON s2.store_id = si.store_id
      WHERE si.product_id = i.item_id
-       AND si.store_id = COALESCE(
-         ${storeIdExpr}::bigint,
-         i.store_id,
-         (
-           SELECT s2.store_id
-             FROM ims.stores s2
-            WHERE s2.branch_id = i.branch_id
-            ORDER BY s2.store_id
-            LIMIT 1
-         )
+       AND s2.branch_id = i.branch_id
+       AND (
+         ${storeIdExpr} IS NULL
+         OR si.store_id = ${storeIdExpr}
        )
   ) sq ON TRUE
 `;

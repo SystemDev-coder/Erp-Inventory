@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { ColumnDef } from '@tanstack/react-table';
-import { ShoppingBag, Users } from 'lucide-react';
+import { RefreshCw, ShoppingBag, Users } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
 import { PageHeader, TabActionToolbar } from '../../components/ui/layout';
 import { DataTable } from '../../components/ui/table/DataTable';
@@ -35,6 +35,10 @@ const Purchases = () => {
   const [loading, setLoading] = useState(false);
   const [search] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | PurchaseForm['status']>('all');
+  const [suppliersDisplayed, setSuppliersDisplayed] = useState(false);
+  const [itemsDisplayed, setItemsDisplayed] = useState(false);
+  const [purchasesDisplayed, setPurchasesDisplayed] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [purchaseToDelete, setPurchaseToDelete] = useState<Purchase | null>(null);
@@ -137,6 +141,36 @@ const Purchases = () => {
     setDeleteOpen(true);
   };
 
+  const downloadPurchasesXlsx = async () => {
+    if (!purchasesDisplayed) {
+      showToast('info', 'Export', 'Click Display to load data.');
+      return;
+    }
+    if (filteredPurchases.length === 0) {
+      showToast('info', 'Export', 'No data to export.');
+      return;
+    }
+    if (exporting) return;
+
+    setExporting(true);
+    const res = await purchaseService.exportXlsx({ search, status: statusFilter });
+    setExporting(false);
+
+    if (!res.success) {
+      showToast('error', 'Export failed', res.error || 'Could not export purchases');
+      return;
+    }
+
+    const url = window.URL.createObjectURL(res.blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = res.filename || 'purchases.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  };
+
   const saveSupplier = async () => {
     if (!supplierForm.supplier_name) {
       showToast('error', 'Name required', 'Enter supplier name');
@@ -160,7 +194,7 @@ const Purchases = () => {
         remaining_balance: 0,
         is_active: true,
       } as Supplier);
-      loadSuppliers(search);
+      if (suppliersDisplayed) loadSuppliers(search);
     } else {
       showToast('error', 'Save failed', res.error || 'Check the form');
     }
@@ -178,7 +212,7 @@ const Purchases = () => {
     const res = await supplierService.remove(supplierToDelete.supplier_id);
     if (res.success) {
       showToast('success', 'Supplier deleted');
-      loadSuppliers(search);
+      if (suppliersDisplayed) loadSuppliers(search);
     } else {
       showToast('error', 'Delete failed', res.error || 'Cannot delete supplier');
     }
@@ -194,7 +228,7 @@ const Purchases = () => {
     const res = await purchaseService.remove(purchaseToDelete.purchase_id);
     if (res.success) {
       showToast('success', 'Deleted', `Purchase #${purchaseToDelete.purchase_id} removed`);
-      loadPurchases(search, statusFilter);
+      if (purchasesDisplayed) loadPurchases(search, statusFilter);
     } else {
       showToast('error', 'Delete failed', res.error || 'Could not delete purchase');
     }
@@ -240,7 +274,7 @@ const Purchases = () => {
     { accessorKey: 'purchase_id', header: 'PO #', cell: ({ row }) => `PO-${row.original.purchase_id}` },
     { accessorKey: 'supplier_name', header: 'Supplier', cell: ({ row }) => row.original.supplier_name || '-' },
     { accessorKey: 'description', header: 'Item', cell: ({ row }) => row.original.description || row.original.product_name || '-' },
-    { accessorKey: 'quantity', header: 'Qty', cell: ({ row }) => Number(row.original.quantity || 0).toFixed(3) },
+    { accessorKey: 'quantity', header: 'Qty', cell: ({ row }) => Number(row.original.quantity || 0).toFixed(0) },
     { accessorKey: 'unit_cost', header: 'Unit Cost', cell: ({ row }) => `$${Number(row.original.unit_cost || 0).toFixed(2)}` },
     { accessorKey: 'cost_price', header: 'Cost Price', cell: ({ row }) => `$${Number(row.original.cost_price || row.original.unit_cost || 0).toFixed(2)}` },
     { accessorKey: 'sale_price', header: 'Sale Price', cell: ({ row }) => `$${Number(row.original.sale_price || 0).toFixed(2)}` },
@@ -276,10 +310,24 @@ const Purchases = () => {
               },
             }}
             secondaryAction={{ label: 'Upload Data', onClick: () => setSupplierImportOpen(true) }}
-            onDisplay={() => loadSuppliers()}
+            onDisplay={() => {
+              setSuppliersDisplayed(true);
+              void loadSuppliers();
+            }}
+            displayLoading={loading}
           />
+          {!suppliersDisplayed && !loading && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+              Click <span className="font-semibold">Display</span> to load data.
+            </div>
+          )}
+          {suppliersDisplayed && !loading && suppliers.length === 0 && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+              No data found for the selected filters.
+            </div>
+          )}
           <DataTable
-            data={suppliers}
+            data={suppliersDisplayed ? suppliers : []}
             columns={supplierColumns}
             isLoading={loading}
             searchPlaceholder="Find supplier..."
@@ -297,14 +345,30 @@ const Purchases = () => {
         <div className="space-y-2">
           <div className="flex justify-end">
             <button
-              onClick={() => loadItems(search)}
-              className="px-3 py-2 text-sm font-medium rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all"
+              type="button"
+              disabled={loading}
+              onClick={() => {
+                setItemsDisplayed(true);
+                void loadItems(search);
+              }}
+              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Display
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              {loading ? 'Loading...' : 'Display'}
             </button>
           </div>
+          {!itemsDisplayed && !loading && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+              Click <span className="font-semibold">Display</span> to load data.
+            </div>
+          )}
+          {itemsDisplayed && !loading && items.length === 0 && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+              No data found for the selected filters.
+            </div>
+          )}
           <DataTable
-            data={items}
+            data={itemsDisplayed ? items : []}
             columns={itemColumns}
             isLoading={loading}
             searchPlaceholder="Search purchased items..."
@@ -321,8 +385,12 @@ const Purchases = () => {
           <TabActionToolbar
             title="Purchase Orders"
             primaryAction={{ label: 'New Purchase', onClick: () => navigate('/purchases/new') }}
-            onDisplay={() => loadPurchases(search, statusFilter)}
-            onExport={() => showToast('info', 'Export', 'Export coming soon')}
+            onDisplay={() => {
+              setPurchasesDisplayed(true);
+              void loadPurchases(search, statusFilter);
+            }}
+            displayLoading={loading}
+            onExport={downloadPurchasesXlsx}
           />
           <div className="flex flex-wrap gap-2 px-1">
             {statusFilters.map((s) => (
@@ -342,13 +410,19 @@ const Purchases = () => {
             ))}
           </div>
           <DataTable
-            data={filteredPurchases}
+            data={purchasesDisplayed ? filteredPurchases : []}
             columns={columns}
             isLoading={loading}
             searchPlaceholder="Find by supplier or note..."
             onEdit={onEdit}
             onDelete={onDelete}
           />
+          {!purchasesDisplayed && !loading && (
+            <div className="text-sm text-slate-500 px-1">Click Display to load data.</div>
+          )}
+          {purchasesDisplayed && !loading && filteredPurchases.length === 0 && (
+            <div className="text-sm text-slate-500 px-1">No data found for the selected filters.</div>
+          )}
         </div>
       ),
     },

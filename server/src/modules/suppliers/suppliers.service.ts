@@ -50,7 +50,8 @@ const detectSupplierShape = async (): Promise<SupplierSchemaShape> => {
 
   supplierShape = {
     nameColumn: names.has('name') ? 'name' : 'supplier_name',
-    balanceColumn: names.has('open_balance') ? 'open_balance' : 'remaining_balance',
+    // Prefer `remaining_balance` as the live outstanding; keep `open_balance` as opening balance.
+    balanceColumn: names.has('remaining_balance') ? 'remaining_balance' : 'open_balance',
     locationColumn: names.has('country')
       ? 'country'
       : names.has('location')

@@ -375,11 +375,12 @@ const ClosingFinance = () => {
           <>
             <button
               type="button"
-              onClick={loadData}
+              onClick={() => void loadData()}
+              disabled={loading}
               className="inline-flex items-center gap-2 rounded-xl border border-[#9bc0e6] bg-white px-4 py-2.5 text-sm font-semibold text-[#0c3556] hover:bg-[#f0f7ff]"
             >
-              <RefreshCw className="h-4 w-4" />
-              Display
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              {loading ? 'Loading...' : 'Display'}
             </button>
             <button
               type="button"

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
 import { Filter, Plus, RefreshCw } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
@@ -23,6 +23,7 @@ const StockRecountPage = () => {
   const [rows, setRows] = useState<StockAdjustmentRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [mastersLoading, setMastersLoading] = useState(false);
+  const [mastersLoaded, setMastersLoaded] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [hasLoaded, setHasLoaded] = useState(false);
 
@@ -90,7 +91,7 @@ const StockRecountPage = () => {
       {
         accessorKey: 'qty_delta',
         header: 'Difference',
-        cell: ({ row }) => Number(row.original.qty_delta).toFixed(3),
+        cell: ({ row }) => Number(row.original.qty_delta).toFixed(0),
       },
       {
         accessorKey: 'value_delta',
@@ -143,11 +144,14 @@ const StockRecountPage = () => {
     setMastersLoading(false);
   };
 
-  useEffect(() => {
-    loadMasters();
-  }, []);
+  const ensureMastersLoaded = async () => {
+    if (mastersLoaded) return;
+    await loadMasters();
+    setMastersLoaded(true);
+  };
 
   const loadRecounts = async () => {
+    await ensureMastersLoaded();
     setLoading(true);
     const res = await inventoryService.listRecounts({
       branchId: filters.branchId || undefined,
@@ -229,11 +233,14 @@ const StockRecountPage = () => {
               className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"
               disabled={loading}
             >
-              <RefreshCw className="h-4 w-4" />
-              Display
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              {loading ? 'Loading...' : 'Display'}
             </button>
             <button
-              onClick={() => setIsModalOpen(true)}
+              onClick={async () => {
+                await ensureMastersLoaded();
+                setIsModalOpen(true);
+              }}
               className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-white"
               disabled={mastersLoading}
             >
@@ -315,12 +322,22 @@ const StockRecountPage = () => {
             disabled={loading}
           >
             <Filter className="h-4 w-4" />
-            Display
+            {loading ? 'Loading...' : 'Display'}
           </button>
         </div>
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+        {!hasLoaded && !loading && (
+          <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+            Click <span className="font-semibold">Display</span> to load data.
+          </div>
+        )}
+        {hasLoaded && !loading && rows.length === 0 && (
+          <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+            No data found for the selected filters.
+          </div>
+        )}
         <DataTable
           data={rows}
           columns={columns}
@@ -393,6 +410,8 @@ const StockRecountPage = () => {
               type="number"
               className={inputClass}
               value={form.countedQty}
+              min={0}
+              step={1}
               onChange={(e) => setForm((prev) => ({ ...prev, countedQty: Number(e.target.value) }))}
             />
           </div>

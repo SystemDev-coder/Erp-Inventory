@@ -27,7 +27,7 @@ const purchaseCards: Array<{ id: PurchaseCardId; title: string; hint: string }> 
 ];
 
 const ordersSummaryColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'purchase_id', header: 'Purchase #' },
+  { key: 'purchase_id', header: 'Purchase #', getHref: (row) => (row.purchase_id ? `/purchases/${row.purchase_id}` : null) },
   { key: 'purchase_date', header: 'Date', render: (row) => formatDateTime(row.purchase_date) },
   { key: 'supplier_name', header: 'Supplier' },
   { key: 'buyer_name', header: 'Buyer' },
@@ -40,7 +40,7 @@ const ordersSummaryColumns: ReportColumn<Record<string, unknown>>[] = [
 ];
 
 const supplierWiseColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'purchase_id', header: 'Purchase #' },
+  { key: 'purchase_id', header: 'Purchase #', getHref: (row) => (row.purchase_id ? `/purchases/${row.purchase_id}` : null) },
   { key: 'purchase_date', header: 'Date', render: (row) => formatDateTime(row.purchase_date) },
   { key: 'supplier_name', header: 'Supplier' },
   { key: 'buyer_name', header: 'Buyer' },
@@ -52,9 +52,9 @@ const supplierWiseColumns: ReportColumn<Record<string, unknown>>[] = [
 ];
 
 const purchaseReturnsColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'return_id', header: 'Return #' },
+  { key: 'return_id', header: 'Return #', getHref: (row) => (row.return_id ? `/returns/purchases/${row.return_id}/edit` : null) },
   { key: 'return_date', header: 'Return Date', render: (row) => formatDateTime(row.return_date) },
-  { key: 'purchase_id', header: 'Purchase #' },
+  { key: 'purchase_id', header: 'Purchase #', getHref: (row) => (row.purchase_id ? `/purchases/${row.purchase_id}` : null) },
   { key: 'supplier_name', header: 'Supplier' },
   { key: 'buyer_name', header: 'Buyer' },
   { key: 'subtotal', header: 'Subtotal', align: 'right', render: (row) => formatCurrency(row.subtotal) },
@@ -63,7 +63,7 @@ const purchaseReturnsColumns: ReportColumn<Record<string, unknown>>[] = [
 ];
 
 const paymentStatusColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'purchase_id', header: 'Purchase #' },
+  { key: 'purchase_id', header: 'Purchase #', getHref: (row) => (row.purchase_id ? `/purchases/${row.purchase_id}` : null) },
   { key: 'purchase_date', header: 'Date', render: (row) => formatDateTime(row.purchase_date) },
   { key: 'supplier_name', header: 'Supplier' },
   { key: 'total', header: 'Total', align: 'right', render: (row) => formatCurrency(row.total) },
@@ -78,12 +78,9 @@ const supplierLedgerColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'entry_date', header: 'Date', render: (row) => formatDateTime(row.entry_date) },
   { key: 'supplier_name', header: 'Supplier' },
   { key: 'entry_type', header: 'Type' },
-  { key: 'ref_table', header: 'Ref Table' },
-  { key: 'ref_id', header: 'Ref Id' },
   { key: 'debit', header: 'Debit', align: 'right', render: (row) => formatCurrency(row.debit) },
   { key: 'credit', header: 'Credit', align: 'right', render: (row) => formatCurrency(row.credit) },
   { key: 'running_balance', header: 'Balance', align: 'right', render: (row) => formatCurrency(row.running_balance) },
-  { key: 'note', header: 'Note' },
 ];
 
 const byDateRangeColumns: ReportColumn<Record<string, unknown>>[] = [
@@ -311,7 +308,6 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
       const response = await purchaseReportsService.getSupplierLedger({ mode, supplierId });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load supplier ledger');
       const rows = toRecordRows(response.data.rows || []);
-      const closingBalance = rows.length > 0 ? Number(rows[rows.length - 1].running_balance || 0) : 0;
       onOpenModal({
         title: 'Supplier Ledger',
         subtitle: mode === 'show' ? selectedSupplierLedgerLabel || 'Selected Supplier' : 'All Suppliers',
@@ -321,14 +317,6 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
         filters: {
           Mode: mode === 'show' ? 'Show' : 'All',
           Supplier: mode === 'show' ? selectedSupplierLedgerLabel || 'Selected Supplier' : 'All Suppliers',
-        },
-        tableTotals: {
-          label: 'Total',
-          values: {
-            debit: formatCurrency(sumNumericField(rows, 'debit')),
-            credit: formatCurrency(sumNumericField(rows, 'credit')),
-            running_balance: formatCurrency(closingBalance),
-          },
         },
       });
     });

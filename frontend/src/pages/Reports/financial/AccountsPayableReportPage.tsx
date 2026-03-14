@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from '../../../components/ui/table/DataTable';
 import { PageHeader } from '../../../components/ui/layout';
@@ -24,6 +24,7 @@ export default function AccountsPayableReportPage() {
   const [rows, setRows] = useState<AccountsPayableRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [hasDisplayed, setHasDisplayed] = useState(false);
 
   const loadReport = async () => {
     if (!range.fromDate || !range.toDate) {
@@ -36,6 +37,7 @@ export default function AccountsPayableReportPage() {
     }
 
     setLoading(true);
+    setHasDisplayed(true);
     setError('');
     try {
       const response = await financialReportsService.getAccountsPayable(range);
@@ -52,10 +54,6 @@ export default function AccountsPayableReportPage() {
       setLoading(false);
     }
   };
-
-  useEffect(() => {
-    void loadReport();
-  }, []);
 
   const columns = useMemo<ColumnDef<AccountsPayableRow>[]>(
     () => [
@@ -135,9 +133,10 @@ export default function AccountsPayableReportPage() {
             <button
               type="button"
               onClick={() => void loadReport()}
-              className="w-full rounded-md border border-black bg-black px-4 py-2 text-sm font-semibold text-white"
+              disabled={loading}
+              className="w-full rounded-md border border-black bg-black px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Display
+              {loading ? 'Loading...' : 'Display'}
             </button>
           </div>
         </div>
@@ -159,8 +158,18 @@ export default function AccountsPayableReportPage() {
       </div>
 
       <div className="rounded-xl border border-zinc-300 bg-white p-4 shadow-sm">
+        {!hasDisplayed && !loading && (
+          <div className="mb-3 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-700">
+            Click <span className="font-semibold">Display</span> to load data.
+          </div>
+        )}
+        {hasDisplayed && !loading && rows.length === 0 && (
+          <div className="mb-3 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-700">
+            No data found for the selected filters.
+          </div>
+        )}
         <DataTable
-          data={rows}
+          data={hasDisplayed ? rows : []}
           columns={columns}
           isLoading={loading}
           error={error || null}

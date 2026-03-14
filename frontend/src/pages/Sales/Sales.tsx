@@ -8,6 +8,8 @@ import { DataTable } from '../../components/ui/table/DataTable';
 import Badge from '../../components/ui/badge/Badge';
 import { useToast } from '../../components/ui/toast/Toast';
 import { Sale, SaleItem, salesService } from '../../services/sales.service';
+import { settingsService } from '../../services/settings.service';
+import { customerService } from '../../services/customer.service';
 
 const formatMoney = (value: number) => `$${Number(value || 0).toFixed(2)}`;
 
@@ -19,11 +21,29 @@ const escapeHtml = (value: string) =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
-const buildPrintableInvoice = (sale: Sale, items: SaleItem[]) => {
-  const docLabel = sale.doc_type === 'quotation' ? 'Quotation' : 'Invoice';
-  const docNo = `S-${sale.sale_id}`;
-  const date = new Date(sale.sale_date).toLocaleString();
-  const customer = sale.customer_name || 'Walking Customer';
+type PrintCompany = {
+  name: string;
+  phone?: string | null;
+  logoUrl?: string | null;
+};
+
+type PrintCustomer = {
+  name: string;
+  phone?: string | null;
+  address?: string | null;
+};
+
+export const buildPrintableDocument = (
+  sale: Sale,
+  items: SaleItem[],
+  company: PrintCompany,
+  customer: PrintCustomer
+) => {
+  const isQuote = sale.doc_type === 'quotation';
+  const docLabel = isQuote ? 'Quotation' : 'Invoice';
+  const docNo = isQuote ? `Q-${sale.sale_id}` : `S-${sale.sale_id}`;
+  const date = new Date(sale.sale_date).toLocaleDateString();
+  const quoteValidUntil = sale.quote_valid_until ? new Date(sale.quote_valid_until).toLocaleDateString() : '';
   const totalAmount = Number(sale.total || 0);
   const taxAmount = Number((sale as any).tax_amount || 0);
   // When status is paid, show full total as paid and 0 balance (fixes display inconsistency)
@@ -32,27 +52,7 @@ const buildPrintableInvoice = (sale: Sale, items: SaleItem[]) => {
       ? totalAmount
       : Math.min(Number(sale.paid_amount || 0), totalAmount);
   const balance = Math.max(totalAmount - paidAmount, 0);
-  const safeNote = escapeHtml(String(sale.note || ''));
-
-  const itemRows = items
-    .map((line, idx) => {
-      const qty = Number(line.quantity || 0);
-      const unitPrice = Number(line.unit_price || 0);
-      const lineTotal = Number(line.line_total || qty * unitPrice);
-      const itemId = Number(line.item_id || 0);
-      const itemName = line.item_name || '';
-      const itemLabel = itemName ? escapeHtml(itemName) : `Item ${itemId}`;
-      return `
-        <tr>
-          <td>${idx + 1}</td>
-          <td>${itemLabel}</td>
-          <td>${qty.toFixed(3)}</td>
-          <td>$${unitPrice.toFixed(2)}</td>
-          <td>$${lineTotal.toFixed(2)}</td>
-        </tr>
-      `;
-    })
-    .join('');
+  const themeClass = isQuote ? 'quote' : 'invoice';
 
   return `
     <!doctype html>
@@ -61,72 +61,148 @@ const buildPrintableInvoice = (sale: Sale, items: SaleItem[]) => {
         <meta charset="utf-8" />
         <title>${docLabel} ${docNo}</title>
         <style>
-          * { box-sizing: border-box; font-family: Arial, sans-serif; }
-          body { margin: 24px; color: #0f172a; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-          .header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 18px; }
-          .brand { font-size: 22px; font-weight: 700; }
-          .doc-type { font-size: 14px; color: #475569; margin-top: 6px; }
-          .meta { margin-bottom: 16px; font-size: 14px; display: grid; gap: 6px; }
-          .meta b { color: #0f172a; }
-          table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-          th, td { border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; font-size: 13px; }
-          th { background: #f8fafc; }
-          .totals { margin-top: 16px; margin-left: auto; width: 320px; }
-          .totals-row { display: flex; justify-content: space-between; border-bottom: 1px solid #e2e8f0; padding: 6px 0; font-size: 14px; }
-          .totals-row.total { font-weight: 700; font-size: 16px; }
-          .note { margin-top: 16px; font-size: 13px; color: #334155; white-space: pre-wrap; }
-          .footer { margin-top: 28px; font-size: 12px; color: #64748b; text-align: center; }
-          .void { color: #b91c1c; font-weight: 700; margin-top: 8px; }
-          @media print { body { margin: 16px; } }
+          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+          * { box-sizing: border-box; font-family: 'Inter', 'Manrope', 'Segoe UI', Arial, sans-serif; }
+          @page { margin: 12mm; }
+          body { margin: 0; color: #0f172a; -webkit-print-color-adjust: exact; print-color-adjust: exact; font-size: 11px; line-height: 1.55; }
+          body.invoice { --accent: #1e3a8a; --accent-soft: #e0e7ff; --accent-dark: #1e3a8a; --accent-ink:#111827; --header-bg:#1e3a8a; --border:#c7d2fe; }
+          body.quote { --accent: #7c3aed; --accent-soft: #ede9fe; --accent-dark: #6d28d9; --accent-ink:#6d28d9; --header-bg:#6d28d9; --border:#ddd6fe; }
+          .page { padding: 10px 16px 12px; }
+          .sheet { border:1px solid var(--border); border-radius:16px; padding:16px; }
+          .watermark { position:absolute; top:80px; right:24px; font-size:52px; font-weight:800; letter-spacing:0.18em; color:rgba(148,163,184,0.12); transform:rotate(-10deg); pointer-events:none; }
+          .hero { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; }
+          .brand { display:flex; align-items:center; gap:12px; }
+          .logo { width:42px; height:42px; object-fit:contain; border-radius:10px; }
+          .brand-name { font-size:15px; font-weight:700; color:#0f172a; }
+          .brand-sub { font-size:9px; color:#64748b; letter-spacing:0.2em; text-transform:uppercase; }
+          .doc-card { border:1px solid var(--border); border-radius:12px; padding:10px 12px; min-width:190px; background:var(--accent-soft); }
+          .doc-label { font-size:10px; letter-spacing:0.22em; text-transform:uppercase; color:#64748b; margin-bottom:6px; }
+          .doc-title { font-size:22px; font-weight:800; color:var(--accent-dark); }
+          .doc-meta { margin-top:8px; display:grid; grid-template-columns: 1fr 1fr; gap:6px; font-size:10px; color:#475569; }
+          .doc-meta b { color:#0f172a; }
+          .accent-line { height:4px; background:var(--accent); border-radius:999px; margin:12px 0 6px; }
+          .pill { display:inline-flex; background:var(--accent-soft); color:#0f172a; padding:4px 10px; border-radius:999px; font-size:9px; letter-spacing:0.16em; text-transform:uppercase; }
+          .info-grid { display:grid; grid-template-columns: 1.1fr 1fr; gap:12px; margin-top:10px; }
+          .box { border:1px solid var(--border); padding:10px 12px; border-radius:12px; background:#ffffff; }
+          .box h4 { margin:0 0 6px; font-size:9px; letter-spacing:0.2em; text-transform:uppercase; color:#64748b; }
+          .box p { margin:2px 0; font-size:10.5px; color:#475569; }
+          .box .name { font-weight:600; color:#0f172a; }
+          table { width:100%; border-collapse: collapse; margin-top:14px; border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+          thead th { background:var(--header-bg); color:#f8fafc; text-transform:uppercase; letter-spacing:0.16em; font-size:9px; padding:8px; text-align:left; }
+          thead th.num { text-align:right; }
+          tbody td { padding:8px; border-bottom:1px solid #e2e8f0; font-size:10.5px; }
+          tbody td.num { text-align:right; }
+          tbody tr:nth-child(even) { background:#f8fafc; }
+          .summary { display:flex; justify-content:flex-end; margin-top:12px; }
+          .totals { border:1px solid var(--border); padding:12px 14px; border-radius:12px; background:var(--accent-soft); min-width:210px; }
+          .totals-row { display:flex; justify-content:space-between; font-size:10.5px; padding:6px 0; color:#475569; }
+          .total-highlight { margin-top:10px; background:var(--accent); padding:10px 12px; font-weight:700; display:flex; justify-content:space-between; border-radius:10px; color:#ffffff; }
+          .signatures { margin-top:14px; display:flex; justify-content:space-between; font-size:9.5px; color:#64748b; }
+          .footer { margin-top:12px; border-top:1px solid var(--border); padding-top:6px; font-size:9px; color:#94a3b8; display:flex; justify-content:space-between; }
+          .void { color:#b91c1c; font-weight:700; margin-top:8px; font-size:11px; letter-spacing:0.08em; }
+          body.quote .doc-title { color:var(--accent-dark); }
+          body.quote .accent-line { background:linear-gradient(90deg, #6d28d9 0%, #a78bfa 100%); }
+          body.invoice .doc-title { color:var(--accent-dark); }
+          body.invoice .accent-line { background:linear-gradient(90deg, #1e3a8a 0%, #93c5fd 100%); }
         </style>
       </head>
-      <body>
-        <div class="header">
-          <div>
-            <div class="brand">KeydMaal MS</div>
-            <div class="doc-type">${docLabel}</div>
+      <body class="${themeClass}">
+        <div class="page">
+          <div class="sheet">
+            ${isQuote ? '<div class="watermark">QUOTATION</div>' : '<div class="watermark">INVOICE</div>'}
+            <div class="hero">
+              <div class="brand">
+                ${company.logoUrl ? `<img class="logo" src="${escapeHtml(company.logoUrl)}" alt="Logo" />` : ''}
+                <div>
+                  <div class="brand-name">${escapeHtml(company.name || 'My Inventory ERP')}</div>
+                  <div class="brand-sub">Business Document</div>
+                </div>
+              </div>
+              <div class="doc-card">
+                <div class="doc-label">${docLabel}</div>
+                <div class="doc-title">${docNo}</div>
+                <div class="doc-meta">
+                  <div>Date</div><div><b>${escapeHtml(date)}</b></div>
+                  ${!isQuote ? `<div>Status</div><div><b>${escapeHtml(String(sale.status))}</b></div>` : ''}
+                </div>
+              </div>
+            </div>
+
+            <div class="accent-line"></div>
+            ${
+              isQuote && quoteValidUntil
+                ? `<div class="pill">Valid until ${escapeHtml(quoteValidUntil)}</div>`
+                : ''
+            }
+
+            <div class="info-grid">
+              <div class="box">
+                <h4>${isQuote ? 'Quotation to' : 'Invoice to'}</h4>
+                <p class="name">${escapeHtml(customer.name || 'Walking Customer')}</p>
+                ${customer.address ? `<p>${escapeHtml(String(customer.address))}</p>` : ''}
+                ${customer.phone ? `<p>Phone: ${escapeHtml(String(customer.phone))}</p>` : ''}
+              </div>
+              <div class="box">
+                <h4>Company</h4>
+                <p class="name">${escapeHtml(company.name || 'My Inventory ERP')}</p>
+                ${company.phone ? `<p>Phone: ${escapeHtml(String(company.phone))}</p>` : ''}
+              </div>
+            </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th style="width:48px;">SL.</th>
+                <th>Item Description</th>
+                <th class="num" style="width:110px;">Price</th>
+                <th class="num" style="width:80px;">Qty.</th>
+                <th class="num" style="width:130px;">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${items.length ? items.map((line, idx) => {
+                const qty = Number(line.quantity || 0);
+                const unitPrice = Number(line.unit_price || 0);
+                const lineTotal = Number(line.line_total || qty * unitPrice);
+                const itemId = Number(line.item_id || 0);
+                const itemName = line.item_name || '';
+                const itemLabel = itemName ? escapeHtml(itemName) : `Item ${itemId}`;
+                return `
+                  <tr>
+                    <td>${idx + 1}</td>
+                    <td>${itemLabel}</td>
+                    <td class="num">$${unitPrice.toFixed(2)}</td>
+                    <td class="num">${qty.toFixed(0)}</td>
+                    <td class="num">$${lineTotal.toFixed(2)}</td>
+                  </tr>
+                `;
+              }).join('') : '<tr><td colspan="5" style="padding: 12px; color:#6b7280;">No items</td></tr>'}
+            </tbody>
+          </table>
+
+            <div class="summary">
+              <div class="totals">
+                <div class="totals-row"><span>Sub Total</span><span>${formatMoney(sale.subtotal)}</span></div>
+                <div class="totals-row"><span>Discount</span><span>${formatMoney(sale.discount)}</span></div>
+                <div class="totals-row"><span>Tax</span><span>${formatMoney(taxAmount)}</span></div>
+                ${isQuote ? '' : `<div class="totals-row"><span>Paid</span><span>${formatMoney(paidAmount)}</span></div>`}
+                ${isQuote ? '' : `<div class="totals-row"><span>Balance</span><span>${formatMoney(balance)}</span></div>`}
+                <div class="total-highlight"><span>Total</span><span>${formatMoney(sale.total)}</span></div>
+              </div>
+            </div>
+
+          ${sale.status === 'void' ? '<div class="void">VOIDED DOCUMENT</div>' : ''}
+
+            <div class="signatures">
+              <div>Authorized Sign: ____________________</div>
+              <div>Client Sign: ____________________</div>
+            </div>
+
+            <div class="footer">
+              <div>${escapeHtml(company.name || 'My Inventory ERP')}</div>
+              <div>${company.phone ? escapeHtml(String(company.phone)) : ''}</div>
+            </div>
           </div>
-          <div>
-            <div><b>No:</b> ${docNo}</div>
-            <div><b>Date:</b> ${escapeHtml(date)}</div>
-          </div>
-        </div>
-
-        <div class="meta">
-          <div><b>Customer:</b> ${escapeHtml(customer)}</div>
-          <div><b>Status:</b> ${escapeHtml(sale.status)}</div>
-          <div><b>Type:</b> ${escapeHtml(sale.sale_type)}</div>
-        </div>
-
-        <table>
-          <thead>
-            <tr>
-              <th style="width: 60px;">#</th>
-              <th>Item</th>
-              <th style="width: 120px;">Qty</th>
-              <th style="width: 140px;">Unit Price</th>
-              <th style="width: 160px;">Line Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${itemRows || '<tr><td colspan="5">No items</td></tr>'}
-          </tbody>
-        </table>
-
-        <div class="totals">
-          <div class="totals-row"><span>Subtotal</span><span>${formatMoney(sale.subtotal)}</span></div>
-          <div class="totals-row"><span>Discount</span><span>${formatMoney(sale.discount)}</span></div>
-          <div class="totals-row"><span>Tax</span><span>${formatMoney(taxAmount)}</span></div>
-          <div class="totals-row"><span>Paid</span><span>${formatMoney(paidAmount)}</span></div>
-          <div class="totals-row"><span>Balance</span><span>${formatMoney(balance)}</span></div>
-          <div class="totals-row total"><span>Total</span><span>${formatMoney(sale.total)}</span></div>
-        </div>
-
-        ${safeNote ? `<div class="note"><b>Note:</b> ${safeNote}</div>` : ''}
-        ${sale.status === 'void' ? '<div class="void">VOIDED DOCUMENT</div>' : ''}
-
-        <div class="footer">
-          Printed from KeydMaal ERP - ${new Date().toLocaleString()}
         </div>
       </body>
     </html>
@@ -168,8 +244,28 @@ const Sales = () => {
           return;
         }
 
+        const saleRow = res.data.sale;
+        const items = res.data.items || [];
+
+        const [companyRes, customerRes] = await Promise.all([
+          settingsService.getCompany(),
+          saleRow.customer_id ? customerService.get(Number(saleRow.customer_id)) : Promise.resolve(null as any),
+        ]);
+
+        const company = {
+          name: companyRes?.data?.company?.company_name || 'My Inventory ERP',
+          phone: companyRes?.data?.company?.phone || null,
+          logoUrl: companyRes?.data?.company?.logo_img || null,
+        };
+
+        const customer = {
+          name: saleRow.customer_name || 'Walking Customer',
+          phone: (customerRes && customerRes.success && customerRes.data?.customer?.phone) ? customerRes.data.customer.phone : null,
+          address: (customerRes && customerRes.success && customerRes.data?.customer?.address) ? customerRes.data.customer.address : null,
+        };
+
         // Build the HTML content
-        const html = buildPrintableInvoice(res.data.sale, res.data.items || []);
+        const html = buildPrintableDocument(saleRow, items, company, customer);
         
         // Print in a hidden iframe so no new tab/window appears.
         const printFrame = document.createElement('iframe');
@@ -330,7 +426,7 @@ const Sales = () => {
                 type="button"
                 onClick={() => void printSaleInvoice(sale)}
                 className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-300 dark:hover:bg-indigo-900/30"
-                title="Print invoice"
+                title={sale.doc_type === 'quotation' ? 'Print quotation' : 'Print invoice'}
               >
                 <Printer className="h-3.5 w-3.5" />
                 Print
@@ -406,6 +502,7 @@ const Sales = () => {
           title="Sales Documents"
           primaryAction={{ label: 'New Sale', onClick: () => navigate('/sales/new?docType=sale') }}
           onDisplay={() => void loadSales()}
+          displayLoading={loading}
         />
         <DataTable
           data={sales}
@@ -415,8 +512,11 @@ const Sales = () => {
         />
         {!loading && !hasLoaded && (
           <div className="text-sm text-slate-500 px-1">
-            No data loaded yet. Click Display to fetch sales documents.
+            Click Display to load data.
           </div>
+        )}
+        {!loading && hasLoaded && sales.length === 0 && (
+          <div className="text-sm text-slate-500 px-1">No data found for the selected filters.</div>
         )}
       </div>
 

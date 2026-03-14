@@ -105,6 +105,7 @@ export const API = {
   // Purchases endpoints
   PURCHASES: {
     LIST: '/api/purchases',
+    EXPORT: '/api/purchases/export',
     ITEM: (id: number) => `/api/purchases/${id}`,
   },
 

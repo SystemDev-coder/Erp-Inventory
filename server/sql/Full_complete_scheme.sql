@@ -258,12 +258,14 @@ branch_id     BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCA
 name          VARCHAR(140) NOT NULL,
 country       VARCHAR(80),
 phone         VARCHAR(30),
-open_balance  NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (open_balance >= 0),
-remaining_balance NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (remaining_balance >= 0),
+open_balance  NUMERIC(14,2) NOT NULL DEFAULT 0,
+remaining_balance NUMERIC(14,2) NOT NULL DEFAULT 0,
 is_active     BOOLEAN NOT NULL DEFAULT TRUE,
 created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 CONSTRAINT uq_supplier_branch_name UNIQUE (branch_id, name)
 );
+ALTER TABLE ims.suppliers DROP CONSTRAINT IF EXISTS suppliers_open_balance_check;
+ALTER TABLE ims.suppliers DROP CONSTRAINT IF EXISTS suppliers_remaining_balance_check;
 
 CREATE TABLE IF NOT EXISTS ims.customers (
 customer_id     BIGSERIAL PRIMARY KEY,
@@ -274,15 +276,17 @@ customer_type   VARCHAR(20) NOT NULL DEFAULT 'regular' CHECK (customer_type IN (
 sex             ims.sex_enum,
 gender          VARCHAR(20),
 address         TEXT,
-open_balance    NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (open_balance >= 0),
-registered_date DATE NOT NULL DEFAULT CURRENT_DATE,
-external_id     VARCHAR(120),
-source_system   VARCHAR(80),
-migrated_at     TIMESTAMPTZ,
+ open_balance    NUMERIC(14,2) NOT NULL DEFAULT 0,
+ remaining_balance NUMERIC(14,2) NOT NULL DEFAULT 0,
+ registered_date DATE NOT NULL DEFAULT CURRENT_DATE,
+ external_id     VARCHAR(120),
+ source_system   VARCHAR(80),
+ migrated_at     TIMESTAMPTZ,
 is_active       BOOLEAN NOT NULL DEFAULT TRUE,
 created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 CONSTRAINT uq_customer_branch_phone UNIQUE (branch_id, phone)
 );
+ALTER TABLE ims.customers DROP CONSTRAINT IF EXISTS customers_open_balance_check;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_external_per_branch
     ON ims.customers(branch_id, external_id, source_system)
@@ -380,9 +384,9 @@ branch_id       BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CAS
 store_id        BIGINT, -- FK added later after stores table is defined
 name            VARCHAR(160) NOT NULL,
 barcode         VARCHAR(80) NULL,
-stock_alert NUMERIC(14,3) NOT NULL DEFAULT 5 CHECK (stock_alert >= 0),
-quantity        NUMERIC(14,3) NOT NULL DEFAULT 0,
-opening_balance NUMERIC(14,3) NOT NULL DEFAULT 0 CHECK (opening_balance >= 0),
+stock_alert INTEGER NOT NULL DEFAULT 5 CHECK (stock_alert >= 0),
+quantity        INTEGER NOT NULL DEFAULT 0,
+opening_balance INTEGER NOT NULL DEFAULT 0 CHECK (opening_balance >= 0),
 cost_price      NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (cost_price >= 0),
 sell_price      NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (sell_price >= 0),
 is_active       BOOLEAN NOT NULL DEFAULT TRUE,
@@ -399,8 +403,8 @@ BEGIN
        AND table_name = 'items'
   ) THEN
     ALTER TABLE ims.items
-      ADD COLUMN IF NOT EXISTS quantity NUMERIC(14,3) NOT NULL DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS stock_alert NUMERIC(14,3) NOT NULL DEFAULT 5;
+      ADD COLUMN IF NOT EXISTS quantity INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS stock_alert INTEGER NOT NULL DEFAULT 5;
     IF NOT EXISTS (
       SELECT 1 FROM pg_constraint c
       JOIN pg_class t ON t.oid = c.conrelid
@@ -484,7 +488,7 @@ CREATE TABLE IF NOT EXISTS ims.store_items (
     store_item_id BIGSERIAL PRIMARY KEY,
     store_id      BIGINT NOT NULL REFERENCES ims.stores(store_id) ON UPDATE CASCADE ON DELETE CASCADE,
     product_id    BIGINT NOT NULL REFERENCES ims.items(item_id) ON UPDATE CASCADE ON DELETE CASCADE,
-    quantity      NUMERIC(14,3) NOT NULL DEFAULT 0 CHECK (quantity >= 0),
+    quantity      INTEGER NOT NULL DEFAULT 0 CHECK (quantity >= 0),
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at    TIMESTAMPTZ DEFAULT NOW(),
     CONSTRAINT uq_store_items_store_product UNIQUE (store_id, product_id)
@@ -497,7 +501,7 @@ CREATE TABLE IF NOT EXISTS ims.warehouse_stock (
 branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 wh_id     BIGINT NOT NULL REFERENCES ims.warehouses(wh_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 item_id   BIGINT NOT NULL REFERENCES ims.items(item_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-quantity  NUMERIC(14,3) NOT NULL DEFAULT 0 CHECK (quantity >= 0),
+quantity  INTEGER NOT NULL DEFAULT 0 CHECK (quantity >= 0),
 PRIMARY KEY (wh_id, item_id)
 );
 
@@ -510,7 +514,7 @@ CREATE TABLE IF NOT EXISTS ims.inventory_transaction (
     item_id BIGINT REFERENCES ims.items(item_id) ON UPDATE CASCADE ON DELETE SET NULL,
     transaction_type VARCHAR(20) NOT NULL,
     direction VARCHAR(3),
-    quantity NUMERIC(10,2) NOT NULL CHECK (quantity > 0),
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
     unit_cost NUMERIC(12,2),
     total_cost NUMERIC(14,2) GENERATED ALWAYS AS (quantity * COALESCE(unit_cost, 0)) STORED,
     reference_no VARCHAR(50),
@@ -538,8 +542,8 @@ item_id   BIGINT NOT NULL REFERENCES ims.items(item_id) ON UPDATE CASCADE ON DEL
 move_type ims.movement_type_enum NOT NULL,
 ref_table VARCHAR(40),
 ref_id    BIGINT,
-qty_in    NUMERIC(14,3) NOT NULL DEFAULT 0 CHECK (qty_in >= 0),
-qty_out   NUMERIC(14,3) NOT NULL DEFAULT 0 CHECK (qty_out >= 0),
+qty_in    INTEGER NOT NULL DEFAULT 0 CHECK (qty_in >= 0),
+qty_out   INTEGER NOT NULL DEFAULT 0 CHECK (qty_out >= 0),
 unit_cost NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (unit_cost >= 0),
 move_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 note      TEXT,
@@ -567,7 +571,7 @@ CREATE TABLE IF NOT EXISTS ims.stock_adjustment (
     adjustment_id BIGSERIAL PRIMARY KEY,
     item_id BIGINT NOT NULL REFERENCES ims.items(item_id) ON UPDATE CASCADE ON DELETE RESTRICT,
     adjustment_type VARCHAR(20) NOT NULL,
-    quantity NUMERIC(10,2) NOT NULL CHECK (quantity > 0),
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
     reason VARCHAR(255) NOT NULL,
     adjustment_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_by BIGINT NOT NULL REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE RESTRICT,
@@ -584,7 +588,7 @@ BEGIN
   ALTER TABLE ims.stock_adjustment
     ADD COLUMN IF NOT EXISTS item_id BIGINT,
     ADD COLUMN IF NOT EXISTS adjustment_type VARCHAR(20),
-    ADD COLUMN IF NOT EXISTS quantity NUMERIC(10,2),
+    ADD COLUMN IF NOT EXISTS quantity INTEGER,
     ADD COLUMN IF NOT EXISTS reason VARCHAR(255),
     ADD COLUMN IF NOT EXISTS adjustment_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     ADD COLUMN IF NOT EXISTS created_by BIGINT,
@@ -637,27 +641,25 @@ BEGIN
   END IF;
 END $$;
 
-CREATE OR REPLACE FUNCTION ims.fn_stock_adjustment_touch_updated_at()
-RETURNS trigger
+DROP TRIGGER IF EXISTS trg_stock_adjustment_touch_updated_at ON ims.stock_adjustment;
+DROP FUNCTION IF EXISTS ims.fn_stock_adjustment_touch_updated_at();
+
+CREATE OR REPLACE FUNCTION ims.sp_stock_adjustment_touch(p_adjustment_id BIGINT)
+RETURNS VOID
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  NEW.updated_at = NOW();
-  RETURN NEW;
+  UPDATE ims.stock_adjustment
+     SET updated_at = NOW()
+   WHERE adjustment_id = p_adjustment_id;
 END;
 $$;
-
-DROP TRIGGER IF EXISTS trg_stock_adjustment_touch_updated_at ON ims.stock_adjustment;
-CREATE TRIGGER trg_stock_adjustment_touch_updated_at
-BEFORE UPDATE ON ims.stock_adjustment
-FOR EACH ROW
-EXECUTE FUNCTION ims.fn_stock_adjustment_touch_updated_at();
 CREATE TABLE IF NOT EXISTS ims.sale_items (
 sale_item_id BIGSERIAL PRIMARY KEY,
 branch_id    BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 sale_id      BIGINT NOT NULL REFERENCES ims.sales(sale_id) ON UPDATE CASCADE ON DELETE CASCADE,
 item_id      BIGINT NOT NULL REFERENCES ims.items(item_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-quantity     NUMERIC(14,3) NOT NULL CHECK (quantity > 0),
+quantity     INTEGER NOT NULL CHECK (quantity > 0),
 unit_price   NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (unit_price >= 0),
 line_total   NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (line_total >= 0)
 );
@@ -729,7 +731,7 @@ purchase_item_id BIGSERIAL PRIMARY KEY,
 branch_id        BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 purchase_id      BIGINT NOT NULL REFERENCES ims.purchases(purchase_id) ON UPDATE CASCADE ON DELETE CASCADE,
 item_id          BIGINT NOT NULL REFERENCES ims.items(item_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-quantity         NUMERIC(14,3) NOT NULL CHECK (quantity > 0),
+quantity         INTEGER NOT NULL CHECK (quantity > 0),
 unit_cost        NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (unit_cost >= 0),
 sale_price       NUMERIC(14,2),
 discount         NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (discount >= 0),
@@ -1122,6 +1124,7 @@ CREATE TABLE IF NOT EXISTS ims.expense_charges (
     ref_table   VARCHAR(40),
     ref_id      BIGINT,
     exp_budget  SMALLINT NOT NULL DEFAULT 0, -- 1 if created from budget, else 0
+    is_opening_paid BOOLEAN NOT NULL DEFAULT FALSE,
     budget_month SMALLINT,
     budget_year  SMALLINT,
     user_id     BIGINT NOT NULL REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE RESTRICT
@@ -1143,6 +1146,13 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='ims' AND table_name='expense_charges' AND column_name='acc_id') THEN
     ALTER TABLE ims.expense_charges ADD COLUMN acc_id BIGINT REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE SET NULL;
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='ims' AND table_name='expense_charges' AND column_name='is_opening_paid') THEN
+    ALTER TABLE ims.expense_charges ADD COLUMN is_opening_paid BOOLEAN NOT NULL DEFAULT FALSE;
+  END IF;
+  UPDATE ims.expense_charges
+     SET is_opening_paid = TRUE
+   WHERE COALESCE(is_opening_paid, FALSE) = FALSE
+     AND COALESCE(note, '') ILIKE '[OPENING BALANCE]%';
   -- Realign FK to ims.expenses (plural) in case legacy constraint points to ims.expense
   IF EXISTS (
       SELECT 1 FROM information_schema.table_constraints tc
@@ -1398,15 +1408,18 @@ customer_id BIGINT REFERENCES ims.customers(customer_id) ON UPDATE CASCADE ON DE
 return_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 subtotal NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (subtotal >= 0),
 total NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (total >= 0),
+balance_adjustment NUMERIC(14,2) NOT NULL DEFAULT 0,
 note TEXT
 );
+ALTER TABLE ims.sales_returns
+  ADD COLUMN IF NOT EXISTS balance_adjustment NUMERIC(14,2) NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS ims.sales_return_items (
 sr_item_id BIGSERIAL PRIMARY KEY,
 branch_id  BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 sr_id      BIGINT NOT NULL REFERENCES ims.sales_returns(sr_id) ON UPDATE CASCADE ON DELETE CASCADE,
 item_id    BIGINT NOT NULL REFERENCES ims.items(item_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-quantity   NUMERIC(14,3) NOT NULL CHECK (quantity > 0),
+quantity   INTEGER NOT NULL CHECK (quantity > 0),
 unit_price NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (unit_price >= 0),
 line_total NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (line_total >= 0)
 );
@@ -1420,15 +1433,18 @@ supplier_id BIGINT NOT NULL REFERENCES ims.suppliers(supplier_id) ON UPDATE CASC
 return_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 subtotal    NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (subtotal >= 0),
 total       NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (total >= 0),
+balance_adjustment NUMERIC(14,2) NOT NULL DEFAULT 0,
 note        TEXT
 );
+ALTER TABLE ims.purchase_returns
+  ADD COLUMN IF NOT EXISTS balance_adjustment NUMERIC(14,2) NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS ims.purchase_return_items (
 pr_item_id BIGSERIAL PRIMARY KEY,
 branch_id  BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 pr_id      BIGINT NOT NULL REFERENCES ims.purchase_returns(pr_id) ON UPDATE CASCADE ON DELETE CASCADE,
 item_id    BIGINT NOT NULL REFERENCES ims.items(item_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-quantity   NUMERIC(14,3) NOT NULL CHECK (quantity > 0),
+quantity   INTEGER NOT NULL CHECK (quantity > 0),
 unit_cost  NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (unit_cost >= 0),
 line_total NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (line_total >= 0)
 );
@@ -1449,7 +1465,7 @@ CREATE TABLE IF NOT EXISTS ims.transfer_items (
 transfer_item_id BIGSERIAL PRIMARY KEY,
 transfer_id      BIGINT NOT NULL REFERENCES ims.transfers(transfer_id) ON UPDATE CASCADE ON DELETE CASCADE,
 item_id          BIGINT NOT NULL REFERENCES ims.items(item_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-quantity         NUMERIC(14,3) NOT NULL CHECK (quantity > 0),
+quantity         INTEGER NOT NULL CHECK (quantity > 0),
 unit_cost        NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (unit_cost >= 0)
 );
 
@@ -1471,9 +1487,134 @@ wh_transfer_item_id BIGSERIAL PRIMARY KEY,
 branch_id           BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
 wh_transfer_id      BIGINT NOT NULL REFERENCES ims.warehouse_transfers(wh_transfer_id) ON UPDATE CASCADE ON DELETE CASCADE,
 item_id             BIGINT NOT NULL REFERENCES ims.items(item_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-quantity            NUMERIC(14,3) NOT NULL CHECK (quantity > 0),
+quantity            INTEGER NOT NULL CHECK (quantity > 0),
 unit_cost           NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (unit_cost >= 0)
 );
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'ims' AND table_name = 'items' AND column_name = 'quantity' AND data_type <> 'integer'
+  ) THEN
+    ALTER TABLE ims.items
+      ALTER COLUMN quantity TYPE INTEGER USING ROUND(quantity);
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'ims' AND table_name = 'items' AND column_name = 'opening_balance' AND data_type <> 'integer'
+  ) THEN
+    ALTER TABLE ims.items
+      ALTER COLUMN opening_balance TYPE INTEGER USING ROUND(opening_balance);
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'ims' AND table_name = 'items' AND column_name = 'stock_alert' AND data_type <> 'integer'
+  ) THEN
+    ALTER TABLE ims.items
+      ALTER COLUMN stock_alert TYPE INTEGER USING ROUND(stock_alert);
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'ims' AND table_name = 'store_items' AND column_name = 'quantity' AND data_type <> 'integer'
+  ) THEN
+    ALTER TABLE ims.store_items
+      ALTER COLUMN quantity TYPE INTEGER USING ROUND(quantity);
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'ims' AND table_name = 'warehouse_stock' AND column_name = 'quantity' AND data_type <> 'integer'
+  ) THEN
+    ALTER TABLE ims.warehouse_stock
+      ALTER COLUMN quantity TYPE INTEGER USING ROUND(quantity);
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'ims' AND table_name = 'inventory_transaction' AND column_name = 'quantity' AND data_type <> 'integer'
+  ) THEN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'ims'
+        AND table_name = 'inventory_transaction'
+        AND column_name = 'total_cost'
+        AND is_generated = 'ALWAYS'
+    ) THEN
+      ALTER TABLE ims.inventory_transaction
+        DROP COLUMN total_cost;
+      ALTER TABLE ims.inventory_transaction
+        ALTER COLUMN quantity TYPE INTEGER USING ROUND(quantity);
+      ALTER TABLE ims.inventory_transaction
+        ADD COLUMN total_cost NUMERIC(14,2)
+          GENERATED ALWAYS AS (quantity * COALESCE(unit_cost, 0)) STORED;
+    ELSE
+      ALTER TABLE ims.inventory_transaction
+        ALTER COLUMN quantity TYPE INTEGER USING ROUND(quantity);
+    END IF;
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'ims' AND table_name = 'inventory_movements' AND column_name = 'qty_in' AND data_type <> 'integer'
+  ) THEN
+    ALTER TABLE ims.inventory_movements
+      ALTER COLUMN qty_in TYPE INTEGER USING ROUND(qty_in);
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'ims' AND table_name = 'inventory_movements' AND column_name = 'qty_out' AND data_type <> 'integer'
+  ) THEN
+    ALTER TABLE ims.inventory_movements
+      ALTER COLUMN qty_out TYPE INTEGER USING ROUND(qty_out);
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'ims' AND table_name = 'sale_items' AND column_name = 'quantity' AND data_type <> 'integer'
+  ) THEN
+    ALTER TABLE ims.sale_items
+      ALTER COLUMN quantity TYPE INTEGER USING ROUND(quantity);
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'ims' AND table_name = 'purchase_items' AND column_name = 'quantity' AND data_type <> 'integer'
+  ) THEN
+    ALTER TABLE ims.purchase_items
+      ALTER COLUMN quantity TYPE INTEGER USING ROUND(quantity);
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'ims' AND table_name = 'sales_return_items' AND column_name = 'quantity' AND data_type <> 'integer'
+  ) THEN
+    ALTER TABLE ims.sales_return_items
+      ALTER COLUMN quantity TYPE INTEGER USING ROUND(quantity);
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'ims' AND table_name = 'purchase_return_items' AND column_name = 'quantity' AND data_type <> 'integer'
+  ) THEN
+    ALTER TABLE ims.purchase_return_items
+      ALTER COLUMN quantity TYPE INTEGER USING ROUND(quantity);
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'ims' AND table_name = 'transfer_items' AND column_name = 'quantity' AND data_type <> 'integer'
+  ) THEN
+    ALTER TABLE ims.transfer_items
+      ALTER COLUMN quantity TYPE INTEGER USING ROUND(quantity);
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'ims' AND table_name = 'warehouse_transfer_items' AND column_name = 'quantity' AND data_type <> 'integer'
+  ) THEN
+    ALTER TABLE ims.warehouse_transfer_items
+      ALTER COLUMN quantity TYPE INTEGER USING ROUND(quantity);
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'ims' AND table_name = 'stock_adjustment' AND column_name = 'quantity' AND data_type <> 'integer'
+  ) THEN
+    ALTER TABLE ims.stock_adjustment
+      ALTER COLUMN quantity TYPE INTEGER USING ROUND(quantity);
+  END IF;
+END $$;
 
 -- HR
 CREATE TABLE IF NOT EXISTS ims.employees (
@@ -3338,8 +3479,11 @@ AND pay_date::date BETWEEN p_date_from AND p_date_to
 ORDER BY pay_date;
 $$;
 
+-- Drop first to allow changing OUT columns safely
+DROP FUNCTION IF EXISTS ims.rpt_inventory_qty(BIGINT, BIGINT);
+
 CREATE OR REPLACE FUNCTION ims.rpt_inventory_qty(p_branch_id BIGINT, p_wh_id BIGINT)
-RETURNS TABLE(item_id BIGINT, item_name VARCHAR, quantity NUMERIC)
+RETURNS TABLE(item_id BIGINT, item_name VARCHAR, quantity INTEGER)
 LANGUAGE sql
 AS $$
 SELECT s.item_id, i.name, s.quantity
@@ -3357,8 +3501,8 @@ CREATE OR REPLACE FUNCTION ims.rpt_low_stock(p_branch_id BIGINT, p_store_id BIGI
 RETURNS TABLE(
     item_id BIGINT,
     item_name VARCHAR,
-    quantity NUMERIC,
-    stock_alert NUMERIC
+    quantity INTEGER,
+    stock_alert INTEGER
 )
 LANGUAGE sql
 AS $$

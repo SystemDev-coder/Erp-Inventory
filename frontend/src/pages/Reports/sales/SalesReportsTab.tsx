@@ -23,7 +23,7 @@ const salesCards: Array<{ id: SalesCardId; title: string; hint: string }> = [
 ];
 
 const dailySalesColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'sale_id', header: 'Sale #' },
+  { key: 'sale_id', header: 'Sale #', getHref: (row) => (row.sale_id ? `/sales/${row.sale_id}/edit` : null) },
   { key: 'sale_date', header: 'Sale Date', render: (row) => formatDateTime(row.sale_date) },
   { key: 'customer_name', header: 'Customer' },
   { key: 'cashier_name', header: 'Cashier' },
@@ -32,7 +32,7 @@ const dailySalesColumns: ReportColumn<Record<string, unknown>>[] = [
 ];
 
 const salesByCustomerColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'sale_id', header: 'Sale #' },
+  { key: 'sale_id', header: 'Sale #', getHref: (row) => (row.sale_id ? `/sales/${row.sale_id}/edit` : null) },
   { key: 'sale_date', header: 'Sale Date', render: (row) => formatDateTime(row.sale_date) },
   { key: 'customer_name', header: 'Customer' },
   { key: 'cashier_name', header: 'Cashier' },
@@ -41,7 +41,7 @@ const salesByCustomerColumns: ReportColumn<Record<string, unknown>>[] = [
 ];
 
 const salesByProductColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'sale_id', header: 'Sale #' },
+  { key: 'sale_id', header: 'Sale #', getHref: (row) => (row.sale_id ? `/sales/${row.sale_id}/edit` : null) },
   { key: 'sale_date', header: 'Sale Date', render: (row) => formatDateTime(row.sale_date) },
   { key: 'product_name', header: 'Product' },
   { key: 'quantity', header: 'Qty', align: 'right', render: (row) => formatQuantity(row.quantity) },
@@ -59,9 +59,9 @@ const topSellingColumns: ReportColumn<Record<string, unknown>>[] = [
 ];
 
 const salesReturnsColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'return_id', header: 'Return #' },
+  { key: 'return_id', header: 'Return #', getHref: (row) => (row.return_id ? `/returns/sales/${row.return_id}/edit` : null) },
   { key: 'return_date', header: 'Return Date', render: (row) => formatDateTime(row.return_date) },
-  { key: 'sale_id', header: 'Sale #' },
+  { key: 'sale_id', header: 'Sale #', getHref: (row) => (row.sale_id ? `/sales/${row.sale_id}/edit` : null) },
   { key: 'customer_name', header: 'Customer' },
   { key: 'cashier_name', header: 'Cashier' },
   { key: 'subtotal', header: 'Subtotal', align: 'right', render: (row) => formatCurrency(row.subtotal) },

@@ -17,6 +17,26 @@ const optionalPositiveInt = z.preprocess(
   z.number().int().positive().optional()
 );
 
+const roundToInt = (value: unknown) => {
+  if (
+    value === undefined ||
+    value === null ||
+    value === '' ||
+    value === 'undefined' ||
+    value === 'null'
+  ) {
+    return value;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.round(parsed) : value;
+};
+
+const optionalNonnegativeRoundedInt = z.preprocess(
+  roundToInt,
+  z.number().int().nonnegative().optional()
+);
+const nonnegativeRoundedInt = z.preprocess(roundToInt, z.number().int().nonnegative());
+
 const nullablePositiveInt = z.preprocess(
   (value) => {
     if (
@@ -91,9 +111,9 @@ export const productCreateSchema = z.object({
     .nullable()
     .optional(),
   storeId: nullablePositiveInt.optional(),
-  quantity: z.coerce.number().nonnegative().optional(),
-  stockAlert: z.coerce.number().nonnegative().default(5),
-  openingBalance: z.coerce.number().nonnegative().optional(),
+  quantity: optionalNonnegativeRoundedInt,
+  stockAlert: nonnegativeRoundedInt.default(5),
+  openingBalance: optionalNonnegativeRoundedInt,
   costPrice: z.coerce.number().nonnegative().default(0),
   sellPrice: z.coerce.number().nonnegative().default(0),
   isActive: z.boolean().optional(),

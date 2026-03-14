@@ -7,6 +7,15 @@ import { purchaseSchema } from './purchases.schemas';
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { assertBranchAccess, pickBranchForWrite, resolveBranchScope } from '../../utils/branchScope';
 
+const loadSheetJs = () => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return require('xlsx') as any;
+  } catch (_error) {
+    throw ApiError.internal('Excel export dependency is missing. Install xlsx, then restart server.');
+  }
+};
+
 export const listPurchaseItems = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const search = (req.query.search as string) || undefined;
@@ -70,4 +79,40 @@ export const deletePurchase = asyncHandler(async (req: AuthRequest, res: Respons
   const id = Number(req.params.id);
   await purchasesService.deletePurchase(id, scope);
   return ApiResponse.success(res, null, 'Purchase deleted');
+});
+
+export const exportPurchasesXlsx = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const search = (req.query.search as string) || undefined;
+  const status = (req.query.status as string) || undefined;
+  const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
+  if (branchId) {
+    assertBranchAccess(scope, branchId);
+  }
+
+  const purchases = await purchasesService.listPurchases(scope, search, status, branchId);
+  const XLSX = loadSheetJs();
+
+  const rows = purchases.map((p: any) => ({
+    purchase_id: p.purchase_id,
+    purchase_date: p.purchase_date,
+    supplier_name: p.supplier_name ?? '',
+    purchase_type: p.purchase_type,
+    subtotal: p.subtotal,
+    discount: p.discount,
+    total: p.total,
+    status: p.status,
+    note: p.note ?? '',
+  }));
+
+  const sheet = XLSX.utils.json_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Purchases');
+
+  const buffer: Buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+  const today = new Date().toISOString().slice(0, 10);
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="purchases_${today}.xlsx"`);
+  return res.status(200).send(buffer);
 });

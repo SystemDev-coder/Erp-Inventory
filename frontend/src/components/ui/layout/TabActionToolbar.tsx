@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, ChevronDown, Download, Printer, Search } from 'lucide-react';
+import { Plus, ChevronDown, Download, Printer, Search, RefreshCw } from 'lucide-react';
 import { ActionDropdown } from '../dropdown/ActionDropdown';
 
 interface QuickAddItem {
@@ -27,6 +27,7 @@ interface TabActionToolbarProps {
      */
     onDisplay?: () => void;
     displayLabel?: string;
+    displayLoading?: boolean;
     sticky?: boolean;
 }
 
@@ -40,6 +41,7 @@ export const TabActionToolbar: React.FC<TabActionToolbarProps> = ({
     onSearch,
     onDisplay,
     displayLabel,
+    displayLoading = false,
     sticky = false,
 }) => {
     return (
@@ -73,10 +75,15 @@ export const TabActionToolbar: React.FC<TabActionToolbarProps> = ({
                 )}
                 {onDisplay && (
                     <button
-                        onClick={onDisplay}
-                        className="px-3 py-2 text-sm font-medium rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all"
+                        onClick={() => {
+                            if (displayLoading) return;
+                            onDisplay();
+                        }}
+                        disabled={displayLoading}
+                        className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                        {displayLabel || 'Display'}
+                        <RefreshCw className={`w-4 h-4 ${displayLoading ? 'animate-spin' : ''}`} />
+                        {displayLoading ? 'Loading...' : (displayLabel || 'Display')}
                     </button>
                 )}
                 {/* Export & Print */}

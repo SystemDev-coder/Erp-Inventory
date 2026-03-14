@@ -108,8 +108,8 @@ const Transfers = () => {
       { accessorKey: 'product_name', header: 'Item' },
       { accessorKey: 'branch_name', header: 'Branch' },
       { accessorKey: 'wh_name', header: 'Warehouse', cell: ({ row }) => row.original.wh_name || '-' },
-      { accessorKey: 'qty_in', header: 'In', cell: ({ row }) => Number(row.original.qty_in || 0).toFixed(3) },
-      { accessorKey: 'qty_out', header: 'Out', cell: ({ row }) => Number(row.original.qty_out || 0).toFixed(3) },
+      { accessorKey: 'qty_in', header: 'In', cell: ({ row }) => Number(row.original.qty_in || 0).toFixed(0) },
+      { accessorKey: 'qty_out', header: 'Out', cell: ({ row }) => Number(row.original.qty_out || 0).toFixed(0) },
       { accessorKey: 'note', header: 'Note', cell: ({ row }) => row.original.note || '-' },
     ],
     []
@@ -411,6 +411,8 @@ const Transfers = () => {
               type="number"
               className={inputClass}
               value={form.qty}
+              min={1}
+              step={1}
               onChange={(e) => setForm((prev) => ({ ...prev, qty: Number(e.target.value) }))}
             />
           </div>

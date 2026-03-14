@@ -1,19 +1,15 @@
-import { useEffect, useState } from 'react';
-import { RotateCcw, ShoppingBag, Plus, RefreshCw } from 'lucide-react';
+import { useState } from 'react';
+import { Plus, RefreshCw, RotateCcw, ShoppingBag } from 'lucide-react';
+import { useNavigate } from 'react-router';
 import { PageHeader } from '../../components/ui/layout';
 import { Tabs } from '../../components/ui/tabs';
 import { useToast } from '../../components/ui/toast/Toast';
-import { returnsService, SalesReturn, PurchaseReturn, ReturnItemOption } from '../../services/returns.service';
-import { customerService, Customer } from '../../services/customer.service';
-import { supplierService, Supplier } from '../../services/supplier.service';
-import { Modal } from '../../components/ui/modal/Modal';
+import { returnsService, PurchaseReturn, SalesReturn } from '../../services/returns.service';
 import DeleteConfirmModal from '../../components/ui/modal/DeleteConfirmModal';
 
-const inputClass =
-  'h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
-const labelClass = 'mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400';
 const tableHeadCls = 'px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400';
 const tableCellCls = 'px-3 py-2 text-sm text-slate-800 dark:text-slate-200';
+const tableMutedCell = 'px-3 py-2 text-sm text-slate-500 dark:text-slate-400';
 
 const fmtDate = (d: string) => {
   try { return new Date(d).toLocaleDateString(); } catch { return d; }
@@ -27,91 +23,14 @@ type DeleteReturnTarget =
 
 const Returns = () => {
   const { showToast } = useToast();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
-
-  // --- Sales Returns state ---
   const [salesRows, setSalesRows] = useState<SalesReturn[]>([]);
-  const [salesModalOpen, setSalesModalOpen] = useState(false);
-  const [editingSalesId, setEditingSalesId] = useState<number | null>(null);
-  const [salesForm, setSalesForm] = useState({ referenceNo: '', note: '', customerId: '', itemId: '', qty: 1, unitPrice: 0 });
-
-  // --- Purchase Returns state ---
   const [purchaseRows, setPurchaseRows] = useState<PurchaseReturn[]>([]);
-  const [purchaseModalOpen, setPurchaseModalOpen] = useState(false);
-  const [editingPurchaseId, setEditingPurchaseId] = useState<number | null>(null);
-  const [purchaseForm, setPurchaseForm] = useState({ referenceNo: '', note: '', supplierId: '', itemId: '', qty: 1, unitCost: 0 });
-
-  // --- Modal item options ---
-  const [salesItems, setSalesItems] = useState<ReturnItemOption[]>([]);
-  const [purchaseItems, setPurchaseItems] = useState<ReturnItemOption[]>([]);
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [salesDisplayed, setSalesDisplayed] = useState(false);
+  const [purchaseDisplayed, setPurchaseDisplayed] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DeleteReturnTarget | null>(null);
   const [deletingReturn, setDeletingReturn] = useState(false);
-  const salesReturnAmount = Number(salesForm.qty || 0) * Number(salesForm.unitPrice || 0);
-  const purchaseReturnAmount = Number(purchaseForm.qty || 0) * Number(purchaseForm.unitCost || 0);
-
-  useEffect(() => {
-    if (!salesForm.itemId) return;
-    const selected = salesItems.find((item) => Number(item.item_id) === Number(salesForm.itemId));
-    if (!selected) return;
-    const price = Number(selected.sell_price || selected.cost_price || 0);
-    if (Number(salesForm.unitPrice || 0) !== price) {
-      setSalesForm((prev) => ({ ...prev, unitPrice: price }));
-    }
-  }, [salesItems, salesForm.itemId, salesForm.unitPrice]);
-
-  useEffect(() => {
-    if (!purchaseForm.itemId) return;
-    const selected = purchaseItems.find((item) => Number(item.item_id) === Number(purchaseForm.itemId));
-    if (!selected) return;
-    const cost = Number(selected.cost_price || 0);
-    if (Number(purchaseForm.unitCost || 0) !== cost) {
-      setPurchaseForm((prev) => ({ ...prev, unitCost: cost }));
-    }
-  }, [purchaseItems, purchaseForm.itemId, purchaseForm.unitCost]);
-
-  const loadSalesItemsForCustomer = async (customerId?: number) => {
-    if (!customerId) {
-      setSalesItems([]);
-      return;
-    }
-    const res = await returnsService.listSalesItemsByCustomer(customerId);
-    if (res.success && res.data?.items) {
-      setSalesItems(
-        res.data.items.map((item) => ({
-          ...item,
-          item_id: Number(item.item_id),
-          cost_price: Number(item.cost_price || 0),
-          sell_price: Number(item.sell_price || 0),
-        }))
-      );
-      return;
-    }
-    setSalesItems([]);
-    showToast('error', 'Sales Return', res.error || 'Failed to load customer items');
-  };
-
-  const loadPurchaseItemsForSupplier = async (supplierId?: number) => {
-    if (!supplierId) {
-      setPurchaseItems([]);
-      return;
-    }
-    const res = await returnsService.listPurchaseItemsBySupplier(supplierId);
-    if (res.success && res.data?.items) {
-      setPurchaseItems(
-        res.data.items.map((item) => ({
-          ...item,
-          item_id: Number(item.item_id),
-          cost_price: Number(item.cost_price || 0),
-          sell_price: Number(item.sell_price || 0),
-        }))
-      );
-      return;
-    }
-    setPurchaseItems([]);
-    showToast('error', 'Purchase Return', res.error || 'Failed to load supplier items');
-  };
 
   const loadSalesReturns = async () => {
     setLoading(true);
@@ -135,133 +54,13 @@ const Returns = () => {
     }
   };
 
-  const openSalesModal = async () => {
-    await loadCustomers();
-    setEditingSalesId(null);
-    setSalesForm({ referenceNo: '', note: '', customerId: '', itemId: '', qty: 1, unitPrice: 0 });
-    setSalesItems([]);
-    setSalesModalOpen(true);
-  };
-
-  const openPurchaseModal = async () => {
-    await loadSuppliers();
-    setEditingPurchaseId(null);
-    setPurchaseForm({ referenceNo: '', note: '', supplierId: '', itemId: '', qty: 1, unitCost: 0 });
-    setPurchaseItems([]);
-    setPurchaseModalOpen(true);
-  };
-
-  const openEditSalesModal = async (row: SalesReturn) => {
-    await loadCustomers();
-    await loadSalesItemsForCustomer(row.customer_id ? Number(row.customer_id) : undefined);
-    setEditingSalesId(row.sr_id);
-    setSalesForm({
-      referenceNo: row.reference_no || '',
-      note: row.note || '',
-      customerId: row.customer_id ? String(row.customer_id) : '',
-      itemId: '',
-      qty: 1,
-      unitPrice: 0,
-    });
-    setSalesModalOpen(true);
-  };
-
-  const openEditPurchaseModal = async (row: PurchaseReturn) => {
-    await loadSuppliers();
-    await loadPurchaseItemsForSupplier(row.supplier_id ? Number(row.supplier_id) : undefined);
-    setEditingPurchaseId(row.pr_id);
-    setPurchaseForm({
-      referenceNo: row.reference_no || '',
-      note: row.note || '',
-      supplierId: row.supplier_id ? String(row.supplier_id) : '',
-      itemId: '',
-      qty: 1,
-      unitCost: 0,
-    });
-    setPurchaseModalOpen(true);
-  };
-
-  const loadCustomers = async () => {
-    const res = await customerService.list();
-    if (res.success && res.data?.customers) setCustomers(res.data.customers);
-  };
-
-  const loadSuppliers = async () => {
-    const res = await supplierService.list();
-    if (res.success && res.data?.suppliers) setSuppliers(res.data.suppliers);
-  };
-
-  const submitSalesReturn = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!salesForm.customerId || !salesForm.itemId || salesForm.qty <= 0) {
-      showToast('error', 'Sales Return', 'Customer, item and quantity are required');
-      return;
-    }
-    const selectedItem = salesItems.find((item) => Number(item.item_id) === Number(salesForm.itemId));
-    if (!selectedItem) {
-      showToast('error', 'Sales Return', 'Select an item purchased by this customer');
-      return;
-    }
-    setLoading(true);
-    const payload = {
-      customerId: Number(salesForm.customerId),
-      referenceNo: salesForm.referenceNo || undefined,
-      note: salesForm.note || undefined,
-      items: [{ itemId: Number(salesForm.itemId), quantity: salesForm.qty, unitPrice: salesForm.unitPrice }],
-    };
-    const res = editingSalesId
-      ? await returnsService.updateSalesReturn(editingSalesId, payload)
-      : await returnsService.createSalesReturn(payload);
-    setLoading(false);
-    if (res.success) {
-      showToast('success', 'Sales Return', editingSalesId ? 'Return updated successfully' : 'Return recorded successfully');
-      setSalesModalOpen(false);
-      setEditingSalesId(null);
-      await loadSalesReturns();
-    } else {
-      showToast('error', 'Sales Return', res.error || 'Failed to create return');
-    }
-  };
-
-  const submitPurchaseReturn = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!purchaseForm.supplierId || !purchaseForm.itemId || purchaseForm.qty <= 0) {
-      showToast('error', 'Purchase Return', 'Supplier, item and quantity are required');
-      return;
-    }
-    const selectedItem = purchaseItems.find((item) => Number(item.item_id) === Number(purchaseForm.itemId));
-    if (!selectedItem) {
-      showToast('error', 'Purchase Return', 'Select an item purchased from this supplier');
-      return;
-    }
-    setLoading(true);
-    const payload = {
-      supplierId: Number(purchaseForm.supplierId),
-      referenceNo: purchaseForm.referenceNo || undefined,
-      note: purchaseForm.note || undefined,
-      items: [{ itemId: Number(purchaseForm.itemId), quantity: purchaseForm.qty, unitCost: purchaseForm.unitCost }],
-    };
-    const res = editingPurchaseId
-      ? await returnsService.updatePurchaseReturn(editingPurchaseId, payload)
-      : await returnsService.createPurchaseReturn(payload);
-    setLoading(false);
-    if (res.success) {
-      showToast('success', 'Purchase Return', editingPurchaseId ? 'Return updated successfully' : 'Return recorded successfully');
-      setPurchaseModalOpen(false);
-      setEditingPurchaseId(null);
-      await loadPurchaseReturns();
-    } else {
-      showToast('error', 'Purchase Return', res.error || 'Failed to create return');
-    }
-  };
-
   const removeSalesReturn = async (id: number) => {
     setLoading(true);
     const res = await returnsService.deleteSalesReturn(id);
     setLoading(false);
     if (res.success) {
       showToast('success', 'Sales Return', 'Deleted successfully');
-      await loadSalesReturns();
+      if (salesDisplayed) await loadSalesReturns();
     } else {
       showToast('error', 'Sales Return', res.error || 'Failed to delete return');
     }
@@ -273,7 +72,7 @@ const Returns = () => {
     setLoading(false);
     if (res.success) {
       showToast('success', 'Purchase Return', 'Deleted successfully');
-      await loadPurchaseReturns();
+      if (purchaseDisplayed) await loadPurchaseReturns();
     } else {
       showToast('error', 'Purchase Return', res.error || 'Failed to delete return');
     }
@@ -321,26 +120,31 @@ const Returns = () => {
           <div className="flex items-center justify-end gap-2">
             <button
               type="button"
-              onClick={() => void loadSalesReturns()}
+              onClick={() => {
+                setSalesDisplayed(true);
+                void loadSalesReturns();
+              }}
               disabled={loading}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50"
             >
-              <RefreshCw className="h-4 w-4" /> Display
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
             </button>
             <button
               type="button"
-              onClick={() => void openSalesModal()}
+              onClick={() => navigate('/returns/sales/new')}
               className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-white hover:bg-primary-700"
             >
-              <Plus className="h-4 w-4" /> Add Return
+              <Plus className="h-4 w-4" /> New Return
             </button>
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
             {loading ? (
               <div className="flex justify-center py-12"><div className="h-8 w-8 animate-spin rounded-full border-2 border-primary-600 border-t-transparent" /></div>
+            ) : !salesDisplayed ? (
+              <div className="py-12 text-center text-slate-500 text-sm">Click Display to load data.</div>
             ) : salesRows.length === 0 ? (
-              <div className="py-12 text-center text-slate-500 text-sm">No sales returns found.</div>
+              <div className="py-12 text-center text-slate-500 text-sm">No data found for the selected filters.</div>
             ) : (
               <table className="min-w-full">
                 <thead className="bg-slate-50 dark:bg-slate-800">
@@ -350,6 +154,8 @@ const Returns = () => {
                     <th className={tableHeadCls}>Reference</th>
                     <th className={tableHeadCls}>Customer</th>
                     <th className={tableHeadCls}>Total</th>
+                    <th className={tableHeadCls}>Refund Account</th>
+                    <th className={tableHeadCls}>Refund</th>
                     <th className={tableHeadCls}>Status</th>
                     <th className={tableHeadCls}>Note</th>
                     <th className={tableHeadCls}>Actions</th>
@@ -363,6 +169,12 @@ const Returns = () => {
                       <td className={tableCellCls}>{row.reference_no || '-'}</td>
                       <td className={tableCellCls}>{row.customer_name || '-'}</td>
                       <td className={tableCellCls}>{fmtCurrency(row.total)}</td>
+                      <td className={row.refund_account_name ? tableCellCls : tableMutedCell}>
+                        {row.refund_account_name || '-'}
+                      </td>
+                      <td className={row.refund_amount ? tableCellCls : tableMutedCell}>
+                        {row.refund_amount ? fmtCurrency(Number(row.refund_amount)) : '-'}
+                      </td>
                       <td className={tableCellCls}>
                         {(() => {
                           const status = resolveStatus((row as any).status);
@@ -377,7 +189,7 @@ const Returns = () => {
                       <td className={tableCellCls}>{row.note || '-'}</td>
                       <td className={tableCellCls}>
                         <div className="flex items-center gap-2">
-                          <button type="button" onClick={() => void openEditSalesModal(row)} className="rounded border px-2 py-1 text-xs">Edit</button>
+                          <button type="button" onClick={() => navigate(`/returns/sales/${row.sr_id}/edit`)} className="rounded border px-2 py-1 text-xs">Edit</button>
                           <button type="button" onClick={() => requestDeleteSalesReturn(row)} className="rounded border border-red-300 px-2 py-1 text-xs text-red-600">Delete</button>
                         </div>
                       </td>
@@ -400,26 +212,31 @@ const Returns = () => {
           <div className="flex items-center justify-end gap-2">
             <button
               type="button"
-              onClick={() => void loadPurchaseReturns()}
+              onClick={() => {
+                setPurchaseDisplayed(true);
+                void loadPurchaseReturns();
+              }}
               disabled={loading}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50"
             >
-              <RefreshCw className="h-4 w-4" /> Display
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
             </button>
             <button
               type="button"
-              onClick={() => void openPurchaseModal()}
+              onClick={() => navigate('/returns/purchases/new')}
               className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-white hover:bg-primary-700"
             >
-              <Plus className="h-4 w-4" /> Add Return
+              <Plus className="h-4 w-4" /> New Return
             </button>
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
             {loading ? (
               <div className="flex justify-center py-12"><div className="h-8 w-8 animate-spin rounded-full border-2 border-primary-600 border-t-transparent" /></div>
+            ) : !purchaseDisplayed ? (
+              <div className="py-12 text-center text-slate-500 text-sm">Click Display to load data.</div>
             ) : purchaseRows.length === 0 ? (
-              <div className="py-12 text-center text-slate-500 text-sm">No supplier returns found.</div>
+              <div className="py-12 text-center text-slate-500 text-sm">No data found for the selected filters.</div>
             ) : (
               <table className="min-w-full">
                 <thead className="bg-slate-50 dark:bg-slate-800">
@@ -429,6 +246,8 @@ const Returns = () => {
                     <th className={tableHeadCls}>Reference</th>
                     <th className={tableHeadCls}>Supplier</th>
                     <th className={tableHeadCls}>Total</th>
+                    <th className={tableHeadCls}>Refund Account</th>
+                    <th className={tableHeadCls}>Refund</th>
                     <th className={tableHeadCls}>Status</th>
                     <th className={tableHeadCls}>Note</th>
                     <th className={tableHeadCls}>Actions</th>
@@ -442,6 +261,12 @@ const Returns = () => {
                       <td className={tableCellCls}>{row.reference_no || '-'}</td>
                       <td className={tableCellCls}>{row.supplier_name || '-'}</td>
                       <td className={tableCellCls}>{fmtCurrency(row.total)}</td>
+                      <td className={row.refund_account_name ? tableCellCls : tableMutedCell}>
+                        {row.refund_account_name || '-'}
+                      </td>
+                      <td className={row.refund_amount ? tableCellCls : tableMutedCell}>
+                        {row.refund_amount ? fmtCurrency(Number(row.refund_amount)) : '-'}
+                      </td>
                       <td className={tableCellCls}>
                         {(() => {
                           const status = resolveStatus((row as any).status);
@@ -456,7 +281,7 @@ const Returns = () => {
                       <td className={tableCellCls}>{row.note || '-'}</td>
                       <td className={tableCellCls}>
                         <div className="flex items-center gap-2">
-                          <button type="button" onClick={() => void openEditPurchaseModal(row)} className="rounded border px-2 py-1 text-xs">Edit</button>
+                          <button type="button" onClick={() => navigate(`/returns/purchases/${row.pr_id}/edit`)} className="rounded border px-2 py-1 text-xs">Edit</button>
                           <button type="button" onClick={() => requestDeletePurchaseReturn(row)} className="rounded border border-red-300 px-2 py-1 text-xs text-red-600">Delete</button>
                         </div>
                       </td>
@@ -475,162 +300,6 @@ const Returns = () => {
     <div>
       <PageHeader title="Returns" description="Manage sales returns and purchase/supplier returns." />
       <Tabs tabs={tabs} defaultTab="sales-return" />
-
-      {/* Sales Return Modal */}
-      <Modal isOpen={salesModalOpen} onClose={() => setSalesModalOpen(false)} title={editingSalesId ? 'Edit Sales Return' : 'New Sales Return'} size="md">
-        <form onSubmit={(e) => void submitSalesReturn(e)} className="space-y-3">
-          <div>
-            <label className={labelClass}>Customer *</label>
-            <select
-              className={inputClass}
-              value={salesForm.customerId}
-              required
-              onChange={(e) => {
-                const customerId = e.target.value;
-                setSalesForm((p) => ({ ...p, customerId, itemId: '', qty: 1, unitPrice: 0 }));
-                void loadSalesItemsForCustomer(customerId ? Number(customerId) : undefined);
-              }}
-            >
-              <option value="">Select customer</option>
-              {customers.map((c) => <option key={c.customer_id} value={c.customer_id}>{c.full_name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className={labelClass}>Item *</label>
-            <select className={inputClass} value={salesForm.itemId} required disabled={!salesForm.customerId} onChange={(e) => {
-              const id = e.target.value;
-              const sel = salesItems.find((i) => Number(i.item_id) === Number(id));
-              setSalesForm((p) => ({ ...p, itemId: id, unitPrice: sel ? Number(sel.sell_price || 0) : 0 }));
-            }}>
-              <option value="">
-                {salesForm.customerId ? 'Select item' : 'Select customer first'}
-              </option>
-              {salesItems.map((i) => <option key={i.item_id} value={i.item_id}>{i.name}</option>)}
-            </select>
-            {!!salesForm.customerId && salesItems.length === 0 && (
-              <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-                This customer has no sold items available for return.
-              </p>
-            )}
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className={labelClass}>Qty *</label>
-              <input type="number" min={0.001} step={0.001} className={inputClass} value={salesForm.qty} onChange={(e) => setSalesForm((p) => ({ ...p, qty: Number(e.target.value) }))} />
-            </div>
-            <div>
-              <label className={labelClass}>Unit Price</label>
-              <input
-                type="number"
-                min={0}
-                step={0.01}
-                className={`${inputClass} bg-slate-50 dark:bg-slate-800/70`}
-                value={salesForm.unitPrice}
-                readOnly
-              />
-            </div>
-          </div>
-          <div>
-            <label className={labelClass}>Amount</label>
-            <input
-              type="number"
-              className={`${inputClass} bg-slate-50 dark:bg-slate-800/70`}
-              value={Number(salesReturnAmount.toFixed(2))}
-              readOnly
-            />
-          </div>
-          <div>
-            <label className={labelClass}>Reference No</label>
-            <input className={inputClass} value={salesForm.referenceNo} onChange={(e) => setSalesForm((p) => ({ ...p, referenceNo: e.target.value }))} placeholder="Optional" />
-          </div>
-          <div>
-            <label className={labelClass}>Note</label>
-            <input className={inputClass} value={salesForm.note} onChange={(e) => setSalesForm((p) => ({ ...p, note: e.target.value }))} placeholder="Optional" />
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={() => setSalesModalOpen(false)} className="rounded-lg border px-4 py-2 text-sm">Cancel</button>
-            <button type="submit" disabled={loading || !salesItems.length} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">{editingSalesId ? 'Update Return' : 'Save Return'}</button>
-          </div>
-        </form>
-      </Modal>
-
-      {/* Purchase Return Modal */}
-      <Modal isOpen={purchaseModalOpen} onClose={() => setPurchaseModalOpen(false)} title={editingPurchaseId ? 'Edit Purchase Return' : 'New Purchase Return'} size="md">
-        <form onSubmit={(e) => void submitPurchaseReturn(e)} className="space-y-3">
-          <div>
-            <label className={labelClass}>Supplier *</label>
-            <select
-              className={inputClass}
-              value={purchaseForm.supplierId}
-              required
-              onChange={(e) => {
-                const supplierId = e.target.value;
-                setPurchaseForm((p) => ({ ...p, supplierId, itemId: '', qty: 1, unitCost: 0 }));
-                void loadPurchaseItemsForSupplier(supplierId ? Number(supplierId) : undefined);
-              }}
-            >
-              <option value="">Select supplier</option>
-              {suppliers.map((s) => <option key={s.supplier_id} value={s.supplier_id}>{s.supplier_name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className={labelClass}>Item *</label>
-            <select className={inputClass} value={purchaseForm.itemId} required disabled={!purchaseForm.supplierId} onChange={(e) => {
-              const id = e.target.value;
-              const sel = purchaseItems.find((i) => Number(i.item_id) === Number(id));
-              setPurchaseForm((p) => ({ ...p, itemId: id, unitCost: sel ? Number(sel.cost_price || 0) : 0 }));
-            }}>
-              <option value="">
-                {purchaseForm.supplierId ? 'Select item' : 'Select supplier first'}
-              </option>
-              {purchaseItems.map((i) => <option key={i.item_id} value={i.item_id}>{i.name}</option>)}
-            </select>
-            {!!purchaseForm.supplierId && purchaseItems.length === 0 && (
-              <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-                This supplier has no purchased items available for return.
-              </p>
-            )}
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className={labelClass}>Qty *</label>
-              <input type="number" min={0.001} step={0.001} className={inputClass} value={purchaseForm.qty} onChange={(e) => setPurchaseForm((p) => ({ ...p, qty: Number(e.target.value) }))} />
-            </div>
-            <div>
-              <label className={labelClass}>Unit Cost</label>
-              <input
-                type="number"
-                min={0}
-                step={0.01}
-                className={`${inputClass} bg-slate-50 dark:bg-slate-800/70`}
-                value={purchaseForm.unitCost}
-                readOnly
-              />
-            </div>
-          </div>
-          <div>
-            <label className={labelClass}>Amount</label>
-            <input
-              type="number"
-              className={`${inputClass} bg-slate-50 dark:bg-slate-800/70`}
-              value={Number(purchaseReturnAmount.toFixed(2))}
-              readOnly
-            />
-          </div>
-          <div>
-            <label className={labelClass}>Reference No</label>
-            <input className={inputClass} value={purchaseForm.referenceNo} onChange={(e) => setPurchaseForm((p) => ({ ...p, referenceNo: e.target.value }))} placeholder="Optional" />
-          </div>
-          <div>
-            <label className={labelClass}>Note</label>
-            <input className={inputClass} value={purchaseForm.note} onChange={(e) => setPurchaseForm((p) => ({ ...p, note: e.target.value }))} placeholder="Optional" />
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={() => setPurchaseModalOpen(false)} className="rounded-lg border px-4 py-2 text-sm">Cancel</button>
-            <button type="submit" disabled={loading || !purchaseItems.length} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">{editingPurchaseId ? 'Update Return' : 'Save Return'}</button>
-          </div>
-        </form>
-      </Modal>
 
       <DeleteConfirmModal
         isOpen={!!deleteTarget}

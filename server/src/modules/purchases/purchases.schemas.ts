@@ -1,8 +1,16 @@
 import { z } from 'zod';
 
+const roundToInt = (value: unknown) => {
+  if (value === undefined || value === null || value === '') return value;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.round(parsed) : value;
+};
+
+const roundedPositiveInt = z.preprocess(roundToInt, z.number().int().positive());
+
 export const purchaseItemSchema = z.object({
   productId: z.coerce.number().int().positive().optional(),
-  quantity: z.coerce.number().positive(),
+  quantity: roundedPositiveInt,
   unitCost: z.coerce.number().nonnegative(),
   salePrice: z.coerce.number().nonnegative().optional(),
   discount: z.coerce.number().nonnegative().default(0).optional(),

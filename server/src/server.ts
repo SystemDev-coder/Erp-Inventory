@@ -1,11 +1,17 @@
 import app from './app';
 import { config } from './config/env';
 import { testConnection } from './db/pool';
+import { ensureRuntimeFinanceSchema } from './utils/runtimeFinanceSchema';
+import { syncSystemAccountBalances } from './utils/systemAccounts';
+import { syncLedgerBalances } from './utils/ledgerBalanceSync';
 
 const startServer = async () => {
   try {
     // Test database connection
     await testConnection();
+    await ensureRuntimeFinanceSchema();
+    await syncSystemAccountBalances();
+    await syncLedgerBalances();
 
     // Start server
     app.listen(config.port, () => {

@@ -41,12 +41,9 @@ const customerLedgerColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'entry_date', header: 'Date', render: (row) => formatDateTime(row.entry_date) },
   { key: 'customer_name', header: 'Customer' },
   { key: 'entry_type', header: 'Type' },
-  { key: 'ref_table', header: 'Ref Table' },
-  { key: 'ref_id', header: 'Ref Id' },
   { key: 'debit', header: 'Debit', align: 'right', render: (row) => formatCurrency(row.debit) },
   { key: 'credit', header: 'Credit', align: 'right', render: (row) => formatCurrency(row.credit) },
   { key: 'running_balance', header: 'Running Balance', align: 'right', render: (row) => formatCurrency(row.running_balance) },
-  { key: 'note', header: 'Note' },
 ];
 
 const outstandingColumns: ReportColumn<Record<string, unknown>>[] = [
@@ -234,9 +231,6 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load customer ledger');
       const rows = toRecordRows(response.data.rows || []);
-      const dr = sumByKey(rows, 'debit');
-      const cr = sumByKey(rows, 'credit');
-      const closingBalance = rows.length > 0 ? Number(rows[rows.length - 1].running_balance || 0) : 0;
       onOpenModal({
         title: 'Customer Ledger',
         subtitle: `${formatDateOnly(ledgerRange.fromDate)} - ${formatDateOnly(ledgerRange.toDate)}`,
@@ -249,15 +243,6 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
           Mode: mode === 'show' ? 'Show' : 'All',
           Customer: mode === 'show' ? customerNameById.get(selectedLedgerCustomerId) || 'Selected Customer' : 'All Customers',
         },
-        tableTotals: {
-          label: 'Total',
-          values: {
-            debit: formatCurrency(dr),
-            credit: formatCurrency(cr),
-            running_balance: formatCurrency(closingBalance),
-          },
-        },
-        totals: [moneyTotal('DR', dr), moneyTotal('CR', cr), moneyTotal('Total', dr - cr)],
       });
     });
 

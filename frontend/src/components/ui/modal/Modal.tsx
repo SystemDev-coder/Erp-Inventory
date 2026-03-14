@@ -10,6 +10,7 @@ interface ModalProps {
     size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl';
     showCloseButton?: boolean;
     resizable?: boolean;
+    centerTitle?: boolean;
 }
 
 export const Modal: React.FC<ModalProps> = ({
@@ -20,6 +21,7 @@ export const Modal: React.FC<ModalProps> = ({
     size = 'md',
     showCloseButton = true,
     resizable = false,
+    centerTitle = false,
 }) => {
     const MODAL_Z_INDEX = 2147483000;
 
@@ -69,8 +71,8 @@ export const Modal: React.FC<ModalProps> = ({
                     onClick={(e) => e.stopPropagation()}
                 >
                     {/* Header */}
-                    <div className="flex items-center justify-between border-b border-[#264676] bg-gradient-to-r from-[#0a1f44] to-[#102b59] px-6 py-4">
-                        <h3 className="text-lg font-semibold text-white">
+                    <div className={`${centerTitle ? 'relative flex items-center justify-end' : 'flex items-center justify-between'} border-b border-[#264676] bg-gradient-to-r from-[#0a1f44] to-[#102b59] px-6 py-4`}>
+                        <h3 className={`text-lg font-semibold text-white ${centerTitle ? 'absolute left-1/2 -translate-x-1/2 w-full text-center pointer-events-none' : ''}`}>
                             {title}
                         </h3>
                         {showCloseButton && (

@@ -335,3 +335,25 @@ export const clearLogs = asyncHandler(async (_req: AuthRequest, res: Response) =
   const deleted = await systemService.clearLogs();
   return ApiResponse.success(res, { deleted }, 'Logs cleared');
 });
+
+export const auditBalances = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const branchIdRaw = req.query.branchId as string | undefined;
+  const branchId = branchIdRaw ? Number(branchIdRaw) : undefined;
+  if (branchIdRaw && (!Number.isInteger(branchId) || (branchId as number) <= 0)) {
+    throw ApiError.badRequest('branchId is invalid');
+  }
+  const result = await systemService.auditBalances(branchId);
+  return ApiResponse.success(res, result);
+});
+
+export const reconcileBalances = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const branchIdRaw = req.body?.branchId ?? req.query.branchId;
+  const branchId = branchIdRaw !== undefined && branchIdRaw !== null && String(branchIdRaw).trim() !== ''
+    ? Number(branchIdRaw)
+    : undefined;
+  if (branchId !== undefined && (!Number.isInteger(branchId) || branchId <= 0)) {
+    throw ApiError.badRequest('branchId is invalid');
+  }
+  const result = await systemService.reconcileBalances(branchId);
+  return ApiResponse.success(res, result, 'Balances reconciled');
+});

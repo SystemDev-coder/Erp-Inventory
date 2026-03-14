@@ -116,7 +116,7 @@ export const customerReportsService = {
          FROM ims.customers
         WHERE branch_id = $1
           AND is_active = TRUE
-        ORDER BY full_name`,
+        ORDER BY customer_id ASC`,
       [branchId]
     );
 
@@ -145,7 +145,7 @@ export const customerReportsService = {
        FROM ims.customers c
       WHERE c.branch_id = $1
         ${filter}
-      ORDER BY c.full_name
+      ORDER BY c.customer_id ASC
       LIMIT 2000`,
       params
     );
@@ -202,7 +202,7 @@ export const customerReportsService = {
           )::double precision AS running_balance,
         scoped.note
       FROM scoped
-      ORDER BY scoped.entry_date DESC, scoped.cust_ledger_id DESC
+      ORDER BY scoped.entry_date ASC, scoped.cust_ledger_id ASC
       LIMIT 4000`,
       params
     );
@@ -337,7 +337,7 @@ export const customerReportsService = {
       WHERE cr.branch_id = $1
         AND cr.receipt_date::date BETWEEN $2::date AND $3::date
         ${filter}
-      ORDER BY cr.receipt_date DESC, cr.receipt_id DESC
+      ORDER BY cr.receipt_date ASC, cr.receipt_id ASC
       LIMIT 3000`,
       params
     );
@@ -403,7 +403,7 @@ export const customerReportsService = {
       LEFT JOIN ledger l ON l.customer_id = c.customer_id
       WHERE c.branch_id = $1
         AND c.registered_date::date BETWEEN $2::date AND $3::date
-      ORDER BY c.registered_date DESC, c.customer_id DESC`,
+      ORDER BY c.registered_date ASC, c.customer_id ASC`,
       [branchId, fromDate, toDate]
     );
   },

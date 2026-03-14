@@ -64,6 +64,7 @@ export const expenseChargeSchema = z.object({
   regDate: z.string().optional(),
   note: z.string().optional().or(z.literal('')),
   expBudgetId: z.coerce.number().int().positive().optional(),
+  isOpeningPaid: z.boolean().optional(),
 });
 
 export const expenseChargeUpdateSchema = expenseChargeSchema.partial();

@@ -22,7 +22,7 @@ const QUICK_COMMANDS: QuickCommand[] = [
   { id: "adjust", label: "Open Adjust Items", to: "/stock-management/adjust-items", keywords: ["stock adjust", "adjustment"], permissionAny: ["items.view", "products.view", "stock.view", "inventory.view"] },
   { id: "sales", label: "Open Sales", to: "/sales", keywords: ["sell", "invoice", "pos"], permissionAny: ["sales.view"] },
   { id: "purchases", label: "Open Purchases", to: "/purchases", keywords: ["buy", "supplier"], permissionAny: ["purchases.view", "suppliers.view"] },
-  { id: "returns", label: "Open Returns", to: "/return", keywords: ["sales return", "purchase return"], permissionAny: ["sales_returns.view", "items.view", "products.view", "stock.view", "inventory.view"] },
+  { id: "returns", label: "Open Returns", to: "/returns", keywords: ["sales return", "purchase return", "supplier return"], permissionAny: ["returns.view", "sales_returns.view", "purchase_returns.view"] },
   { id: "finance", label: "Open Finance", to: "/finance", keywords: ["accounts", "money", "payments"], permissionAny: ["finance.reports", "accounts.view", "expenses.view", "ledgers.view"] },
   { id: "assets", label: "Open Assets", to: "/assets", keywords: ["fixed assets", "depreciation"], permissionAny: ["accounts.view"] },
   { id: "receipts", label: "Open Receipts", to: "/finance/receipts", keywords: ["customer receipt", "supplier payment"], permissionAny: ["accounts.view", "sales.view", "purchases.view"] },

@@ -118,6 +118,9 @@ interface CloseResult {
 
 const roundMoney = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 const toMoney = (value: unknown) => roundMoney(Number(value || 0));
+const OPENING_EXPENSE_NOTE_PREFIX = '[OPENING BALANCE]';
+const openingExpensePredicate = (alias: string) =>
+  `COALESCE(NULLIF(to_jsonb(${alias}) ->> 'is_opening_paid', '')::boolean, COALESCE(${alias}.note, '') ILIKE '${OPENING_EXPENSE_NOTE_PREFIX}%')`;
 
 const parseJsonSafe = <T>(value: unknown, fallback: T): T => {
   if (!value) return fallback;
@@ -572,7 +575,8 @@ const computeClosingSnapshot = async (
       `SELECT COALESCE(SUM(ec.amount), 0)::double precision AS amount
          FROM ims.expense_charges ec
         WHERE ec.branch_id = $1
-          AND ec.charge_date::date BETWEEN $2::date AND $3::date`,
+          AND ec.charge_date::date BETWEEN $2::date AND $3::date
+          AND NOT ${openingExpensePredicate('ec')}`,
       params
     ),
     queryAmount(
@@ -591,8 +595,11 @@ const computeClosingSnapshot = async (
       runner,
       `SELECT COALESCE(SUM(ep.amount_paid), 0)::double precision AS amount
          FROM ims.expense_payments ep
+         JOIN ims.expense_charges ec
+           ON ec.charge_id = ep.exp_ch_id
         WHERE ep.branch_id = $1
-          AND ep.pay_date::date BETWEEN $2::date AND $3::date`,
+          AND ep.pay_date::date BETWEEN $2::date AND $3::date
+          AND NOT ${openingExpensePredicate('ec')}`,
       params
     ),
     queryAmount(

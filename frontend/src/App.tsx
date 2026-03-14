@@ -9,11 +9,14 @@ import { useInactivityLogout } from "./hooks/useInactivityLogout";
 import Home from "./pages/Home/Home";
 import Products from "./pages/Products/Products";
 import StockAdjustmentsPage from "./pages/Stock/StockAdjustmentsPage";
+import StockAdjustmentCreatePage from "./pages/Stock/StockAdjustmentCreatePage";
 import Sales from "./pages/Sales/Sales";
 import SaleCreate from "./pages/Sales/SaleCreate";
 import Purchases from "./pages/Purchases/Purchases";
 import PurchaseEditor from "./pages/Purchases/PurchaseEditor";
 import Returns from "./pages/Returns/Returns";
+import SalesReturns from "./pages/Returns/SalesReturns";
+import PurchaseReturns from "./pages/Returns/PurchaseReturns";
 import Transfers from "./pages/Transfers/Transfers";
 import Finance from "./pages/Finance/Finance";
 import Receipts from "./pages/Finance/Receipts";
@@ -60,9 +63,11 @@ function AppRoutes() {
           <Route path="/stock-management/items" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
           <Route path="/inventory/stock" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
           <Route path="/stock-management/adjust-items" element={<ProtectedRoute><StockAdjustmentsPage /></ProtectedRoute>} />
-          <Route path="/return" element={<ProtectedRoute><Returns /></ProtectedRoute>} />
+          <Route path="/stock-management/adjust-items/new" element={<ProtectedRoute><StockAdjustmentCreatePage /></ProtectedRoute>} />
+          <Route path="/return" element={<ProtectedRoute permission="sales_returns.view"><Returns /></ProtectedRoute>} />
           <Route path="/items" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
           <Route path="/stock/adjustments" element={<ProtectedRoute><StockAdjustmentsPage /></ProtectedRoute>} />
+          <Route path="/stock/adjustments/new" element={<ProtectedRoute><StockAdjustmentCreatePage /></ProtectedRoute>} />
           <Route path="/sales" element={<ProtectedRoute permission="sales.view"><Sales /></ProtectedRoute>} />
           <Route path="/sales/transactions" element={<ProtectedRoute permission="sales.view"><Sales /></ProtectedRoute>} />
           <Route path="/sales/pos" element={<ProtectedRoute permission="sales.view"><ComingSoonPage title="POS" /></ProtectedRoute>} />
@@ -75,6 +80,10 @@ function AppRoutes() {
           <Route path="/purchases/new" element={<ProtectedRoute permission="purchases.create"><PurchaseEditor /></ProtectedRoute>} />
           <Route path="/purchases/:id" element={<ProtectedRoute permission="purchases.view"><PurchaseEditor /></ProtectedRoute>} />
           <Route path="/returns" element={<ProtectedRoute permission="sales_returns.view"><Returns /></ProtectedRoute>} />
+          <Route path="/returns/sales/new" element={<ProtectedRoute permission="sales_returns.create"><SalesReturns /></ProtectedRoute>} />
+          <Route path="/returns/sales/:id/edit" element={<ProtectedRoute permission="sales_returns.update"><SalesReturns /></ProtectedRoute>} />
+          <Route path="/returns/purchases/new" element={<ProtectedRoute permission="purchase_returns.create"><PurchaseReturns /></ProtectedRoute>} />
+          <Route path="/returns/purchases/:id/edit" element={<ProtectedRoute permission="purchase_returns.update"><PurchaseReturns /></ProtectedRoute>} />
           <Route path="/transfers" element={<ProtectedRoute permission="transfers.view"><Transfers /></ProtectedRoute>} />
           <Route path="/finance" element={<ProtectedRoute><Finance /></ProtectedRoute>} />
           <Route path="/finance/accounts" element={<ProtectedRoute><Finance /></ProtectedRoute>} />

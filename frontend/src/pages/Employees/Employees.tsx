@@ -22,6 +22,7 @@ const Employees = () => {
   const [roles, setRoles] = useState<RoleRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
+  const [hasDisplayed, setHasDisplayed] = useState(false);
 
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [isEmployeeModalOpen, setIsEmployeeModalOpen] = useState(false);
@@ -40,6 +41,7 @@ const Employees = () => {
     const res = await employeeService.list({ search: term || undefined, status: 'active' });
     if (res.success && res.data?.employees) {
       setEmployees(res.data.employees);
+      setHasDisplayed(true);
     } else {
       showToast('error', 'HR', res.error || 'Failed to load employees');
     }
@@ -157,13 +159,23 @@ const Employees = () => {
             },
           }}
           onDisplay={() => fetchEmployees(search)}
+          displayLoading={loading}
           onSearch={(value) => {
             setSearch(value);
-            fetchEmployees(value);
           }}
         />
+        {!hasDisplayed && !loading && (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+            Click <span className="font-semibold">Display</span> to load data.
+          </div>
+        )}
+        {hasDisplayed && !loading && employees.length === 0 && (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+            No data found for the selected filters.
+          </div>
+        )}
         <DataTable
-          data={employees}
+          data={hasDisplayed ? employees : []}
           columns={columns}
           isLoading={loading}
           searchPlaceholder="Search employees..."
@@ -189,15 +201,17 @@ const Employees = () => {
         <div className="flex justify-end gap-2">
           <button
             onClick={() => fetchStateEmployees('active')}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            disabled={loading}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <RefreshCw className="h-4 w-4" /> Display Active
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Display Active
           </button>
           <button
             onClick={() => fetchStateEmployees('inactive')}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            disabled={loading}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <RefreshCw className="h-4 w-4" /> Display Inactive
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Display Inactive
           </button>
           <button
             onClick={() => setIsStateModalOpen(true)}
@@ -206,6 +220,16 @@ const Employees = () => {
             <Plus className="h-4 w-4" /> Set State
           </button>
         </div>
+        {!stateLoaded && !loading && (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+            Click <span className="font-semibold">Display Active</span> or <span className="font-semibold">Display Inactive</span> to load data.
+          </div>
+        )}
+        {stateLoaded && !loading && stateEmployees.length === 0 && (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+            No data found for the selected filters.
+          </div>
+        )}
         <DataTable
           data={stateLoaded ? stateEmployees : []}
           columns={columns}

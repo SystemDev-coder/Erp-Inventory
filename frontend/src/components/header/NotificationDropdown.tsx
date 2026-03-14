@@ -68,6 +68,7 @@ export default function NotificationDropdown() {
   const [busy, setBusy] = useState(false);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
   const { showToast } = useToast();
   const navigate = useNavigate();
 
@@ -78,6 +79,7 @@ export default function NotificationDropdown() {
       if (res.success && res.data) {
         setNotifications(res.data.notifications ?? []);
         setUnreadCount(res.data.unreadCount ?? 0);
+        setTotalCount(res.data.total ?? res.data.notifications?.length ?? 0);
       } else if (withLoader) {
         showToast('error', 'Load failed', res.error ?? res.message ?? 'Could not load notifications');
       }
@@ -153,6 +155,9 @@ export default function NotificationDropdown() {
     }
   };
 
+  const badgeCount = totalCount > 0 ? totalCount : unreadCount;
+  const unreadBadge = badgeCount > 99 ? '99+' : String(badgeCount);
+
   return (
     <div className="relative">
       <button
@@ -160,9 +165,9 @@ export default function NotificationDropdown() {
         onClick={toggleDropdown}
         aria-label="Notifications"
       >
-        {unreadCount > 0 && (
-          <span className="absolute right-0 top-0.5 z-10 min-w-2.5 h-2.5 rounded-full bg-orange-400">
-            <span className="absolute inline-flex w-full h-full bg-orange-400 rounded-full opacity-75 animate-ping"></span>
+        {badgeCount > 0 && (
+          <span className="absolute -right-1 -top-1 z-10 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white">
+            {unreadBadge}
           </span>
         )}
         <svg

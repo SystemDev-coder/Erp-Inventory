@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from '../../components/ui/table/DataTable';
 import { PageHeader } from '../../components/ui/layout';
@@ -41,6 +41,7 @@ export default function Assets({
   const [assets, setAssets] = useState<FixedAsset[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [hasDisplayed, setHasDisplayed] = useState(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [form, setForm] = useState<CreateFixedAssetInput>(initialForm);
@@ -52,6 +53,7 @@ export default function Assets({
   const useModalForm = embedded && registerInModal;
 
   const loadAssets = async () => {
+    setHasDisplayed(true);
     setLoading(true);
     setError('');
     try {
@@ -72,13 +74,6 @@ export default function Assets({
       setLoading(false);
     }
   };
-
-  useEffect(() => {
-    if (useModalForm) return;
-    if (mode === 'list') {
-      void loadAssets();
-    }
-  }, [mode, useModalForm]);
 
   const statuses = useMemo(
     () =>
@@ -150,7 +145,8 @@ export default function Assets({
       } else {
         setMode('list');
       }
-      await loadAssets();
+      setAssets([]);
+      setHasDisplayed(false);
     } catch (e) {
       showToast('error', 'Assets', e instanceof Error ? e.message : 'Failed to save asset');
     } finally {
@@ -169,7 +165,8 @@ export default function Assets({
       }
       showToast('success', 'Assets', 'Asset deleted');
       setDeleteTarget(null);
-      await loadAssets();
+      setAssets([]);
+      setHasDisplayed(false);
     } finally {
       setDeleting(false);
     }
@@ -188,7 +185,8 @@ export default function Assets({
                 onClick={() => {
                   setMode('list');
                   setEditingAssetId(null);
-                  void loadAssets();
+                  setAssets([]);
+                  setHasDisplayed(false);
                 }}
                 className={`rounded-lg px-4 py-2 text-sm font-semibold ${
                   mode === 'list'
@@ -224,9 +222,10 @@ export default function Assets({
               <button
                 type="button"
                 onClick={() => void loadAssets()}
-                className="rounded-lg border border-black bg-white px-3 py-2 text-xs font-semibold text-black"
+                disabled={loading}
+                className="rounded-lg border border-black bg-white px-3 py-2 text-xs font-semibold text-black disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Display
+                {loading ? 'Loading...' : 'Display'}
               </button>
               <button
                 type="button"
@@ -247,7 +246,8 @@ export default function Assets({
                 onClick={() => {
                   setMode('list');
                   setEditingAssetId(null);
-                  void loadAssets();
+                  setAssets([]);
+                  setHasDisplayed(false);
                 }}
                 className={`rounded-lg px-3 py-2 text-xs font-semibold ${
                   mode === 'list'
@@ -309,15 +309,26 @@ export default function Assets({
               <button
                 type="button"
                 onClick={() => void loadAssets()}
-                className="w-full rounded-md border border-black bg-black px-3 py-2 text-sm font-semibold text-white"
+                disabled={loading}
+                className="w-full rounded-md border border-black bg-black px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Display
+                {loading ? 'Loading...' : 'Display'}
               </button>
             </div>
           </div>
 
+          {!hasDisplayed && !loading && (
+            <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-700">
+              Click <span className="font-semibold">Display</span> to load data.
+            </div>
+          )}
+          {hasDisplayed && !loading && assets.length === 0 && (
+            <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-700">
+              No data found for the selected filters.
+            </div>
+          )}
           <DataTable
-            data={assets}
+            data={hasDisplayed ? assets : []}
             columns={columns}
             isLoading={loading}
             error={error || null}

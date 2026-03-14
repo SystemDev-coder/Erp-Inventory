@@ -179,12 +179,14 @@ export const getAccountStatementReport = asyncHandler(async (req: AuthRequest, r
 export const getTrialBalanceReport = asyncHandler(async (req: AuthRequest, res: Response) => {
   const branchId = await resolveBranchIdForReports(req);
   const { fromDate, toDate } = parseDateRange(req);
-  const rows = await financialReportsService.getTrialBalance(branchId, fromDate, toDate);
+  const includeZero = String(req.query.includeZero ?? '').toLowerCase() === 'true';
+  const rows = await financialReportsService.getTrialBalance(branchId, fromDate, toDate, includeZero);
   return ApiResponse.success(res, {
     branchId,
     reportKey: 'trial-balance',
     fromDate,
     toDate,
+    includeZero,
     rows,
   });
 });

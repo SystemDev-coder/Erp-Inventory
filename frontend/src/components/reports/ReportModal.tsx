@@ -11,11 +11,15 @@ export type ReportColumn<T> = {
   width?: string;
   align?: "left" | "center" | "right";
   render?: (row: T, index: number) => React.ReactNode;
+  getHref?: (row: T, index: number) => string | null | undefined;
+  onClick?: (row: T, index: number) => void;
 };
 
 export type ReportTotalItem = {
   label: string;
   value: string | number;
+  href?: string;
+  onClick?: () => void;
 };
 
 export type ReportTableTotals = {
@@ -31,6 +35,7 @@ type ReportModalProps<T> = {
   subtitle?: string;
   companyInfo?: {
     name?: string;
+    logoUrl?: string;
     manager?: string;
     phone?: string;
     updatedAt?: string;
@@ -81,6 +86,18 @@ const formatStatementCurrency = (value: number) => {
     maximumFractionDigits: 2,
   });
   return value < 0 ? `($${absolute})` : `$${absolute}`;
+};
+
+const formatFilterValue = (value: string | number) => {
+  if (value === null || value === undefined) return "";
+  const raw = String(value);
+  if (!raw.trim()) return "";
+  // if it looks like a date, format lightly
+  const d = new Date(raw);
+  if (!Number.isNaN(d.getTime()) && /^\d{4}-\d{2}-\d{2}/.test(raw)) {
+    return d.toLocaleDateString();
+  }
+  return raw;
 };
 
 const formatTrialAmount = (value: number) =>
@@ -232,8 +249,7 @@ export function ReportModal<T extends Record<string, any>>({
     const equity = rows.filter(
       (row) =>
         normalizeSection(row.section) === "equity" &&
-        row.rowType === "detail" &&
-        !/(net profit|net loss|net income)/i.test(row.lineItem)
+        row.rowType === "detail"
     );
 
     const currentAssetsTotalRow = bySection(["current assets"], "total").find((row) =>
@@ -421,8 +437,9 @@ export function ReportModal<T extends Record<string, any>>({
 
     doc.open();
     doc.write(
-      `<!doctype html><html><head>${styles}<style>
-        body { margin: 14px; padding: 0; background: #ffffff; color: #0f172a; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      `<!doctype html><html><head><title></title>${styles}<style>
+        @page { size: A4; margin: 10mm; }
+        body { margin: 0; padding: 0; background: #ffffff; color: #0f172a; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         #report-print-area { width: 100% !important; max-width: 178mm !important; margin: 0 auto !important; box-shadow: none !important; border: none !important; }
       </style></head><body>${contentNode.outerHTML}</body></html>`
     );
@@ -499,20 +516,14 @@ export function ReportModal<T extends Record<string, any>>({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Report Preview" size="2xl" resizable>
+    <Modal isOpen={isOpen} onClose={onClose} title="Report Preview" size="2xl" resizable centerTitle>
       <div className="space-y-4">
         {/* Screen controls (hidden on print) */}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-2xl border border-zinc-300 bg-white px-6 py-5 text-black shadow-sm print:hidden">
-          <div className="space-y-1">
-            <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">Report</p>
-            <h2 className="text-2xl font-semibold">{title}</h2>
-            {subtitle && <p className="text-sm text-zinc-700">{subtitle}</p>}
-          </div>
-          <div className="flex flex-wrap gap-2 sm:gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3 rounded-2xl border border-slate-200 bg-white px-6 py-4 text-black shadow-sm print:hidden dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100">
             {enablePdf && !isIncomeStatement && !isBalanceSheet && (
               <button
                 onClick={handlePrint}
-                className="inline-flex items-center gap-2 rounded-xl border border-black bg-white px-4 py-2 text-sm font-semibold text-black transition"
+                className="inline-flex items-center gap-2 rounded-xl border border-black bg-white px-4 py-2 text-sm font-semibold text-black transition dark:border-slate-200 dark:bg-slate-900 dark:text-slate-100"
               >
                 <Printer className="h-4 w-4" /> Export PDF
               </button>
@@ -525,11 +536,10 @@ export function ReportModal<T extends Record<string, any>>({
             </button>
             <button
               onClick={handleExportExcel}
-              className="inline-flex items-center gap-2 rounded-xl border border-black bg-white px-4 py-2 text-sm font-semibold text-black transition"
+              className="inline-flex items-center gap-2 rounded-xl border border-black bg-white px-4 py-2 text-sm font-semibold text-black transition dark:border-slate-200 dark:bg-slate-900 dark:text-slate-100"
             >
               <FileSpreadsheet className="h-4 w-4" /> Export Excel
             </button>
-          </div>
         </div>
 
         {/* Printable surface */}
@@ -539,6 +549,22 @@ export function ReportModal<T extends Record<string, any>>({
           className="mx-auto bg-white text-black"
           style={{ pageBreakInside: "avoid", width: "100%", maxWidth: reportSurfaceWidth }}
         >
+          <div className="border-b border-zinc-300 px-8 py-5" style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}>
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-center gap-3">
+                {companyInfo?.logoUrl ? (
+                  <img src={companyInfo.logoUrl} alt="Logo" className="h-10 w-10 object-contain" />
+                ) : null}
+                <div>
+                  <div className="text-[16px] font-semibold leading-tight">{companyInfo?.name || "Business Name"}</div>
+                  <div className="text-[12px] text-slate-600">
+                    {title}
+                    {subtitle ? ` — ${subtitle}` : ""}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
           {isIncomeStatement && statementData ? (
             <div
               className="px-10 py-9 text-slate-900"
@@ -887,7 +913,29 @@ export function ReportModal<T extends Record<string, any>>({
                                 lineHeight: 1.4,
                               }}
                             >
-                              {col.render ? col.render(row, i) : getRawValue(row, col, i)}
+                              {(() => {
+                                const cell = col.render ? col.render(row, i) : getRawValue(row, col, i);
+                                const href = col.getHref?.(row, i);
+                                if (href) {
+                                  return (
+                                    <a href={href} style={{ color: "#0f4f76", textDecoration: "underline" }}>
+                                      {cell}
+                                    </a>
+                                  );
+                                }
+                                if (col.onClick) {
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={() => col.onClick?.(row, i)}
+                                      style={{ color: "#0f4f76", textDecoration: "underline" }}
+                                    >
+                                      {cell}
+                                    </button>
+                                  );
+                                }
+                                return cell;
+                              })()}
                             </td>
                           ))}
                         </tr>
@@ -932,44 +980,7 @@ export function ReportModal<T extends Record<string, any>>({
                   </table>
                 </div>
 
-                {totals.length > 0 && (
-                  <div className="mt-4 rounded-md border border-zinc-300 bg-white p-3">
-                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-300 pb-2">
-                      <div className="text-xs font-bold uppercase tracking-[0.2em] text-black">Totals Summary</div>
-                      <div className="text-xs font-semibold text-zinc-700">Records: {data.length.toLocaleString()}</div>
-                    </div>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                      {totals.map((item) => (
-                        <div
-                          key={item.label}
-                          className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm"
-                        >
-                          <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-700">{item.label}</div>
-                          <div className="text-base font-bold text-black">{item.value}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {filters && Object.keys(filters).length > 0 && (
-                  <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-slate-600">
-                    {Object.entries(filters).map(([label, value]) => (
-                      <span
-                        key={label}
-                        className="rounded-full border px-3 py-1"
-                        style={{
-                          borderColor: BORDER_COLOR,
-                          color: BORDER_COLOR,
-                          background: "#f5fbff",
-                          fontWeight: 600,
-                        }}
-                      >
-                        {label}: {value}
-                      </span>
-                    ))}
-                  </div>
-                )}
+                {filters && Object.keys(filters).length > 0 && null}
               </div>
             </>
           )}

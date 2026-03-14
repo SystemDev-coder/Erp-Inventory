@@ -331,6 +331,17 @@ fi
 
 run_bootstrap_seed
 
+echo "Applying runtime schema fixes..."
+psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 <<SQL
+SET search_path TO "${DB_SCHEMA}", public;
+ALTER TABLE ims.accounts DROP CONSTRAINT IF EXISTS accounts_balance_check;
+ALTER TABLE ims.customers ADD COLUMN IF NOT EXISTS remaining_balance NUMERIC(14,2) NOT NULL DEFAULT 0;
+UPDATE ims.customers
+   SET remaining_balance = open_balance
+ WHERE remaining_balance = 0
+   AND open_balance <> 0;
+SQL
+
 if [ "$RUN_DEMO_SEED" = "true" ]; then
   if [ -f "${DEMO_SEED_PATH}" ]; then
     apply_seed_file "${DEMO_SEED_PATH}"

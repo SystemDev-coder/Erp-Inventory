@@ -17,6 +17,25 @@ const optionalPositiveInt = z.preprocess(
   z.number().int().positive().optional()
 );
 
+const roundToInt = (value: unknown) => {
+  if (
+    value === undefined ||
+    value === null ||
+    value === '' ||
+    value === 'undefined' ||
+    value === 'null'
+  ) {
+    return value;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.round(parsed) : value;
+};
+
+const optionalRoundedInt = z.preprocess(roundToInt, z.number().int().optional());
+const optionalPositiveRoundedInt = z.preprocess(roundToInt, z.number().int().positive().optional());
+const requiredPositiveRoundedInt = z.preprocess(roundToInt, z.number().int().positive());
+const nonnegativeRoundedInt = z.preprocess(roundToInt, z.number().int().nonnegative());
+
 const requiredPositiveInt = z.coerce.number().int().positive();
 
 const resolveTransferType = (
@@ -61,8 +80,8 @@ export const adjustmentSchema = z.object({
   productId: optionalPositiveInt,
   itemId: optionalPositiveInt,
   adjustmentType: adjustmentTypeSchema.optional(),
-  quantity: z.coerce.number().positive().optional(),
-  qty: z.coerce.number().optional(),
+  quantity: optionalPositiveRoundedInt,
+  qty: optionalRoundedInt,
   unitCost: z.coerce.number().nonnegative().default(0),
   adjustmentDate: dateStringSchema.optional(),
   reason: z.string().trim().min(1).max(255).optional(),
@@ -119,8 +138,8 @@ export const adjustmentUpdateSchema = z.object({
   productId: optionalPositiveInt,
   itemId: optionalPositiveInt,
   adjustmentType: adjustmentTypeSchema.optional(),
-  quantity: z.coerce.number().positive().optional(),
-  qty: z.coerce.number().optional(),
+  quantity: optionalPositiveRoundedInt,
+  qty: optionalRoundedInt,
   reason: z.string().trim().min(1).max(255).optional(),
   adjustmentDate: dateStringSchema.optional(),
   status: adjustmentStatusSchema.optional(),
@@ -188,7 +207,7 @@ export const transferSchema = z
     toBranchId: optionalPositiveInt,
     productId: optionalPositiveInt,
     itemId: optionalPositiveInt,
-    qty: z.coerce.number().positive(),
+    qty: requiredPositiveRoundedInt,
     unitCost: z.coerce.number().nonnegative().default(0),
     note: z.string().optional(),
   })
@@ -262,7 +281,7 @@ export const recountSchema = z.object({
   whId: optionalPositiveInt,
   productId: optionalPositiveInt,
   itemId: optionalPositiveInt,
-  countedQty: z.coerce.number().nonnegative(),
+  countedQty: nonnegativeRoundedInt,
   unitCost: z.coerce.number().nonnegative().default(0),
   note: z.string().optional(),
 }).refine((value) => !!(value.productId || value.itemId), {
@@ -297,7 +316,7 @@ export const inventoryTransactionSchema = z.object({
   itemId: z.coerce.number().int().positive(),
   transactionType: z.enum(['ADJUSTMENT', 'PAID', 'SALES', 'DAMAGE']),
   direction: z.enum(['IN', 'OUT']).optional(),
-  quantity: z.coerce.number().positive(),
+  quantity: requiredPositiveRoundedInt,
   unitCost: z.coerce.number().nonnegative().optional(),
   referenceNo: z.string().trim().max(120).optional().or(z.literal('')),
   transactionDate: z.string().datetime().optional(),

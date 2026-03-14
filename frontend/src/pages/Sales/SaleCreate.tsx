@@ -6,8 +6,10 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { accountService, Account } from '../../services/account.service';
 import { customerService, Customer } from '../../services/customer.service';
 import { inventoryService, InventoryItem } from '../../services/inventory.service';
-import { SaleDocType, SaleStatus, salesService } from '../../services/sales.service';
+import { Sale, SaleDocType, SaleItem, SaleStatus, salesService } from '../../services/sales.service';
+import { settingsService } from '../../services/settings.service';
 import { formatAvailableQty, itemLabelWithAvailability } from '../../utils/itemAvailability';
+import { buildPrintableDocument } from './Sales';
 
 type FormLine = {
   item_id: number | '';
@@ -228,13 +230,59 @@ const SaleCreate = () => {
     : 0;
   const hasInsufficientStock = Boolean(firstInsufficientLine);
 
+  const printHtmlDocument = (html: string) => {
+    const printFrame = document.createElement('iframe');
+    printFrame.style.position = 'fixed';
+    printFrame.style.right = '0';
+    printFrame.style.bottom = '0';
+    printFrame.style.width = '0';
+    printFrame.style.height = '0';
+    printFrame.style.border = '0';
+    document.body.appendChild(printFrame);
+
+    const frameWindow = printFrame.contentWindow;
+    if (!frameWindow) {
+      document.body.removeChild(printFrame);
+      showToast('error', 'Print Failed', 'Unable to open print frame');
+      return;
+    }
+
+    frameWindow.document.open();
+    frameWindow.document.write(html);
+    frameWindow.document.close();
+
+    let printed = false;
+    const cleanup = () => {
+      setTimeout(() => {
+        if (document.body.contains(printFrame)) {
+          document.body.removeChild(printFrame);
+        }
+      }, 300);
+    };
+
+    printFrame.onload = () => {
+      if (printed) return;
+      printed = true;
+      frameWindow.focus();
+      frameWindow.print();
+      cleanup();
+    };
+  };
+
   const handleSaveSale = async () => {
     const validItems = saleForm.items.filter((line) => line.item_id && line.quantity > 0);
     if (!validItems.length) {
       showToast('error', 'Sales', 'Select at least one item with quantity');
       return;
     }
-    if (firstInsufficientLine) {
+
+    if (effectiveDocType === 'quotation' && !saleForm.quote_valid_until) {
+      showToast('error', 'Quotation', 'Quote valid until date is required');
+      return;
+    }
+
+    // Quotation does not post stock; allow quoting even if current stock is low.
+    if (firstInsufficientLine && effectiveDocType !== 'quotation') {
       const selected = itemOptions.find((item) => item.item_id === Number(firstInsufficientLine.item_id));
       const itemLabel = selected?.item_name || `Item ${firstInsufficientLine.item_id}`;
       showToast(
@@ -244,6 +292,81 @@ const SaleCreate = () => {
           firstInsufficientAvailableQty
         )} available`
       );
+      return;
+    }
+
+    if (effectiveDocType === 'quotation') {
+      try {
+        setSubmitting(true);
+        const [companyRes, customerRes] = await Promise.all([
+          settingsService.getCompany(),
+          saleForm.customer_id ? customerService.get(Number(saleForm.customer_id)) : Promise.resolve(null as any),
+        ]);
+
+        const company = {
+          name: companyRes?.data?.company?.company_name || 'My Inventory ERP',
+          phone: companyRes?.data?.company?.phone || null,
+          logoUrl: companyRes?.data?.company?.logo_img || null,
+        };
+
+        const customer = {
+          name: saleForm.customer_id
+            ? customers.find((c) => c.customer_id === Number(saleForm.customer_id))?.full_name || 'Customer'
+            : 'Walking Customer',
+          phone:
+            customerRes && customerRes.success && customerRes.data?.customer?.phone
+              ? customerRes.data.customer.phone
+              : null,
+          address:
+            customerRes && customerRes.success && customerRes.data?.customer?.address
+              ? customerRes.data.customer.address
+              : null,
+        };
+
+        const draftId = Number(String(Date.now()).slice(-6));
+        const draftSale: Sale = {
+          sale_id: draftId,
+          branch_id: 0,
+          wh_id: null,
+          user_id: 0,
+          customer_id: saleForm.customer_id ? Number(saleForm.customer_id) : null,
+          customer_name: customer.name,
+          sale_date: saleForm.sale_date,
+          sale_type: 'credit',
+          doc_type: 'quotation',
+          quote_valid_until: saleForm.quote_valid_until || null,
+          subtotal: Number(saleForm.subtotal || 0),
+          discount: Number(saleForm.discount || 0),
+          total: Number(saleForm.total || 0),
+          status: 'unpaid',
+          note: saleForm.note || '',
+          paid_amount: 0,
+          tax_amount: Number(saleForm.tax_amount || 0),
+        };
+
+        const printItems: SaleItem[] = validItems.map((line) => {
+          const option = itemOptions.find((item) => item.item_id === Number(line.item_id));
+          const qty = Number(line.quantity || 0);
+          const unitPrice = Number(line.unit_price || option?.unit_price || 0);
+          return {
+            item_id: Number(line.item_id),
+            item_name: option?.item_name || undefined,
+            quantity: qty,
+            unit_price: unitPrice,
+            line_total: qty * unitPrice,
+          };
+        });
+
+        const html = buildPrintableDocument(draftSale, printItems, company, customer);
+        printHtmlDocument(html);
+        showToast('success', 'Quotation', 'Quotation printed');
+        navigate('/sales');
+      } catch (error) {
+        console.error('Quotation print error:', error);
+        showToast('error', 'Quotation', 'Failed to print quotation');
+      } finally {
+        setSubmitting(false);
+      }
       return;
     }
 
@@ -720,7 +843,13 @@ const SaleCreate = () => {
             disabled={submitting || loading || hasInsufficientStock}
             className="px-8 py-2.5 bg-primary-600 text-white font-bold rounded-lg hover:bg-primary-700 transition-all shadow-md shadow-primary-500/20 active:scale-95 disabled:opacity-60"
           >
-            {submitting ? 'Saving...' : isEditing ? 'Update Document' : 'Create Document'}
+            {submitting
+              ? 'Saving...'
+              : effectiveDocType === 'quotation'
+              ? 'Print Quotation'
+              : isEditing
+              ? 'Update Document'
+              : 'Create Document'}
           </button>
         </div>
       </div>

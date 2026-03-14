@@ -41,7 +41,8 @@ const detectCustomerBalanceColumn = async (): Promise<'open_balance' | 'remainin
   );
   const names = new Set(columns.map((row) => row.column_name));
 
-  customerBalanceColumn = names.has('open_balance') ? 'open_balance' : 'remaining_balance';
+  // Prefer `remaining_balance` as the live outstanding; keep `open_balance` as opening balance.
+  customerBalanceColumn = names.has('remaining_balance') ? 'remaining_balance' : 'open_balance';
   customerHasGenderColumn = names.has('gender');
   customerHasTypeColumn = names.has('customer_type');
   return customerBalanceColumn;

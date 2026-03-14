@@ -5,6 +5,7 @@ import { ApiError } from '../../utils/ApiError';
 import { syncLowStockNotifications } from '../../utils/stockAlerts';
 import { PurchaseInput, PurchaseItemInput } from './purchases.schemas';
 import { PoolClient } from 'pg';
+import { adjustSystemAccountBalance } from '../../utils/systemAccounts';
 
 export interface Purchase {
   purchase_id: number;
@@ -206,12 +207,17 @@ const adjustSupplierBalance = async (
 
   const cols = await getSupplierBalanceColumns(client);
   const updates: string[] = [];
-  if (cols.hasOpenBalance) {
-    updates.push(`open_balance = GREATEST(open_balance + $1, 0)`);
-  }
   if (cols.hasRemainingBalance) {
-    updates.push(`remaining_balance = GREATEST(remaining_balance + $1, 0)`);
+    updates.push(`remaining_balance = remaining_balance + $1`);
+  } else if (cols.hasOpenBalance) {
+    // Legacy schema: open_balance acts as the live balance.
+    updates.push(`open_balance = open_balance + $1`);
   }
+  await adjustSystemAccountBalance(client, {
+    branchId: params.branchId,
+    kind: 'payable',
+    delta: params.delta,
+  });
   if (!updates.length) return;
 
   await client.query(
@@ -307,7 +313,8 @@ const applyStoreItemDelta = async (
   client: PoolClient,
   params: { storeId: number; itemId: number; delta: number; branchId: number }
 ) => {
-  if (!params.delta) return;
+  const delta = Math.round(params.delta);
+  if (!delta) return;
   const existing = await client.query<{ quantity: string }>(
     `SELECT quantity::text AS quantity
        FROM ims.store_items
@@ -328,7 +335,7 @@ const applyStoreItemDelta = async (
     );
     currentQty = Number(item.rows[0]?.opening_balance || 0);
   }
-  const nextQty = currentQty + params.delta;
+  const nextQty = currentQty + delta;
   if (nextQty < 0) {
     throw ApiError.badRequest(`Insufficient stock for item ${params.itemId}`);
   }
@@ -358,7 +365,7 @@ const applyPurchaseStockEffects = async (
   if (!params.lines.length) return;
 
   for (const line of params.lines) {
-    const qty = Number(line.quantity || 0);
+    const qty = Math.round(Number(line.quantity || 0));
     if (!qty) continue;
     const delta = params.direction === 'in' ? qty : -qty;
     const storeId = await getStoreForItem(client, {
@@ -405,10 +412,13 @@ const preparePurchaseItems = async (
 ): Promise<PreparedPurchaseItem[]> => {
   const prepared: PreparedPurchaseItem[] = [];
   for (const item of params.items) {
-    const quantity = Number(item.quantity || 0);
+    const rawQuantity = Number(item.quantity || 0);
+    const quantity = Math.round(rawQuantity);
     const unitCost = Number(item.unitCost || 0);
     const discount = Number(item.discount || 0);
-    if (quantity <= 0) throw ApiError.badRequest('Quantity must be greater than zero');
+    if (Number.isNaN(rawQuantity) || quantity <= 0) {
+      throw ApiError.badRequest('Quantity must be greater than zero');
+    }
     if (unitCost < 0) throw ApiError.badRequest('Unit cost cannot be negative');
     if (discount < 0) throw ApiError.badRequest('Line discount cannot be negative');
 

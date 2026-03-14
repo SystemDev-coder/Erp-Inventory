@@ -51,6 +51,17 @@ const formatMoney = (value: number) =>
   `$${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const Settings = () => {
+  const modalLabelClass =
+    'text-sm font-semibold text-slate-700 dark:text-slate-200 flex flex-col gap-1';
+  const modalInputClass =
+    'rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-all';
+  const modalReadOnlyInputClass =
+    'rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 px-3 py-2 text-sm text-slate-700 dark:text-slate-200 focus:outline-none';
+  const modalTextareaClass = `${modalInputClass} resize-none`;
+  const modalBtnSecondaryClass =
+    'px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all';
+  const modalBtnPrimaryClass =
+    'px-4 py-2 rounded-xl bg-primary-600 text-white font-semibold hover:bg-primary-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed';
   const { showToast } = useToast();
   const { permissions } = useAuth();
 
@@ -145,6 +156,9 @@ const Settings = () => {
   const [assetOverview, setAssetOverview] = useState<SettingsAssetOverview | null>(null);
   const [fixedAssetModalOpen, setFixedAssetModalOpen] = useState(false);
   const [fixedAssetSaving, setFixedAssetSaving] = useState(false);
+  const [editingFixedAssetId, setEditingFixedAssetId] = useState<number | null>(null);
+  const [fixedAssetDeleteTarget, setFixedAssetDeleteTarget] = useState<{ asset_id: number; asset_name: string } | null>(null);
+  const [fixedAssetDeleting, setFixedAssetDeleting] = useState(false);
   const [fixedAssetForm, setFixedAssetForm] = useState({
     assetName: '',
     purchaseDate: today(),
@@ -641,7 +655,39 @@ const Settings = () => {
     }
   };
 
-  const createFixedAsset = async () => {
+  const resetFixedAssetModal = () => {
+    setEditingFixedAssetId(null);
+    setFixedAssetForm({
+      assetName: '',
+      purchaseDate: today(),
+      cost: '',
+      status: 'active',
+    });
+  };
+
+  const openCreateFixedAssetModal = () => {
+    resetFixedAssetModal();
+    setFixedAssetModalOpen(true);
+  };
+
+  const openEditFixedAssetModal = (asset: {
+    asset_id: number;
+    asset_name: string;
+    purchase_date: string;
+    cost: number;
+    status: string;
+  }) => {
+    setEditingFixedAssetId(asset.asset_id);
+    setFixedAssetForm({
+      assetName: asset.asset_name || '',
+      purchaseDate: formatDateOnly(asset.purchase_date) || today(),
+      cost: String(Number(asset.cost || 0)),
+      status: asset.status || 'active',
+    });
+    setFixedAssetModalOpen(true);
+  };
+
+  const saveFixedAsset = async () => {
     if (!fixedAssetForm.assetName.trim()) {
       showToast('error', 'Assets', 'Asset name is required');
       return;
@@ -657,27 +703,41 @@ const Settings = () => {
     }
 
     setFixedAssetSaving(true);
-    const res = await assetsService.create({
+    const payload = {
       assetName: fixedAssetForm.assetName.trim(),
       purchaseDate: fixedAssetForm.purchaseDate,
       cost,
       status: fixedAssetForm.status,
-    });
+    };
+    const res = editingFixedAssetId
+      ? await assetsService.update(editingFixedAssetId, payload)
+      : await assetsService.create(payload);
     setFixedAssetSaving(false);
 
     if (!res.success) {
-      showToast('error', 'Assets', res.error || 'Failed to create fixed asset');
+      showToast('error', 'Assets', res.error || `Failed to ${editingFixedAssetId ? 'update' : 'create'} fixed asset`);
       return;
     }
 
     setFixedAssetModalOpen(false);
-    setFixedAssetForm({
-      assetName: '',
-      purchaseDate: today(),
-      cost: '',
-      status: 'active',
-    });
-    showToast('success', 'Assets', 'Fixed asset created');
+    resetFixedAssetModal();
+    showToast('success', 'Assets', editingFixedAssetId ? 'Fixed asset updated' : 'Fixed asset created');
+    if (assetAccountsDisplayed) {
+      await loadAssetAccounts();
+    }
+  };
+
+  const deleteFixedAsset = async () => {
+    if (!fixedAssetDeleteTarget) return;
+    setFixedAssetDeleting(true);
+    const res = await assetsService.delete(fixedAssetDeleteTarget.asset_id);
+    setFixedAssetDeleting(false);
+    if (!res.success) {
+      showToast('error', 'Assets', res.error || 'Failed to delete fixed asset');
+      return;
+    }
+    setFixedAssetDeleteTarget(null);
+    showToast('success', 'Assets', 'Fixed asset deleted');
     if (assetAccountsDisplayed) {
       await loadAssetAccounts();
     }
@@ -907,15 +967,7 @@ const Settings = () => {
               {assetAccountsCreating ? 'Creating...' : 'Prepare Accounts'}
             </button>
             <button
-              onClick={() => {
-                setFixedAssetForm({
-                  assetName: '',
-                  purchaseDate: today(),
-                  cost: '',
-                  status: 'active',
-                });
-                setFixedAssetModalOpen(true);
-              }}
+              onClick={openCreateFixedAssetModal}
               className="px-3 py-2 rounded border border-black bg-black text-white text-sm"
             >
               New Fixed Asset
@@ -973,12 +1025,13 @@ const Settings = () => {
                       <th className="py-2 pr-3">Purchase Date</th>
                       <th className="py-2 pr-3">Status</th>
                       <th className="py-2 pr-0 text-right">Cost</th>
+                      <th className="py-2 pl-3 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {fixedAssetRows.length === 0 ? (
                       <tr>
-                        <td colSpan={4} className="py-3 text-zinc-600">No fixed assets found.</td>
+                        <td colSpan={5} className="py-3 text-zinc-600">No fixed assets found.</td>
                       </tr>
                     ) : (
                       fixedAssetRows.map((row) => (
@@ -987,13 +1040,31 @@ const Settings = () => {
                           <td className="py-2 pr-3">{row.purchase_date}</td>
                           <td className="py-2 pr-3 capitalize">{row.status || 'active'}</td>
                           <td className="py-2 pr-0 text-right">{formatMoney(row.cost)}</td>
+                          <td className="py-2 pl-3">
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                onClick={() => openEditFixedAssetModal(row)}
+                                className="p-1.5 rounded border border-zinc-400 text-zinc-700 hover:bg-zinc-100"
+                                title="Edit fixed asset"
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => setFixedAssetDeleteTarget({ asset_id: row.asset_id, asset_name: row.asset_name })}
+                                className="p-1.5 rounded border border-red-300 text-red-600 hover:bg-red-50"
+                                title="Delete fixed asset"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </td>
                         </tr>
                       ))
                     )}
                   </tbody>
                   <tfoot>
                     <tr>
-                      <td colSpan={3} className="pt-3 font-semibold">Total</td>
+                      <td colSpan={4} className="pt-3 font-semibold">Total</td>
                       <td className="pt-3 text-right font-semibold">{formatMoney(assetOverview?.fixed_assets_total || 0)}</td>
                     </tr>
                   </tfoot>
@@ -1008,14 +1079,9 @@ const Settings = () => {
         isOpen={fixedAssetModalOpen}
         onClose={() => {
           setFixedAssetModalOpen(false);
-          setFixedAssetForm({
-            assetName: '',
-            purchaseDate: today(),
-            cost: '',
-            status: 'active',
-          });
+          resetFixedAssetModal();
         }}
-        title="New Fixed Asset"
+        title={editingFixedAssetId ? 'Edit Fixed Asset' : 'New Fixed Asset'}
         size="lg"
       >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1065,25 +1131,33 @@ const Settings = () => {
             className="px-4 py-2 rounded border border-black"
             onClick={() => {
               setFixedAssetModalOpen(false);
-              setFixedAssetForm({
-                assetName: '',
-                purchaseDate: today(),
-                cost: '',
-                status: 'active',
-              });
+              resetFixedAssetModal();
             }}
           >
             Cancel
           </button>
           <button
             className="px-4 py-2 rounded border border-black bg-black text-white"
-            onClick={() => void createFixedAsset()}
+            onClick={() => void saveFixedAsset()}
             disabled={fixedAssetSaving}
           >
-            {fixedAssetSaving ? 'Saving...' : 'Create'}
+            {fixedAssetSaving ? 'Saving...' : editingFixedAssetId ? 'Update' : 'Create'}
           </button>
         </div>
       </Modal>
+
+      <ConfirmDialog
+        isOpen={!!fixedAssetDeleteTarget}
+        onClose={() => setFixedAssetDeleteTarget(null)}
+        onConfirm={deleteFixedAsset}
+        title="Delete Fixed Asset?"
+        highlightedName={fixedAssetDeleteTarget?.asset_name}
+        message="This action permanently removes the fixed asset."
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="danger"
+        isLoading={fixedAssetDeleting}
+      />
     </div>
   );
 
@@ -1320,38 +1394,65 @@ const Settings = () => {
 
       <Modal isOpen={capitalModalOpen} onClose={() => setCapitalModalOpen(false)} title={editingCapital ? 'Edit Capital' : 'Add Capital'} size="lg">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <label className="text-sm font-medium flex flex-col gap-1">
+          <label className={modalLabelClass}>
             Owner Name *
-            <input className="rounded border border-black px-3 py-2" value={capitalForm.ownerName} onChange={(e) => setCapitalForm({ ...capitalForm, ownerName: e.target.value })} />
+            <input
+              className={modalInputClass}
+              placeholder="e.g. Ahmed Ali"
+              value={capitalForm.ownerName}
+              onChange={(e) => setCapitalForm({ ...capitalForm, ownerName: e.target.value })}
+            />
           </label>
-          <label className="text-sm font-medium flex flex-col gap-1">
+          <label className={modalLabelClass}>
             Amount *
-            <input type="number" min="0" step="0.01" className="rounded border border-black px-3 py-2" value={capitalForm.amount} onChange={(e) => setCapitalForm({ ...capitalForm, amount: e.target.value })} />
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              className={modalInputClass}
+              placeholder="0.00"
+              value={capitalForm.amount}
+              onChange={(e) => setCapitalForm({ ...capitalForm, amount: e.target.value })}
+            />
           </label>
-          <label className="text-sm font-medium flex flex-col gap-1">
+          <label className={modalLabelClass}>
             Date *
-            <input type="date" className="rounded border border-black px-3 py-2" value={capitalForm.date} onChange={(e) => setCapitalForm({ ...capitalForm, date: e.target.value })} />
+            <input
+              type="date"
+              className={modalInputClass}
+              value={capitalForm.date}
+              onChange={(e) => setCapitalForm({ ...capitalForm, date: e.target.value })}
+            />
           </label>
-          <label className="text-sm font-medium flex flex-col gap-1">
+          <label className={modalLabelClass}>
             Share % *
             <input
               type="number"
               min="0"
               max="100"
               step="0.01"
-              className="rounded border border-black px-3 py-2"
+              className={modalInputClass}
+              placeholder="e.g. 50"
               value={capitalForm.sharePct}
               onChange={(e) => setCapitalForm({ ...capitalForm, sharePct: e.target.value })}
             />
           </label>
-          <label className="text-sm font-medium flex flex-col gap-1 md:col-span-2">
+          <label className={`${modalLabelClass} md:col-span-2`}>
             Note
-            <textarea className="rounded border border-black px-3 py-2" rows={3} value={capitalForm.note} onChange={(e) => setCapitalForm({ ...capitalForm, note: e.target.value })} />
+            <textarea
+              className={modalTextareaClass}
+              placeholder="Optional note about this capital entry..."
+              rows={3}
+              value={capitalForm.note}
+              onChange={(e) => setCapitalForm({ ...capitalForm, note: e.target.value })}
+            />
           </label>
         </div>
         <div className="flex justify-end gap-2 pt-4">
-          <button className="px-4 py-2 rounded border border-black" onClick={() => setCapitalModalOpen(false)}>Cancel</button>
-          <button className="px-4 py-2 rounded border border-black bg-black text-white" onClick={submitCapital} disabled={capitalSaving}>
+          <button className={modalBtnSecondaryClass} onClick={() => setCapitalModalOpen(false)}>
+            Cancel
+          </button>
+          <button className={modalBtnPrimaryClass} onClick={submitCapital} disabled={capitalSaving}>
             {capitalSaving ? 'Saving...' : editingCapital ? 'Update' : 'Create'}
           </button>
         </div>
@@ -1364,10 +1465,10 @@ const Settings = () => {
         size="md"
       >
         <div className="space-y-4">
-          <label className="text-sm font-medium flex flex-col gap-1">
+          <label className={modalLabelClass}>
             Owner *
             <select
-              className="rounded border border-black px-3 py-2"
+              className={modalInputClass}
               value={drawingForm.ownerName}
               onChange={(e) => setDrawingForm((prev) => ({ ...prev, ownerName: e.target.value }))}
             >
@@ -1380,52 +1481,56 @@ const Settings = () => {
             </select>
           </label>
 
-          <label className="text-sm font-medium flex flex-col gap-1">
+          <label className={modalLabelClass}>
             Available Equity (Auto)
             <input
               readOnly
-              className="rounded border border-black bg-zinc-100 px-3 py-2"
+              className={modalReadOnlyInputClass}
               value={formatMoney(selectedOwnerAvailable)}
             />
           </label>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <label className="text-sm font-medium flex flex-col gap-1">
+            <label className={modalLabelClass}>
               Amount *
               <input
                 type="number"
                 min="0"
                 step="0.01"
-                className="rounded border border-black px-3 py-2"
+                className={modalInputClass}
+                placeholder="0.00"
                 value={drawingForm.amount}
                 onChange={(e) => setDrawingForm((prev) => ({ ...prev, amount: e.target.value }))}
               />
             </label>
-            <label className="text-sm font-medium flex flex-col gap-1">
+            <label className={modalLabelClass}>
               Date *
               <input
                 type="date"
-                className="rounded border border-black px-3 py-2"
+                className={modalInputClass}
                 value={drawingForm.date}
                 onChange={(e) => setDrawingForm((prev) => ({ ...prev, date: e.target.value }))}
               />
             </label>
           </div>
 
-          <label className="text-sm font-medium flex flex-col gap-1">
+          <label className={modalLabelClass}>
             Note
             <textarea
               rows={3}
-              className="rounded border border-black px-3 py-2"
+              className={modalTextareaClass}
+              placeholder="Optional note..."
               value={drawingForm.note}
               onChange={(e) => setDrawingForm((prev) => ({ ...prev, note: e.target.value }))}
             />
           </label>
 
           <div className="flex justify-end gap-2">
-            <button className="px-4 py-2 rounded border border-black" onClick={closeDrawingModal}>Cancel</button>
+            <button className={modalBtnSecondaryClass} onClick={closeDrawingModal}>
+              Cancel
+            </button>
             <button
-              className="px-4 py-2 rounded border border-black bg-black text-white"
+              className={modalBtnPrimaryClass}
               onClick={() => void submitOwnerDrawing()}
               disabled={drawingSaving}
             >

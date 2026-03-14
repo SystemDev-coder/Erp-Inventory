@@ -122,7 +122,7 @@ export const inventoryReportsService = {
            FROM ims.stores
           WHERE branch_id = $1
             AND is_active = TRUE
-          ORDER BY store_name`,
+          ORDER BY store_id ASC`,
         [branchId]
       ),
       queryMany<InventoryReportOption>(
@@ -130,7 +130,7 @@ export const inventoryReportsService = {
            FROM ims.items
           WHERE branch_id = $1
             AND is_active = TRUE
-          ORDER BY name`,
+          ORDER BY item_id ASC`,
         [branchId]
       ),
     ]);
@@ -157,7 +157,7 @@ export const inventoryReportsService = {
         AND st.branch_id = i.branch_id
       WHERE i.branch_id = $1
         AND i.is_active = TRUE
-      ORDER BY i.name`,
+      ORDER BY i.item_id ASC`,
       [branchId]
     );
   },
@@ -231,10 +231,10 @@ export const inventoryReportsService = {
          tx.reference_no,
          tx.status,
          tx.notes
-       FROM tx
-       LEFT JOIN ims.items i ON i.item_id = tx.item_id
-       LEFT JOIN ims.stores s ON s.store_id = tx.store_id
-      ORDER BY tx.transaction_date DESC, tx.transaction_id DESC
+        FROM tx
+        LEFT JOIN ims.items i ON i.item_id = tx.item_id
+        LEFT JOIN ims.stores s ON s.store_id = tx.store_id
+      ORDER BY tx.transaction_date ASC, tx.transaction_id ASC
       LIMIT 3000`,
       [branchId, fromDate, toDate]
     );
@@ -282,7 +282,7 @@ export const inventoryReportsService = {
       WHERE p.branch_id = $1
         AND pi.expiry_date IS NOT NULL
         AND pi.expiry_date BETWEEN $2::date AND $3::date
-      ORDER BY pi.expiry_date ASC, i.name`,
+      ORDER BY pi.expiry_date ASC, i.item_id ASC`,
       [branchId, fromDate, toDate]
     );
   },
@@ -304,7 +304,7 @@ export const inventoryReportsService = {
        LEFT JOIN ims.users u ON u.user_id = sa.created_by
       WHERE i.branch_id = $1
         AND sa.adjustment_date::date BETWEEN $2::date AND $3::date
-      ORDER BY sa.adjustment_date DESC, sa.adjustment_id DESC`,
+      ORDER BY sa.adjustment_date ASC, sa.adjustment_id ASC`,
       [branchId, fromDate, toDate]
     );
   },
@@ -331,7 +331,7 @@ export const inventoryReportsService = {
         AND s.is_active = TRUE
         ${filter}
       GROUP BY s.store_id, s.store_name
-      ORDER BY s.store_name`,
+      ORDER BY s.store_id ASC`,
       params
     );
   },
@@ -360,7 +360,7 @@ export const inventoryReportsService = {
        JOIN ims.items i ON i.item_id = si.product_id
       WHERE s.branch_id = $1
         ${filter}
-      ORDER BY s.store_name, i.name
+      ORDER BY s.store_id ASC, i.item_id ASC
       LIMIT 4000`,
       params
     );

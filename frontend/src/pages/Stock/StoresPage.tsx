@@ -11,6 +11,7 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const { showToast } = useToast();
   const [stores, setStores] = useState<StoreType[]>([]);
   const [loading, setLoading] = useState(false);
+  const [hasDisplayed, setHasDisplayed] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [storeItems, setStoreItems] = useState<Record<number, StoreItem[]>>({});
   const [editQty, setEditQty] = useState<Record<number, number>>({});
@@ -26,6 +27,7 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
 
   const loadStores = async () => {
     setLoading(true);
+    setHasDisplayed(true);
     const res = await storeService.list();
     if (res.success && res.data?.stores) {
       setStores(res.data.stores);
@@ -182,10 +184,11 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
           actions={
             <div className="flex items-center gap-2">
               <button
-                onClick={() => loadStores()}
-                className="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 rounded-xl text-slate-700 hover:bg-slate-100"
+                onClick={() => void loadStores()}
+                disabled={loading}
+                className="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 rounded-xl text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <Eye className="w-4 h-4" /> Display
+                <Eye className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
               </button>
               <button
                 onClick={openCreateStore}
@@ -201,10 +204,11 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
       {embedded && (
         <div className="flex items-center justify-end gap-2">
           <button
-            onClick={() => loadStores()}
-            className="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 rounded-xl text-slate-700 hover:bg-slate-100"
+            onClick={() => void loadStores()}
+            disabled={loading}
+            className="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 rounded-xl text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <Eye className="w-4 h-4" /> Display
+            <Eye className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
           </button>
           <button
             onClick={openCreateStore}
@@ -223,7 +227,9 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
         ) : stores.length === 0 ? (
           <div className="text-center py-12 text-slate-500">
             <Store className="w-12 h-12 mx-auto mb-2 opacity-50" />
-            <p>No stores loaded. Click Display to fetch stores.</p>
+            <p>
+              {hasDisplayed ? 'No data found for the selected filters.' : 'Click Display to load data.'}
+            </p>
           </div>
         ) : (
           <ul className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -275,7 +281,7 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
                                 <input
                                   type="number"
                                   min={0}
-                                  step={0.001}
+                                  step={1}
                                   className="w-28 rounded border border-slate-300 bg-white px-2 py-1 text-right text-sm dark:border-slate-700 dark:bg-slate-900"
                                   value={editQty[item.store_item_id] ?? Number(item.quantity || 0)}
                                   onChange={(e) => setEditQty((prev) => ({ ...prev, [item.store_item_id]: Number(e.target.value || 0) }))}

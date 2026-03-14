@@ -1,4 +1,5 @@
 import { queryMany, queryOne } from '../../db/query';
+import { ApiError } from '../../utils/ApiError';
 import { BranchScope, pickBranchForWrite } from '../../utils/branchScope';
 
 export interface FixedAssetRow {
@@ -8,6 +9,7 @@ export interface FixedAssetRow {
   purchase_date: string;
   cost: number;
   status: string;
+  account_id: number | null;
   created_by: number | null;
   created_at: string;
 }
@@ -18,6 +20,7 @@ export interface CreateFixedAssetInput {
   cost: number;
   category?: string;
   status?: string;
+  accountId?: number;
   branchId?: number;
 }
 
@@ -27,6 +30,7 @@ export interface UpdateFixedAssetInput {
   cost?: number;
   category?: string;
   status?: string;
+  accountId?: number;
 }
 
 let fixedAssetsSchemaReady = false;
@@ -43,6 +47,7 @@ const ensureFixedAssetsSchema = async () => {
       purchase_date DATE NOT NULL,
       cost NUMERIC(14,2) NOT NULL CHECK (cost >= 0),
       status VARCHAR(30) NOT NULL DEFAULT 'active',
+      acc_id BIGINT REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE SET NULL,
       created_by BIGINT REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE SET NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -53,6 +58,7 @@ const ensureFixedAssetsSchema = async () => {
     ALTER TABLE ims.fixed_assets
       ADD COLUMN IF NOT EXISTS category VARCHAR(100),
       ADD COLUMN IF NOT EXISTS status VARCHAR(30),
+      ADD COLUMN IF NOT EXISTS acc_id BIGINT,
       ADD COLUMN IF NOT EXISTS created_by BIGINT,
       ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ
@@ -89,6 +95,7 @@ const mapRow = (row: {
   purchase_date: string;
   cost: string | number;
   status: string;
+  acc_id?: number | null;
   created_by: number | null;
   created_at: string;
 }): FixedAssetRow => ({
@@ -98,6 +105,7 @@ const mapRow = (row: {
   purchase_date: row.purchase_date,
   cost: Number(row.cost || 0),
   status: row.status,
+  account_id: row.acc_id === undefined ? null : row.acc_id ? Number(row.acc_id) : null,
   created_by: row.created_by ? Number(row.created_by) : null,
   created_at: row.created_at,
 });
@@ -136,6 +144,7 @@ export const assetsService = {
       purchase_date: string;
       cost: string | number;
       status: string;
+      acc_id: number | null;
       created_by: number | null;
       created_at: string;
     }>(
@@ -146,6 +155,7 @@ export const assetsService = {
          fa.purchase_date::text AS purchase_date,
          fa.cost::text AS cost,
          fa.status,
+         fa.acc_id,
          fa.created_by,
          fa.created_at::text AS created_at
        FROM ims.fixed_assets fa
@@ -166,6 +176,41 @@ export const assetsService = {
     await ensureFixedAssetsSchema();
 
     const branchId = pickBranchForWrite(scope, input.branchId);
+
+    const cashAccount = input.accountId
+      ? await queryOne<{ acc_id: number; account_type: string }>(
+          `SELECT acc_id, account_type
+             FROM ims.accounts
+            WHERE branch_id = $1
+              AND acc_id = $2
+              AND is_active = TRUE`,
+          [branchId, input.accountId]
+        )
+      : await queryOne<{ acc_id: number; account_type: string }>(
+          `SELECT acc_id, account_type
+             FROM ims.accounts
+            WHERE branch_id = $1
+              AND is_active = TRUE
+              AND account_type = 'asset'
+            ORDER BY
+              CASE
+                WHEN name ILIKE '%cash%' THEN 0
+                WHEN name ILIKE '%bank%' THEN 1
+                ELSE 2
+              END,
+              acc_id ASC
+            LIMIT 1`,
+          [branchId]
+        );
+
+    if (!cashAccount) {
+      throw ApiError.badRequest('No active cash/bank asset account found for this branch');
+    }
+    if ((cashAccount.account_type || 'asset') !== 'asset') {
+      throw ApiError.badRequest('Selected payment account must be an asset (cash/bank) account');
+    }
+    const cashAccountId = Number(cashAccount.acc_id);
+
     const row = await queryOne<{
       asset_id: number;
       branch_id: number;
@@ -173,13 +218,14 @@ export const assetsService = {
       purchase_date: string;
       cost: string | number;
       status: string;
+      acc_id: number | null;
       created_by: number | null;
       created_at: string;
     }>(
       `INSERT INTO ims.fixed_assets
-         (branch_id, asset_name, category, purchase_date, cost, status, created_by)
+         (branch_id, asset_name, category, purchase_date, cost, status, acc_id, created_by)
        VALUES
-         ($1, $2, $3, $4::date, $5, $6, $7)
+         ($1, $2, $3, $4::date, $5, $6, $7, $8)
        RETURNING
          asset_id,
          branch_id,
@@ -187,6 +233,7 @@ export const assetsService = {
          purchase_date::text AS purchase_date,
          cost::text AS cost,
          status,
+         acc_id,
          created_by,
          created_at::text AS created_at`,
       [
@@ -196,6 +243,7 @@ export const assetsService = {
         input.purchaseDate,
         input.cost,
         input.status || 'active',
+        cashAccountId,
         userId,
       ]
     );
@@ -203,6 +251,30 @@ export const assetsService = {
     if (!row) {
       throw new Error('Failed to create fixed asset');
     }
+
+    // Post the cash payment to the cash/bank ledger so Cash Flow matches asset creation.
+    await queryOne(
+      `INSERT INTO ims.account_transactions
+         (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
+       VALUES
+         ($1, $2, 'other', 'fixed_assets', $3, $4, 0, $5::timestamptz, $6)`,
+      [
+        branchId,
+        cashAccountId,
+        row.asset_id,
+        input.cost,
+        input.purchaseDate,
+        `[FIXED ASSET] ${input.assetName}`,
+      ]
+    );
+
+    await queryOne(
+      `UPDATE ims.accounts
+          SET balance = COALESCE(balance, 0) - $1
+        WHERE branch_id = $2
+          AND acc_id = $3`,
+      [input.cost, branchId, cashAccountId]
+    );
 
     return mapRow(row);
   },
@@ -213,6 +285,31 @@ export const assetsService = {
     scope: BranchScope
   ): Promise<FixedAssetRow | null> {
     await ensureFixedAssetsSchema();
+
+    const existing = await queryOne<{
+      asset_id: number;
+      branch_id: number;
+      asset_name: string;
+      purchase_date: string;
+      cost: string | number;
+      status: string;
+      acc_id: number | null;
+    }>(
+      scope.isAdmin
+        ? `SELECT asset_id, branch_id, asset_name, purchase_date::text AS purchase_date, cost::text AS cost, status, acc_id
+             FROM ims.fixed_assets
+            WHERE asset_id = $1
+            LIMIT 1`
+        : `SELECT asset_id, branch_id, asset_name, purchase_date::text AS purchase_date, cost::text AS cost, status, acc_id
+             FROM ims.fixed_assets
+            WHERE asset_id = $1
+              AND branch_id = ANY($2)
+            LIMIT 1`,
+      scope.isAdmin ? [assetId] : [assetId, scope.branchIds]
+    );
+    if (!existing) {
+      return null;
+    }
 
     const updates: string[] = [];
     const values: Array<string | number | number[] | null> = [];
@@ -238,6 +335,10 @@ export const assetsService = {
       updates.push(`status = $${param++}`);
       values.push(input.status);
     }
+    if (input.accountId !== undefined) {
+      updates.push(`acc_id = $${param++}`);
+      values.push(input.accountId);
+    }
 
     if (!updates.length) {
       const params: Array<number | number[]> = [assetId];
@@ -253,6 +354,7 @@ export const assetsService = {
         purchase_date: string;
         cost: string | number;
         status: string;
+        acc_id: number | null;
         created_by: number | null;
         created_at: string;
       }>(
@@ -263,6 +365,7 @@ export const assetsService = {
            fa.purchase_date::text AS purchase_date,
            fa.cost::text AS cost,
            fa.status,
+           fa.acc_id,
            fa.created_by,
            fa.created_at::text AS created_at
          FROM ims.fixed_assets fa
@@ -291,6 +394,7 @@ export const assetsService = {
       purchase_date: string;
       cost: string | number;
       status: string;
+      acc_id: number | null;
       created_by: number | null;
       created_at: string;
     }>(
@@ -304,10 +408,72 @@ export const assetsService = {
           purchase_date::text AS purchase_date,
           cost::text AS cost,
           status,
+          acc_id,
           created_by,
           created_at::text AS created_at`,
       params
     );
+
+    // If any accounting fields changed, rewrite the associated cash ledger row.
+    const prevCost = Number(existing.cost || 0);
+    const nextCost = input.cost !== undefined ? Number(input.cost || 0) : prevCost;
+    const prevDate = existing.purchase_date;
+    const nextDate = input.purchaseDate !== undefined ? input.purchaseDate : prevDate;
+    const prevAccId = existing.acc_id ? Number(existing.acc_id) : null;
+    const nextAccId = input.accountId !== undefined ? (input.accountId ? Number(input.accountId) : null) : prevAccId;
+
+    const accountingChanged =
+      nextCost !== prevCost ||
+      nextDate !== prevDate ||
+      nextAccId !== prevAccId ||
+      (input.assetName !== undefined && input.assetName !== existing.asset_name);
+
+    if (accountingChanged) {
+      const branchId = Number(existing.branch_id);
+
+      // Reverse old cash movement.
+      if (prevAccId && prevCost > 0) {
+        await queryOne(
+          `UPDATE ims.accounts
+              SET balance = COALESCE(balance, 0) + $1
+            WHERE branch_id = $2
+              AND acc_id = $3`,
+          [prevCost, branchId, prevAccId]
+        );
+      }
+
+      await queryOne(
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'fixed_assets'
+            AND ref_id = $2`,
+        [branchId, assetId]
+      );
+
+      if (nextAccId && nextCost > 0) {
+        await queryOne(
+          `INSERT INTO ims.account_transactions
+             (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
+           VALUES
+             ($1, $2, 'other', 'fixed_assets', $3, $4, 0, $5::timestamptz, $6)`,
+          [
+            branchId,
+            nextAccId,
+            assetId,
+            nextCost,
+            nextDate,
+            `[FIXED ASSET] ${(input.assetName ?? existing.asset_name) || existing.asset_name}`,
+          ]
+        );
+        await queryOne(
+          `UPDATE ims.accounts
+              SET balance = COALESCE(balance, 0) - $1
+            WHERE branch_id = $2
+              AND acc_id = $3`,
+          [nextCost, branchId, nextAccId]
+        );
+      }
+    }
 
     return row ? mapRow(row) : null;
   },
@@ -321,6 +487,40 @@ export const assetsService = {
       params.push(scope.branchIds);
       scopeSql = ` AND branch_id = ANY($${params.length})`;
     }
+
+    const existing = await queryOne<{ branch_id: number; cost: string | number; acc_id: number | null }>(
+      `SELECT branch_id, cost::text AS cost, acc_id
+         FROM ims.fixed_assets
+        WHERE asset_id = $1${scopeSql}
+        LIMIT 1`,
+      params
+    );
+
+    if (!existing) return false;
+
+    // Reverse cash movement and remove ledger entry.
+    const branchId = Number(existing.branch_id);
+    const cost = Number(existing.cost || 0);
+    const cashAccId = existing.acc_id ? Number(existing.acc_id) : null;
+
+    if (cashAccId && cost > 0) {
+      await queryOne(
+        `UPDATE ims.accounts
+            SET balance = COALESCE(balance, 0) + $1
+          WHERE branch_id = $2
+            AND acc_id = $3`,
+        [cost, branchId, cashAccId]
+      );
+    }
+
+    await queryOne(
+      `DELETE FROM ims.account_transactions
+        WHERE branch_id = $1
+          AND ref_table = 'fixed_assets'
+          AND ref_id = $2`,
+      [branchId, assetId]
+    );
+
     const deleted = await queryOne<{ asset_id: number }>(
       `DELETE FROM ims.fixed_assets
         WHERE asset_id = $1${scopeSql}

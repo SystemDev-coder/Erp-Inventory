@@ -159,13 +159,14 @@ const ensureCapitalSchema = async (): Promise<void> => {
     UPDATE ims.accounts
        SET account_type = 'asset'
      WHERE account_type IS NULL
-        OR account_type NOT IN ('asset', 'equity')
+        OR BTRIM(account_type) = ''
   `);
 
+  // Allow standard COA types used across reports.
   await queryMany(`
     DO $$
     BEGIN
-      IF NOT EXISTS (
+      IF EXISTS (
         SELECT 1
           FROM pg_constraint c
           JOIN pg_class t ON t.oid = c.conrelid
@@ -174,10 +175,22 @@ const ensureCapitalSchema = async (): Promise<void> => {
            AND t.relname = 'accounts'
            AND c.conname = 'chk_accounts_account_type'
       ) THEN
-        ALTER TABLE ims.accounts
-          ADD CONSTRAINT chk_accounts_account_type
-          CHECK (account_type IN ('asset', 'equity'));
+        ALTER TABLE ims.accounts DROP CONSTRAINT chk_accounts_account_type;
       END IF;
+
+      ALTER TABLE ims.accounts
+        ADD CONSTRAINT chk_accounts_account_type
+        CHECK (
+          account_type IN (
+            'asset',
+            'liability',
+            'equity',
+            'revenue',
+            'income',
+            'expense',
+            'cost'
+          )
+        );
     END
     $$;
   `);
@@ -340,7 +353,8 @@ const ensureOwnerCapitalAccount = async (branchId: number): Promise<number> => {
   if (existing) {
     await queryOne(
       `UPDATE ims.accounts
-          SET account_type = 'equity'
+          SET account_type = 'equity',
+              is_active = TRUE
         WHERE acc_id = $1`,
       [existing.acc_id]
     );
@@ -394,28 +408,6 @@ const isCapitalDateLocked = async (branchId: number, date: string): Promise<bool
     hasBranch ? [date, branchId] : [date]
   );
   return Boolean(row?.exists);
-};
-
-const ensureReversibleCapitalBalances = async (
-  receivingAccId: number,
-  equityAccId: number,
-  amount: number
-): Promise<void> => {
-  const rows = await queryMany<{ acc_id: number; balance: string | number }>(
-    `SELECT acc_id, balance::text AS balance
-       FROM ims.accounts
-      WHERE acc_id = ANY($1::bigint[])`,
-    [[receivingAccId, equityAccId]]
-  );
-  const map = new Map(rows.map((row) => [Number(row.acc_id), Number(row.balance || 0)]));
-  const receivingBalance = map.get(receivingAccId) ?? 0;
-  const equityBalance = map.get(equityAccId) ?? 0;
-  if (receivingBalance < amount) {
-    throw ApiError.badRequest('Cannot reverse this capital record: receiving account balance is insufficient');
-  }
-  if (equityBalance < amount) {
-    throw ApiError.badRequest('Cannot reverse this capital record: Owner Capital balance is insufficient');
-  }
 };
 
 const getOwnerAvailableEquity = async (
@@ -642,14 +634,31 @@ export const settingsService = {
       institution: string | null;
       balance: string | number;
     }>(
-      `SELECT
-         a.name AS account_name,
-         a.institution,
-         COALESCE(SUM(a.balance), 0)::text AS balance
-       FROM ims.accounts a
-       WHERE ${where.join(' AND ')}
-       GROUP BY a.name, a.institution
-       ORDER BY a.name`,
+      `WITH account_balances AS (
+         SELECT
+           a.acc_id,
+           a.name AS account_name,
+           NULLIF(BTRIM(a.institution), '') AS institution,
+           CASE
+             WHEN COUNT(at.txn_id) > 0 THEN COALESCE(SUM(COALESCE(at.credit, 0) - COALESCE(at.debit, 0)), 0)
+             ELSE COALESCE(a.balance, 0)
+           END::double precision AS dynamic_balance
+         FROM ims.accounts a
+         LEFT JOIN ims.account_transactions at
+           ON at.branch_id = a.branch_id
+          AND at.acc_id = a.acc_id
+          AND at.txn_type::text NOT IN ('capital_contribution', 'owner_drawing')
+          AND COALESCE(at.ref_table, '') NOT IN ('capital_contributions', 'owner_drawings')
+         WHERE ${where.join(' AND ')}
+         GROUP BY a.acc_id, a.name, a.institution, a.balance
+       )
+       SELECT
+         account_name,
+         institution,
+         COALESCE(SUM(dynamic_balance), 0)::text AS balance
+       FROM account_balances
+       GROUP BY account_name, institution
+       ORDER BY account_name`,
       params
     );
 
@@ -1319,42 +1328,29 @@ export const settingsService = {
       );
       if (!row) throw ApiError.internal('Failed to create capital entry');
 
-      const journal = await queryOne<{ journal_id: number }>(
-        `INSERT INTO ims.journal_entries (branch_id, entry_date, memo, source_table, source_id, created_by)
-         VALUES ($1, $2::date, $3, 'capital_contributions', $4, $5)
-         RETURNING journal_id`,
-        [branchId, input.date, input.note || `Capital contribution by ${ownerName}`, row.capital_id, userId]
-      );
-      if (!journal) throw ApiError.internal('Failed to create journal entry');
-
+      // Post to cash/bank ledger so Cash Flow + Account balances are correct.
       await queryOne(
-        `INSERT INTO ims.journal_lines (journal_id, acc_id, debit, credit, note)
-         VALUES ($1, $2, $3, 0, $4), ($1, $5, 0, $3, $4)`,
-        [journal.journal_id, receivingAccountId, input.amount, input.note || null, ownerCapitalAccId]
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'capital_contributions'
+            AND ref_id = $2`,
+        [branchId, row.capital_id]
       );
 
-      await queryOne(
-        `UPDATE ims.capital_contributions
-            SET journal_id = $2
-          WHERE capital_id = $1`,
-        [row.capital_id, journal.journal_id]
-      );
-
-      // Operational cash movement table (legacy): credit means inflow for this system.
+      const memo = `[CAPITAL] ${ownerName}${input.note ? ` - ${input.note}` : ''}`;
       await queryOne(
         `INSERT INTO ims.account_transactions
            (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
-         VALUES ($1, $2, 'capital_contribution', 'capital_contributions', $3, 0, $4, $5::date, $6)`,
-        [branchId, receivingAccountId, row.capital_id, input.amount, input.date, input.note || null]
+         VALUES ($1, $2, 'capital_contribution', 'capital_contributions', $3, 0, $4, $5::timestamptz, $6)`,
+        [branchId, receivingAccountId, row.capital_id, input.amount, input.date, memo]
       );
 
       await queryOne(
-        `UPDATE ims.accounts SET balance = balance + $2 WHERE acc_id = $1`,
-        [receivingAccountId, input.amount]
-      );
-      await queryOne(
-        `UPDATE ims.accounts SET balance = balance + $2 WHERE acc_id = $1`,
-        [ownerCapitalAccId, input.amount]
+        `UPDATE ims.accounts
+            SET balance = COALESCE(balance, 0) + $1
+          WHERE branch_id = $2
+            AND acc_id = $3`,
+        [input.amount, branchId, receivingAccountId]
       );
 
       await queryOne('COMMIT');
@@ -1521,16 +1517,16 @@ export const settingsService = {
     }
 
     const payoutAccount = input.accountId
-      ? await queryOne<{ acc_id: number; account_type: string; balance: string | number }>(
-          `SELECT acc_id, account_type, balance::text AS balance
+      ? await queryOne<{ acc_id: number; account_type: string }>(
+          `SELECT acc_id, account_type
              FROM ims.accounts
             WHERE acc_id = $1
               AND branch_id = $2
               AND is_active = TRUE`,
           [input.accountId, branchId]
         )
-      : await queryOne<{ acc_id: number; account_type: string; balance: string | number }>(
-          `SELECT acc_id, account_type, balance::text AS balance
+      : await queryOne<{ acc_id: number; account_type: string }>(
+          `SELECT acc_id, account_type
              FROM ims.accounts
             WHERE branch_id = $1
               AND is_active = TRUE
@@ -1554,20 +1550,7 @@ export const settingsService = {
     }
 
     const payoutAccountId = Number(payoutAccount.acc_id);
-    const payoutBalance = Number(payoutAccount.balance || 0);
-    if (payoutBalance < input.amount) {
-      throw ApiError.badRequest('Insufficient account balance for this drawing');
-    }
-
     const ownerCapitalAccId = await ensureOwnerCapitalAccount(branchId);
-    const ownerCapitalBalanceRow = await queryOne<{ balance: string | number }>(
-      `SELECT balance::text AS balance FROM ims.accounts WHERE acc_id = $1`,
-      [ownerCapitalAccId]
-    );
-    const ownerCapitalBalance = Number(ownerCapitalBalanceRow?.balance || 0);
-    if (ownerCapitalBalance < input.amount) {
-      throw ApiError.badRequest('Owner Capital account balance is insufficient');
-    }
 
     await queryOne('BEGIN');
     try {
@@ -1580,41 +1563,29 @@ export const settingsService = {
       );
       if (!row) throw ApiError.internal('Failed to create owner drawing');
 
-      const journal = await queryOne<{ journal_id: number }>(
-        `INSERT INTO ims.journal_entries (branch_id, entry_date, memo, source_table, source_id, created_by)
-         VALUES ($1, $2::date, $3, 'owner_drawings', $4, $5)
-         RETURNING journal_id`,
-        [branchId, input.date, input.note || `Owner drawing by ${ownerName}`, row.draw_id, userId]
-      );
-      if (!journal) throw ApiError.internal('Failed to create owner drawing journal');
-
+      // Post to cash/bank ledger so Cash Flow + Account balances are correct.
       await queryOne(
-        `INSERT INTO ims.journal_lines (journal_id, acc_id, debit, credit, note)
-         VALUES ($1, $2, $3, 0, $4), ($1, $5, 0, $3, $4)`,
-        [journal.journal_id, ownerCapitalAccId, input.amount, input.note || null, payoutAccountId]
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'owner_drawings'
+            AND ref_id = $2`,
+        [branchId, row.draw_id]
       );
 
-      await queryOne(
-        `UPDATE ims.owner_drawings
-            SET journal_id = $2
-          WHERE draw_id = $1`,
-        [row.draw_id, journal.journal_id]
-      );
-
+      const memo = `[DRAWING] ${ownerName}${input.note ? ` - ${input.note}` : ''}`;
       await queryOne(
         `INSERT INTO ims.account_transactions
            (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
-         VALUES ($1, $2, 'owner_drawing', 'owner_drawings', $3, $4, 0, $5::date, $6)`,
-        [branchId, payoutAccountId, row.draw_id, input.amount, input.date, input.note || null]
+         VALUES ($1, $2, 'owner_drawing', 'owner_drawings', $3, $4, 0, $5::timestamptz, $6)`,
+        [branchId, payoutAccountId, row.draw_id, input.amount, input.date, memo]
       );
 
       await queryOne(
-        `UPDATE ims.accounts SET balance = balance - $2 WHERE acc_id = $1`,
-        [payoutAccountId, input.amount]
-      );
-      await queryOne(
-        `UPDATE ims.accounts SET balance = balance - $2 WHERE acc_id = $1`,
-        [ownerCapitalAccId, input.amount]
+        `UPDATE ims.accounts
+            SET balance = COALESCE(balance, 0) - $1
+          WHERE branch_id = $2
+            AND acc_id = $3`,
+        [input.amount, branchId, payoutAccountId]
       );
 
       await queryOne('COMMIT');
@@ -1633,6 +1604,7 @@ export const settingsService = {
     scope: BranchScope,
     userId: number
   ): Promise<OwnerDrawing> {
+    void userId;
     await ensureCapitalSchema();
     const existing = await queryOne<{
       draw_id: number;
@@ -1653,23 +1625,28 @@ export const settingsService = {
     if (!existing) throw ApiError.notFound('Drawing record not found');
     assertBranchAccess(scope, Number(existing.branch_id));
 
+    const prevAmount = Number(existing.amount || 0);
+    const prevAccountId = Number(existing.acc_id);
+
     const next = {
       ownerName: compactOwnerName(input.ownerName ?? existing.owner_name),
       amount: input.amount ?? Number(existing.amount),
       date: input.date ?? existing.draw_date,
       accountId: input.accountId ?? Number(existing.acc_id),
       note: input.note !== undefined ? input.note : existing.note,
-      equityAccId: Number(existing.equity_acc_id),
     };
 
     if (!next.ownerName) throw ApiError.badRequest('Owner name is required');
     if (!Number.isFinite(next.amount) || next.amount <= 0) throw ApiError.badRequest('Amount must be greater than 0');
-    if (await isCapitalDateLocked(Number(existing.branch_id), existing.draw_date) || await isCapitalDateLocked(Number(existing.branch_id), next.date)) {
+    if (
+      (await isCapitalDateLocked(Number(existing.branch_id), existing.draw_date)) ||
+      (await isCapitalDateLocked(Number(existing.branch_id), next.date))
+    ) {
       throw ApiError.badRequest('Cannot update drawing entry in a closed accounting period');
     }
 
-    const payoutAccount = await queryOne<{ acc_id: number; account_type: string; balance: string | number }>(
-      `SELECT acc_id, account_type, balance::text AS balance
+    const payoutAccount = await queryOne<{ acc_id: number; account_type: string }>(
+      `SELECT acc_id, account_type
          FROM ims.accounts
         WHERE acc_id = $1
           AND branch_id = $2
@@ -1691,103 +1668,22 @@ export const settingsService = {
       throw ApiError.badRequest(`Draw amount exceeds available equity (${availableEquity.toFixed(2)})`);
     }
 
-    const existingAmount = Number(existing.amount || 0);
-    const existingAccountId = Number(existing.acc_id);
     const nextAccountId = Number(next.accountId);
-    const accountChanged = existingAccountId !== nextAccountId;
-    const amountDelta = Number(next.amount) - existingAmount;
 
     await queryOne('BEGIN');
     try {
-      const balanceAccIds = Array.from(new Set([existingAccountId, nextAccountId, Number(existing.equity_acc_id)]));
-      const balanceRows = await queryMany<{ acc_id: number; balance: string | number }>(
-        `SELECT acc_id, balance::text AS balance
-           FROM ims.accounts
-          WHERE acc_id = ANY($1::bigint[])
-          FOR UPDATE`,
-        [balanceAccIds]
-      );
-      const balances = new Map(balanceRows.map((row) => [Number(row.acc_id), Number(row.balance || 0)]));
-      const oldPayoutBalance = balances.get(existingAccountId) ?? 0;
-      const nextPayoutBalance = balances.get(nextAccountId) ?? 0;
-      const equityBalance = balances.get(Number(existing.equity_acc_id)) ?? 0;
-
-      if (accountChanged) {
-        if (nextPayoutBalance < Number(next.amount)) {
-          throw ApiError.badRequest('Insufficient account balance for this drawing');
-        }
-      } else if (amountDelta > 0 && oldPayoutBalance < amountDelta) {
-        throw ApiError.badRequest('Insufficient account balance for this drawing');
+      if (existing.journal_id) {
+        await queryOne(`DELETE FROM ims.journal_entries WHERE journal_id = $1`, [existing.journal_id]);
       }
 
-      if (amountDelta > 0 && equityBalance < amountDelta) {
-        throw ApiError.badRequest('Owner Capital account balance is insufficient');
-      }
-
-      if (accountChanged) {
-        await queryOne(`UPDATE ims.accounts SET balance = balance + $2 WHERE acc_id = $1`, [existingAccountId, existingAmount]);
-        await queryOne(`UPDATE ims.accounts SET balance = balance - $2 WHERE acc_id = $1`, [nextAccountId, next.amount]);
-      } else if (amountDelta !== 0) {
-        if (amountDelta > 0) {
-          await queryOne(`UPDATE ims.accounts SET balance = balance - $2 WHERE acc_id = $1`, [existingAccountId, amountDelta]);
-        } else {
-          await queryOne(`UPDATE ims.accounts SET balance = balance + $2 WHERE acc_id = $1`, [existingAccountId, Math.abs(amountDelta)]);
-        }
-      }
-
-      if (amountDelta > 0) {
-        await queryOne(`UPDATE ims.accounts SET balance = balance - $2 WHERE acc_id = $1`, [existing.equity_acc_id, amountDelta]);
-      } else if (amountDelta < 0) {
-        await queryOne(`UPDATE ims.accounts SET balance = balance + $2 WHERE acc_id = $1`, [existing.equity_acc_id, Math.abs(amountDelta)]);
-      }
-
-      let journalId = existing.journal_id ?? null;
-      if (!journalId) {
-        const journal = await queryOne<{ journal_id: number }>(
-          `INSERT INTO ims.journal_entries (branch_id, entry_date, memo, source_table, source_id, created_by)
-           VALUES ($1, $2::date, $3, 'owner_drawings', $4, $5)
-           RETURNING journal_id`,
-          [existing.branch_id, next.date, next.note || `Owner drawing by ${next.ownerName}`, id, userId]
-        );
-        if (!journal) throw ApiError.internal('Failed to create journal entry');
-        journalId = journal.journal_id;
-      } else {
-        await queryOne(
-          `UPDATE ims.journal_entries
-              SET entry_date = $2::date,
-                  memo = $3
-            WHERE journal_id = $1`,
-          [journalId, next.date, next.note || `Owner drawing by ${next.ownerName}`]
-        );
-        await queryOne(`DELETE FROM ims.journal_lines WHERE journal_id = $1`, [journalId]);
-      }
-
+      // Remove old ledger row before updating.
       await queryOne(
-        `INSERT INTO ims.journal_lines (journal_id, acc_id, debit, credit, note)
-         VALUES ($1, $2, $3, 0, $4), ($1, $5, 0, $3, $4)`,
-        [journalId, next.equityAccId, next.amount, next.note || null, nextAccountId]
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'owner_drawings'
+            AND ref_id = $2`,
+        [Number(existing.branch_id), id]
       );
-
-      const updatedTxnRows = await queryMany<{ txn_id: number }>(
-        `UPDATE ims.account_transactions
-            SET acc_id = $2,
-                debit = $3,
-                credit = 0,
-                txn_date = $4::date,
-                note = $5
-          WHERE ref_table = 'owner_drawings'
-            AND ref_id = $1
-          RETURNING txn_id`,
-        [id, nextAccountId, next.amount, next.date, next.note || null]
-      );
-      if (updatedTxnRows.length === 0) {
-        await queryOne(
-          `INSERT INTO ims.account_transactions
-             (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
-           VALUES ($1, $2, 'owner_drawing', 'owner_drawings', $3, $4, 0, $5::date, $6)`,
-          [existing.branch_id, nextAccountId, id, next.amount, next.date, next.note || null]
-        );
-      }
 
       await queryOne(
         `UPDATE ims.owner_drawings
@@ -1796,11 +1692,49 @@ export const settingsService = {
                 draw_date = $4::date,
                 acc_id = $5,
                 note = $6,
-                journal_id = $7,
+                journal_id = NULL,
                 updated_at = NOW()
           WHERE draw_id = $1`,
-        [id, next.ownerName, next.amount, next.date, nextAccountId, next.note || null, journalId]
+        [id, next.ownerName, next.amount, next.date, nextAccountId, next.note || null]
       );
+
+      const memo = `[DRAWING] ${next.ownerName}${next.note ? ` - ${next.note}` : ''}`;
+      await queryOne(
+        `INSERT INTO ims.account_transactions
+           (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
+         VALUES ($1, $2, 'owner_drawing', 'owner_drawings', $3, $4, 0, $5::timestamptz, $6)`,
+        [Number(existing.branch_id), nextAccountId, id, next.amount, next.date, memo]
+      );
+
+      // Sync balances for involved cash/bank accounts.
+      // Drawing reduces cash: subtract new amount, add back old amount.
+      if (prevAccountId === nextAccountId) {
+        const diff = Number(next.amount) - prevAmount;
+        if (Math.abs(diff) >= 0.01) {
+          await queryOne(
+            `UPDATE ims.accounts
+                SET balance = COALESCE(balance, 0) - $1
+              WHERE branch_id = $2
+                AND acc_id = $3`,
+            [diff, Number(existing.branch_id), nextAccountId]
+          );
+        }
+      } else {
+        await queryOne(
+          `UPDATE ims.accounts
+              SET balance = COALESCE(balance, 0) + $1
+            WHERE branch_id = $2
+              AND acc_id = $3`,
+          [prevAmount, Number(existing.branch_id), prevAccountId]
+        );
+        await queryOne(
+          `UPDATE ims.accounts
+              SET balance = COALESCE(balance, 0) - $1
+            WHERE branch_id = $2
+              AND acc_id = $3`,
+          [Number(next.amount), Number(existing.branch_id), nextAccountId]
+        );
+      }
 
       await queryOne('COMMIT');
       const updated = await this.getOwnerDrawingById(id, scope);
@@ -1834,22 +1768,28 @@ export const settingsService = {
       throw ApiError.badRequest('Cannot delete: accounting period is closed for this date');
     }
 
-    const amount = Number(existing.amount || 0);
     await queryOne('BEGIN');
     try {
-      await queryOne(`UPDATE ims.accounts SET balance = balance + $2 WHERE acc_id = $1`, [existing.acc_id, amount]);
-      await queryOne(`UPDATE ims.accounts SET balance = balance + $2 WHERE acc_id = $1`, [existing.equity_acc_id, amount]);
-
-      await queryOne(
-        `DELETE FROM ims.account_transactions
-          WHERE ref_table = 'owner_drawings'
-            AND ref_id = $1`,
-        [id]
-      );
-
       if (existing.journal_id) {
         await queryOne(`DELETE FROM ims.journal_entries WHERE journal_id = $1`, [existing.journal_id]);
       }
+
+      // Reverse cash movement (drawing reduced cash).
+      await queryOne(
+        `UPDATE ims.accounts
+            SET balance = COALESCE(balance, 0) + $1
+          WHERE branch_id = $2
+            AND acc_id = $3`,
+        [Number(existing.amount || 0), Number(existing.branch_id), Number(existing.acc_id)]
+      );
+
+      await queryOne(
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'owner_drawings'
+            AND ref_id = $2`,
+        [Number(existing.branch_id), id]
+      );
 
       await queryOne(`DELETE FROM ims.owner_drawings WHERE draw_id = $1`, [id]);
       await queryOne('COMMIT');
@@ -1865,6 +1805,7 @@ export const settingsService = {
     scope: BranchScope,
     userId: number
   ): Promise<CapitalContribution> {
+    void userId;
     await ensureCapitalSchema();
     const existing = await queryOne<{
       capital_id: number;
@@ -1886,6 +1827,9 @@ export const settingsService = {
     if (!existing) throw ApiError.notFound('Capital record not found');
     assertBranchAccess(scope, Number(existing.branch_id));
 
+    const prevAmount = Number(existing.amount || 0);
+    const prevAccountId = Number(existing.acc_id);
+
     const next = {
       ownerName: compactOwnerName(input.ownerName ?? existing.owner_name),
       amount: input.amount ?? Number(existing.amount),
@@ -1893,105 +1837,31 @@ export const settingsService = {
       date: input.date ?? existing.contribution_date,
       accountId: Number(existing.acc_id),
       note: input.note !== undefined ? input.note : existing.note,
-      equityAccId: Number(existing.equity_acc_id),
     };
 
     if (!next.ownerName) throw ApiError.badRequest('Owner name is required');
     if (next.amount <= 0) throw ApiError.badRequest('Amount must be greater than 0');
-    if (await isCapitalDateLocked(Number(existing.branch_id), existing.contribution_date) || await isCapitalDateLocked(Number(existing.branch_id), next.date)) {
+    if (
+      (await isCapitalDateLocked(Number(existing.branch_id), existing.contribution_date)) ||
+      (await isCapitalDateLocked(Number(existing.branch_id), next.date))
+    ) {
       throw ApiError.badRequest('Cannot update capital entry in a closed accounting period');
     }
 
-    const accountChanged = false;
-    const amountDelta = Number(next.amount) - Number(existing.amount);
-
     await queryOne('BEGIN');
     try {
-      const balanceAccIds = Array.from(new Set([Number(existing.acc_id), Number(next.accountId), Number(existing.equity_acc_id)]));
-      const balanceRows = await queryMany<{ acc_id: number; balance: string | number }>(
-        `SELECT acc_id, balance::text AS balance
-           FROM ims.accounts
-          WHERE acc_id = ANY($1::bigint[])
-          FOR UPDATE`,
-        [balanceAccIds]
-      );
-      const balances = new Map(balanceRows.map((row) => [Number(row.acc_id), Number(row.balance || 0)]));
-      const oldReceivingBalance = balances.get(Number(existing.acc_id)) ?? 0;
-      const equityBalance = balances.get(Number(existing.equity_acc_id)) ?? 0;
-
-      if (accountChanged && oldReceivingBalance < Number(existing.amount)) {
-        throw ApiError.badRequest('Cannot move capital to another account: previous receiving account balance is insufficient');
-      }
-      if (!accountChanged && amountDelta < 0 && oldReceivingBalance < Math.abs(amountDelta)) {
-        throw ApiError.badRequest('Cannot reduce this capital record: receiving account balance is insufficient');
-      }
-      if (amountDelta < 0 && equityBalance < Math.abs(amountDelta)) {
-        throw ApiError.badRequest('Cannot reduce this capital record: Owner Capital balance is insufficient');
+      if (existing.journal_id) {
+        await queryOne(`DELETE FROM ims.journal_entries WHERE journal_id = $1`, [existing.journal_id]);
       }
 
-      if (accountChanged) {
-        await queryOne(`UPDATE ims.accounts SET balance = balance - $2 WHERE acc_id = $1`, [existing.acc_id, existing.amount]);
-        await queryOne(`UPDATE ims.accounts SET balance = balance + $2 WHERE acc_id = $1`, [next.accountId, next.amount]);
-      } else {
-        if (amountDelta !== 0) {
-          if (amountDelta > 0) {
-            await queryOne(`UPDATE ims.accounts SET balance = balance + $2 WHERE acc_id = $1`, [existing.acc_id, amountDelta]);
-          } else {
-            await queryOne(`UPDATE ims.accounts SET balance = balance - $2 WHERE acc_id = $1`, [existing.acc_id, Math.abs(amountDelta)]);
-          }
-        }
-      }
-      if (amountDelta !== 0) {
-        await queryOne(`UPDATE ims.accounts SET balance = balance + $2 WHERE acc_id = $1`, [existing.equity_acc_id, amountDelta]);
-      }
-
-      let journalId = existing.journal_id ?? null;
-      if (!journalId) {
-        const journal = await queryOne<{ journal_id: number }>(
-          `INSERT INTO ims.journal_entries (branch_id, entry_date, memo, source_table, source_id, created_by)
-           VALUES ($1, $2::date, $3, 'capital_contributions', $4, $5)
-           RETURNING journal_id`,
-          [existing.branch_id, next.date, next.note || `Capital contribution by ${next.ownerName}`, id, userId]
-        );
-        if (!journal) throw ApiError.internal('Failed to create journal entry');
-        journalId = journal.journal_id;
-      } else {
-        await queryOne(
-          `UPDATE ims.journal_entries
-              SET entry_date = $2::date,
-                  memo = $3
-            WHERE journal_id = $1`,
-          [journalId, next.date, next.note || `Capital contribution by ${next.ownerName}`]
-        );
-        await queryOne(`DELETE FROM ims.journal_lines WHERE journal_id = $1`, [journalId]);
-      }
-
+      // Remove old ledger row before updating.
       await queryOne(
-        `INSERT INTO ims.journal_lines (journal_id, acc_id, debit, credit, note)
-         VALUES ($1, $2, $3, 0, $4), ($1, $5, 0, $3, $4)`,
-        [journalId, next.accountId, next.amount, next.note || null, next.equityAccId]
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'capital_contributions'
+            AND ref_id = $2`,
+        [Number(existing.branch_id), id]
       );
-
-      const updatedTxnRows = await queryMany<{ txn_id: number }>(
-        `UPDATE ims.account_transactions
-            SET acc_id = $2,
-                debit = 0,
-                credit = $3,
-                txn_date = $4::date,
-                note = $5
-          WHERE ref_table = 'capital_contributions'
-            AND ref_id = $1
-          RETURNING txn_id`,
-        [id, next.accountId, next.amount, next.date, next.note || null]
-      );
-      if (updatedTxnRows.length === 0) {
-        await queryOne(
-          `INSERT INTO ims.account_transactions
-             (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
-           VALUES ($1, $2, 'capital_contribution', 'capital_contributions', $3, 0, $4, $5::date, $6)`,
-          [existing.branch_id, next.accountId, id, next.amount, next.date, next.note || null]
-        );
-      }
 
       await queryOne(
         `UPDATE ims.capital_contributions
@@ -2001,11 +1871,50 @@ export const settingsService = {
                 contribution_date = $5::date,
                 acc_id = $6,
                 note = $7,
-                journal_id = $8,
+                journal_id = NULL,
                 updated_at = NOW()
           WHERE capital_id = $1`,
-        [id, next.ownerName, next.amount, Number(next.sharePct || 0), next.date, next.accountId, next.note || null, journalId]
+        [id, next.ownerName, next.amount, Number(next.sharePct || 0), next.date, next.accountId, next.note || null]
       );
+
+      const memo = `[CAPITAL] ${next.ownerName}${next.note ? ` - ${next.note}` : ''}`;
+      await queryOne(
+        `INSERT INTO ims.account_transactions
+           (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
+         VALUES ($1, $2, 'capital_contribution', 'capital_contributions', $3, 0, $4, $5::timestamptz, $6)`,
+        [Number(existing.branch_id), next.accountId, id, next.amount, next.date, memo]
+      );
+
+      // Sync balances for involved cash/bank accounts.
+      // Capital increases cash: add new amount, remove old amount.
+      const nextAccountId = Number(next.accountId);
+      if (prevAccountId === nextAccountId) {
+        const diff = Number(next.amount) - prevAmount;
+        if (Math.abs(diff) >= 0.01) {
+          await queryOne(
+            `UPDATE ims.accounts
+                SET balance = COALESCE(balance, 0) + $1
+              WHERE branch_id = $2
+                AND acc_id = $3`,
+            [diff, Number(existing.branch_id), nextAccountId]
+          );
+        }
+      } else {
+        await queryOne(
+          `UPDATE ims.accounts
+              SET balance = COALESCE(balance, 0) - $1
+            WHERE branch_id = $2
+              AND acc_id = $3`,
+          [prevAmount, Number(existing.branch_id), prevAccountId]
+        );
+        await queryOne(
+          `UPDATE ims.accounts
+              SET balance = COALESCE(balance, 0) + $1
+            WHERE branch_id = $2
+              AND acc_id = $3`,
+          [Number(next.amount), Number(existing.branch_id), nextAccountId]
+        );
+      }
 
       await queryOne('COMMIT');
       const updated = await this.getCapitalContributionById(id, scope);
@@ -2038,22 +1947,29 @@ export const settingsService = {
     if (await isCapitalDateLocked(Number(existing.branch_id), existing.contribution_date)) {
       throw ApiError.badRequest('Cannot delete: accounting period is closed for this date');
     }
-    await ensureReversibleCapitalBalances(existing.acc_id, existing.equity_acc_id, existing.amount);
 
     await queryOne('BEGIN');
     try {
-      await queryOne(`UPDATE ims.accounts SET balance = balance - $2 WHERE acc_id = $1`, [existing.acc_id, existing.amount]);
-      await queryOne(`UPDATE ims.accounts SET balance = balance - $2 WHERE acc_id = $1`, [existing.equity_acc_id, existing.amount]);
-
-      await queryOne(
-        `DELETE FROM ims.account_transactions
-          WHERE ref_table = 'capital_contributions'
-            AND ref_id = $1`,
-        [id]
-      );
       if (existing.journal_id) {
         await queryOne(`DELETE FROM ims.journal_entries WHERE journal_id = $1`, [existing.journal_id]);
       }
+
+      // Reverse cash movement (capital increased cash).
+      await queryOne(
+        `UPDATE ims.accounts
+            SET balance = COALESCE(balance, 0) - $1
+          WHERE branch_id = $2
+            AND acc_id = $3`,
+        [Number(existing.amount || 0), Number(existing.branch_id), Number(existing.acc_id)]
+      );
+
+      await queryOne(
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'capital_contributions'
+            AND ref_id = $2`,
+        [Number(existing.branch_id), id]
+      );
 
       await queryOne(`DELETE FROM ims.capital_contributions WHERE capital_id = $1`, [id]);
       await queryOne('COMMIT');

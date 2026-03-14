@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
-import { BadgeAlert, Boxes, Store } from 'lucide-react';
+import { BadgeAlert, Boxes, RefreshCw, Store } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
 import { DataTable } from '../../components/ui/table/DataTable';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
@@ -46,6 +46,9 @@ const Products = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [stateProducts, setStateProducts] = useState<Product[]>([]);
   const [transactions, setTransactions] = useState<InventoryTransactionRow[]>([]);
+  const [itemsDisplayed, setItemsDisplayed] = useState(false);
+  const [txDisplayed, setTxDisplayed] = useState(false);
+  const [inactiveDisplayed, setInactiveDisplayed] = useState(false);
   const [txCategory, setTxCategory] = useState<TxCategory>('adjustment');
   const [txFromDate, setTxFromDate] = useState<string>(() => {
     const d = new Date();
@@ -111,7 +114,8 @@ const Products = () => {
   const loadInactiveStateItems = async () => {
     setLoading(true);
     await resolveStores();
-    const res = await productService.list({ includeInactive: true, limit: 500 });
+    // Backend caps list limit at 200; keep within allowed range to avoid validation errors.
+    const res = await productService.list({ includeInactive: true, limit: 200 });
     if (res.success && res.data?.products) {
       const onlyInactive = res.data.products.filter((item) => !item.is_active || String(item.status).toLowerCase() === 'inactive');
       setStateProducts(onlyInactive);
@@ -128,7 +132,7 @@ const Products = () => {
   const itemColumns: ColumnDef<Product>[] = useMemo(
     () => [
       { accessorKey: 'name', header: 'Item' },
-      { accessorKey: 'quantity', header: 'Quantity', cell: ({ row }) => Number(row.original.quantity ?? row.original.stock ?? 0).toFixed(3) },
+      { accessorKey: 'quantity', header: 'Quantity', cell: ({ row }) => Number(row.original.quantity ?? row.original.stock ?? 0).toFixed(0) },
       { accessorKey: 'cost_price', header: 'Cost Price', cell: ({ row }) => `$${Number(row.original.cost_price || 0).toFixed(2)}` },
       {
         accessorKey: 'amount',
@@ -159,7 +163,7 @@ const Products = () => {
       { accessorKey: 'transaction_type', header: 'Type' },
       { accessorKey: 'item_name', header: 'Item', cell: ({ row }) => row.original.item_name || '-' },
       { accessorKey: 'direction', header: 'Dir' },
-      { accessorKey: 'quantity', header: 'Qty', cell: ({ row }) => Number(row.original.quantity || 0).toFixed(3) },
+      { accessorKey: 'quantity', header: 'Qty', cell: ({ row }) => Number(row.original.quantity || 0).toFixed(0) },
       { accessorKey: 'store_name', header: 'Store', cell: ({ row }) => row.original.store_name || '-' },
       { accessorKey: 'notes', header: 'Note', cell: ({ row }) => row.original.notes || '-' },
     ],
@@ -217,7 +221,7 @@ const Products = () => {
     if (res.success) {
       showToast('success', 'Items', 'Item deleted');
       setItemToDelete(null);
-      await loadProducts();
+      if (itemsDisplayed) await loadProducts();
     } else {
       showToast('error', 'Items', res.error || 'Failed to delete item');
     }
@@ -231,7 +235,18 @@ const Products = () => {
       content: (
         <div className="space-y-2">
           <div className="flex flex-wrap items-center justify-end gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
-            <button type="button" onClick={loadProducts} className="rounded-lg border px-3 py-2 text-sm">Display</button>
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => {
+                setItemsDisplayed(true);
+                void loadProducts();
+              }}
+              className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              {loading ? 'Loading...' : 'Display'}
+            </button>
             <button
               type="button"
               onClick={() => setItemImportOpen(true)}
@@ -257,8 +272,18 @@ const Products = () => {
               New Item
             </button>
           </div>
+          {!itemsDisplayed && !loading && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+              Click <span className="font-semibold">Display</span> to load data.
+            </div>
+          )}
+          {itemsDisplayed && !loading && products.length === 0 && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+              No data found for the selected filters.
+            </div>
+          )}
           <DataTable
-            data={products}
+            data={itemsDisplayed ? products : []}
             columns={itemColumns}
             isLoading={loading}
             onEdit={async (row) => {
@@ -281,45 +306,90 @@ const Products = () => {
       label: 'Inventory Transaction',
       content: (
         <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex items-center gap-2">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex flex-wrap items-center gap-2">
               {(['adjustment', 'paid', 'sales', 'cancelled'] as TxCategory[]).map((key) => (
                 <button
                   key={key}
                   type="button"
                   onClick={() => {
                     setTxCategory(key);
-                    void loadTransactions(key);
+                    setTxDisplayed(false);
+                    setTransactions([]);
                   }}
-                  className={`rounded-lg px-3 py-2 text-sm ${txCategory === key ? 'bg-primary-600 text-white' : 'border border-slate-300 dark:border-slate-700'}`}
+                  className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition-all ${
+                    txCategory === key
+                      ? 'bg-primary-600 text-white shadow-sm'
+                      : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800'
+                  }`}
                 >
                   {txLabel[key]}
                 </button>
               ))}
             </div>
-            <div className="flex flex-wrap items-end gap-2">
-              <label className="space-y-1 text-xs font-semibold text-slate-600 dark:text-slate-300">
-                <span>From Date</span>
-                <input
-                  type="date"
-                  value={txFromDate}
-                  onChange={(event) => setTxFromDate(event.target.value)}
-                  className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900"
-                />
-              </label>
-              <label className="space-y-1 text-xs font-semibold text-slate-600 dark:text-slate-300">
-                <span>To Date</span>
-                <input
-                  type="date"
-                  value={txToDate}
-                  onChange={(event) => setTxToDate(event.target.value)}
-                  className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900"
-                />
-              </label>
-              <button type="button" onClick={() => void loadTransactions()} className="h-10 rounded-lg border px-3 text-sm">Display</button>
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                    From Date
+                  </span>
+                  <input
+                    type="date"
+                    value={txFromDate}
+                    onChange={(event) => {
+                      setTxFromDate(event.target.value);
+                      setTxDisplayed(false);
+                      setTransactions([]);
+                    }}
+                    className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                    To Date
+                  </span>
+                  <input
+                    type="date"
+                    value={txToDate}
+                    onChange={(event) => {
+                      setTxToDate(event.target.value);
+                      setTxDisplayed(false);
+                      setTransactions([]);
+                    }}
+                    className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                  />
+                </div>
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => {
+                    setTxDisplayed(true);
+                  void loadTransactions();
+                }}
+                className="inline-flex h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition-all hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                {loading ? 'Loading...' : 'Display'}
+              </button>
             </div>
           </div>
-          <DataTable data={filteredTransactions} columns={txColumns} isLoading={loading} searchPlaceholder="Search transactions..." />
+          </div>
+          {!txDisplayed && !loading && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+              Click <span className="font-semibold">Display</span> to load data.
+            </div>
+          )}
+          {txDisplayed && !loading && filteredTransactions.length === 0 && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+              No data found for the selected filters.
+            </div>
+          )}
+          <DataTable
+            data={txDisplayed ? filteredTransactions : []}
+            columns={txColumns}
+            isLoading={loading}
+            searchPlaceholder="Search transactions..."
+          />
         </div>
       ),
     },
@@ -330,7 +400,18 @@ const Products = () => {
       content: (
         <div className="space-y-2">
           <div className="flex items-center justify-end gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
-            <button type="button" onClick={loadInactiveStateItems} className="rounded-lg border px-3 py-2 text-sm">Display</button>
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => {
+                setInactiveDisplayed(true);
+                void loadInactiveStateItems();
+              }}
+              className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              {loading ? 'Loading...' : 'Display'}
+            </button>
             <button
               type="button"
               onClick={() => {
@@ -342,7 +423,22 @@ const Products = () => {
               + Set State
             </button>
           </div>
-          <DataTable data={stateProducts} columns={stateColumns} isLoading={loading} searchPlaceholder="Search inactive item..." />
+          {!inactiveDisplayed && !loading && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+              Click <span className="font-semibold">Display</span> to load data.
+            </div>
+          )}
+          {inactiveDisplayed && !loading && stateProducts.length === 0 && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+              No data found for the selected filters.
+            </div>
+          )}
+          <DataTable
+            data={inactiveDisplayed ? stateProducts : []}
+            columns={stateColumns}
+            isLoading={loading}
+            searchPlaceholder="Search inactive item..."
+          />
         </div>
       ),
     },
@@ -385,7 +481,8 @@ const Products = () => {
               <label className={modalLabelCls}>Stock Alert</label>
               <input
                 type="number"
-                step="0.001"
+                min={0}
+                step="1"
                 className={modalInputCls}
                 value={itemForm.stock_alert ?? 5}
                 onChange={(e) => setItemForm({ ...itemForm, stock_alert: Number(e.target.value || 0) })}
@@ -418,7 +515,8 @@ const Products = () => {
               <label className={modalLabelCls}>Opening Balance</label>
               <input
                 type="number"
-                step="0.001"
+                min={0}
+                step="1"
                 className={modalInputCls}
                 value={itemForm.opening_balance ?? 0}
                 onChange={(e) => setItemForm({ ...itemForm, opening_balance: Number(e.target.value || 0) })}
@@ -440,7 +538,7 @@ const Products = () => {
               <label className={modalLabelCls}>Quantity</label>
               <input
                 type="number"
-                step="0.001"
+                step="1"
                 min={0}
                 className={modalInputCls}
                 value={itemForm.quantity ?? 0}
@@ -482,7 +580,7 @@ const Products = () => {
         columns={['item', 'quantity', 'cost_price', 'amount', 'sell_price']}
         templateHeaders={['item', 'quantity', 'cost_price', 'sell_price', 'store_id', 'barcode', 'stock_alert', 'is_active']}
         onImported={async () => {
-          await loadProducts();
+          if (itemsDisplayed) await loadProducts();
         }}
       />
     </div>

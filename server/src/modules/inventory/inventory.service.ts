@@ -96,7 +96,8 @@ const applyStoreItemDelta = async (
   client: PoolClient,
   params: { branchId: number; itemId: number; delta: number }
 ) => {
-  if (!params.delta) return;
+  const delta = Math.round(params.delta);
+  if (!delta) return;
 
   const storeId = await resolveStoreForItem(client, params.branchId, params.itemId);
   const existing = await client.query<{ quantity: string }>(
@@ -121,7 +122,7 @@ const applyStoreItemDelta = async (
     currentQty = Number(itemStock.rows[0]?.opening_balance || 0);
   }
 
-  const nextQty = currentQty + Number(params.delta);
+  const nextQty = currentQty + delta;
   if (!isNegativeStockAllowed() && nextQty < 0) {
     throw ApiError.badRequest('Insufficient stock for this adjustment');
   }
@@ -133,7 +134,7 @@ const applyStoreItemDelta = async (
      DO UPDATE
            SET quantity = GREATEST(0, ims.store_items.quantity + $4),
                updated_at = NOW()`,
-    [storeId, params.itemId, nextQty, params.delta]
+    [storeId, params.itemId, nextQty, delta]
   );
 };
 
@@ -1595,6 +1596,10 @@ export const inventoryService = {
       const txCols = await getInventoryTransactionColumns();
       const direction = resolveTransactionDirection(input.transactionType, input.direction);
       const status = (input.status || 'POSTED').toUpperCase() as 'POSTED' | 'PENDING' | 'CANCELLED';
+      const quantity = Math.round(Number(input.quantity));
+      if (!quantity || quantity <= 0) {
+        throw ApiError.badRequest('Quantity must be greater than zero');
+      }
 
       const insertColumns = ['branch_id'];
       const insertValues: unknown[] = [storeRow.branch_id];
@@ -1623,7 +1628,7 @@ export const inventoryService = {
         valueTokens.push(`$${idx++}`);
       }
       insertColumns.push('quantity');
-      insertValues.push(input.quantity);
+      insertValues.push(quantity);
       valueTokens.push(`$${idx++}`);
       insertColumns.push('unit_cost');
       insertValues.push(input.unitCost ?? 0);
@@ -1676,8 +1681,8 @@ export const inventoryService = {
 
         const stockDelta =
           input.transactionType === 'ADJUSTMENT'
-            ? (direction === 'IN' ? Number(input.quantity) : -Number(input.quantity))
-            : -Number(input.quantity);
+            ? (direction === 'IN' ? quantity : -quantity)
+            : -quantity;
 
         if (!isNegativeStockAllowed() && currentQty + stockDelta < 0) {
           throw ApiError.badRequest('Insufficient store quantity for this transaction');
@@ -1852,7 +1857,7 @@ export const inventoryService = {
         created_by: number | null;
       }>(
         `UPDATE ims.stock_adjustment
-            SET ${updates.join(', ')}
+            SET ${updates.join(', ')}, updated_at = NOW()
           WHERE adjustment_id = $${p}
           RETURNING adjustment_id, item_id, adjustment_type, quantity, reason, status, adjustment_date, created_by`,
         params

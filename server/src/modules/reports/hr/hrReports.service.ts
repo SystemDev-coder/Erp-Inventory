@@ -105,12 +105,12 @@ export interface EmployeeCountByDepartmentRow {
 export const hrReportsService = {
   async getHrReportOptions(branchId: number): Promise<{ employees: HrReportOption[] }> {
     const employees = await queryMany<HrReportOption>(
-      `SELECT e.emp_id AS id, e.full_name AS label
-         FROM ims.employees e
-        WHERE e.branch_id = $1
-        ORDER BY e.full_name`,
-      [branchId]
-    );
+       `SELECT e.emp_id AS id, e.full_name AS label
+          FROM ims.employees e
+         WHERE e.branch_id = $1
+        ORDER BY e.emp_id ASC`,
+       [branchId]
+     );
     return { employees };
   },
 
@@ -137,7 +137,7 @@ export const hrReportsService = {
        LEFT JOIN ims.roles r ON r.role_id = COALESCE(e.role_id, (SELECT u.role_id FROM ims.users u WHERE u.user_id = e.user_id))
       WHERE e.branch_id = $1
         ${filter}
-      ORDER BY e.full_name`,
+      ORDER BY e.emp_id ASC`,
       params
     );
   },
@@ -171,7 +171,7 @@ export const hrReportsService = {
       WHERE pr.branch_id = $1
         AND pr.period_from::date BETWEEN $2::date AND $3::date
       GROUP BY pr.payroll_id, pr.period_year, pr.period_month, pr.period_from, pr.period_to, pr.status, p.total_paid
-      ORDER BY pr.period_year DESC, pr.period_month DESC, pr.payroll_id DESC`,
+      ORDER BY pr.period_year ASC, pr.period_month ASC, pr.payroll_id ASC`,
       [branchId, fromDate, toDate]
     );
   },
@@ -211,7 +211,7 @@ export const hrReportsService = {
       WHERE ep.branch_id = $1
         AND ep.pay_date::date BETWEEN $2::date AND $3::date
         ${filter}
-      ORDER BY ep.pay_date DESC, ep.emp_payment_id DESC`,
+      ORDER BY ep.pay_date ASC, ep.emp_payment_id ASC`,
       params
     );
   },
@@ -245,7 +245,7 @@ export const hrReportsService = {
       WHERE a.branch_id = $1
         AND a.effective_date BETWEEN $2::date AND $3::date
         ${filter}
-      ORDER BY a.effective_date DESC, a.assignment_id DESC`,
+      ORDER BY a.effective_date ASC, a.assignment_id ASC`,
       params
     );
   },
@@ -285,7 +285,7 @@ export const hrReportsService = {
        LEFT JOIN paid p ON p.loan_id = l.loan_id
       WHERE l.branch_id = $1
         ${filter}
-      ORDER BY l.loan_date DESC, l.loan_id DESC`,
+      ORDER BY l.loan_date ASC, l.loan_id ASC`,
       params
     );
   },
@@ -378,7 +378,7 @@ export const hrReportsService = {
           ${filter}
        )
        SELECT
-         ROW_NUMBER() OVER (ORDER BY lr.entry_date DESC, lr.ref_id DESC)::bigint AS entry_no,
+         ROW_NUMBER() OVER (ORDER BY lr.entry_date ASC, lr.ref_id ASC)::bigint AS entry_no,
          lr.entry_date::text AS entry_date,
          lr.employee_id,
          lr.employee_name,
@@ -396,7 +396,7 @@ export const hrReportsService = {
            )::double precision AS running_balance,
          COALESCE(lr.note, '') AS note
        FROM ledger_rows lr
-      ORDER BY lr.entry_date DESC, lr.ref_id DESC
+      ORDER BY lr.entry_date ASC, lr.ref_id ASC
       LIMIT 5000`,
       params
     );
@@ -438,10 +438,10 @@ export const hrReportsService = {
        FROM payroll_totals pt
        LEFT JOIN paid p ON p.payroll_id = pt.payroll_id
       GROUP BY pt.period_year, pt.period_month
-      ORDER BY pt.period_year DESC, pt.period_month DESC`,
-      [branchId, fromDate, toDate]
-    );
-  },
+       ORDER BY pt.period_year ASC, pt.period_month ASC`,
+       [branchId, fromDate, toDate]
+     );
+   },
 
   async getEmployeeCountByDepartment(branchId: number): Promise<EmployeeCountByDepartmentRow[]> {
     return queryMany<EmployeeCountByDepartmentRow>(
@@ -455,8 +455,8 @@ export const hrReportsService = {
        LEFT JOIN ims.roles r ON r.role_id = COALESCE(e.role_id, (SELECT u.role_id FROM ims.users u WHERE u.user_id = e.user_id))
       WHERE e.branch_id = $1
       GROUP BY COALESCE(r.role_name, 'Unassigned')
-      ORDER BY total_employees DESC, department`,
-      [branchId]
-    );
-  },
+       ORDER BY department ASC`,
+       [branchId]
+     );
+   },
 };

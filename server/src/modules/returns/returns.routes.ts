@@ -6,10 +6,14 @@ import {
     listSalesItemsByCustomer,
     listPurchaseItemsBySupplier,
     listSalesReturns,
+    getSalesReturn,
+    listSalesReturnItems,
     createSalesReturn,
     updateSalesReturn,
     deleteSalesReturn,
     listPurchaseReturns,
+    getPurchaseReturn,
+    listPurchaseReturnItems,
     createPurchaseReturn,
     updatePurchaseReturn,
     deletePurchaseReturn,
@@ -41,6 +45,16 @@ router.get(
     requireAnyPerm(['returns.view', 'sales_returns.view']),
     asyncHandler(listSalesReturns)
 );
+router.get(
+    '/sales/:id',
+    requireAnyPerm(['returns.view', 'sales_returns.view']),
+    asyncHandler(getSalesReturn)
+);
+router.get(
+    '/sales/:id/items',
+    requireAnyPerm(['returns.view', 'sales_returns.view']),
+    asyncHandler(listSalesReturnItems)
+);
 router.post(
     '/sales',
     requireAnyPerm(['returns.create', 'sales_returns.create']),
@@ -60,6 +74,16 @@ router.get(
     '/purchases',
     requireAnyPerm(['returns.view', 'purchase_returns.view']),
     asyncHandler(listPurchaseReturns)
+);
+router.get(
+    '/purchases/:id',
+    requireAnyPerm(['returns.view', 'purchase_returns.view']),
+    asyncHandler(getPurchaseReturn)
+);
+router.get(
+    '/purchases/:id/items',
+    requireAnyPerm(['returns.view', 'purchase_returns.view']),
+    asyncHandler(listPurchaseReturnItems)
 );
 router.post(
     '/purchases',

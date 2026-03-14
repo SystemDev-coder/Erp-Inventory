@@ -72,7 +72,7 @@ export const salesReportsService = {
            FROM ims.customers
           WHERE branch_id = $1
             AND is_active = TRUE
-          ORDER BY full_name`,
+          ORDER BY customer_id ASC`,
         [branchId]
       ),
       queryMany<ReportOption>(
@@ -80,7 +80,7 @@ export const salesReportsService = {
            FROM ims.items
           WHERE branch_id = $1
             AND is_active = TRUE
-          ORDER BY name`,
+          ORDER BY item_id ASC`,
         [branchId]
       ),
     ]);
@@ -103,7 +103,7 @@ export const salesReportsService = {
       WHERE s.branch_id = $1
         AND s.sale_date::date = CURRENT_DATE
         AND s.status <> 'void'
-      ORDER BY s.sale_date DESC, s.sale_id DESC`,
+      ORDER BY s.sale_date ASC, s.sale_id ASC`,
       [branchId]
     );
   },
@@ -129,7 +129,7 @@ export const salesReportsService = {
        LEFT JOIN ims.customers c ON c.customer_id = s.customer_id
        LEFT JOIN ims.users u ON u.user_id = s.user_id
       WHERE ${filters.join(' AND ')}
-      ORDER BY s.sale_date DESC, s.sale_id DESC
+      ORDER BY s.sale_date ASC, s.sale_id ASC
       LIMIT 1500`,
       params
     );
@@ -174,7 +174,7 @@ export const salesReportsService = {
        LEFT JOIN ims.customers c ON c.customer_id = s.customer_id
        LEFT JOIN ims.users u ON u.user_id = s.user_id
       WHERE ${filters.join(' AND ')}
-      ORDER BY s.sale_date DESC, s.sale_id DESC, i.name
+      ORDER BY s.sale_date ASC, s.sale_id ASC, i.item_id ASC
       LIMIT 2000`,
       params
     );
@@ -229,7 +229,7 @@ export const salesReportsService = {
        LEFT JOIN ims.users u ON u.user_id = sr.user_id
       WHERE sr.branch_id = $1
         AND sr.return_date::date BETWEEN $2::date AND $3::date
-      ORDER BY sr.return_date DESC, sr.sr_id DESC`,
+      ORDER BY sr.return_date ASC, sr.sr_id ASC`,
       [branchId, fromDate, toDate]
     );
   },

@@ -27,6 +27,8 @@ import {
   deleteUser,
   deleteLogo,
   deleteBanner,
+  auditBalances,
+  reconcileBalances,
 } from './system.controller';
 
 const router = Router();
@@ -80,5 +82,8 @@ router.delete('/permissions/:id', requireAnyPerm(['system.permissions.manage', '
 router.get('/logs', requireAnyPerm(['system.audit.view', 'audit_logs.view', 'system.settings']), listLogs);
 router.delete('/logs/:id', requireAnyPerm(['system.audit.view', 'audit_logs.delete', 'system.settings']), deleteLog);
 router.delete('/logs', requireAnyPerm(['system.audit.view', 'audit_logs.delete', 'system.settings']), clearLogs);
+
+router.get('/audit-balances', requireAnyPerm(['system.settings', 'system.company.manage']), auditBalances);
+router.post('/reconcile-balances', requireAnyPerm(['system.settings', 'system.company.manage']), reconcileBalances);
 
 export default router;

@@ -87,6 +87,7 @@ export interface ExpenseCharge {
   reg_date?: string | null;
   note?: string | null;
   exp_budget?: number | null;
+  is_opening_paid?: boolean;
   expense_name?: string | null;
   created_by?: string | null;
   payment_count?: number;
@@ -327,7 +328,7 @@ export const financeService = {
     const qs = branchId ? `?branchId=${branchId}` : '';
     return apiClient.get<{ charges: ExpenseCharge[] }>(`${API.FINANCE.EXPENSE_CHARGES}${qs}`);
   },
-  async createExpenseCharge(payload: { branch_id?: number; exp_id?: number; exp_type_id?: number; amount: number; note?: string; exp_date?: string; reg_date?: string }) {
+  async createExpenseCharge(payload: { branch_id?: number; exp_id?: number; exp_type_id?: number; amount: number; note?: string; exp_date?: string; reg_date?: string; is_opening_paid?: boolean }) {
     return apiClient.post<{ charge: ExpenseCharge }>(API.FINANCE.EXPENSE_CHARGES, {
       branchId: payload.branch_id,
       expId: payload.exp_id,
@@ -336,9 +337,10 @@ export const financeService = {
       note: payload.note,
       expDate: payload.exp_date,
       regDate: payload.reg_date,
+      isOpeningPaid: payload.is_opening_paid,
     });
   },
-  async updateExpenseCharge(id: number, payload: { branch_id?: number; exp_id?: number; amount?: number; exp_date?: string; note?: string }) {
+  async updateExpenseCharge(id: number, payload: { branch_id?: number; exp_id?: number; amount?: number; exp_date?: string; note?: string; is_opening_paid?: boolean }) {
     return apiClient.put<{ charge: ExpenseCharge }>(`${API.FINANCE.EXPENSE_CHARGES}/${id}`, {
       branchId: payload.branch_id,
       expId: payload.exp_id,
@@ -346,6 +348,7 @@ export const financeService = {
       expDate: payload.exp_date,
       regDate: payload.exp_date,
       note: payload.note,
+      isOpeningPaid: payload.is_opening_paid,
     });
   },
   async deleteExpenseCharge(id: number) {

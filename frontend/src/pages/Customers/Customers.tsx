@@ -177,8 +177,19 @@ const Customers = () => {
                         primaryAction={{ label: 'New Customer', onClick: () => { setForm(emptyForm); setIsAddOpen(true); } }}
                         secondaryAction={{ label: 'Upload Data', onClick: () => setImportModalOpen(true) }}
                         onDisplay={handleDisplay}
+                        displayLoading={loading}
                         onExport={() => showToast('info', 'Export', 'Customer export coming soon')}
                     />
+                    {!hasDisplayed && (
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+                            Click <span className="font-semibold">Display</span> to load data.
+                        </div>
+                    )}
+                    {hasDisplayed && !loading && visibleCustomers.length === 0 && (
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+                            No data found for the selected filters.
+                        </div>
+                    )}
                     <DataTable
                         data={visibleCustomers}
                         columns={columns}
@@ -201,7 +212,18 @@ const Customers = () => {
                         primaryAction={{ label: 'New Customer', onClick: () => { setForm(emptyForm); setIsAddOpen(true); } }}
                         secondaryAction={{ label: 'Upload Data', onClick: () => setImportModalOpen(true) }}
                         onDisplay={handleDisplay}
+                        displayLoading={loading}
                     />
+                    {!hasDisplayed && (
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+                            Click <span className="font-semibold">Display</span> to load data.
+                        </div>
+                    )}
+                    {hasDisplayed && !loading && visibleCustomers.filter(c => c.customer_type !== 'one-time').length === 0 && (
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+                            No data found for the selected filters.
+                        </div>
+                    )}
                     <DataTable
                         data={visibleCustomers.filter(c => c.customer_type !== 'one-time')}
                         columns={columns}
@@ -223,7 +245,18 @@ const Customers = () => {
                         primaryAction={{ label: 'New Customer', onClick: () => { setForm(emptyForm); setIsAddOpen(true); } }}
                         secondaryAction={{ label: 'Upload Data', onClick: () => setImportModalOpen(true) }}
                         onDisplay={handleDisplay}
+                        displayLoading={loading}
                     />
+                    {!hasDisplayed && (
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+                            Click <span className="font-semibold">Display</span> to load data.
+                        </div>
+                    )}
+                    {hasDisplayed && !loading && visibleCustomers.filter(c => c.customer_type === 'one-time').length === 0 && (
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+                            No data found for the selected filters.
+                        </div>
+                    )}
                     <DataTable
                         data={visibleCustomers.filter(c => c.customer_type === 'one-time')}
                         columns={columns}

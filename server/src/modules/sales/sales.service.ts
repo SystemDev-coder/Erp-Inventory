@@ -4,6 +4,7 @@ import { queryMany, queryOne } from '../../db/query';
 import { ApiError } from '../../utils/ApiError';
 import { BranchScope } from '../../utils/branchScope';
 import { syncLowStockNotifications } from '../../utils/stockAlerts';
+import { adjustSystemAccountBalance } from '../../utils/systemAccounts';
 import {
   QuotationConvertInput,
   SaleInput,
@@ -229,9 +230,10 @@ const prepareSaleItems = async (
   const prepared: PreparedSaleItem[] = [];
   for (const item of items) {
     const productId = Number(item.productId);
-    const quantity = Number(item.quantity);
+    const rawQuantity = Number(item.quantity);
+    const quantity = Math.round(rawQuantity);
     if (!productId || Number.isNaN(productId)) throw ApiError.badRequest('Item is required for each line');
-    if (!quantity || Number.isNaN(quantity) || quantity <= 0) {
+    if (!quantity || Number.isNaN(rawQuantity) || quantity <= 0) {
       throw ApiError.badRequest('Quantity must be greater than zero');
     }
 
@@ -329,7 +331,8 @@ const applyStoreItemDelta = async (
   client: PoolClient,
   params: { branchId: number; storeId: number; itemId: number; delta: number }
 ) => {
-  if (!params.delta) return;
+  const delta = Math.round(params.delta);
+  if (!delta) return;
 
   const existing = await client.query<{ quantity: string }>(
     `SELECT quantity::text AS quantity
@@ -354,7 +357,7 @@ const applyStoreItemDelta = async (
     currentQty = Number(item.rows[0]?.opening_balance || 0);
   }
 
-  const nextQty = currentQty + params.delta;
+  const nextQty = currentQty + delta;
   if (nextQty < 0) {
     throw ApiError.badRequest(`Insufficient store stock for item ${params.itemId}`);
   }
@@ -382,7 +385,7 @@ const applyStockByFunction = async (
   }
 ) => {
   for (const item of params.items) {
-    const quantity = Number(item.quantity || 0);
+    const quantity = Math.round(Number(item.quantity || 0));
     if (!quantity) continue;
 
     const product = await client.query<{ cost_price: string }>(
@@ -473,12 +476,17 @@ const adjustCustomerBalance = async (
   const cols = await getCustomerBalanceColumns(client);
   const updates: string[] = [];
   const signedAmount = params.mode === 'add' ? params.amount : -params.amount;
-  if (cols.hasOpenBalance) {
-    updates.push(`open_balance = GREATEST(open_balance + $1, 0)`);
-  }
   if (cols.hasRemainingBalance) {
-    updates.push(`remaining_balance = GREATEST(remaining_balance + $1, 0)`);
+    updates.push(`remaining_balance = remaining_balance + $1`);
+  } else if (cols.hasOpenBalance) {
+    // Legacy schema: open_balance acts as the live balance.
+    updates.push(`open_balance = open_balance + $1`);
   }
+  await adjustSystemAccountBalance(client, {
+    branchId: params.branchId,
+    kind: 'receivable',
+    delta: signedAmount,
+  });
   if (!updates.length) return;
 
   await client.query(
@@ -786,7 +794,9 @@ export const salesService = {
       );
 
       const sale = saleResult.rows[0];
-      const affectedProductIds = Array.from(new Set(items.map((line) => Number(line.productId))));
+      const affectedProductIds = Array.from(
+        new Set(preparedItems.map((line) => Number(line.productId)))
+      );
       const triggerEnabled = await hasSaleTrigger(client);
 
       await insertSaleItems(client, sale.sale_id, context.branchId, preparedItems);
@@ -795,7 +805,7 @@ export const salesService = {
           branchId: context.branchId,
           storeId: input.storeId ?? null,
           saleId: sale.sale_id,
-          items: items.map((line) => ({
+          items: preparedItems.map((line) => ({
             product_id: Number(line.productId),
             quantity: Number(line.quantity),
           })),

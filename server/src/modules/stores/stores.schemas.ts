@@ -17,6 +17,14 @@ const optionalPositiveInt = z.preprocess(
   z.number().int().positive().optional()
 );
 
+const roundToInt = (value: unknown) => {
+  if (value === undefined || value === null || value === '') return value;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.round(parsed) : value;
+};
+
+const nonnegativeRoundedInt = z.preprocess(roundToInt, z.number().int().nonnegative());
+
 export const storeListQuerySchema = z.object({
   branchId: optionalPositiveInt,
   search: z.string().trim().optional(),
@@ -43,7 +51,7 @@ export const storeItemListQuerySchema = z.object({
 
 export const storeItemSchema = z.object({
   productId: z.coerce.number().int().positive(),
-  quantity: z.coerce.number().nonnegative(),
+  quantity: nonnegativeRoundedInt,
 });
 
 export type StoreListQueryInput = z.infer<typeof storeListQuerySchema>;

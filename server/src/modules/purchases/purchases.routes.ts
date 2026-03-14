@@ -8,6 +8,7 @@ import {
   createPurchase,
   updatePurchase,
   deletePurchase,
+  exportPurchasesXlsx,
 } from './purchases.controller';
 
 const router = Router();
@@ -15,6 +16,7 @@ const router = Router();
 router.use(requireAuth);
 
 router.get('/items', requirePerm('purchases.view'), listPurchaseItems);
+router.get('/export', requirePerm('purchases.view'), exportPurchasesXlsx);
 router.get('/', requirePerm('purchases.view'), listPurchases);
 router.get('/:id', requirePerm('purchases.view'), getPurchase);
 router.post('/', requirePerm('purchases.create'), createPurchase);

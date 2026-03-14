@@ -11,6 +11,9 @@ export interface SalesReturn {
     return_date: string;
     subtotal: number;
     total: number;
+    refund_acc_id?: number | null;
+    refund_account_name?: string | null;
+    refund_amount?: number;
     status: string;
     note: string | null;
     created_at: string;
@@ -27,9 +30,32 @@ export interface PurchaseReturn {
     return_date: string;
     subtotal: number;
     total: number;
+    refund_acc_id?: number | null;
+    refund_account_name?: string | null;
+    refund_amount?: number;
     status: string;
     note: string | null;
     created_at: string;
+}
+
+export interface SalesReturnItem {
+    sr_item_id: number;
+    sr_id: number;
+    item_id: number;
+    item_name?: string;
+    quantity: number;
+    unit_price: number;
+    line_total: number;
+}
+
+export interface PurchaseReturnItem {
+    pr_item_id: number;
+    pr_id: number;
+    item_id: number;
+    item_name?: string;
+    quantity: number;
+    unit_cost: number;
+    line_total: number;
 }
 
 export interface ReturnItemInput {
@@ -45,6 +71,9 @@ export interface ReturnItemOption {
     barcode?: string | null;
     cost_price: number;
     sell_price: number;
+    sold_qty?: number;
+    returned_qty?: number;
+    available_qty?: number;
 }
 
 export const returnsService = {
@@ -60,11 +89,19 @@ export const returnsService = {
     listSalesReturns() {
         return apiClient.get<{ rows: SalesReturn[] }>('/api/returns/sales');
     },
+    getSalesReturn(id: number) {
+        return apiClient.get<{ return: SalesReturn }>(`/api/returns/sales/${id}`);
+    },
+    getSalesReturnItems(id: number) {
+        return apiClient.get<{ items: SalesReturnItem[] }>(`/api/returns/sales/${id}/items`);
+    },
     createSalesReturn(payload: {
         saleId?: number;
         customerId: number;
         referenceNo?: string;
         note?: string;
+        refundAccId?: number;
+        refundAmount?: number;
         items: ReturnItemInput[];
     }) {
         return apiClient.post<{ return: SalesReturn }>('/api/returns/sales', payload);
@@ -74,6 +111,8 @@ export const returnsService = {
         customerId: number;
         referenceNo?: string;
         note?: string;
+        refundAccId?: number;
+        refundAmount?: number;
         items: ReturnItemInput[];
     }) {
         return apiClient.put<{ return: SalesReturn }>(`/api/returns/sales/${id}`, payload);
@@ -84,11 +123,19 @@ export const returnsService = {
     listPurchaseReturns() {
         return apiClient.get<{ rows: PurchaseReturn[] }>('/api/returns/purchases');
     },
+    getPurchaseReturn(id: number) {
+        return apiClient.get<{ return: PurchaseReturn }>(`/api/returns/purchases/${id}`);
+    },
+    getPurchaseReturnItems(id: number) {
+        return apiClient.get<{ items: PurchaseReturnItem[] }>(`/api/returns/purchases/${id}/items`);
+    },
     createPurchaseReturn(payload: {
         purchaseId?: number;
         supplierId: number;
         referenceNo?: string;
         note?: string;
+        refundAccId?: number;
+        refundAmount?: number;
         items: ReturnItemInput[];
     }) {
         return apiClient.post<{ return: PurchaseReturn }>('/api/returns/purchases', payload);
@@ -98,6 +145,8 @@ export const returnsService = {
         supplierId: number;
         referenceNo?: string;
         note?: string;
+        refundAccId?: number;
+        refundAmount?: number;
         items: ReturnItemInput[];
     }) {
         return apiClient.put<{ return: PurchaseReturn }>(`/api/returns/purchases/${id}`, payload);

@@ -74,6 +74,8 @@ const Receipts = () => {
 
     const [activeTab, setActiveTab] = useState<ActiveTab>('customer-receipts');
     const [loading, setLoading] = useState(false);
+    const [customerDisplayed, setCustomerDisplayed] = useState(false);
+    const [supplierDisplayed, setSupplierDisplayed] = useState(false);
 
     // Data
     const [accounts, setAccounts] = useState<Account[]>([]);
@@ -154,9 +156,11 @@ const Receipts = () => {
 
     const displayReceiptsData = async () => {
         if (activeTab === 'supplier-receipts') {
+            setSupplierDisplayed(true);
             await loadSupplierData();
             return;
         }
+        setCustomerDisplayed(true);
         await loadCustomerData();
     };
 
@@ -532,8 +536,13 @@ const Receipts = () => {
 
                     {/* Toolbar */}
                     <div className="flex flex-wrap items-center gap-2">
-                        <button onClick={() => void displayReceiptsData()} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50">
-                            <RefreshCw className="h-4 w-4" /> Display
+                        <button
+                            type="button"
+                            disabled={loading}
+                            onClick={() => void displayReceiptsData()}
+                            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
                         </button>
                         <button
                             onClick={() => openCustModal()}
@@ -560,7 +569,7 @@ const Receipts = () => {
                                 Customers with Outstanding Balance
                             </div>
                             <DataTable
-                                data={unpaidCustomers}
+                                data={customerDisplayed ? unpaidCustomers : []}
                                 columns={unpaidCustColumns}
                                 isLoading={loading}
                                 searchPlaceholder="Search customers..."
@@ -575,13 +584,24 @@ const Receipts = () => {
                         </div>
                     )}
 
+                    {!customerDisplayed && !loading && (
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                            Click <span className="font-semibold">Display</span> to load data.
+                        </div>
+                    )}
+                    {customerDisplayed && !loading && customerReceipts.length === 0 && (
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                            No data found for the selected filters.
+                        </div>
+                    )}
+
                     {/* Main receipts table */}
                     <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
                         <div className="border-b border-slate-100 px-4 py-3">
                             <h3 className="text-sm font-semibold text-slate-700">All Customer Receipts</h3>
                         </div>
                         <DataTable
-                            data={customerReceipts}
+                            data={customerDisplayed ? customerReceipts : []}
                             columns={custReceiptColumns}
                             isLoading={loading}
                             searchPlaceholder="Search by customer, reference..."
@@ -606,8 +626,13 @@ const Receipts = () => {
 
                     {/* Toolbar */}
                     <div className="flex flex-wrap items-center gap-2">
-                        <button onClick={() => void displayReceiptsData()} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50">
-                            <RefreshCw className="h-4 w-4" /> Display
+                        <button
+                            type="button"
+                            disabled={loading}
+                            onClick={() => void displayReceiptsData()}
+                            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
                         </button>
                         <button
                             onClick={() => openSupModal()}
@@ -634,7 +659,7 @@ const Receipts = () => {
                                 Purchases with Outstanding Balance (still owed to suppliers)
                             </div>
                             <DataTable
-                                data={outstandingPurchases}
+                                data={supplierDisplayed ? outstandingPurchases : []}
                                 columns={outstandingPurchaseColumns}
                                 isLoading={loading}
                                 searchPlaceholder="Search supplier purchases..."
@@ -661,7 +686,7 @@ const Receipts = () => {
                                 <div className="mt-3 border-t border-red-200 pt-3">
                                     <div className="mb-2 text-xs font-semibold text-red-700">By Supplier (net payable)</div>
                                     <DataTable
-                                        data={unpaidSuppliers}
+                                        data={supplierDisplayed ? unpaidSuppliers : []}
                                         columns={unpaidSupColumns}
                                         isLoading={loading}
                                         searchPlaceholder="Search suppliers..."
@@ -678,13 +703,24 @@ const Receipts = () => {
                         </div>
                     )}
 
+                    {!supplierDisplayed && !loading && (
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                            Click <span className="font-semibold">Display</span> to load data.
+                        </div>
+                    )}
+                    {supplierDisplayed && !loading && supplierReceipts.length === 0 && (
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                            No data found for the selected filters.
+                        </div>
+                    )}
+
                     {/* Main receipts table */}
                     <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
                         <div className="border-b border-slate-100 px-4 py-3">
                             <h3 className="text-sm font-semibold text-slate-700">All Supplier Payments</h3>
                         </div>
                         <DataTable
-                            data={supplierReceipts}
+                            data={supplierDisplayed ? supplierReceipts : []}
                             columns={supReceiptColumns}
                             isLoading={loading}
                             searchPlaceholder="Search by supplier, reference..."

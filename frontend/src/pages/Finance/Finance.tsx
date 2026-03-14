@@ -142,22 +142,31 @@ const [deletingBudget, setDeletingBudget] = useState(false);
   const fieldClass =
     'w-full rounded border px-3 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 border-slate-200 dark:border-slate-700';
 
+  const getChargeOpenBalance = (charge?: Partial<ExpenseCharge> | null) => {
+    if (!charge) return 0;
+    if (charge.is_opening_paid) return 0;
+    if (charge.open_balance !== undefined && charge.open_balance !== null) {
+      return Number(charge.open_balance || 0);
+    }
+    return Math.max(0, Number(charge.amount || 0) - Number(charge.paid_sum || 0));
+  };
+
+  const getChargeStatus = (charge: ExpenseCharge): 'unpaid' | 'partial' | 'paid' => {
+    if (charge.is_opening_paid) return 'paid';
+    if (charge.payment_status) return charge.payment_status;
+    const paid = Number(charge.paid_sum || 0);
+    const amount = Number(charge.amount || 0);
+    if (paid <= 0) return 'unpaid';
+    if (paid + 0.000001 < amount) return 'partial';
+    return 'paid';
+  };
+
   const selectedPayCharge = expenseCharges.find((charge) => charge.exp_ch_id === payChargeForm.exp_ch_id);
-  const selectedPayChargeOpenBalance = selectedPayCharge
-    ? selectedPayCharge.open_balance !== undefined
-      ? Number(selectedPayCharge.open_balance || 0)
-      : Math.max(0, Number(selectedPayCharge.amount || 0) - Number(selectedPayCharge.paid_sum || 0))
-    : 0;
+  const selectedPayChargeOpenBalance = getChargeOpenBalance(selectedPayCharge);
 
   const dynamicExpenseOpenBalance = useMemo(
     () =>
-      expenseCharges.reduce((sum, charge) => {
-        const open =
-          charge.open_balance !== undefined
-            ? Number(charge.open_balance || 0)
-            : Math.max(0, Number(charge.amount || 0) - Number(charge.paid_sum || 0));
-        return sum + open;
-      }, 0),
+      expenseCharges.reduce((sum, charge) => sum + getChargeOpenBalance(charge), 0),
     [expenseCharges]
   );
 
@@ -234,25 +243,13 @@ const [deletingBudget, setDeletingBudget] = useState(false);
       {
         id: 'open_balance',
         header: 'Open Balance',
-        cell: ({ row }) => {
-          const openBalance =
-            row.original.open_balance !== undefined
-              ? Number(row.original.open_balance || 0)
-              : Math.max(0, Number(row.original.amount || 0) - Number(row.original.paid_sum || 0));
-          return `$${openBalance.toFixed(2)}`;
-        },
+        cell: ({ row }) => `$${getChargeOpenBalance(row.original).toFixed(2)}`,
       },
       {
         id: 'payment_status',
         header: 'Status',
         cell: ({ row }) => {
-          const status = row.original.payment_status
-            ? String(row.original.payment_status)
-            : Number(row.original.paid_sum || 0) <= 0
-            ? 'unpaid'
-            : Number(row.original.paid_sum || 0) + 0.000001 < Number(row.original.amount || 0)
-            ? 'partial'
-            : 'paid';
+          const status = getChargeStatus(row.original);
           const cls =
             status === 'paid'
               ? 'bg-emerald-100 text-emerald-700'
@@ -272,16 +269,13 @@ const [deletingBudget, setDeletingBudget] = useState(false);
         header: 'Actions',
         cell: ({ row }) => (
           <div className="flex items-center gap-3">
-            {!!row.original.exp_id && (
+            {!!row.original.exp_id && !row.original.is_opening_paid && (
               <button
                 className="px-3 py-1.5 rounded-lg text-white bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold disabled:opacity-40"
                 aria-label="Full payment"
                 onClick={() => {
                   const ch = row.original;
-                  const remaining =
-                    ch.open_balance !== undefined
-                      ? Number(ch.open_balance || 0)
-                      : Math.max(0, Number(ch.amount || 0) - Number(ch.paid_sum || 0));
+                  const remaining = getChargeOpenBalance(ch);
                   setIsEditingPayment(false);
                   setPayChargeForm({
                     exp_ch_id: ch.exp_ch_id,
@@ -293,9 +287,9 @@ const [deletingBudget, setDeletingBudget] = useState(false);
                   });
                   setIsPayChargeModalOpen(true);
                 }}
-                disabled={Number(row.original.open_balance ?? (Number(row.original.amount || 0) - Number(row.original.paid_sum || 0))) <= 0}
+                disabled={getChargeOpenBalance(row.original) <= 0}
               >
-                {Number(row.original.open_balance ?? (Number(row.original.amount || 0) - Number(row.original.paid_sum || 0))) <= 0 ? 'Paid' : 'Full Payment'}
+                {getChargeOpenBalance(row.original) <= 0 ? 'Paid' : 'Full Payment'}
               </button>
             )}
             {!!row.original.exp_id && (
@@ -528,6 +522,12 @@ const [deletingBudget, setDeletingBudget] = useState(false);
     }
   };
 
+  const emptyHint = (message: string) => (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+      {message}
+    </div>
+  );
+
   const openTransferModal = (row?: AccountTransfer) => {
     if (row) {
       setEditingTransferId(row.acc_transfer_id);
@@ -584,7 +584,7 @@ const [deletingBudget, setDeletingBudget] = useState(false);
       setEditingAccount(null);
       setAccountForm({ name: '', institution: '', balance: '' });
       setAccountErrors({});
-      loadAll();
+      reloadIfDisplayed();
     } else {
       quickError(res.error || 'Failed to save account');
     }
@@ -677,7 +677,7 @@ const [deletingBudget, setDeletingBudget] = useState(false);
       setTransferForm({});
       setTransferErrors({});
       setEditingTransferId(null);
-      loadAll();
+      reloadIfDisplayed();
     } else quickError(res.error || 'Transfer failed');
   };
 
@@ -700,7 +700,7 @@ const [deletingBudget, setDeletingBudget] = useState(false);
       setReceiptForm({});
       setCustReceiptErrors({});
       setIsCustReceiptModalOpen(false);
-      loadAll();
+      reloadIfDisplayed();
     } else quickError(res.error || 'Receipt failed');
   };
 
@@ -723,7 +723,7 @@ const [deletingBudget, setDeletingBudget] = useState(false);
       setReceiptForm({});
       setSupReceiptErrors({});
       setIsSupReceiptModalOpen(false);
-      loadAll();
+      reloadIfDisplayed();
     } else quickError(res.error || 'Receipt failed');
   };
 
@@ -750,7 +750,7 @@ const [deletingBudget, setDeletingBudget] = useState(false);
       setChargeErrors({});
       setEditingChargeId(null);
       setIsChargeModalOpen(false);
-      loadAll();
+      reloadIfDisplayed();
     } else quickError(res.error || 'Charge failed');
   };
 
@@ -773,6 +773,7 @@ const [deletingBudget, setDeletingBudget] = useState(false);
       note,
       exp_date: resolvedDate,
       reg_date: resolvedDate,
+      is_opening_paid: true,
     });
 
     if (res.success) {
@@ -780,7 +781,7 @@ const [deletingBudget, setDeletingBudget] = useState(false);
       setOpeningChargeForm({});
       setOpeningChargeErrors({});
       setIsOpeningChargeModalOpen(false);
-      loadAll();
+      reloadIfDisplayed();
     } else {
       quickError(res.error || 'Opening balance charge failed');
     }
@@ -794,10 +795,7 @@ const [deletingBudget, setDeletingBudget] = useState(false);
     if (payChargeForm.exp_ch_id && payChargeForm.amount && payChargeForm.amount > 0) {
       const charge = expenseCharges.find((c) => c.exp_ch_id === payChargeForm.exp_ch_id);
       if (charge) {
-        const openBalance =
-          charge.open_balance !== undefined
-            ? Number(charge.open_balance || 0)
-            : Math.max(0, Number(charge.amount || 0) - Number(charge.paid_sum || 0));
+        const openBalance = getChargeOpenBalance(charge);
         if (Number(payChargeForm.amount) > openBalance + 0.000001) {
           errs.amount = `Amount exceeds open balance ($${openBalance.toFixed(2)})`;
         }
@@ -818,7 +816,7 @@ const [deletingBudget, setDeletingBudget] = useState(false);
       setIsPayChargeModalOpen(false);
       setPayChargeForm({});
       setPayErrors({});
-      loadAll();
+      reloadIfDisplayed();
     } else {
       if ((res as any).status === 404) {
         quickError('Cannot pay: expense record missing for this charge.');
@@ -861,7 +859,7 @@ const submitBudget = async () => {
     setBudgetErrors({});
     setEditingBudget(null);
     setIsBudgetModalOpen(false);
-    loadAll();
+    reloadIfDisplayed();
   } else quickError(res.error || 'Budget failed');
 };
 
@@ -883,7 +881,7 @@ const submitBudgetCharge = async () => {
       showToast('success', 'Finance', 'Budget charged');
       setBudgetChargeForm({});
       setIsBudgetChargeModalOpen(false);
-      loadAll();
+      reloadIfDisplayed();
     } else quickError(res.error || 'Charge failed');
   };
 
@@ -898,7 +896,7 @@ const submitBudgetCharge = async () => {
       showToast('success', 'Finance', 'Salaries charged');
       setIsChargePayrollModalOpen(false);
       setChargePayrollForm({});
-      loadAll();
+      reloadIfDisplayed();
     } else {
       quickError(res.error || 'Charge salaries failed');
     }
@@ -924,7 +922,7 @@ const submitBudgetCharge = async () => {
       setIsPaySalaryModalOpen(false);
       setPaySalaryForm({});
       setPaySalaryErrors({});
-      loadAll();
+      reloadIfDisplayed();
     } else {
       quickError(res.error || 'Salary payment failed');
     }
@@ -947,7 +945,7 @@ const submitBudgetCharge = async () => {
       setExpenseForm({ name: '' });
       setEditingExpense(null);
       setIsExpenseModalOpen(false);
-      loadAll();
+      reloadIfDisplayed();
     } else quickError(res.error || 'Expense failed');
   };
 
@@ -972,10 +970,12 @@ const submitBudgetCharge = async () => {
             </span>
             <div className="flex items-center gap-2">
               <button
+                type="button"
+                disabled={loading}
                 onClick={() => void displayFinanceData()}
-                className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <RefreshCw className="h-4 w-4" /> Display
+                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
               </button>
               <button
                 onClick={() => openAccountModal()}
@@ -985,8 +985,10 @@ const submitBudgetCharge = async () => {
               </button>
             </div>
           </div>
+          {!financeDisplayed && !loading && emptyHint('Click Display to load data.')}
+          {financeDisplayed && !loading && accounts.length === 0 && emptyHint('No data found for the selected filters.')}
           <DataTable
-            data={accounts}
+            data={financeDisplayed ? accounts : []}
             columns={accountColumns}
             isLoading={loading}
             searchPlaceholder="Search accounts..."
@@ -1010,10 +1012,12 @@ const submitBudgetCharge = async () => {
         <div className="space-y-3">
           <div className="flex items-center justify-between gap-3">
             <button
+              type="button"
+              disabled={loading}
               onClick={() => void displayFinanceData()}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <RefreshCw className="h-4 w-4" /> Display
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
             </button>
             <button
               onClick={() => openTransferModal()}
@@ -1022,10 +1026,12 @@ const submitBudgetCharge = async () => {
               <Plus className="h-4 w-4" /> New Transfer
             </button>
           </div>
+          {!financeDisplayed && !loading && emptyHint('Click Display to load data.')}
+          {financeDisplayed && !loading && transfers.length === 0 && emptyHint('No data found for the selected filters.')}
           <DataTable
-            data={transfers}
+            data={financeDisplayed ? transfers : []}
             columns={transferColumns}
-            isLoading={false}
+            isLoading={loading}
             searchPlaceholder="Search transfers..."
             onEdit={(row) => openTransferModal(row as AccountTransfer)}
           />
@@ -1043,10 +1049,12 @@ const submitBudgetCharge = async () => {
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-sm">
               <button
+                type="button"
+                disabled={loading}
                 onClick={() => void displayFinanceData()}
                 className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-4 py-2 text-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
               >
-                <RefreshCw className="h-4 w-4" /> Display
+                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
               </button>
               <button
                 onClick={() => {
@@ -1066,7 +1074,6 @@ const submitBudgetCharge = async () => {
               <button
                 onClick={() => {
                   setCustMonthOnly((v) => !v);
-                  setTimeout(reloadIfDisplayed, 0);
                 }}
                 className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition-all ${
                   custMonthOnly ? 'bg-primary-600 text-white hover:bg-primary-500' : 'border border-slate-300 text-slate-700 hover:-translate-y-0.5 hover:shadow-md'
@@ -1076,11 +1083,14 @@ const submitBudgetCharge = async () => {
               </button>
             </div>
           </div>
+          {!financeDisplayed && !loading && emptyHint('Click Display to load data.')}
+          {financeDisplayed && !loading && !showCustUnpaid && customerReceipts.length === 0 && emptyHint('No data found for the selected filters.')}
+          {financeDisplayed && !loading && showCustUnpaid && unpaidCustomers.length === 0 && emptyHint('No data found for the selected filters.')}
           {showCustUnpaid && (
             <div className="rounded-lg border border-amber-300 bg-amber-50/80 p-3 shadow-sm">
               <div className="mb-2 text-xs font-semibold text-amber-800">Unpaid (current month)</div>
               <DataTable
-                data={unpaidCustomers}
+                data={financeDisplayed ? unpaidCustomers : []}
                 columns={unpaidCustomerColumns}
                 isLoading={loading}
                 searchPlaceholder="Search unpaid customers..."
@@ -1097,7 +1107,7 @@ const submitBudgetCharge = async () => {
           )}
           {!showCustUnpaid && (
             <DataTable
-              data={customerReceipts}
+              data={financeDisplayed ? customerReceipts : []}
               columns={receiptColumns}
               isLoading={loading}
               searchPlaceholder="Search receipts..."
@@ -1114,10 +1124,12 @@ const submitBudgetCharge = async () => {
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-sm">
               <button
+                type="button"
+                disabled={loading}
                 onClick={() => void displayFinanceData()}
                 className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-4 py-2 text-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
               >
-                <RefreshCw className="h-4 w-4" /> Display
+                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
               </button>
               <button
                 onClick={() => {
@@ -1137,7 +1149,6 @@ const submitBudgetCharge = async () => {
               <button
                 onClick={() => {
                   setSupMonthOnly((v) => !v);
-                  setTimeout(reloadIfDisplayed, 0);
                 }}
                 className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition-all ${
                   supMonthOnly ? 'bg-primary-600 text-white hover:bg-primary-500' : 'border border-slate-300 text-slate-700 hover:-translate-y-0.5 hover:shadow-md'
@@ -1147,11 +1158,14 @@ const submitBudgetCharge = async () => {
               </button>
             </div>
           </div>
+          {!financeDisplayed && !loading && emptyHint('Click Display to load data.')}
+          {financeDisplayed && !loading && !showSupUnpaid && supplierReceipts.length === 0 && emptyHint('No data found for the selected filters.')}
+          {financeDisplayed && !loading && showSupUnpaid && unpaidSuppliers.length === 0 && emptyHint('No data found for the selected filters.')}
           {showSupUnpaid && (
             <div className="rounded-lg border border-amber-300 bg-amber-50/80 p-3 shadow-sm">
               <div className="mb-2 text-xs font-semibold text-amber-800">Unpaid (current month)</div>
               <DataTable
-                data={unpaidSuppliers}
+                data={financeDisplayed ? unpaidSuppliers : []}
                 columns={unpaidSupplierColumns}
                 isLoading={loading}
                 searchPlaceholder="Search unpaid suppliers..."
@@ -1168,7 +1182,7 @@ const submitBudgetCharge = async () => {
           )}
           {!showSupUnpaid && (
             <DataTable
-              data={supplierReceipts}
+              data={financeDisplayed ? supplierReceipts : []}
               columns={receiptColumns}
               isLoading={loading}
               searchPlaceholder="Search receipts..."
@@ -1220,10 +1234,12 @@ const submitBudgetCharge = async () => {
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-sm">
               <button
+                type="button"
+                disabled={loading}
                 onClick={() => void displayFinanceData()}
-                className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-3 py-2 text-sm"
+                className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <RefreshCw className="h-4 w-4" /> Display
+                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
               </button>
               <button
                 onClick={() => {
@@ -1237,8 +1253,10 @@ const submitBudgetCharge = async () => {
               </button>
             </div>
           </div>
+          {!financeDisplayed && !loading && emptyHint('Click Display to load data.')}
+          {financeDisplayed && !loading && expenses.length === 0 && emptyHint('No data found for the selected filters.')}
           <DataTable
-            data={expenses}
+            data={financeDisplayed ? expenses : []}
             columns={expenseColumns}
             isLoading={loading}
             searchPlaceholder="Search expenses..."
@@ -1257,10 +1275,12 @@ const submitBudgetCharge = async () => {
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-sm">
               <button
+                type="button"
+                disabled={loading}
                 onClick={() => void displayFinanceData()}
-                className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-3 py-2 text-sm"
+                className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <RefreshCw className="h-4 w-4" /> Display
+                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
               </button>
               <button
                 onClick={() => {
@@ -1303,10 +1323,12 @@ const submitBudgetCharge = async () => {
             </p>
             <p className="mt-1 text-xs text-amber-800">Total unpaid expense charges.</p>
           </div>
+          {!financeDisplayed && !loading && emptyHint('Click Display to load data.')}
+          {financeDisplayed && !loading && expenseCharges.length === 0 && emptyHint('No data found for the selected filters.')}
           <DataTable
-            data={expenseCharges}
+            data={financeDisplayed ? expenseCharges : []}
             columns={chargeColumns}
-            isLoading={false}
+            isLoading={loading}
             searchPlaceholder="Search charges..."
             className="rounded-2xl overflow-hidden border border-slate-200 shadow-md"
             headerClassName="bg-slate-900 text-white"
@@ -1323,10 +1345,12 @@ const submitBudgetCharge = async () => {
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-sm">
               <button
+                type="button"
+                disabled={loading}
                 onClick={() => void displayFinanceData()}
-                className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-3 py-2 text-sm"
+                className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <RefreshCw className="h-4 w-4" /> Display
+                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
               </button>
               <button
                 onClick={() => {
@@ -1356,10 +1380,12 @@ const submitBudgetCharge = async () => {
               </button>
             </div>
           </div>
+          {!financeDisplayed && !loading && emptyHint('Click Display to load data.')}
+          {financeDisplayed && !loading && expenseBudgets.length === 0 && emptyHint('No data found for the selected filters.')}
           <DataTable
-            data={expenseBudgets}
+            data={financeDisplayed ? expenseBudgets : []}
             columns={budgetColumns}
-            isLoading={false}
+            isLoading={loading}
             searchPlaceholder="Search budgets..."
             className="rounded-2xl overflow-hidden border border-slate-200 shadow-md"
             headerClassName="bg-slate-900 text-white"
@@ -1378,10 +1404,12 @@ const submitBudgetCharge = async () => {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-sm">
             <button
+              type="button"
+              disabled={loading}
               onClick={() => void displayFinanceData()}
-              className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-3 py-2 text-sm"
+              className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <RefreshCw className="h-4 w-4" /> Display
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
             </button>
             <button
               onClick={() => {
@@ -1403,14 +1431,15 @@ const submitBudgetCharge = async () => {
                 value={payrollPeriod}
                 onChange={(e) => {
                   setPayrollPeriod(e.target.value);
-                  setTimeout(reloadIfDisplayed, 0);
                 }}
               />
             </label>
           </div>
         </div>
+        {!financeDisplayed && !loading && emptyHint('Click Display to load data.')}
+        {financeDisplayed && !loading && payroll.length === 0 && emptyHint('No data found for the selected filters.')}
         <DataTable
-          data={payroll}
+          data={financeDisplayed ? payroll : []}
           columns={payrollColumns}
           isLoading={loading}
           searchPlaceholder="Search employees..."
@@ -1763,7 +1792,7 @@ const submitBudgetCharge = async () => {
       >
         <div className="space-y-4 text-slate-900 dark:text-slate-100">
           <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            Use this once to register unpaid expense balance brought from before this period.
+            Use this once to register already-paid historical expense without creating new account payment.
           </p>
           <label className="text-sm">
             <span className="mb-1 block font-medium">Expense</span>
@@ -1957,7 +1986,7 @@ const submitBudgetCharge = async () => {
                   showToast('success', 'Finance', 'Expense charge deleted');
                   setPendingDeleteChargeId(null);
                   setIsDeleteChargeModalOpen(false);
-                  loadAll();
+                  reloadIfDisplayed();
                 } else {
                   quickError(res.error || 'Delete failed');
                   setIsDeleteChargeModalOpen(false);
@@ -2206,7 +2235,7 @@ const submitBudgetCharge = async () => {
                   showToast('success', 'Finance', 'Salary charge deleted');
                   setIsDeletePayrollModalOpen(false);
                   setPendingPayrollLineId(null);
-                  loadAll();
+                  reloadIfDisplayed();
                 } else {
                   quickError(res.error || 'Delete failed');
                 }

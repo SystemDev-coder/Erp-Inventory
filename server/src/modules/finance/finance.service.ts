@@ -1,6 +1,7 @@
 import { queryMany, queryOne } from '../../db/query';
 import { ApiError } from '../../utils/ApiError';
 import { BranchScope, pickBranchForWrite, assertBranchAccess } from '../../utils/branchScope';
+import { adjustSystemAccountBalance } from '../../utils/systemAccounts';
 import {
   AccountTransferInput,
   accountTransferUpdateSchema,
@@ -44,6 +45,11 @@ const hasColumn = async (table: string, column: string): Promise<boolean> => {
   return Boolean(row?.exists);
 };
 
+const OPENING_EXPENSE_NOTE_PREFIX = '[OPENING BALANCE]';
+
+const isOpeningExpenseNote = (note?: string | null): boolean =>
+  typeof note === 'string' && note.trimStart().toUpperCase().startsWith(OPENING_EXPENSE_NOTE_PREFIX);
+
 const adjustEntityBalance = async (
   table: 'customers' | 'suppliers',
   id: number | null,
@@ -54,10 +60,57 @@ const adjustEntityBalance = async (
   const column = await detectColumn(table, 'remaining_balance', ['open_balance', 'remaining_balance']);
   await queryOne(
     `UPDATE ims.${table}
-        SET ${column} = GREATEST(${column} + $3, 0)
+        SET ${column} = ${column} + $3
       WHERE ${table.slice(0, -1)}_id = $1
         AND branch_id = $2`,
     [id, branchId, delta]
+  );
+  await adjustSystemAccountBalance(null, {
+    branchId,
+    kind: table === 'customers' ? 'receivable' : 'payable',
+    delta,
+  });
+};
+
+const roundMoney = (value: number) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+
+const lockAccountBalance = async (branchId: number, accId: number) => {
+  const row = await queryOne<{ acc_id: number; balance: string }>(
+    `SELECT acc_id, balance::text AS balance
+       FROM ims.accounts
+      WHERE branch_id = $1
+        AND acc_id = $2
+      FOR UPDATE`,
+    [branchId, accId]
+  );
+  if (!row) throw ApiError.badRequest('Account not found in selected branch');
+  return { accId: Number(row.acc_id), balance: Number(row.balance || 0) };
+};
+
+const debitAccount = async (branchId: number, accId: number, amount: number) => {
+  const amt = roundMoney(amount);
+  const current = await lockAccountBalance(branchId, accId);
+  if (current.balance + 1e-9 < amt) {
+    throw ApiError.badRequest('Insufficient funds in selected account');
+  }
+  await queryOne(
+    `UPDATE ims.accounts
+        SET balance = balance - $3
+      WHERE branch_id = $1
+        AND acc_id = $2`,
+    [branchId, accId, amt]
+  );
+};
+
+const creditAccount = async (branchId: number, accId: number, amount: number) => {
+  const amt = roundMoney(amount);
+  await lockAccountBalance(branchId, accId);
+  await queryOne(
+    `UPDATE ims.accounts
+        SET balance = balance + $3
+      WHERE branch_id = $1
+        AND acc_id = $2`,
+    [branchId, accId, amt]
   );
 };
 
@@ -109,15 +162,8 @@ export const financeService = {
       );
       if (!row) throw ApiError.internal('Failed to create transfer');
 
-      // Apply balance moves (ignore insufficiency to allow admin override)
-      await queryOne(
-        `UPDATE ims.accounts SET balance = balance - $3 WHERE branch_id = $1 AND acc_id = $2`,
-        [branchId, input.fromAccId, input.amount]
-      );
-      await queryOne(
-        `UPDATE ims.accounts SET balance = balance + $3 WHERE branch_id = $1 AND acc_id = $2`,
-        [branchId, input.toAccId, input.amount]
-      );
+      await debitAccount(branchId, input.fromAccId, input.amount);
+      await creditAccount(branchId, input.toAccId, input.amount);
 
       await queryOne('COMMIT');
       return queryOne(`SELECT * FROM ims.account_transfers WHERE acc_transfer_id = $1`, [row.acc_transfer_id]);
@@ -146,15 +192,8 @@ export const financeService = {
     await queryOne('BEGIN');
     try {
       if (existing.status === 'posted') {
-        // reverse old posting (allow negative temporarily)
-        await queryOne(
-          `UPDATE ims.accounts SET balance = balance + $3 WHERE branch_id = $1 AND acc_id = $2`,
-          [existing.branch_id, existing.from_acc_id, existing.amount]
-        );
-        await queryOne(
-          `UPDATE ims.accounts SET balance = balance - $3 WHERE branch_id = $1 AND acc_id = $2`,
-          [existing.branch_id, existing.to_acc_id, existing.amount]
-        );
+        await creditAccount(existing.branch_id, existing.from_acc_id, existing.amount);
+        await debitAccount(existing.branch_id, existing.to_acc_id, existing.amount);
       }
 
       const updates: string[] = [];
@@ -174,14 +213,8 @@ export const financeService = {
       );
 
       if (existing.status === 'posted') {
-        await queryOne(
-          `UPDATE ims.accounts SET balance = balance - $3 WHERE branch_id = $1 AND acc_id = $2`,
-          [existing.branch_id, newFrom, newAmount]
-        );
-        await queryOne(
-          `UPDATE ims.accounts SET balance = balance + $3 WHERE branch_id = $1 AND acc_id = $2`,
-          [existing.branch_id, newTo, newAmount]
-        );
+        await debitAccount(existing.branch_id, newFrom, newAmount);
+        await creditAccount(existing.branch_id, newTo, newAmount);
       }
 
       await queryOne('COMMIT');
@@ -410,11 +443,7 @@ export const financeService = {
       if (!receipt) throw ApiError.internal('Failed to create supplier receipt');
 
       // Decrease paying account balance
-      await queryOne(`UPDATE ims.accounts SET balance = balance - $2 WHERE branch_id = $1 AND acc_id = $3`, [
-        branchId,
-        input.amount,
-        input.accId,
-      ]);
+      await debitAccount(branchId, input.accId, input.amount);
 
       // Reduce supplier balance (payable)
       await adjustEntityBalance('suppliers', resolvedSupplierId, branchId, -input.amount);
@@ -1144,10 +1173,15 @@ export const financeService = {
               COALESCE(e.name, 'Expense '||e.exp_id) AS expense_name,
               COALESCE(u.full_name, u.name) AS created_by,
               c.branch_id,
+              opening.is_opening_paid,
               COALESCE(pay.payment_count,0) AS payment_count,
               COALESCE(pay.paid_sum,0) AS paid_sum,
-              GREATEST(COALESCE(c.amount, 0) - COALESCE(pay.paid_sum, 0), 0)::double precision AS open_balance,
               CASE
+                WHEN opening.is_opening_paid THEN 0::double precision
+                ELSE GREATEST(COALESCE(c.amount, 0) - COALESCE(pay.paid_sum, 0), 0)::double precision
+              END AS open_balance,
+              CASE
+                WHEN opening.is_opening_paid THEN 'paid'
                 WHEN COALESCE(pay.paid_sum, 0) <= 0 THEN 'unpaid'
                 WHEN COALESCE(pay.paid_sum, 0) + 0.000001 < COALESCE(c.amount, 0) THEN 'partial'
                 ELSE 'paid'
@@ -1162,19 +1196,52 @@ export const financeService = {
            FROM ims.expense_payments p
            WHERE p.exp_ch_id = c.charge_id
          ) pay ON TRUE
-        ${where}
-        ORDER BY c.charge_date DESC
-        LIMIT 200`,
+         CROSS JOIN LATERAL (
+           SELECT COALESCE(
+                    NULLIF(to_jsonb(c) ->> 'is_opening_paid', '')::boolean,
+                    COALESCE(c.note, '') ILIKE '${OPENING_EXPENSE_NOTE_PREFIX}%'
+                  ) AS is_opening_paid
+         ) opening
+         ${where}
+         ORDER BY c.charge_date DESC
+         LIMIT 200`,
       params
     );
   },
 
   async createExpenseCharge(input: ExpenseChargeInput, scope: BranchScope, userId: number) {
     const branchId = pickBranchForWrite(scope, input.branchId);
+    const isOpeningPaid =
+      input.isOpeningPaid === true || (input.isOpeningPaid === undefined && isOpeningExpenseNote(input.note));
+    const hasOpeningPaidColumn = await hasColumn('expense_charges', 'is_opening_paid');
+    const insertColumns = ['branch_id', 'exp_id', 'charge_date', 'reg_date', 'amount', 'ref_table', 'ref_id', 'note', 'user_id'];
+    const insertValues: any[] = [
+      branchId,
+      input.expId,
+      input.expDate || null,
+      input.regDate || null,
+      input.amount,
+      input.expBudgetId ? 'expense_budgets' : null,
+      input.expBudgetId || null,
+      input.note || null,
+      userId,
+    ];
+    if (hasOpeningPaidColumn) {
+      insertColumns.push('is_opening_paid');
+      insertValues.push(isOpeningPaid);
+    }
+    const chargeDateParam = insertColumns.indexOf('charge_date') + 1;
+    const insertPlaceholders = insertColumns.map((column, idx) => {
+      const param = `$${idx + 1}`;
+      if (column === 'charge_date') return `COALESCE(${param}, NOW())`;
+      if (column === 'reg_date') return `COALESCE(${param}, $${chargeDateParam}, NOW())`;
+      return param;
+    });
+
     const charge = await queryOne(
       `INSERT INTO ims.expense_charges
-         (branch_id, exp_id, charge_date, reg_date, amount, ref_table, ref_id, note, user_id)
-       VALUES ($1,$2,COALESCE($3,NOW()),COALESCE($4,$3,NOW()),$5,$6,$7,$8,$9)
+         (${insertColumns.join(', ')})
+       VALUES (${insertPlaceholders.join(', ')})
        RETURNING
          charge_id AS exp_ch_id,
          charge_date AS exp_date,
@@ -1182,22 +1249,17 @@ export const financeService = {
          amount,
          exp_id,
          branch_id,
-         note,
-         amount::double precision AS open_balance,
-         'unpaid'::text AS payment_status`,
-      [
-        branchId,
-        input.expId,
-        input.expDate || null,
-        input.regDate || null,
-        input.amount,
-        input.expBudgetId ? 'expense_budgets' : null,
-        input.expBudgetId || null,
-        input.note || null,
-        userId
-      ]
+         note`,
+      insertValues
     );
-    return charge;
+    if (!charge) throw ApiError.internal('Failed to create expense charge');
+
+    return {
+      ...charge,
+      is_opening_paid: isOpeningPaid,
+      open_balance: isOpeningPaid ? 0 : Number(charge.amount || 0),
+      payment_status: isOpeningPaid ? 'paid' : 'unpaid',
+    };
   },
 
   async updateExpenseCharge(id: number, input: Partial<ExpenseChargeInput>, scope: BranchScope, userId: number) {
@@ -1244,6 +1306,10 @@ export const financeService = {
       params.push(input.expBudgetId || null);
       sets.push(`ref_id = $${params.length}`);
     }
+    if (input.isOpeningPaid !== undefined && (await hasColumn('expense_charges', 'is_opening_paid'))) {
+      params.push(Boolean(input.isOpeningPaid));
+      sets.push(`is_opening_paid = $${params.length}`);
+    }
     if (sets.length === 0) throw ApiError.badRequest('Nothing to update');
     params.push(id);
     let where = `WHERE charge_id = $${params.length}`;
@@ -1251,41 +1317,54 @@ export const financeService = {
       params.push(scope.branchIds);
       where += ` AND branch_id = ANY($${params.length})`;
     }
-    const charge = await queryOne(
+    const charge = await queryOne<{ exp_ch_id: number }>(
       `UPDATE ims.expense_charges
           SET ${sets.join(', ')}, user_id = ${userId}
-        ${where}
-        RETURNING
-          charge_id AS exp_ch_id,
-          charge_date AS exp_date,
-          amount,
-          exp_id,
-          branch_id,
-          note,
-          GREATEST(
-            COALESCE(amount, 0) - (
-              SELECT COALESCE(SUM(p.amount_paid), 0)
-              FROM ims.expense_payments p
-              WHERE p.exp_ch_id = charge_id
-            ),
-            0
-          )::double precision AS open_balance,
-          CASE
-            WHEN (
-              SELECT COALESCE(SUM(p.amount_paid), 0)
-              FROM ims.expense_payments p
-              WHERE p.exp_ch_id = charge_id
-            ) <= 0 THEN 'unpaid'
-            WHEN (
-              SELECT COALESCE(SUM(p.amount_paid), 0)
-              FROM ims.expense_payments p
-              WHERE p.exp_ch_id = charge_id
-            ) + 0.000001 < amount THEN 'partial'
-            ELSE 'paid'
-          END AS payment_status`,
+         ${where}
+        RETURNING charge_id AS exp_ch_id`,
       params
     );
-    return charge;
+    if (!charge) throw ApiError.notFound('Expense charge not found');
+
+    const refreshed = await queryOne(
+      `SELECT c.charge_id AS exp_ch_id,
+              c.charge_date AS exp_date,
+              c.reg_date,
+              c.amount,
+              c.exp_id,
+              c.branch_id,
+              c.note,
+              COALESCE(
+                NULLIF(to_jsonb(c) ->> 'is_opening_paid', '')::boolean,
+                COALESCE(c.note, '') ILIKE '${OPENING_EXPENSE_NOTE_PREFIX}%'
+              ) AS is_opening_paid,
+              CASE
+                WHEN COALESCE(
+                  NULLIF(to_jsonb(c) ->> 'is_opening_paid', '')::boolean,
+                  COALESCE(c.note, '') ILIKE '${OPENING_EXPENSE_NOTE_PREFIX}%'
+                ) THEN 0::double precision
+                ELSE GREATEST(COALESCE(c.amount, 0) - COALESCE(pay.paid_sum, 0), 0)::double precision
+              END AS open_balance,
+              CASE
+                WHEN COALESCE(
+                  NULLIF(to_jsonb(c) ->> 'is_opening_paid', '')::boolean,
+                  COALESCE(c.note, '') ILIKE '${OPENING_EXPENSE_NOTE_PREFIX}%'
+                ) THEN 'paid'
+                WHEN COALESCE(pay.paid_sum, 0) <= 0 THEN 'unpaid'
+                WHEN COALESCE(pay.paid_sum, 0) + 0.000001 < COALESCE(c.amount, 0) THEN 'partial'
+                ELSE 'paid'
+              END AS payment_status
+         FROM ims.expense_charges c
+         LEFT JOIN LATERAL (
+           SELECT COALESCE(SUM(p.amount_paid), 0)::double precision AS paid_sum
+             FROM ims.expense_payments p
+            WHERE p.exp_ch_id = c.charge_id
+         ) pay ON TRUE
+        WHERE c.charge_id = $1`,
+      [charge.exp_ch_id]
+    );
+    if (!refreshed) throw ApiError.notFound('Expense charge not found');
+    return refreshed;
   },
 
   async deleteExpenseCharge(id: number, scope: BranchScope) {
@@ -1347,11 +1426,24 @@ export const financeService = {
   },
 
   async createExpensePayment(input: ExpensePaymentInput, scope: BranchScope, userId: number) {
-    const charge = await queryOne<{ branch_id: number; amount: number; exp_id: number; charge_id: number }>(
-      `SELECT branch_id, amount, exp_id, charge_id FROM ims.expense_charges WHERE charge_id = $1`,
+    const charge = await queryOne<{ branch_id: number; amount: number; exp_id: number; charge_id: number; is_opening_paid: boolean }>(
+      `SELECT
+          c.branch_id,
+          c.amount,
+          c.exp_id,
+          c.charge_id,
+          COALESCE(
+            NULLIF(to_jsonb(c) ->> 'is_opening_paid', '')::boolean,
+            COALESCE(c.note, '') ILIKE '${OPENING_EXPENSE_NOTE_PREFIX}%'
+          ) AS is_opening_paid
+         FROM ims.expense_charges c
+        WHERE c.charge_id = $1`,
       [input.expChargeId]
     );
     if (!charge) throw ApiError.notFound('Expense charge not found');
+    if (charge.is_opening_paid) {
+      throw ApiError.badRequest('Opening balance expense is already paid and cannot be paid again');
+    }
     assertBranchAccess(scope, charge.branch_id);
     const branchId = input.branchId && input.branchId !== charge.branch_id ? (() => { throw ApiError.badRequest('Branch mismatch'); })() : charge.branch_id;
     const paid = await queryOne<{ paid_sum: number }>(
@@ -1386,10 +1478,7 @@ export const financeService = {
       if (!payment) throw ApiError.internal('Failed to record expense payment');
 
       // Decrement account balance
-      await queryOne(
-        `UPDATE ims.accounts SET balance = balance - $3 WHERE branch_id = $1 AND acc_id = $2`,
-        [branchId, input.accId, amount]
-      );
+      await debitAccount(branchId, input.accId, amount);
 
       await queryOne(
         `INSERT INTO ims.account_transactions
@@ -1738,10 +1827,7 @@ export const financeService = {
       );
       if (!pay) throw ApiError.internal('Failed to record salary payment');
 
-      await queryOne(
-        `UPDATE ims.accounts SET balance = balance - $2 WHERE acc_id = $1`,
-        [input.accId, amount]
-      );
+      await debitAccount(line.branch_id, input.accId, amount);
 
       await queryOne(
         `INSERT INTO ims.account_transactions
