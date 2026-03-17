@@ -59,10 +59,66 @@ export interface CashierPerformanceRow {
   net_sales: number;
 }
 
+export interface SalesSummaryRow {
+  metric: string;
+  kind: 'money' | 'count';
+  value: number;
+}
+
+export interface InvoiceStatusRow {
+  sale_id: number;
+  sale_date: string;
+  customer_name: string;
+  cashier_name: string;
+  sale_type: string;
+  total: number;
+  paid: number;
+  balance: number;
+  status: string;
+}
+
+export interface SalesByStoreRow {
+  store_id: number | null;
+  store_name: string;
+  quantity_sold: number;
+  sales_amount: number;
+  sales_count: number;
+}
+
+export interface PaymentByAccountRow {
+  acc_id: number;
+  account_name: string;
+  sales_count: number;
+  payment_count: number;
+  amount_paid: number;
+}
+
+export interface QuotationRow {
+  quotation_id: number;
+  quotation_date: string;
+  valid_until: string | null;
+  customer_name: string;
+  cashier_name: string;
+  total: number;
+  status: string;
+  note: string;
+}
+
+export interface SalesTopCustomerRow {
+  customer_id: number | null;
+  customer_name: string;
+  invoice_count: number;
+  quantity: number;
+  sales_total: number;
+  returns_total: number;
+  net_sales: number;
+}
+
 interface SalesOptionsResponse {
   branchId: number;
   customers: ReportOption[];
   products: ReportOption[];
+  stores: ReportOption[];
 }
 
 export const salesReportsService = {
@@ -74,6 +130,25 @@ export const salesReportsService = {
   async getDailySales(branchId?: number) {
     const query = toQuery({ branchId });
     return apiClient.get<RowsResponse<DailySalesRow>>(`${API.REPORTS.SALES_DAILY}${query}`);
+  },
+
+  async getSalesSummary(input: { fromDate: string; toDate: string; branchId?: number }) {
+    const query = toQuery({
+      branchId: input.branchId,
+      fromDate: input.fromDate,
+      toDate: input.toDate,
+    });
+    return apiClient.get<RowsResponse<SalesSummaryRow>>(`${API.REPORTS.SALES_SUMMARY}${query}`);
+  },
+
+  async getInvoiceStatus(input: { fromDate: string; toDate: string; status: 'all' | 'paid' | 'partial' | 'unpaid'; branchId?: number }) {
+    const query = toQuery({
+      branchId: input.branchId,
+      fromDate: input.fromDate,
+      toDate: input.toDate,
+      status: input.status,
+    });
+    return apiClient.get<RowsResponse<InvoiceStatusRow>>(`${API.REPORTS.SALES_INVOICE_STATUS}${query}`);
   },
 
   async getSalesByCustomer(input: { mode: ReportSelectionMode; customerId?: number; branchId?: number }) {
@@ -94,6 +169,17 @@ export const salesReportsService = {
     return apiClient.get<RowsResponse<SalesByProductRow>>(`${API.REPORTS.SALES_BY_PRODUCT}${query}`);
   },
 
+  async getSalesByStore(input: { fromDate: string; toDate: string; mode: ReportSelectionMode; storeId?: number; branchId?: number }) {
+    const query = toQuery({
+      branchId: input.branchId,
+      fromDate: input.fromDate,
+      toDate: input.toDate,
+      mode: input.mode,
+      storeId: input.mode === 'show' ? input.storeId : undefined,
+    });
+    return apiClient.get<RowsResponse<SalesByStoreRow>>(`${API.REPORTS.SALES_BY_STORE}${query}`);
+  },
+
   async getTopSellingItems(input: { fromDate: string; toDate: string; branchId?: number }) {
     const query = toQuery({
       branchId: input.branchId,
@@ -103,6 +189,15 @@ export const salesReportsService = {
     return apiClient.get<RowsResponse<TopSellingItemRow>>(`${API.REPORTS.SALES_TOP_ITEMS}${query}`);
   },
 
+  async getTopCustomers(input: { fromDate: string; toDate: string; branchId?: number }) {
+    const query = toQuery({
+      branchId: input.branchId,
+      fromDate: input.fromDate,
+      toDate: input.toDate,
+    });
+    return apiClient.get<RowsResponse<SalesTopCustomerRow>>(`${API.REPORTS.SALES_TOP_CUSTOMERS}${query}`);
+  },
+
   async getSalesReturns(input: { fromDate: string; toDate: string; branchId?: number }) {
     const query = toQuery({
       branchId: input.branchId,
@@ -110,6 +205,24 @@ export const salesReportsService = {
       toDate: input.toDate,
     });
     return apiClient.get<RowsResponse<SalesReturnRow>>(`${API.REPORTS.SALES_RETURNS}${query}`);
+  },
+
+  async getPaymentsByAccount(input: { fromDate: string; toDate: string; branchId?: number }) {
+    const query = toQuery({
+      branchId: input.branchId,
+      fromDate: input.fromDate,
+      toDate: input.toDate,
+    });
+    return apiClient.get<RowsResponse<PaymentByAccountRow>>(`${API.REPORTS.SALES_PAYMENTS_BY_ACCOUNT}${query}`);
+  },
+
+  async getQuotations(input: { fromDate: string; toDate: string; branchId?: number }) {
+    const query = toQuery({
+      branchId: input.branchId,
+      fromDate: input.fromDate,
+      toDate: input.toDate,
+    });
+    return apiClient.get<RowsResponse<QuotationRow>>(`${API.REPORTS.SALES_QUOTATIONS}${query}`);
   },
 
   async getCashierPerformance(input: { fromDate: string; toDate: string; branchId?: number }) {
