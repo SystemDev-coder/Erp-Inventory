@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router';
 import { ColumnDef } from '@tanstack/react-table';
 import { Plus, RefreshCw, SquarePen, Trash, History, CalendarClock } from 'lucide-react';
@@ -38,6 +38,8 @@ const Finance = () => {
   const [loading, setLoading] = useState(false);
   const [financeDisplayed, setFinanceDisplayed] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [accountsLoaded, setAccountsLoaded] = useState(false);
+  const [accountsLoadError, setAccountsLoadError] = useState('');
   const [transfers, setTransfers] = useState<AccountTransfer[]>([]);
   const [customerReceipts, setCustomerReceipts] = useState<Receipt[]>([]);
   const [supplierReceipts, setSupplierReceipts] = useState<Receipt[]>([]);
@@ -155,6 +157,32 @@ const [deletingBudget, setDeletingBudget] = useState(false);
     if (Number.isNaN(d.getTime())) return String(value).slice(0, 10) || '-';
     return d.toISOString().slice(0, 10);
   };
+
+  // Always load accounts (needed for finance forms) without requiring "Display"
+  useEffect(() => {
+    let alive = true;
+    setAccountsLoadError('');
+    accountService
+      .list()
+      .then((res) => {
+        if (!alive) return;
+        if (res.success && res.data?.accounts) {
+          setAccounts(res.data.accounts);
+          setAccountsLoaded(true);
+        } else {
+          setAccountsLoadError(res.error || res.message || 'Failed to load accounts');
+          setAccountsLoaded(true);
+        }
+      })
+      .catch((err) => {
+        if (!alive) return;
+        setAccountsLoadError(err instanceof Error ? err.message : 'Failed to load accounts');
+        setAccountsLoaded(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const openOtherIncomeModal = (row?: OtherIncomeRow) => {
     if (row) {
@@ -1133,12 +1161,17 @@ const submitBudgetCharge = async () => {
               </button>
             </div>
           </div>
-          {!financeDisplayed && !loading && emptyHint('Click Display to load data.')}
-          {financeDisplayed && !loading && accounts.length === 0 && emptyHint('No data found for the selected filters.')}
+          {accountsLoadError && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-200">
+              {accountsLoadError}
+            </div>
+          )}
+          {!accountsLoaded && emptyHint('Loading accounts...')}
+          {accountsLoaded && !accountsLoadError && accounts.length === 0 && emptyHint('No accounts found.')}
           <DataTable
-            data={financeDisplayed ? accounts : []}
+            data={accountsLoaded ? accounts : []}
             columns={accountColumns}
-            isLoading={loading}
+            isLoading={loading && financeDisplayed}
             searchPlaceholder="Search accounts..."
             onEdit={(row) => openAccountModal(row as Account)}
             onDelete={(row) => requestDeleteAccount(row as Account)}

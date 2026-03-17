@@ -569,6 +569,13 @@ export const financeService = {
 
   // Other income (ad-hoc income not tied to sales)
   async listOtherIncomes(scope: BranchScope, branchId?: number, range: DateRange = {}) {
+    const exists = await queryOne<{ exists: boolean }>(
+      `SELECT to_regclass('ims.other_incomes') IS NOT NULL AS exists`
+    );
+    if (!exists?.exists) {
+      return [];
+    }
+
     const params: any[] = [];
     let where = 'WHERE 1=1';
 
