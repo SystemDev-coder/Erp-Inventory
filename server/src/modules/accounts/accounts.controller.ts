@@ -6,6 +6,7 @@ import { AuthRequest } from '../../middlewares/requireAuth';
 import { pickBranchForWrite, resolveBranchScope } from '../../utils/branchScope';
 import { accountsService } from './accounts.service';
 import { accountSchema, accountUpdateSchema } from './accounts.schemas';
+import { logAudit } from '../../utils/audit';
 
 export const listAccounts = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
@@ -43,5 +44,14 @@ export const deleteAccount = asyncHandler(async (req: AuthRequest, res: Response
   }
 
   await accountsService.remove(id, scope);
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'delete',
+    entity: 'accounts',
+    entityId: id,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
+
   return ApiResponse.success(res, null, 'Account deleted');
 });

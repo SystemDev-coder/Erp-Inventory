@@ -6,6 +6,7 @@ import { suppliersService, type SupplierInput as SupplierServiceInput } from './
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { z } from 'zod';
 import { pickBranchForWrite, resolveBranchScope } from '../../utils/branchScope';
+import { logAudit } from '../../utils/audit';
 
 const supplierSchema = z.object({
   supplierName: z.string().min(1, 'Supplier name is required'),
@@ -105,5 +106,14 @@ export const deleteSupplier = asyncHandler(async (req: AuthRequest, res: Respons
   const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
   await suppliersService.deleteSupplier(id, scope);
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'delete',
+    entity: 'suppliers',
+    entityId: id,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
+
   return ApiResponse.success(res, null, 'Supplier deleted');
 });

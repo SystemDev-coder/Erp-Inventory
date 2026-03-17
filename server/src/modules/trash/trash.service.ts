@@ -9,21 +9,31 @@ type TrashModule = {
   label: string;
   table: string;
   filter?: { column: string; value: string };
+  auditEntity?: string;
 };
+
+type AuditLogColumns = {
+  actionColumn: string;
+  entityColumn: string;
+  entityIdColumn: string;
+  createdAtColumn: string;
+};
+
+let auditLogColumnsCache: AuditLogColumns | null = null;
 
 const MODULES: TrashModule[] = [
   { key: 'customers', label: 'Customers', table: 'customers' },
   { key: 'sales', label: 'Sales', table: 'sales' },
   { key: 'items', label: 'Items', table: 'items' },
-  { key: 'items_state', label: 'Items State', table: 'store_items' },
+  { key: 'items_state', label: 'Items State', table: 'store_items', auditEntity: 'store_items' },
   { key: 'inventory_transaction', label: 'Inventory Transactions', table: 'inventory_transaction' },
   { key: 'stores', label: 'Stores', table: 'stores' },
-  { key: 'adjustment_items', label: 'Adjustment Items', table: 'stock_adjustment' },
+  { key: 'adjustment_items', label: 'Adjustment Items', table: 'stock_adjustment', auditEntity: 'stock_adjustment' },
   { key: 'sales_returns', label: 'Sales Returns', table: 'sales_returns' },
-  { key: 'supplier_returns', label: 'Supplier Returns', table: 'purchase_returns' },
+  { key: 'supplier_returns', label: 'Supplier Returns', table: 'purchase_returns', auditEntity: 'purchase_returns' },
   { key: 'purchases', label: 'Purchases', table: 'purchases' },
   { key: 'suppliers', label: 'Suppliers', table: 'suppliers' },
-  { key: 'quotations', label: 'Quotations', table: 'sales', filter: { column: 'doc_type', value: 'quotation' } },
+  { key: 'quotations', label: 'Quotations', table: 'sales', filter: { column: 'doc_type', value: 'quotation' }, auditEntity: 'sales' },
   { key: 'accounts', label: 'Accounts', table: 'accounts' },
   { key: 'customer_receipts', label: 'Customer Receipts', table: 'customer_receipts' },
   { key: 'supplier_receipts', label: 'Supplier Receipts', table: 'supplier_receipts' },
@@ -33,12 +43,45 @@ const MODULES: TrashModule[] = [
   { key: 'employees', label: 'Employees', table: 'employees' },
   { key: 'users', label: 'Users', table: 'users' },
   { key: 'roles', label: 'Roles', table: 'roles' },
-  { key: 'company', label: 'Company', table: 'company' },
+  { key: 'company', label: 'Company', table: 'company', auditEntity: 'company_info' },
   { key: 'capital', label: 'Capital Contributions', table: 'capital_contributions' },
   { key: 'drawings', label: 'Owner Drawings', table: 'owner_drawings' },
   { key: 'fixed_assets', label: 'Fixed Assets', table: 'fixed_assets' },
 ];
 const MODULE_BY_KEY = new Map(MODULES.map((module) => [module.key, module]));
+
+const detectAuditLogColumns = async (): Promise<AuditLogColumns | null> => {
+  if (auditLogColumnsCache) return auditLogColumnsCache;
+
+  const exists = await queryOne<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM information_schema.tables
+        WHERE table_schema = $1
+          AND table_name = 'audit_logs'
+     ) AS exists`,
+    [SCHEMA]
+  );
+  if (!exists?.exists) return null;
+
+  const columns = await queryMany<{ column_name: string }>(
+    `SELECT column_name
+       FROM information_schema.columns
+      WHERE table_schema = $1
+        AND table_name = 'audit_logs'`,
+    [SCHEMA]
+  );
+  const names = new Set(columns.map((row) => row.column_name));
+
+  auditLogColumnsCache = {
+    actionColumn: names.has('action_type') ? 'action_type' : 'action',
+    entityColumn: names.has('table_name') ? 'table_name' : 'entity',
+    entityIdColumn: names.has('record_id') ? 'record_id' : 'entity_id',
+    createdAtColumn: 'created_at',
+  };
+
+  return auditLogColumnsCache;
+};
 
 const getTableColumns = async (table: string) => {
   const rows = await queryMany<{ column_name: string }>(
@@ -171,20 +214,22 @@ export const trashService = {
       throw ApiError.badRequest('This table does not support date filtering');
     }
 
-    const where: string[] = ['is_deleted = 1'];
+    const auditCols = await detectAuditLogColumns();
+
+    const where: string[] = ["(COALESCE(to_jsonb(t)->>'is_deleted','0') IN ('1','true','t','TRUE','T'))"];
     const params: any[] = [];
     if (module.filter) {
       params.push(module.filter.value);
-      where.push(`${module.filter.column}::text = $${params.length}`);
+      where.push(`t.${module.filter.column}::text = $${params.length}`);
     }
     if (options.branchId && columns.has('branch_id')) {
       params.push(options.branchId);
-      where.push(`branch_id = $${params.length}`);
+      where.push(`t.branch_id = $${params.length}`);
     }
     params.push(options.fromDate);
-    where.push(`${dateCol}::date >= $${params.length}::date`);
+    where.push(`t.${dateCol}::date >= $${params.length}::date`);
     params.push(options.toDate);
-    where.push(`${dateCol}::date <= $${params.length}::date`);
+    where.push(`t.${dateCol}::date <= $${params.length}::date`);
     const limit = Math.min(Math.max(Number(options.limit || 50), 1), 200);
     const offset = Math.max(Number(options.offset || 0), 0);
 
@@ -195,29 +240,52 @@ export const trashService = {
     const offsetParamIndex = params.length + 1;
     params.push(offset);
 
-    const labelExpr = labelCol ? `${labelCol}::text` : `${pkCol}::text`;
-    const deletedExpr = dateCol ? `${dateCol}::text` : 'NULL::text';
-    const createdExpr = columns.has('created_at') ? 'created_at::text' : 'NULL::text';
+    const auditEntityParamIndex = params.length + 1;
+    params.push(module.auditEntity || module.key);
+
+    const labelExpr = labelCol ? `t.${labelCol}::text` : `t.${pkCol}::text`;
+    const deletedExpr = dateCol ? `t.${dateCol}::text` : 'NULL::text';
+    const createdExpr = columns.has('created_at') ? 't.created_at::text' : 'NULL::text';
+
+    const auditJoinSql = auditCols
+      ? `LEFT JOIN LATERAL (`
+           + ` SELECT al.user_id::bigint AS deleted_by_id,`
+           + `        u.username::text AS deleted_by,`
+           + `        al.${auditCols.createdAtColumn}::text AS deleted_logged_at`
+           + `   FROM ${SCHEMA}.audit_logs al`
+           + `   LEFT JOIN ${SCHEMA}.users u ON u.user_id = al.user_id`
+           + `  WHERE LOWER(COALESCE(al.${auditCols.actionColumn}::text, '')) = 'delete'`
+           + `    AND COALESCE(al.${auditCols.entityColumn}::text, '') = $${auditEntityParamIndex}::text`
+           + `    AND al.${auditCols.entityIdColumn}::bigint = t.${pkCol}::bigint`
+           + `  ORDER BY al.${auditCols.createdAtColumn} DESC`
+           + `  LIMIT 1`
+           + ` ) aud ON TRUE`
+      : '';
+    const auditSelectSql = auditCols
+      ? `, aud.deleted_by_id, aud.deleted_by, aud.deleted_logged_at`
+      : `, NULL::bigint AS deleted_by_id, NULL::text AS deleted_by, NULL::text AS deleted_logged_at`;
 
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       await client.query(`SET LOCAL app.include_deleted = '1'`);
       const data = await client.query(
-        `SELECT ${pkCol}::bigint AS id,
+        `SELECT t.${pkCol}::bigint AS id,
                 ${labelExpr} AS label,
                 ${deletedExpr} AS deleted_at,
                 ${createdExpr} AS created_at,
                 $${tableParamIndex}::text AS table
-           FROM ${SCHEMA}.${module.table}
+                ${auditSelectSql}
+           FROM ${SCHEMA}.${module.table} t
+           ${auditJoinSql}
           WHERE ${where.join(' AND ')}
-          ORDER BY ${dateCol || pkCol} DESC
+          ORDER BY t.${dateCol || pkCol} DESC
           LIMIT $${limitParamIndex} OFFSET $${offsetParamIndex}`,
         params
       );
       const count = await client.query(
         `SELECT COUNT(*)::int AS total
-           FROM ${SCHEMA}.${module.table}
+           FROM ${SCHEMA}.${module.table} t
           WHERE ${where.join(' AND ')}`,
         params.slice(0, tableParamIndex - 1)
       );

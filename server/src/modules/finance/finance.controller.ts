@@ -23,6 +23,7 @@ import {
 } from './finance.schemas';
 import { financeService } from './finance.service';
 import { asyncHandler as ah } from '../../utils/asyncHandler';
+import { logAudit } from '../../utils/audit';
 
 export const listExpenses = ah(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
@@ -62,6 +63,15 @@ export const deleteExpense = ah(async (req: AuthRequest, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) throw ApiError.badRequest('Invalid expense id');
   await financeService.deleteExpense(id, scope);
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'delete',
+    entity: 'expenses',
+    entityId: id,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
+
   return ApiResponse.success(res, null, 'Expense deleted');
 });
 
@@ -137,6 +147,15 @@ export const deleteCustomerReceipt = asyncHandler(async (req: AuthRequest, res: 
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) throw ApiError.badRequest('Invalid receipt id');
   await financeService.deleteCustomerReceipt(id, scope);
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'delete',
+    entity: 'customer_receipts',
+    entityId: id,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
+
   return ApiResponse.success(res, null, 'Customer receipt deleted');
 });
 
@@ -180,6 +199,15 @@ export const deleteSupplierReceipt = asyncHandler(async (req: AuthRequest, res: 
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) throw ApiError.badRequest('Invalid receipt id');
   await financeService.deleteSupplierReceipt(id, scope);
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'delete',
+    entity: 'supplier_receipts',
+    entityId: id,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
+
   return ApiResponse.success(res, null, 'Supplier receipt deleted');
 });
 
@@ -272,6 +300,15 @@ export const deleteExpenseCharge = asyncHandler(async (req: AuthRequest, res: Re
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) throw ApiError.badRequest('Invalid charge id');
   await financeService.deleteExpenseCharge(id, scope);
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'delete',
+    entity: 'expense_charges',
+    entityId: id,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
+
   return ApiResponse.success(res, null, 'Expense charge deleted');
 });
 

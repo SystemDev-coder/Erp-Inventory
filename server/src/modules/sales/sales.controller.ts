@@ -11,6 +11,7 @@ import {
 } from './sales.schemas';
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { assertBranchAccess, pickBranchForWrite, resolveBranchScope } from '../../utils/branchScope';
+import { logAudit } from '../../utils/audit';
 
 export const listSales = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
@@ -111,6 +112,15 @@ export const deleteSale = asyncHandler(async (req: AuthRequest, res: Response) =
   const id = Number(req.params.id);
   if (!id) throw ApiError.badRequest('Invalid sale id');
   await salesService.deleteSale(id, scope, { userId: req.user?.userId ?? null });
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'delete',
+    entity: 'sales',
+    entityId: id,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
+
   return ApiResponse.success(res, null, 'Sale deleted');
 });
 

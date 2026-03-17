@@ -12,6 +12,7 @@ import {
   storeListQuerySchema,
   storeUpdateSchema,
 } from './stores.schemas';
+import { logAudit } from '../../utils/audit';
 
 export const listStores = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
@@ -56,6 +57,15 @@ export const deleteStore = asyncHandler(async (req: AuthRequest, res: Response) 
   const id = Number(req.params.id);
   const scope = await resolveBranchScope(req);
   await storesService.delete(id, scope);
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'delete',
+    entity: 'stores',
+    entityId: id,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
+
   return ApiResponse.success(res, null, 'Store deleted');
 });
 

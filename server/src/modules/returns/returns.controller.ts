@@ -9,6 +9,7 @@ import {
 } from './returns.service';
 import { resolveBranchScope } from '../../utils/branchScope';
 import { ApiError } from '../../utils/ApiError';
+import { logAudit } from '../../utils/audit';
 
 // GET /api/returns/sales
 export const listSalesReturns = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -79,7 +80,17 @@ export const updateSalesReturn = async (req: AuthRequest, res: Response): Promis
 
 export const deleteSalesReturn = async (req: AuthRequest, res: Response): Promise<void> => {
     const scope = await resolveBranchScope(req);
+    const id = Number(req.params.id);
     await returnsService.deleteSalesReturn(Number(req.params.id), scope);
+    await logAudit({
+      userId: req.user?.userId ?? null,
+      action: 'delete',
+      entity: 'sales_returns',
+      entityId: id,
+      ip: req.ip,
+      userAgent: req.get('user-agent') || null,
+    });
+
     res.json({ success: true, message: 'Sales return deleted' });
 };
 
@@ -132,6 +143,16 @@ export const updatePurchaseReturn = async (req: AuthRequest, res: Response): Pro
 
 export const deletePurchaseReturn = async (req: AuthRequest, res: Response): Promise<void> => {
     const scope = await resolveBranchScope(req);
+    const id = Number(req.params.id);
     await returnsService.deletePurchaseReturn(Number(req.params.id), scope);
+    await logAudit({
+      userId: req.user?.userId ?? null,
+      action: 'delete',
+      entity: 'purchase_returns',
+      entityId: id,
+      ip: req.ip,
+      userAgent: req.get('user-agent') || null,
+    });
+
     res.json({ success: true, message: 'Purchase return deleted' });
 };

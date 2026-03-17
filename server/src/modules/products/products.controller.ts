@@ -16,6 +16,7 @@ import {
   unitCreateSchema,
   unitUpdateSchema,
 } from './products.schemas';
+import { logAudit } from '../../utils/audit';
 
 const listPayload = <T extends { rows: unknown[]; total: number; page: number; limit: number }>(
   key: string,
@@ -114,7 +115,17 @@ export const updateProduct = asyncHandler(async (req: AuthRequest, res: Response
 
 export const deleteProduct = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
+  const id = Number(req.params.id);
   await productsService.deleteProduct(Number(req.params.id), scope);
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'delete',
+    entity: 'items',
+    entityId: id,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
+
   return ApiResponse.success(res, null, 'Product deleted');
 });
 

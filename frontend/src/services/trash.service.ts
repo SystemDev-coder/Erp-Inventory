@@ -7,6 +7,9 @@ export interface TrashRow {
   deleted_at?: string | null;
   created_at?: string | null;
   table?: string | null;
+  deleted_by_id?: number | null;
+  deleted_by?: string | null;
+  deleted_logged_at?: string | null;
 }
 
 export interface TrashModule {

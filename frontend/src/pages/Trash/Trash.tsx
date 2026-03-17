@@ -22,11 +22,27 @@ export default function Trash() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
 
+  const moduleLabelByKey = useMemo(() => new Map(modules.map((m) => [m.key, m.label])), [modules]);
+
   const columns = useMemo(
     () => [
+      {
+        accessorKey: 'table',
+        header: 'Module',
+        cell: ({ row }: any) => moduleLabelByKey.get(row.original.table || selectedTable) || row.original.table || '-',
+      },
       { accessorKey: 'id', header: 'ID' },
       { accessorKey: 'label', header: 'Name / Reference' },
-      { accessorKey: 'deleted_at', header: 'Deleted At', cell: ({ row }: any) => formatDate(row.original.deleted_at) },
+      {
+        accessorKey: 'deleted_by',
+        header: 'Deleted By',
+        cell: ({ row }: any) => row.original.deleted_by || '-',
+      },
+      {
+        accessorKey: 'deleted_at',
+        header: 'Deleted At',
+        cell: ({ row }: any) => formatDate(row.original.deleted_logged_at || row.original.deleted_at),
+      },
       { accessorKey: 'created_at', header: 'Created At', cell: ({ row }: any) => formatDate(row.original.created_at) },
       {
         id: 'actions',
@@ -42,7 +58,7 @@ export default function Trash() {
         ),
       },
     ],
-    []
+    [moduleLabelByKey, selectedTable]
   );
 
   const loadTables = async () => {

@@ -6,6 +6,7 @@ import { purchasesService } from './purchases.service';
 import { purchaseSchema } from './purchases.schemas';
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { assertBranchAccess, pickBranchForWrite, resolveBranchScope } from '../../utils/branchScope';
+import { logAudit } from '../../utils/audit';
 
 const loadSheetJs = () => {
   try {
@@ -86,6 +87,15 @@ export const deletePurchase = asyncHandler(async (req: AuthRequest, res: Respons
   const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
   await purchasesService.deletePurchase(id, scope);
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'delete',
+    entity: 'purchases',
+    entityId: id,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
+
   return ApiResponse.success(res, null, 'Purchase deleted');
 });
 
