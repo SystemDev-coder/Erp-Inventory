@@ -810,37 +810,35 @@ export function ReportModal<T extends Record<string, any>>({
             </div>
           ) : isCashFlowStatement && cashFlowData ? (
             <div
-              className="overflow-hidden rounded-[24px] border border-zinc-300 text-slate-900"
+              className="px-6 pb-6 pt-5 text-slate-900"
               style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}
             >
               {!companyInfo?.bannerUrl ? (
-                <div className="border-b border-zinc-300 px-8 py-6 text-center text-slate-900">
-                  <h2 className="text-[47px] font-semibold leading-tight">Cash Flow Statement</h2>
-                  {cashFlowPeriodLabel && <p className="mt-1 text-[16px]">{cashFlowPeriodLabel}</p>}
+                <div className="mb-4 text-center">
+                  <h2 className="text-[26px] font-semibold leading-tight">Cash Flow Statement</h2>
+                  {cashFlowPeriodLabel && <p className="text-[14px] text-slate-600">{cashFlowPeriodLabel}</p>}
                 </div>
               ) : cashFlowPeriodLabel ? (
-                <div className="border-b border-zinc-300 px-8 py-4 text-right text-[13px] font-semibold text-slate-600">
-                  {cashFlowPeriodLabel}
-                </div>
+                <div className="mb-3 text-right text-[12px] font-semibold text-slate-600">{cashFlowPeriodLabel}</div>
               ) : null}
 
-              <div className="px-0 py-0">
+              <div>
                 {cashFlowData.sections.map((section) => (
                   <section key={section.section} className="border-b border-slate-200">
-                    <div className="px-6 py-2 text-[16px] font-semibold text-black">{section.section}</div>
+                    <div className="px-2 py-2 text-[14px] font-semibold text-slate-900">{section.section}</div>
                     <table className="w-full border-collapse">
                       <tbody>
                         {section.rows.map((row, index) => (
                           <tr key={`${section.section}-${row.lineItem}-${index}`}>
                             <td
-                              className={`border-b border-slate-100 px-6 py-2 text-[15px] ${
+                              className={`border-b border-slate-100 px-2 py-2 text-[13px] ${
                                 row.rowType === "total" ? "font-semibold" : ""
                               }`}
                             >
                               {row.lineItem}
                             </td>
                             <td
-                              className={`w-44 border-b border-slate-100 px-6 py-2 text-right text-[15px] tabular-nums ${
+                              className={`w-44 border-b border-slate-100 px-2 py-2 text-right text-[13px] tabular-nums ${
                                 row.rowType === "total" ? "font-semibold" : ""
                               }`}
                             >
@@ -854,13 +852,13 @@ export function ReportModal<T extends Record<string, any>>({
                 ))}
 
                 {cashFlowData.summaryRows.length > 0 && (
-                  <div className="space-y-2 px-6 py-4">
+                  <div className="space-y-2 px-2 py-4">
                     {cashFlowData.summaryRows.map((row, index) => {
                       const isMainTotal = /net increase in cash/i.test(row.lineItem);
                       return (
                         <div
                           key={`summary-${row.lineItem}-${index}`}
-                          className={`flex items-center justify-between px-4 py-2 text-[15px] ${
+                          className={`flex items-center justify-between px-2 py-2 text-[13px] ${
                             isMainTotal
                               ? "border-t border-b border-slate-300 font-semibold text-slate-900"
                               : "border-b border-slate-200 font-semibold text-slate-900"

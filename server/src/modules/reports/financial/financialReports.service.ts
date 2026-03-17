@@ -2334,11 +2334,11 @@ export const financialReportsService = {
            ON sr.branch_id = s.branch_id
           AND sr.supplier_id = s.supplier_id
           AND sr.purchase_id IS NULL
-          AND sr.receipt_date::date <= $3::date
-        WHERE s.branch_id = $1
-          AND s.is_active = TRUE
-        GROUP BY s.supplier_id, s.name
-        HAVING COALESCE(SUM(sr.amount), 0) > 0.000001`,
+          AND sr.receipt_date::date BETWEEN $2::date AND $3::date
+         WHERE s.branch_id = $1
+           AND s.is_active = TRUE
+         GROUP BY s.supplier_id, s.name
+         HAVING COALESCE(SUM(sr.amount), 0) > 0.000001`,
         params
       ),
     ]);
