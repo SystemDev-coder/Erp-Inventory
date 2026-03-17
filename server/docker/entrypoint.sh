@@ -439,17 +439,21 @@ LANGUAGE plpgsql
 AS \$\$
 DECLARE
   v_col TEXT;
-  v_count INT;
+  v_pk_cols INT;
 BEGIN
-  SELECT COUNT(*) INTO v_count
+  -- We only support soft-delete for tables that have exactly ONE primary-key column.
+  -- Many junction tables (e.g. role_permissions) use composite PKs, and attempting
+  -- to soft-delete them using a single key will break deletes and bootstrap seed.
+  SELECT COUNT(*) INTO v_pk_cols
     FROM pg_index i
+    JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
     JOIN pg_class c ON c.oid = i.indrelid
     JOIN pg_namespace n ON n.oid = c.relnamespace
    WHERE i.indisprimary
      AND n.nspname = '${DB_SCHEMA}'
      AND c.relname = p_table;
 
-  IF v_count = 0 THEN
+  IF COALESCE(v_pk_cols, 0) <> 1 THEN
     RETURN NULL;
   END IF;
 

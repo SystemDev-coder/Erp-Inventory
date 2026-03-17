@@ -4500,6 +4500,44 @@ BEGIN
     END LOOP;
 END $store_seed$;
 
+-- Soft-delete helper: only return PK column when table has a single-column PK.
+-- This prevents soft-delete triggers from breaking composite-PK junction tables.
+CREATE OR REPLACE FUNCTION ims.fn_table_pk_column(p_table TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_col TEXT;
+  v_pk_cols INT;
+BEGIN
+  SELECT COUNT(*) INTO v_pk_cols
+    FROM pg_index i
+    JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+    JOIN pg_class c ON c.oid = i.indrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE i.indisprimary
+     AND n.nspname = 'ims'
+     AND c.relname = p_table;
+
+  IF COALESCE(v_pk_cols, 0) <> 1 THEN
+    RETURN NULL;
+  END IF;
+
+  SELECT a.attname INTO v_col
+    FROM pg_index i
+    JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+    JOIN pg_class c ON c.oid = i.indrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE i.indisprimary
+     AND n.nspname = 'ims'
+     AND c.relname = p_table
+   ORDER BY a.attnum
+   LIMIT 1;
+
+  RETURN v_col;
+END;
+$$;
+
 -- Generate all permissions
 SELECT 'Generating all permissions...' as status;
 SELECT * FROM ims.sp_generate_all_permissions();
