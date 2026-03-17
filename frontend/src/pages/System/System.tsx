@@ -427,9 +427,7 @@ const System = () => {
                   <tr className="text-left text-slate-500 dark:text-slate-300">
                     <th>Code</th>
                     <th>Name</th>
-                    <th>Monthly Salary</th>
                     <th>Description</th>
-                    <th>Permissions</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
@@ -438,9 +436,7 @@ const System = () => {
                     <tr key={r.role_id} className="border-t border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200">
                       <td className="font-mono text-xs">{r.role_code}</td>
                       <td>{r.role_name}</td>
-                      <td>${Number(r.monthly_salary || 0).toFixed(2)}</td>
                       <td>{r.description || '-'}</td>
-                      <td>{r.permission_count}</td>
                       <td className="space-x-2 py-2">
                         <button onClick={() => openEditRole(r)} className="px-2 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"><Pencil className="w-3 h-3 inline" /></button>
                         <button onClick={() => requestDeleteRole(r)} className="px-2 py-1 border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-300 rounded hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="w-3 h-3 inline" /></button>
