@@ -607,7 +607,7 @@ const buildBalanceSheetFromLedger = async (branchId: number, asOfDate: string): 
     ownerCapitalRows,
     ownerDrawingRows,
     ownerProfitRows,
-    prepaidExpenseAssetFallback,
+    prepaidExpenseRowsFallback,
     prepaidPayrollAssetFallback,
   ] =
     await Promise.all([
@@ -748,35 +748,44 @@ const buildBalanceSheetFromLedger = async (branchId: number, asOfDate: string): 
            AND fpa.allocation_type = 'partner'
            AND cp.status = 'closed'
            AND cp.period_to <= $2::date
-         GROUP BY 1`,
+          GROUP BY 1`,
         params
       ),
-      queryAmount(
-        `WITH opening_prepaid AS (
-           SELECT COALESCE(SUM(ec.amount), 0)::double precision AS amount
-             FROM ims.expense_charges ec
-            WHERE ec.branch_id = $1
-              AND ec.charge_date::date <= $2::date
-              AND ${openingExpensePredicate('ec')}
+      queryMany<{ expense_name: string; amount: number }>(
+        `WITH charge_rollup AS (
+           SELECT
+             e.name AS expense_name,
+             COALESCE(SUM(CASE WHEN ${openingExpensePredicate('ec')} THEN ec.amount ELSE 0 END), 0)::double precision AS opening_amount,
+             COALESCE(SUM(CASE WHEN NOT ${openingExpensePredicate('ec')} THEN ec.amount ELSE 0 END), 0)::double precision AS charge_amount
+           FROM ims.expense_charges ec
+           JOIN ims.expenses e
+             ON e.exp_id = ec.exp_id
+           WHERE ec.branch_id = $1
+             AND ec.charge_date::date <= $2::date
+           GROUP BY e.name
          ),
-         charges AS (
-           SELECT COALESCE(SUM(ec.amount), 0)::double precision AS amount
-             FROM ims.expense_charges ec
-            WHERE ec.branch_id = $1
-              AND ec.charge_date::date <= $2::date
-              AND NOT ${openingExpensePredicate('ec')}
-         ),
-         paid AS (
-           SELECT COALESCE(SUM(ep.amount_paid), 0)::double precision AS amount
-              FROM ims.expense_payments ep
-              JOIN ims.expense_charges ec
-                ON ec.charge_id = ep.exp_ch_id
-             WHERE ep.branch_id = $1
-               AND ep.pay_date::date <= $2::date
-               AND NOT ${openingExpensePredicate('ec')}
+         payment_rollup AS (
+           SELECT
+             e.name AS expense_name,
+             COALESCE(SUM(ep.amount_paid), 0)::double precision AS paid_amount
+           FROM ims.expense_payments ep
+           JOIN ims.expense_charges ec
+             ON ec.charge_id = ep.exp_ch_id
+           JOIN ims.expenses e
+             ON e.exp_id = ec.exp_id
+           WHERE ep.branch_id = $1
+             AND ep.pay_date::date <= $2::date
+             AND NOT ${openingExpensePredicate('ec')}
+           GROUP BY e.name
          )
-         SELECT GREATEST(opening_prepaid.amount + paid.amount - charges.amount, 0)::double precision AS amount
-           FROM opening_prepaid, charges, paid`,
+         SELECT
+           cr.expense_name,
+           GREATEST(COALESCE(cr.opening_amount, 0) + COALESCE(pr.paid_amount, 0) - COALESCE(cr.charge_amount, 0), 0)::double precision AS amount
+         FROM charge_rollup cr
+         LEFT JOIN payment_rollup pr
+           ON pr.expense_name = cr.expense_name
+         WHERE GREATEST(COALESCE(cr.opening_amount, 0) + COALESCE(pr.paid_amount, 0) - COALESCE(cr.charge_amount, 0), 0) > 0.005
+         ORDER BY cr.expense_name`,
         params
       ),
       queryAmount(
@@ -817,6 +826,7 @@ const buildBalanceSheetFromLedger = async (branchId: number, asOfDate: string): 
   let payableFromAccounts = 0;
   let inventoryFromAccounts = 0;
   let drawingFromAccounts = 0;
+  let usedPrepaidAccounts = false;
   let usedOwnerEquityBreakdown = false;
 
   for (const row of accountRows) {
@@ -894,6 +904,7 @@ const buildBalanceSheetFromLedger = async (branchId: number, asOfDate: string): 
     if (isPrepaidAccount(accountName)) {
       const value = moneyPos(naturalAmount);
       if (!isApproxZero(value)) {
+        usedPrepaidAccounts = true;
         currentAssets.push({
           section: 'Current Assets',
           line_item: accountName,
@@ -1000,22 +1011,53 @@ const buildBalanceSheetFromLedger = async (branchId: number, asOfDate: string): 
 
   const drawingAmount = !isApproxZero(drawingFromAccounts) ? drawingFromAccounts : moneyPos(drawingFallback);
   if (!usedOwnerEquityBreakdown && !isApproxZero(drawingAmount)) {
-    equityRows.push({
-      section: 'Equity',
-      line_item: 'Drawing',
-      amount: -drawingAmount,
-      row_type: 'detail',
-    });
-  }
+      equityRows.push({
+        section: 'Equity',
+        line_item: 'Drawing',
+        amount: -drawingAmount,
+        row_type: 'detail',
+      });
+    }
 
-  const prepaidAmount = moneyPos(prepaidExpenseAssetFallback) + moneyPos(prepaidPayrollAssetFallback);
-  if (!isApproxZero(prepaidAmount)) {
+  const formatPrepaidLabel = (raw: string) => {
+    const trimmed = String(raw || '').trim();
+    if (!trimmed) return 'Prepaid Expense';
+    // Normalize "prepared"/"prepaid" spelling and keep the label client-friendly.
+    const normalized = trimmed.replace(/^prepared\b/i, 'Prepaid').replace(/^prepaid\b/i, 'Prepaid');
+    if (/\bprepaid\b|\bprepared\b/i.test(normalized)) return normalized;
+    return `Prepaid ${normalized}`;
+  };
+
+  const addPrepaidRow = (label: string, amount: number) => {
+    if (isApproxZero(amount)) return;
     currentAssets.push({
       section: 'Current Assets',
-      line_item: 'Prepaid Expenses',
-      amount: prepaidAmount,
+      line_item: label,
+      amount: moneyPos(amount),
       row_type: 'detail',
     });
+  };
+
+  // If the chart-of-accounts already includes prepaid asset accounts, trust those balances.
+  // Otherwise, infer prepaid balances from expenses/payments so the balance sheet is understandable
+  // (Prepaid Rent, Prepaid Insurance, ...), instead of a single "Prepaid Expenses" line.
+  if (!usedPrepaidAccounts) {
+    const prepaidMap = new Map<string, number>();
+    for (const row of prepaidExpenseRowsFallback || []) {
+      const label = formatPrepaidLabel(row.expense_name);
+      prepaidMap.set(label, (prepaidMap.get(label) || 0) + moneyPos(row.amount));
+    }
+    Array.from(prepaidMap.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .forEach(([label, amount]) => addPrepaidRow(label, amount));
+  }
+
+  const payrollLabel = 'Prepaid Payroll';
+  const hasPayrollPrepaidAccount =
+    usedPrepaidAccounts &&
+    currentAssets.some((row) => isPrepaidAccount(String(row.line_item || '')) && /payroll/i.test(String(row.line_item || '')));
+  if (!hasPayrollPrepaidAccount && !isApproxZero(prepaidPayrollAssetFallback)) {
+    addPrepaidRow(payrollLabel, prepaidPayrollAssetFallback);
   }
 
   const totalCurrentAssets = currentAssets.reduce((sum, row) => sum + Number(row.amount || 0), 0);

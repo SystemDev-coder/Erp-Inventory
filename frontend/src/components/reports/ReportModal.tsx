@@ -470,16 +470,17 @@ export function ReportModal<T extends Record<string, any>>({
     if (!doc) return;
 
     doc.open();
-    doc.write(
-      `<!doctype html><html><head><base href="${escapeHtml(document.baseURI)}" /><title></title>${styles}<style>
-        @page { size: A4 landscape; margin: 8mm; }
-        body { margin: 0; padding: 0; background: #ffffff; color: #0f172a; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-        #report-print-area { width: 100% !important; max-width: none !important; margin: 0 auto !important; box-shadow: none !important; border: none !important; border-radius: 0 !important; }
-        #report-print-area table { width: 100% !important; table-layout: fixed; }
-        #report-print-area th, #report-print-area td { font-size: 11px !important; padding: 6px 6px !important; word-break: break-word; white-space: normal; }
-        #report-print-area .report-letterhead-banner { height: 32mm !important; width: 100% !important; object-fit: cover !important; object-position: center !important; }
-      </style></head><body>${contentNode.outerHTML}</body></html>`
-    );
+      doc.write(
+        `<!doctype html><html><head><base href="${escapeHtml(document.baseURI)}" /><title></title>${styles}<style>
+         @page { size: A4 landscape; margin: 8mm; }
+         body { margin: 0; padding: 0; background: #ffffff; color: #0f172a; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+         #report-print-area { width: 100% !important; max-width: none !important; margin: 0 auto !important; box-shadow: none !important; border: none !important; border-radius: 0 !important; overflow: visible !important; break-inside: auto !important; page-break-inside: auto !important; }
+         #report-print-area .overflow-x-auto { overflow: visible !important; }
+         #report-print-area table { width: 100% !important; table-layout: fixed; }
+         #report-print-area th, #report-print-area td { font-size: 11px !important; padding: 6px 6px !important; word-break: break-word; white-space: normal; }
+         #report-print-area .report-letterhead-banner { height: 32mm !important; width: 100% !important; object-fit: cover !important; object-position: center !important; }
+       </style></head><body>${contentNode.outerHTML}</body></html>`
+      );
     doc.close();
 
     const cleanup = () => {
@@ -584,7 +585,7 @@ export function ReportModal<T extends Record<string, any>>({
           ref={printRef}
           id="report-print-area"
           className="mx-auto overflow-hidden rounded-2xl border border-zinc-200 bg-white text-black shadow-sm"
-          style={{ pageBreakInside: "avoid", width: "100%", maxWidth: reportSurfaceWidth }}
+          style={{ width: "100%", maxWidth: reportSurfaceWidth }}
         >
           <div className="border-b border-zinc-300" style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}>
             {companyInfo?.bannerUrl ? (
