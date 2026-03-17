@@ -52,7 +52,6 @@ const System = () => {
     roleName: '',
     roleCode: '',
     description: '',
-    monthlySalary: '0',
   });
   const [permissionForm, setPermissionForm] = useState({
     permKey: '',
@@ -214,7 +213,6 @@ const System = () => {
       roleName: '',
       roleCode: '',
       description: '',
-      monthlySalary: '0',
     });
     setRoleModalOpen(true);
   };
@@ -225,7 +223,6 @@ const System = () => {
       roleName: role.role_name || '',
       roleCode: role.role_code || '',
       description: role.description || '',
-      monthlySalary: String(role.monthly_salary ?? 0),
     });
     setRoleModalOpen(true);
   };
@@ -236,17 +233,11 @@ const System = () => {
       showToast('error', 'Roles', 'Role name is required');
       return;
     }
-    const monthlySalary = Number(roleForm.monthlySalary || 0);
-    if (Number.isNaN(monthlySalary) || monthlySalary < 0) {
-      showToast('error', 'Roles', 'Monthly salary must be zero or positive');
-      return;
-    }
 
     const payload = {
       roleName,
       roleCode: roleForm.roleCode.trim() || undefined,
       description: roleForm.description.trim() || undefined,
-      monthlySalary,
     };
 
     setSavingRole(true);
@@ -601,17 +592,6 @@ const System = () => {
               value={roleForm.roleCode}
               onChange={(e) => setRoleForm({ ...roleForm, roleCode: e.target.value })}
               placeholder="Optional"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300 md:col-span-2">
-            Monthly Salary
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
-              value={roleForm.monthlySalary}
-              onChange={(e) => setRoleForm({ ...roleForm, monthlySalary: e.target.value })}
             />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300 md:col-span-2">
