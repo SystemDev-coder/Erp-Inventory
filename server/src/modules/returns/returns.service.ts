@@ -749,6 +749,49 @@ const insertReturnMovement = async (
 };
 
 export const returnsService = {
+    async listSalesCustomers(scope: BranchScope): Promise<any[]> {
+        const docTypeFilter = (await hasSalesDocTypeColumn())
+            ? `AND COALESCE(s.doc_type::text, 'sale') <> 'quotation'`
+            : '';
+
+        const params: any[] = [];
+        let where = `
+            WHERE s.customer_id IS NOT NULL
+              AND LOWER(COALESCE(s.status::text, '')) <> 'void'
+              AND LOWER(COALESCE(s.status::text, '')) IN ('paid', 'partial')
+              ${docTypeFilter}
+        `;
+        if (!scope.isAdmin) {
+            params.push(scope.branchIds);
+            where += ` AND s.branch_id = ANY($${params.length})`;
+        }
+
+        return queryMany(
+            `SELECT DISTINCT
+                c.customer_id,
+                COALESCE(NULLIF(BTRIM(c.full_name), ''), 'Customer') AS full_name
+                , c.phone
+                , COALESCE(c.customer_type::text, 'regular') AS customer_type
+                , c.address
+                , c.sex
+                , c.gender
+                , COALESCE(c.is_active, TRUE) AS is_active
+                , COALESCE(
+                    NULLIF(to_jsonb(c)->>'remaining_balance','')::numeric,
+                    NULLIF(to_jsonb(c)->>'open_balance','')::numeric,
+                    NULLIF(to_jsonb(c)->>'balance','')::numeric,
+                    0
+                  )::double precision AS balance
+             FROM ims.sales s
+             JOIN ims.sale_items si ON si.sale_id = s.sale_id
+             JOIN ims.customers c ON c.customer_id = s.customer_id
+             ${where}
+               AND COALESCE(c.is_active, TRUE) = TRUE
+             ORDER BY 2 ASC`,
+            params
+        );
+    },
+
     async listReturnItems(scope: BranchScope): Promise<ReturnItemOption[]> {
         const params: any[] = [];
         let where = `WHERE 1=1`;

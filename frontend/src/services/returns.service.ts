@@ -80,6 +80,9 @@ export const returnsService = {
     listItems() {
         return apiClient.get<{ items: ReturnItemOption[] }>('/api/returns/items');
     },
+    listSalesCustomers() {
+        return apiClient.get<{ customers: any[] }>('/api/returns/sales/customers');
+    },
     listSalesItemsByCustomer(customerId: number) {
         return apiClient.get<{ items: ReturnItemOption[] }>(`/api/returns/sales/customer-items?customerId=${customerId}`);
     },

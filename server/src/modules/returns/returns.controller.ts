@@ -39,6 +39,12 @@ export const listSalesReturnItems = async (req: AuthRequest, res: Response): Pro
     res.json({ success: true, data: { items } });
 };
 
+export const listSalesCustomers = async (req: AuthRequest, res: Response): Promise<void> => {
+    const scope = await resolveBranchScope(req);
+    const customers = await returnsService.listSalesCustomers(scope);
+    res.json({ success: true, data: { customers } });
+};
+
 export const listReturnItems = async (req: AuthRequest, res: Response): Promise<void> => {
     const scope = await resolveBranchScope(req);
     const items = await returnsService.listReturnItems(scope);

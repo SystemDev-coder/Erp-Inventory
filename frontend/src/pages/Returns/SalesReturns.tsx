@@ -78,9 +78,29 @@ const SalesReturns = () => {
   }, [form.customerId]);
 
   const loadCustomers = async () => {
-    const res = await customerService.list();
-    if (res.success && res.data?.customers) setCustomers(res.data.customers);
+    const res = await returnsService.listSalesCustomers();
+    if (res.success && res.data?.customers) {
+      setCustomers(res.data.customers as Customer[]);
+      return;
+    }
+    // Fallback: show all customers if the returns endpoint fails for any reason.
+    const fallback = await customerService.list();
+    if (fallback.success && fallback.data?.customers) setCustomers(fallback.data.customers);
   };
+
+  useEffect(() => {
+    // If an existing return references a customer not in the filtered list, include them so edit works.
+    const ensureSelectedCustomer = async () => {
+      if (!editingId) return;
+      if (!form.customerId) return;
+      if (customers.some((c) => String(c.customer_id) === String(form.customerId))) return;
+      const res = await customerService.get(Number(form.customerId));
+      if (res.success && res.data?.customer) {
+        setCustomers((prev) => [...prev, res.data!.customer]);
+      }
+    };
+    void ensureSelectedCustomer();
+  }, [customers, editingId, form.customerId]);
 
   const loadAccounts = async () => {
     const res = await accountService.list();
