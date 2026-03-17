@@ -39,6 +39,10 @@ import {
   listSupplierUnpaid,
   getSupplierCombinedBalance,
   listSupplierOutstandingPurchases,
+  listOtherIncomes,
+  createOtherIncome,
+  updateOtherIncome,
+  deleteOtherIncome,
 } from './finance.controller';
 import {
   listClosingPeriods,
@@ -79,6 +83,12 @@ router.get('/receipts/suppliers', listSupplierReceipts);
 router.post('/receipts/suppliers', createSupplierReceipt);
 router.put('/receipts/suppliers/:id', updateSupplierReceipt);
 router.delete('/receipts/suppliers/:id', deleteSupplierReceipt);
+
+// Other income
+router.get('/other-income', listOtherIncomes);
+router.post('/other-income', createOtherIncome);
+router.put('/other-income/:id', updateOtherIncome);
+router.delete('/other-income/:id', deleteOtherIncome);
 
 // Expenses
 router.get('/expenses', listExpenses);

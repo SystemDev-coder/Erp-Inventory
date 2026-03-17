@@ -11,6 +11,7 @@ import {
   financeService,
   AccountTransfer,
   Receipt,
+  OtherIncomeRow,
   ExpenseCharge,
   ExpenseBudget,
   Expense,
@@ -40,6 +41,7 @@ const Finance = () => {
   const [transfers, setTransfers] = useState<AccountTransfer[]>([]);
   const [customerReceipts, setCustomerReceipts] = useState<Receipt[]>([]);
   const [supplierReceipts, setSupplierReceipts] = useState<Receipt[]>([]);
+  const [otherIncomes, setOtherIncomes] = useState<OtherIncomeRow[]>([]);
   const [expenseCharges, setExpenseCharges] = useState<ExpenseCharge[]>([]);
   const [expenseBudgets, setExpenseBudgets] = useState<ExpenseBudget[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -73,18 +75,31 @@ const [transferForm, setTransferForm] = useState<{
   note?: string;
 }>({});
 const [transferErrors, setTransferErrors] = useState<{ from?: string; to?: string; amount?: string }>({});
-const [isCustReceiptModalOpen, setIsCustReceiptModalOpen] = useState(false);
-const [isSupReceiptModalOpen, setIsSupReceiptModalOpen] = useState(false);
-const [receiptForm, setReceiptForm] = useState<{
-  acc_id?: number;
-  customer_id?: number;
-  supplier_id?: number;
-  amount?: number;
-  reference_no?: string;
-  note?: string;
-}>({});
-const [custReceiptErrors, setCustReceiptErrors] = useState<{ acc?: string; customer?: string; amount?: string }>({});
-const [supReceiptErrors, setSupReceiptErrors] = useState<{ acc?: string; supplier?: string; amount?: string }>({});
+ const [isCustReceiptModalOpen, setIsCustReceiptModalOpen] = useState(false);
+ const [isSupReceiptModalOpen, setIsSupReceiptModalOpen] = useState(false);
+ const [receiptForm, setReceiptForm] = useState<{
+   acc_id?: number;
+   customer_id?: number;
+   supplier_id?: number;
+   amount?: number;
+   reference_no?: string;
+   note?: string;
+ }>({});
+ const [custReceiptErrors, setCustReceiptErrors] = useState<{ acc?: string; customer?: string; amount?: string }>({});
+ const [supReceiptErrors, setSupReceiptErrors] = useState<{ acc?: string; supplier?: string; amount?: string }>({});
+
+ const [isOtherIncomeModalOpen, setIsOtherIncomeModalOpen] = useState(false);
+ const [editingOtherIncome, setEditingOtherIncome] = useState<OtherIncomeRow | null>(null);
+ const [otherIncomeForm, setOtherIncomeForm] = useState<{
+   income_name: string;
+   income_date: string;
+   acc_id?: number;
+   amount?: number;
+   note?: string;
+ }>({ income_name: '', income_date: '', note: '' });
+ const [otherIncomeErrors, setOtherIncomeErrors] = useState<{ name?: string; date?: string; acc?: string; amount?: string }>({});
+ const [pendingDeleteOtherIncome, setPendingDeleteOtherIncome] = useState<OtherIncomeRow | null>(null);
+ const [deletingOtherIncome, setDeletingOtherIncome] = useState(false);
 
   // Expenses / budgets modal state
 const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
@@ -139,6 +154,30 @@ const [deletingBudget, setDeletingBudget] = useState(false);
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) return String(value).slice(0, 10) || '-';
     return d.toISOString().slice(0, 10);
+  };
+
+  const openOtherIncomeModal = (row?: OtherIncomeRow) => {
+    if (row) {
+      setEditingOtherIncome(row);
+      setOtherIncomeForm({
+        income_name: row.income_name || '',
+        income_date: formatDate(row.income_date),
+        acc_id: row.acc_id,
+        amount: Number(row.amount || 0),
+        note: row.note || '',
+      });
+    } else {
+      setEditingOtherIncome(null);
+      setOtherIncomeForm({
+        income_name: '',
+        income_date: todayDate(),
+        acc_id: accounts[0]?.acc_id,
+        amount: undefined,
+        note: '',
+      });
+    }
+    setOtherIncomeErrors({});
+    setIsOtherIncomeModalOpen(true);
   };
 
   const fieldClass =
@@ -203,6 +242,40 @@ const [deletingBudget, setDeletingBudget] = useState(false);
       { accessorKey: 'amount', header: 'Amount', cell: ({ row }) => `$${Number(row.original.amount || 0).toFixed(2)}` },
     ],
     []
+  );
+
+  const otherIncomeColumns: ColumnDef<OtherIncomeRow>[] = useMemo(
+    () => [
+      { accessorKey: 'income_date', header: 'Date', cell: ({ row }) => formatDate(row.original.income_date) },
+      { accessorKey: 'income_name', header: 'Income Name' },
+      { accessorKey: 'account_name', header: 'Account' },
+      { accessorKey: 'amount', header: 'Amount', cell: ({ row }) => `$${Number(row.original.amount || 0).toFixed(2)}` },
+      { accessorKey: 'note', header: 'Comment', cell: ({ row }) => row.original.note || '-' },
+      { accessorKey: 'created_by_name', header: 'By', cell: ({ row }) => row.original.created_by_name || '-' },
+      {
+        id: 'actions',
+        header: 'Actions',
+        cell: ({ row }) => (
+          <div className="flex items-center gap-2">
+            <button
+              className="p-2 text-slate-600 hover:text-primary-600"
+              aria-label="Edit other income"
+              onClick={() => openOtherIncomeModal(row.original)}
+            >
+              <SquarePen className="h-5 w-5" />
+            </button>
+            <button
+              className="p-2 text-slate-600 hover:text-red-600"
+              aria-label="Delete other income"
+              onClick={() => setPendingDeleteOtherIncome(row.original)}
+            >
+              <Trash className="h-5 w-5" />
+            </button>
+          </div>
+        ),
+      },
+    ],
+    [openOtherIncomeModal]
   );
 
   const unpaidCustomerColumns: ColumnDef<UnpaidCustomer>[] = useMemo(
@@ -481,11 +554,12 @@ const [deletingBudget, setDeletingBudget] = useState(false);
 
   const loadAll = async () => {
     setLoading(true);
-    const [acc, tr, cr, sr, ch, bd, ex, unpaidC, unpaidS, pr] = await Promise.all([
+    const [acc, tr, cr, sr, oi, ch, bd, ex, unpaidC, unpaidS, pr] = await Promise.all([
       accountService.list(),
       financeService.listTransfers({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
       financeService.listCustomerReceipts({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
       financeService.listSupplierReceipts({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
+      financeService.listOtherIncome({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
       financeService.listExpenseCharges({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
       financeService.listExpenseBudgets({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
       financeService.listExpenses({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
@@ -497,6 +571,7 @@ const [deletingBudget, setDeletingBudget] = useState(false);
     if (tr.success && tr.data?.transfers) setTransfers(tr.data.transfers);
     if (cr.success && cr.data?.receipts) setCustomerReceipts(cr.data.receipts);
     if (sr.success && sr.data?.receipts) setSupplierReceipts(sr.data.receipts);
+    if (oi.success && oi.data?.otherIncomes) setOtherIncomes(oi.data.otherIncomes);
     if (ch.success && ch.data?.charges) setExpenseCharges(ch.data.charges);
     if (bd.success && bd.data?.budgets) setExpenseBudgets(bd.data.budgets);
     if (ex.success && ex.data?.expenses) setExpenses(ex.data.expenses);
@@ -655,6 +730,54 @@ const [deletingBudget, setDeletingBudget] = useState(false);
       quickError(res.error || 'Delete failed');
     }
     setDeletingBudget(false);
+  };
+
+  const confirmDeleteOtherIncome = async () => {
+    if (!pendingDeleteOtherIncome) return;
+    setDeletingOtherIncome(true);
+    const res = await financeService.deleteOtherIncome(pendingDeleteOtherIncome.other_income_id);
+    if (res.success) {
+      showToast('success', 'Finance', 'Other income deleted');
+      setPendingDeleteOtherIncome(null);
+      reloadIfDisplayed();
+    } else {
+      quickError(res.error || 'Delete failed');
+    }
+    setDeletingOtherIncome(false);
+  };
+
+  const submitOtherIncome = async () => {
+    const errs: typeof otherIncomeErrors = {};
+    if (!otherIncomeForm.income_name.trim()) errs.name = 'Income name required';
+    if (!otherIncomeForm.income_date) errs.date = 'Date required';
+    if (!otherIncomeForm.acc_id) errs.acc = 'Account required';
+    const amt = Number(otherIncomeForm.amount || 0);
+    if (amt <= 0 || Number.isNaN(amt)) errs.amount = 'Amount must be > 0';
+    setOtherIncomeErrors(errs);
+    if (Object.keys(errs).length) return;
+
+    const payload = {
+      income_name: otherIncomeForm.income_name.trim(),
+      income_date: otherIncomeForm.income_date,
+      acc_id: otherIncomeForm.acc_id!,
+      amount: amt,
+      note: otherIncomeForm.note || '',
+    };
+
+    const res = editingOtherIncome
+      ? await financeService.updateOtherIncome(editingOtherIncome.other_income_id, payload)
+      : await financeService.createOtherIncome(payload);
+
+    if (res.success) {
+      showToast('success', 'Finance', editingOtherIncome ? 'Other income updated' : 'Other income recorded');
+      setIsOtherIncomeModalOpen(false);
+      setEditingOtherIncome(null);
+      setOtherIncomeForm({ income_name: '', income_date: '', note: '' });
+      setOtherIncomeErrors({});
+      reloadIfDisplayed();
+    } else {
+      quickError(res.error || 'Other income failed');
+    }
   };
 
   const submitTransfer = async () => {
@@ -1062,6 +1185,41 @@ const submitBudgetCharge = async () => {
             isLoading={loading}
             searchPlaceholder="Search transfers..."
             onEdit={(row) => openTransferModal(row as AccountTransfer)}
+          />
+        </div>
+      ),
+    },
+    {
+      id: 'other-income',
+      label: 'Other Income',
+      content: (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {renderDateRange()}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => void displayFinanceData()}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
+              </button>
+              <button
+                onClick={() => openOtherIncomeModal()}
+                className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm text-white"
+              >
+                <Plus className="h-4 w-4" /> New Other Income
+              </button>
+            </div>
+          </div>
+          {!financeDisplayed && !loading && emptyHint('Click Display to load data.')}
+          {financeDisplayed && !loading && otherIncomes.length === 0 && emptyHint('No data found for the selected filters.')}
+          <DataTable
+            data={financeDisplayed ? otherIncomes : []}
+            columns={otherIncomeColumns}
+            isLoading={loading}
+            searchPlaceholder="Search other income..."
           />
         </div>
       ),
@@ -2377,6 +2535,98 @@ const submitBudgetCharge = async () => {
           </div>
         </div>
       </Modal>
+
+      <Modal
+        isOpen={isOtherIncomeModalOpen}
+        onClose={() => setIsOtherIncomeModalOpen(false)}
+        title={editingOtherIncome ? 'Edit Other Income' : 'New Other Income'}
+        size="md"
+      >
+        <div className="space-y-3 text-slate-900 dark:text-slate-100">
+          <label className="text-sm">
+            <span className="mb-1 block font-medium">Income Name</span>
+            <input
+              className={fieldClass}
+              value={otherIncomeForm.income_name}
+              onChange={(e) => setOtherIncomeForm((p) => ({ ...p, income_name: e.target.value }))}
+              placeholder="e.g. Delivery income"
+            />
+            {otherIncomeErrors.name && <p className="mt-1 text-xs text-red-500">{otherIncomeErrors.name}</p>}
+          </label>
+
+          <label className="text-sm">
+            <span className="mb-1 block font-medium">Date</span>
+            <input
+              type="date"
+              className={fieldClass}
+              value={otherIncomeForm.income_date}
+              onChange={(e) => setOtherIncomeForm((p) => ({ ...p, income_date: e.target.value }))}
+            />
+            {otherIncomeErrors.date && <p className="mt-1 text-xs text-red-500">{otherIncomeErrors.date}</p>}
+          </label>
+
+          <label className="text-sm">
+            <span className="mb-1 block font-medium">Account</span>
+            <select
+              className={fieldClass}
+              value={otherIncomeForm.acc_id ?? ''}
+              onChange={(e) => setOtherIncomeForm((p) => ({ ...p, acc_id: Number(e.target.value) }))}
+            >
+              <option value="">Select</option>
+              {accounts.map((a) => (
+                <option key={a.acc_id} value={a.acc_id}>
+                  {a.name} (${Number(a.balance || 0).toFixed(2)})
+                </option>
+              ))}
+            </select>
+            {otherIncomeErrors.acc && <p className="mt-1 text-xs text-red-500">{otherIncomeErrors.acc}</p>}
+          </label>
+
+          <label className="text-sm">
+            <span className="mb-1 block font-medium">Amount</span>
+            <input
+              type="number"
+              step="0.01"
+              className={fieldClass}
+              value={otherIncomeForm.amount ?? ''}
+              onChange={(e) => setOtherIncomeForm((p) => ({ ...p, amount: Number(e.target.value) }))}
+            />
+            {otherIncomeErrors.amount && <p className="mt-1 text-xs text-red-500">{otherIncomeErrors.amount}</p>}
+          </label>
+
+          <label className="text-sm">
+            <span className="mb-1 block font-medium">Comment</span>
+            <textarea
+              className={fieldClass}
+              value={otherIncomeForm.note || ''}
+              onChange={(e) => setOtherIncomeForm((p) => ({ ...p, note: e.target.value }))}
+              placeholder="Optional"
+            />
+          </label>
+
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={() => setIsOtherIncomeModalOpen(false)} className="rounded border px-4 py-2">
+              Cancel
+            </button>
+            <button type="button" onClick={submitOtherIncome} className="rounded bg-primary-600 px-4 py-2 text-white">
+              Save
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <DeleteConfirmModal
+        isOpen={!!pendingDeleteOtherIncome}
+        onClose={() => {
+          if (!deletingOtherIncome) setPendingDeleteOtherIncome(null);
+        }}
+        onConfirm={confirmDeleteOtherIncome}
+        title="Delete Other Income?"
+        message="This record will be deleted and the selected account balance will be adjusted."
+        itemName={pendingDeleteOtherIncome?.income_name}
+        isDeleting={deletingOtherIncome}
+      />
+
       <DeleteConfirmModal
         isOpen={!!pendingDeleteAccount}
         onClose={() => {

@@ -8,6 +8,7 @@ import {
   accountTransferSchema,
   customerReceiptSchema,
   supplierReceiptSchema,
+  otherIncomeSchema,
   expenseChargeSchema,
   expenseChargeUpdateSchema,
   expenseBudgetSchema,
@@ -212,6 +213,57 @@ export const deleteSupplierReceipt = asyncHandler(async (req: AuthRequest, res: 
 });
 
 // ─── Outstanding / Unpaid ────────────────────────────────────────────────────
+
+// ─── Other Income ────────────────────────────────────────────────────────────
+
+export const listOtherIncomes = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
+  const fromDate = (req.query.fromDate as string) || undefined;
+  const toDate = (req.query.toDate as string) || undefined;
+  if ((fromDate && !toDate) || (!fromDate && toDate)) {
+    throw ApiError.badRequest('Both fromDate and toDate are required together');
+  }
+  if (fromDate && toDate && fromDate > toDate) {
+    throw ApiError.badRequest('fromDate cannot be after toDate');
+  }
+  const otherIncomes = await financeService.listOtherIncomes(scope, branchId, { fromDate, toDate });
+  return ApiResponse.success(res, { otherIncomes });
+});
+
+export const createOtherIncome = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const input = otherIncomeSchema.parse(req.body);
+  const userId = req.user?.userId;
+  if (!userId) throw ApiError.unauthorized('User required');
+  const otherIncome = await financeService.createOtherIncome(input, scope, userId);
+  return ApiResponse.created(res, { otherIncome }, 'Other income recorded');
+});
+
+export const updateOtherIncome = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id) || id <= 0) throw ApiError.badRequest('Invalid other income id');
+  const input = otherIncomeSchema.partial().parse(req.body);
+  const otherIncome = await financeService.updateOtherIncome(id, input, scope);
+  return ApiResponse.success(res, { otherIncome }, 'Other income updated');
+});
+
+export const deleteOtherIncome = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id) || id <= 0) throw ApiError.badRequest('Invalid other income id');
+  await financeService.deleteOtherIncome(id, scope);
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'delete',
+    entity: 'other_incomes',
+    entityId: id,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
+  return ApiResponse.success(res, null, 'Other income deleted');
+});
 
 export const listCustomerUnpaid = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);

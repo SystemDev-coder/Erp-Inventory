@@ -39,6 +39,15 @@ export const supplierReceiptSchema = z.object({
   note: z.string().optional().or(z.literal('')),
 });
 
+export const otherIncomeSchema = z.object({
+  branchId: z.coerce.number().int().positive().optional(),
+  incomeName: z.string().trim().min(1).max(160),
+  incomeDate: z.string().optional(), // YYYY-MM-DD
+  accId: z.coerce.number().int().positive(),
+  amount: z.coerce.number().positive(),
+  note: z.string().optional().or(z.literal('')),
+});
+
 export const expenseSchema = z.object({
   branchId: z.coerce.number().int().positive().optional(),
   name: z.string().trim().min(1).max(120),
@@ -119,6 +128,7 @@ export type AccountTransferInput = z.infer<typeof accountTransferSchema>;
 export type AccountTransferUpdateInput = z.infer<typeof accountTransferUpdateSchema>;
 export type CustomerReceiptInput = z.infer<typeof customerReceiptSchema>;
 export type SupplierReceiptInput = z.infer<typeof supplierReceiptSchema>;
+export type OtherIncomeInput = z.infer<typeof otherIncomeSchema>;
 export type ExpenseChargeInput = z.infer<typeof expenseChargeSchema>;
 export type ExpenseBudgetInput = z.infer<typeof expenseBudgetSchema>;
 export type ExpenseBudgetUpdateInput = z.infer<typeof expenseBudgetUpdateSchema>;

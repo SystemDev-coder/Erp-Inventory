@@ -210,6 +210,7 @@ export const API = {
     SUPPLIER_RECEIPTS_UNPAID: '/api/finance/receipts/suppliers/unpaid',
     SUPPLIER_BALANCE: (supplierId: number) => `/api/finance/receipts/suppliers/${supplierId}/balance`,
     SUPPLIER_OUTSTANDING: '/api/finance/receipts/suppliers/outstanding',
+    OTHER_INCOME: '/api/finance/other-income',
     EXPENSES: '/api/finance/expenses',
     EXPENSE_CHARGES: '/api/finance/expenses/charges',
     EXPENSE_BUDGETS: '/api/finance/expenses/budgets',

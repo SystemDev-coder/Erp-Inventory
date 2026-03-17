@@ -7,6 +7,7 @@ import {
   accountTransferUpdateSchema,
   CustomerReceiptInput,
   SupplierReceiptInput,
+  OtherIncomeInput,
   ExpenseChargeInput,
   ExpenseBudgetInput,
   ExpenseInput,
@@ -564,6 +565,263 @@ export const financeService = {
     if (!existing) throw ApiError.notFound('Supplier receipt not found');
     assertBranchAccess(scope, existing.branch_id);
     await queryOne(`DELETE FROM ims.supplier_receipts WHERE receipt_id = $1`, [id]);
+  },
+
+  // Other income (ad-hoc income not tied to sales)
+  async listOtherIncomes(scope: BranchScope, branchId?: number, range: DateRange = {}) {
+    const params: any[] = [];
+    let where = 'WHERE 1=1';
+
+    if (branchId) {
+      assertBranchAccess(scope, branchId);
+      params.push(branchId);
+      where += ` AND oi.branch_id = $${params.length}`;
+    } else if (!scope.isAdmin) {
+      params.push(scope.branchIds);
+      where += ` AND oi.branch_id = ANY($${params.length})`;
+    }
+
+    if (range.fromDate && range.toDate) {
+      params.push(range.fromDate);
+      where += ` AND oi.income_date >= $${params.length}::date`;
+      params.push(range.toDate);
+      where += ` AND oi.income_date <= $${params.length}::date`;
+    }
+
+    return queryMany(
+      `SELECT
+         oi.*,
+         a.name AS account_name,
+         COALESCE(u.full_name, u.name, u.username) AS created_by_name
+       FROM ims.other_incomes oi
+       JOIN ims.accounts a
+         ON a.acc_id = oi.acc_id
+        AND a.branch_id = oi.branch_id
+       LEFT JOIN ims.users u ON u.user_id = oi.created_by
+       ${where}
+       ORDER BY oi.income_date DESC, oi.other_income_id DESC
+       LIMIT 200`,
+      params
+    );
+  },
+
+  async createOtherIncome(input: OtherIncomeInput, scope: BranchScope, userId: number) {
+    const branchId = pickBranchForWrite(scope, input.branchId);
+    await queryOne('BEGIN');
+    try {
+      const account = await queryOne<{ acc_id: number }>(
+        `SELECT acc_id
+           FROM ims.accounts
+          WHERE branch_id = $1
+            AND acc_id = $2
+          FOR UPDATE`,
+        [branchId, input.accId]
+      );
+      if (!account) throw ApiError.badRequest('Selected account was not found');
+
+      const incomeDate = input.incomeDate ? input.incomeDate : null;
+      const row = await queryOne<any>(
+        `INSERT INTO ims.other_incomes
+           (branch_id, income_name, income_date, acc_id, amount, note, created_by)
+         VALUES
+           ($1, $2, COALESCE($3::date, CURRENT_DATE), $4, $5, $6, $7)
+         RETURNING *`,
+        [
+          branchId,
+          input.incomeName.trim(),
+          incomeDate,
+          input.accId,
+          roundMoney(input.amount),
+          input.note || null,
+          userId,
+        ]
+      );
+      if (!row) throw ApiError.internal('Failed to create other income');
+
+      await queryOne(
+        `UPDATE ims.accounts
+            SET balance = balance + $3
+          WHERE branch_id = $1
+            AND acc_id = $2`,
+        [branchId, input.accId, roundMoney(input.amount)]
+      );
+
+      const note = `${input.incomeName.trim()}${input.note ? ` — ${input.note}` : ''}`;
+      await queryOne(
+        `INSERT INTO ims.account_transactions
+           (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
+         VALUES ($1, $2, 'other', 'other_incomes', $3, 0, $4, COALESCE($5::date, CURRENT_DATE)::timestamptz, $6)`,
+        [branchId, input.accId, row.other_income_id, roundMoney(input.amount), incomeDate, note]
+      );
+
+      await queryOne('COMMIT');
+      return row;
+    } catch (err) {
+      await queryOne('ROLLBACK');
+      throw err;
+    }
+  },
+
+  async updateOtherIncome(id: number, input: Partial<OtherIncomeInput>, scope: BranchScope) {
+    await queryOne('BEGIN');
+    try {
+      const existing = await queryOne<{
+        other_income_id: number;
+        branch_id: number;
+        acc_id: number;
+        amount: number;
+        income_name: string;
+        income_date: string;
+        note: string | null;
+      }>(
+        `SELECT other_income_id, branch_id, acc_id, amount, income_name, income_date::text AS income_date, note
+           FROM ims.other_incomes
+          WHERE other_income_id = $1
+          FOR UPDATE`,
+        [id]
+      );
+      if (!existing) throw ApiError.notFound('Other income not found');
+      assertBranchAccess(scope, existing.branch_id);
+
+      const nextAccId = input.accId ?? existing.acc_id;
+      const nextAmount = input.amount !== undefined ? roundMoney(input.amount) : roundMoney(Number(existing.amount));
+      const nextName = input.incomeName !== undefined ? input.incomeName.trim() : existing.income_name;
+      const nextDate = input.incomeDate !== undefined ? input.incomeDate : existing.income_date;
+      const nextNote = input.note !== undefined ? input.note || null : existing.note;
+
+      // Account balance adjustments (reverse old, apply new)
+      if (nextAccId !== existing.acc_id || nextAmount !== roundMoney(Number(existing.amount))) {
+        await queryOne(`UPDATE ims.accounts SET balance = balance - $1 WHERE branch_id = $2 AND acc_id = $3`, [
+          roundMoney(Number(existing.amount)),
+          existing.branch_id,
+          existing.acc_id,
+        ]);
+        await queryOne(`UPDATE ims.accounts SET balance = balance + $1 WHERE branch_id = $2 AND acc_id = $3`, [
+          nextAmount,
+          existing.branch_id,
+          nextAccId,
+        ]);
+      }
+
+      const updated = await queryOne<any>(
+        `UPDATE ims.other_incomes
+            SET income_name = $2,
+                income_date = COALESCE($3::date, income_date),
+                acc_id = $4,
+                amount = $5,
+                note = $6,
+                updated_at = NOW()
+          WHERE other_income_id = $1
+          RETURNING *`,
+        [id, nextName, nextDate, nextAccId, nextAmount, nextNote]
+      );
+
+      const noteText = `${nextName}${nextNote ? ` — ${nextNote}` : ''}`;
+      const hasTxnSoftDelete = await hasColumn('account_transactions', 'is_deleted');
+      const txnRow = await queryOne<{ txn_id: number }>(
+        `SELECT txn_id
+           FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND txn_type = 'other'
+            AND ref_table = 'other_incomes'
+            AND ref_id = $2
+          ${hasTxnSoftDelete ? 'AND COALESCE(is_deleted::int, 0) = 0' : ''}
+          LIMIT 1`,
+        [existing.branch_id, id]
+      );
+      if (txnRow) {
+        await queryOne(
+          `UPDATE ims.account_transactions
+              SET acc_id = $3,
+                  credit = $4,
+                  debit = 0,
+                  txn_date = COALESCE($5::date, CURRENT_DATE)::timestamptz,
+                  note = $6
+            WHERE branch_id = $1
+              AND txn_id = $2`,
+          [existing.branch_id, txnRow.txn_id, nextAccId, nextAmount, nextDate, noteText]
+        );
+      } else {
+        await queryOne(
+          `INSERT INTO ims.account_transactions
+             (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
+           VALUES ($1, $2, 'other', 'other_incomes', $3, 0, $4, COALESCE($5::date, CURRENT_DATE)::timestamptz, $6)`,
+          [existing.branch_id, nextAccId, id, nextAmount, nextDate, noteText]
+        );
+      }
+
+      await queryOne('COMMIT');
+      return updated;
+    } catch (err) {
+      await queryOne('ROLLBACK');
+      throw err;
+    }
+  },
+
+  async deleteOtherIncome(id: number, scope: BranchScope) {
+    await queryOne('BEGIN');
+    try {
+      const existing = await queryOne<{
+        other_income_id: number;
+        branch_id: number;
+        acc_id: number;
+        amount: number;
+      }>(
+        `SELECT other_income_id, branch_id, acc_id, amount
+           FROM ims.other_incomes
+          WHERE other_income_id = $1
+          FOR UPDATE`,
+        [id]
+      );
+      if (!existing) throw ApiError.notFound('Other income not found');
+      assertBranchAccess(scope, existing.branch_id);
+
+      await queryOne(`UPDATE ims.accounts SET balance = balance - $1 WHERE branch_id = $2 AND acc_id = $3`, [
+        roundMoney(Number(existing.amount)),
+        existing.branch_id,
+        existing.acc_id,
+      ]);
+
+      const hasTxnSoftDelete = await hasColumn('account_transactions', 'is_deleted');
+      const hasTxnDeletedAt = await hasColumn('account_transactions', 'deleted_at');
+      const txnSet = hasTxnSoftDelete
+        ? `is_deleted = 1${hasTxnDeletedAt ? ', deleted_at = NOW()' : ''}`
+        : '';
+      if (txnSet) {
+        await queryOne(
+          `UPDATE ims.account_transactions
+              SET ${txnSet}
+            WHERE branch_id = $1
+              AND txn_type = 'other'
+              AND ref_table = 'other_incomes'
+              AND ref_id = $2`,
+          [existing.branch_id, id]
+        );
+      } else {
+        await queryOne(
+          `DELETE FROM ims.account_transactions
+            WHERE branch_id = $1
+              AND txn_type = 'other'
+              AND ref_table = 'other_incomes'
+              AND ref_id = $2`,
+          [existing.branch_id, id]
+        );
+      }
+
+      await queryOne(
+        `UPDATE ims.other_incomes
+            SET is_deleted = 1,
+                deleted_at = NOW(),
+                updated_at = NOW()
+          WHERE other_income_id = $1`,
+        [id]
+      );
+
+      await queryOne('COMMIT');
+    } catch (err) {
+      await queryOne('ROLLBACK');
+      throw err;
+    }
   },
 
   /* Supplier outstanding balances (purchases not fully paid) */

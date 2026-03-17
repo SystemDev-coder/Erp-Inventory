@@ -78,6 +78,19 @@ export interface SupplierOutstandingPurchase {
   status: string;
 }
 
+export interface OtherIncomeRow {
+  other_income_id: number;
+  branch_id: number;
+  income_name: string;
+  income_date: string;
+  acc_id: number;
+  amount: number;
+  note?: string | null;
+  account_name?: string | null;
+  created_by_name?: string | null;
+  created_at?: string;
+}
+
 export interface ExpenseCharge {
   exp_ch_id: number;
   branch_id: number;
@@ -463,6 +476,41 @@ export const financeService = {
       payrollLineId: payload.payroll_line_id,
       period: payload.period,
     });
+  },
+
+  // Other income
+  async listOtherIncome(params?: { branchId?: number; fromDate?: string; toDate?: string }) {
+    const qsParts: string[] = [];
+    if (params?.branchId) qsParts.push(`branchId=${encodeURIComponent(String(params.branchId))}`);
+    if (params?.fromDate) qsParts.push(`fromDate=${encodeURIComponent(params.fromDate)}`);
+    if (params?.toDate) qsParts.push(`toDate=${encodeURIComponent(params.toDate)}`);
+    const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
+    return apiClient.get<{ otherIncomes: OtherIncomeRow[] }>(`${API.FINANCE.OTHER_INCOME}${qs}`);
+  },
+  async createOtherIncome(payload: { branch_id?: number; income_name: string; income_date: string; acc_id: number; amount: number; note?: string }) {
+    return apiClient.post<{ otherIncome: OtherIncomeRow }>(API.FINANCE.OTHER_INCOME, {
+      branchId: payload.branch_id,
+      incomeName: payload.income_name,
+      incomeDate: payload.income_date,
+      accId: payload.acc_id,
+      amount: payload.amount,
+      note: payload.note || '',
+    });
+  },
+  async updateOtherIncome(
+    id: number,
+    payload: Partial<{ income_name: string; income_date: string; acc_id: number; amount: number; note?: string }>
+  ) {
+    return apiClient.put<{ otherIncome: OtherIncomeRow }>(`${API.FINANCE.OTHER_INCOME}/${id}`, {
+      incomeName: payload.income_name,
+      incomeDate: payload.income_date,
+      accId: payload.acc_id,
+      amount: payload.amount,
+      note: payload.note || '',
+    });
+  },
+  async deleteOtherIncome(id: number) {
+    return apiClient.delete<{ message: string }>(`${API.FINANCE.OTHER_INCOME}/${id}`);
   },
 
   // Expenses
