@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PageHeader } from '../../components/ui/layout';
 import { useToast } from '../../components/ui/toast/Toast';
 import { trashService, TrashModule, TrashRow } from '../../services/trash.service';
 import { DataTable } from '../../components/ui/table/DataTable';
+import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 
 const formatDate = (value?: string | null) => {
   if (!value) return '-';
@@ -21,8 +22,15 @@ export default function Trash() {
   const [rows, setRows] = useState<TrashRow[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [restoreTarget, setRestoreTarget] = useState<TrashRow | null>(null);
+  const [restoreConfirmOpen, setRestoreConfirmOpen] = useState(false);
 
   const moduleLabelByKey = useMemo(() => new Map(modules.map((m) => [m.key, m.label])), [modules]);
+
+  const requestRestore = useCallback((row: TrashRow) => {
+    setRestoreTarget(row);
+    setRestoreConfirmOpen(true);
+  }, []);
 
   const columns = useMemo(
     () => [
@@ -50,7 +58,7 @@ export default function Trash() {
         cell: ({ row }: any) => (
           <button
             type="button"
-            onClick={() => restoreRow(row.original)}
+            onClick={() => requestRestore(row.original)}
             className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
           >
             Restore
@@ -58,7 +66,7 @@ export default function Trash() {
         ),
       },
     ],
-    [moduleLabelByKey, selectedTable]
+    [moduleLabelByKey, requestRestore, selectedTable]
   );
 
   const loadTables = async () => {
@@ -177,6 +185,24 @@ export default function Trash() {
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <DataTable data={rows} columns={columns} isLoading={loading} searchPlaceholder="Search deleted records..." />
       </div>
+
+      <ConfirmDialog
+        isOpen={restoreConfirmOpen}
+        onClose={() => {
+          setRestoreConfirmOpen(false);
+          setRestoreTarget(null);
+        }}
+        onConfirm={() => {
+          if (!restoreTarget) return;
+          void restoreRow(restoreTarget);
+        }}
+        title="Restore Record"
+        highlightedName={restoreTarget?.label || (restoreTarget ? `ID: ${restoreTarget.id}` : undefined)}
+        message="Are you sure you want to restore this record? It will appear again in the system."
+        confirmText="Yes, Restore"
+        cancelText="No"
+        variant="info"
+      />
     </div>
   );
 }
