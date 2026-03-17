@@ -188,7 +188,13 @@ const SalesReturns = () => {
     });
   };
 
-  const addLine = () => setLines((prev) => [...prev, defaultLine()]);
+  const addLine = () => {
+    if (!form.customerId) {
+      showToast('error', 'Sales Return', 'Please select a customer before adding items.');
+      return;
+    }
+    setLines((prev) => [...prev, defaultLine()]);
+  };
   const removeLine = (index: number) =>
     setLines((prev) => {
       const next = prev.filter((_, idx) => idx !== index);
@@ -316,23 +322,36 @@ const SalesReturns = () => {
           <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
             <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-200">
               <span>Items</span>
-              <button type="button" onClick={addLine} className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-1 text-xs font-medium text-white hover:bg-primary-700">
+              <button
+                type="button"
+                onClick={addLine}
+                disabled={!form.customerId}
+                className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-1 text-xs font-medium text-white hover:bg-primary-700 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
                 <Plus className="h-3.5 w-3.5" /> Add line
               </button>
             </div>
+            {!form.customerId && (
+              <div className="border-b border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900/20 dark:text-slate-300">
+                Please select a customer before adding items.
+              </div>
+            )}
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 dark:bg-slate-800">
                 <tr>
                   <th className={tableHeadCls}>Item</th>
-                  <th className={`${tableHeadCls} text-right`}>Qty</th>
-                  <th className={`${tableHeadCls} text-right`}>Unit Price</th>
-                  <th className={`${tableHeadCls} text-right`}>Line Total</th>
-                  <th className={`${tableHeadCls} text-center`}>Action</th>
+                  <th className={`${tableHeadCls} w-[110px] text-center`}>Qty</th>
+                  <th className={`${tableHeadCls} w-[150px] text-right`}>Unit Price</th>
+                  <th className={`${tableHeadCls} w-[150px] text-right`}>Line Total</th>
+                  <th className={`${tableHeadCls} w-[96px] text-center`}>Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {lines.map((line, idx) => (
-                  <tr key={`${line.itemId}-${idx}`}>
+                  <tr
+                    key={`${line.itemId}-${idx}`}
+                    className="hover:bg-slate-50/70 dark:hover:bg-slate-900/30"
+                  >
                     <td className={tableCellCls}>
                       <div className="space-y-1">
                         <select
@@ -341,9 +360,7 @@ const SalesReturns = () => {
                           disabled={!form.customerId}
                           onChange={(e) => handleSelectItem(idx, e.target.value)}
                         >
-                          <option value="">
-                            {form.customerId ? 'Select item' : 'Select customer first'}
-                          </option>
+                          <option value="">Select item</option>
                           {items.map((item) => (
                             <option key={item.item_id} value={item.item_id}>{item.name}</option>
                           ))}
@@ -359,29 +376,36 @@ const SalesReturns = () => {
                         })() : null}
                       </div>
                     </td>
-                    <td className={`${tableCellCls} text-right`}>
+                    <td className={`${tableCellCls} text-center align-middle`}>
                       <input
                         type="number"
+                        inputMode="numeric"
                         min={1}
                         step={1}
-                        className={inputClass}
+                        className={`${inputClass} h-10 max-w-[110px] px-2 text-center`}
                         value={line.quantity}
                         onChange={(e) => setLineValue(idx, { quantity: Math.round(Number(e.target.value || 0)) })}
                       />
                     </td>
                     <td className={`${tableCellCls} text-right`}>
                       <input
-                        type="number"
-                        className={`${inputClass} bg-slate-50 dark:bg-slate-800/70`}
-                        value={line.unitPrice}
+                        type="text"
+                        className={`${inputClass} h-10 bg-slate-50 dark:bg-slate-800/70 px-2 text-right tabular-nums`}
+                        value={fmtCurrency(Number(line.unitPrice || 0))}
                         readOnly
                       />
                     </td>
-                    <td className={`${tableCellCls} text-right`}>
+                    <td className={`${tableCellCls} text-right tabular-nums font-semibold`}>
                       {fmtCurrency(Number(line.quantity || 0) * Number(line.unitPrice || 0))}
                     </td>
-                    <td className={`${tableCellCls} text-center`}>
-                      <button type="button" onClick={() => removeLine(idx)} className="inline-flex items-center justify-center rounded-md border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50">
+                    <td className={`${tableCellCls} text-center align-middle`}>
+                      <button
+                        type="button"
+                        onClick={() => removeLine(idx)}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-red-200 text-xs text-red-600 hover:bg-red-50 dark:border-red-900/40 dark:hover:bg-red-950/30"
+                        aria-label="Remove line"
+                        title="Remove line"
+                      >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     </td>

@@ -885,30 +885,35 @@ export function ReportModal<T extends Record<string, any>>({
               ) : null}
 
               <div className="overflow-hidden rounded-md">
-                <table className="w-full border-collapse text-[12px]">
+                <table className="w-full table-fixed border-collapse text-[12px]">
                   <thead>
                     <tr className="text-zinc-900">
                       <th className="border-b border-slate-300 px-2 py-2 text-left font-semibold">Particulars</th>
-                      <th className="border-b border-slate-300 px-2 py-2 text-center font-semibold">Dr. Balance</th>
-                      <th className="border-b border-slate-300 px-2 py-2 text-center font-semibold">Cr. Balance</th>
+                      <th className="w-44 border-b border-slate-300 px-2 py-2 text-right font-semibold">Dr. Balance</th>
+                      <th className="w-44 border-b border-slate-300 px-2 py-2 text-right font-semibold">Cr. Balance</th>
                     </tr>
                   </thead>
                   <tbody>
                     {trialBalanceData.rows.map((row, index) => (
-                      <tr key={`${row.accountName}-${index}`}>
+                      <tr
+                        key={`${row.accountName}-${index}`}
+                        className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}
+                      >
                         <td className="border-b border-slate-200 px-2 py-1.5">{row.accountName}</td>
                         <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">
-                          {row.closingDebit ? formatTrialAmount(row.closingDebit) : ""}
+                          {Math.max(Number(row.closingDebit || 0), 0) > 0.000001
+                            ? formatTrialAmount(Math.max(Number(row.closingDebit || 0), 0))
+                            : "—"}
                         </td>
                         <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">
-                          {row.closingCredit ? formatTrialAmount(row.closingCredit) : ""}
+                          {Math.max(Number(row.closingCredit || 0), 0) > 0.000001
+                            ? formatTrialAmount(Math.max(Number(row.closingCredit || 0), 0))
+                            : "—"}
                         </td>
                       </tr>
                     ))}
                     <tr className="font-bold text-slate-900">
-                      <td className="border-t border-slate-300 px-2 py-2 text-center">
-                        Total
-                      </td>
+                      <td className="border-t border-slate-300 px-2 py-2 text-left">Total</td>
                       <td className="border-t border-slate-300 px-2 py-2 text-right tabular-nums">
                         {formatTrialAmount(trialBalanceData.totals.totalClosingDebit)}
                       </td>
