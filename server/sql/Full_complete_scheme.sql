@@ -938,6 +938,8 @@ note              TEXT,
 summary_json      JSONB NOT NULL DEFAULT '{}'::jsonb,
 profit_json       JSONB NOT NULL DEFAULT '{}'::jsonb,
 journal_id        BIGINT REFERENCES ims.journal_entries(journal_id) ON UPDATE CASCADE ON DELETE SET NULL,
+closing_journal_id BIGINT REFERENCES ims.journal_entries(journal_id) ON UPDATE CASCADE ON DELETE SET NULL,
+closing_reversal_journal_id BIGINT REFERENCES ims.journal_entries(journal_id) ON UPDATE CASCADE ON DELETE SET NULL,
 created_by        BIGINT REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE SET NULL,
 closed_by         BIGINT REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE SET NULL,
 reopened_by       BIGINT REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE SET NULL,
@@ -947,6 +949,22 @@ created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 CONSTRAINT chk_finance_closing_dates CHECK (period_from <= period_to),
 CONSTRAINT uq_finance_closing_period UNIQUE (branch_id, period_from, period_to)
+);
+
+ALTER TABLE ims.journal_entries
+  ADD COLUMN IF NOT EXISTS is_closing_entry BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE ims.journal_entries
+  ADD COLUMN IF NOT EXISTS closing_period_id BIGINT REFERENCES ims.finance_closing_periods(closing_id) ON UPDATE CASCADE ON DELETE SET NULL;
+
+CREATE TABLE IF NOT EXISTS ims.finance_closing_summaries (
+summary_id        BIGSERIAL PRIMARY KEY,
+closing_id        BIGINT NOT NULL REFERENCES ims.finance_closing_periods(closing_id) ON UPDATE CASCADE ON DELETE CASCADE,
+branch_id         BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+period_from       DATE NOT NULL,
+period_to         DATE NOT NULL,
+summary_json      JSONB NOT NULL DEFAULT '{}'::jsonb,
+created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+CONSTRAINT uq_finance_closing_summary UNIQUE (closing_id)
 );
 
 CREATE TABLE IF NOT EXISTS ims.finance_profit_share_rules (

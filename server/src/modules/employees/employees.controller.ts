@@ -14,6 +14,14 @@ import { AuthRequest } from '../../middlewares/requireAuth';
 
 export const listEmployees = asyncHandler(async (req: AuthRequest, res: Response) => {
   const { search, status } = req.query;
+  const fromDate = (req.query.fromDate as string) || undefined;
+  const toDate = (req.query.toDate as string) || undefined;
+  if ((fromDate && !toDate) || (!fromDate && toDate)) {
+    throw ApiError.badRequest('Both fromDate and toDate are required together');
+  }
+  if (fromDate && toDate && fromDate > toDate) {
+    throw ApiError.badRequest('fromDate cannot be after toDate');
+  }
   
   // Get user's accessible branches
   const branchIds = (req as any).userBranches || [];
@@ -21,6 +29,8 @@ export const listEmployees = asyncHandler(async (req: AuthRequest, res: Response
   const employees = await employeesService.list({
     search: search as string,
     status: status as string,
+    fromDate,
+    toDate,
     branchIds,
   });
   

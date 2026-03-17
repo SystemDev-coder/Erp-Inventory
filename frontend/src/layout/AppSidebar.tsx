@@ -16,6 +16,7 @@ import {
   ShoppingCart,
   Store,
   Users,
+  Trash2,
   Lock as LockIcon,
 } from 'lucide-react';
 import { useSidebar } from '../context/SidebarContext';
@@ -141,6 +142,7 @@ const AppSidebar: React.FC = () => {
           { id: 'system', label: 'System', icon: Settings, to: '/system', permissionAny: ['users.view', 'roles.view', 'permissions.view', 'system.users.manage', 'system.roles.manage', 'system.permissions.manage'] },
           { id: 'setting', label: 'Setting', icon: Cog, to: '/settings', permissionAny: ['system.settings'] },
           { id: 'reports', label: 'Reports', icon: FileText, to: '/reports', permissionAny: ['reports.all'] },
+          { id: 'trash', label: 'Trash', icon: Trash2, to: '/trash', permissionAny: ['trash.view'] },
         ],
       },
     ];

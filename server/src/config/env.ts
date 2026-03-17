@@ -15,6 +15,8 @@ const envSchema = z.object({
   PGUSER: z.string().min(1, 'PGUSER is required'),
   PGPASSWORD: z.string().min(1, 'PGPASSWORD is required'),
   PGSCHEMA: z.string().default('ims'),
+  ADMIN_PGUSER: z.string().optional(),
+  ADMIN_PGPASSWORD: z.string().optional(),
   
   // Client
   CLIENT_ORIGIN: z.string().url().default('http://localhost:5173'),
@@ -65,6 +67,8 @@ export const config = {
     user: env.PGUSER,
     password: env.PGPASSWORD,
     schema: env.PGSCHEMA,
+    adminUser: env.ADMIN_PGUSER || env.PGUSER,
+    adminPassword: env.ADMIN_PGPASSWORD || env.PGPASSWORD,
   },
   
   client: {

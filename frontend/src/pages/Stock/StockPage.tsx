@@ -11,6 +11,7 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { useAuth } from '../../context/AuthContext';
 import { itemLabelWithAvailability } from '../../utils/itemAvailability';
 import { formatAvailableQty } from '../../utils/itemAvailability';
+import { defaultDateRange } from '../../utils/dateRange';
 
 type MovementRow = {
   move_date: string;
@@ -39,6 +40,7 @@ const StockPage = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [stockDisplayed, setStockDisplayed] = useState(false);
   const [filters, setFilters] = useState({ branchId: '', whId: '', productId: '', search: '' });
+  const [dateRange, setDateRange] = useState(() => defaultDateRange());
   const [showAdjust, setShowAdjust] = useState(false);
   const [showTransfer, setShowTransfer] = useState(false);
   const [showBranchModal, setShowBranchModal] = useState(false);
@@ -283,12 +285,18 @@ const StockPage = () => {
   };
 
   const loadMovements = async () => {
+    if (dateRange.fromDate && dateRange.toDate && dateRange.fromDate > dateRange.toDate) {
+      showToast('error', 'Inventory', 'From date cannot be after To date');
+      return;
+    }
     setLoadingMove(true);
     const res = await inventoryService.listMovements({
       branchId: filters.branchId || undefined,
       whId: filters.whId || undefined,
       productId: filters.productId || undefined,
       search: filters.search || undefined,
+      fromDate: dateRange.fromDate,
+      toDate: dateRange.toDate,
     });
     setLoadingMove(false);
     if (res.success && res.data?.rows) setMovements(res.data.rows as MovementRow[]);
@@ -578,11 +586,13 @@ const StockPage = () => {
       </div>
 
       <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-6">
           <div><label className={labelClass}>Search</label><input className={inputClass} placeholder="Item name..." value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} /></div>
           <div><label className={labelClass}>Branch</label><select className={inputClass} value={filters.branchId} onChange={(e) => setFilters({ ...filters, branchId: e.target.value, whId: '' })}><option value="">All branches</option>{activeBranches.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>)}</select></div>
           <div><label className={labelClass}>Warehouse</label><select className={inputClass} value={filters.whId} onChange={(e) => setFilters({ ...filters, whId: e.target.value })}><option value="">All warehouses</option>{filterWarehouses.map((w) => <option key={w.wh_id} value={w.wh_id}>{w.wh_name}</option>)}</select></div>
           <div><label className={labelClass}>Purchased Item</label><select className={inputClass} value={filters.productId} onChange={(e) => setFilters({ ...filters, productId: e.target.value })}><option value="">All purchased items</option>{filterItems.map((item) => <option key={item.item_id} value={item.item_id}>{itemLabelWithAvailability(item.item_name, itemAvailableQtyMap[item.item_id])}</option>)}</select></div>
+          <div><label className={labelClass}>From Date</label><input type="date" className={inputClass} value={dateRange.fromDate} onChange={(e) => setDateRange((prev) => ({ ...prev, fromDate: e.target.value }))} /></div>
+          <div><label className={labelClass}>To Date</label><input type="date" className={inputClass} value={dateRange.toDate} onChange={(e) => setDateRange((prev) => ({ ...prev, toDate: e.target.value }))} /></div>
         </div>
         <div className="mt-3 flex justify-end"><button onClick={() => { setStockDisplayed(true); void Promise.all([loadStock(), loadMovements()]); }} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"><Filter className="h-4 w-4" />Display</button></div>
       </div>

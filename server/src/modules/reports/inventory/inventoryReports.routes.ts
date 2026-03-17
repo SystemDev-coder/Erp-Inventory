@@ -5,6 +5,7 @@ import {
   getInventoryReportOptions,
   getInventoryValuationReport,
   getLowStockAlertReport,
+  getInventoryLossReport,
   getStockAdjustmentLogReport,
   getStockMovementHistoryReport,
   getStoreStockReport,
@@ -20,6 +21,7 @@ router.get('/movement-history', getStockMovementHistoryReport);
 router.get('/valuation', getInventoryValuationReport);
 router.get('/expiry-tracking', getExpiryTrackingReport);
 router.get('/adjustment-log', getStockAdjustmentLogReport);
+router.get('/loss', getInventoryLossReport);
 router.get('/store-stock', getStoreStockReport);
 router.get('/store-wise', getStoreWiseStockReport);
 

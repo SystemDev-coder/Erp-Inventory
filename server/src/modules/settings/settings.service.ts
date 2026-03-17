@@ -1,6 +1,8 @@
 import { queryMany, queryOne } from '../../db/query';
+import { adminQueryMany } from '../../db/adminQuery';
 import { ApiError } from '../../utils/ApiError';
 import { BranchScope, assertBranchAccess, pickBranchForWrite } from '../../utils/branchScope';
+import { getUploadedImageUrl } from '../../config/cloudinary';
 
 export interface Branch {
   branch_id: number;
@@ -140,7 +142,7 @@ let capitalSchemaReady = false;
 
 const ensureCompanySchema = async (): Promise<void> => {
   if (companySchemaReady) return;
-  await queryMany(`
+  await adminQueryMany(`
     ALTER TABLE ims.company
       ADD COLUMN IF NOT EXISTS capital_amount NUMERIC(14,2) NOT NULL DEFAULT 0
   `);
@@ -150,12 +152,12 @@ const ensureCompanySchema = async (): Promise<void> => {
 const ensureCapitalSchema = async (): Promise<void> => {
   if (capitalSchemaReady) return;
 
-  await queryMany(`
+  await adminQueryMany(`
     ALTER TABLE ims.accounts
       ADD COLUMN IF NOT EXISTS account_type VARCHAR(20) NOT NULL DEFAULT 'asset'
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     UPDATE ims.accounts
        SET account_type = 'asset'
      WHERE account_type IS NULL
@@ -163,7 +165,7 @@ const ensureCapitalSchema = async (): Promise<void> => {
   `);
 
   // Allow standard COA types used across reports.
-  await queryMany(`
+  await adminQueryMany(`
     DO $$
     BEGIN
       IF EXISTS (
@@ -195,7 +197,7 @@ const ensureCapitalSchema = async (): Promise<void> => {
     $$;
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     DO $$
     BEGIN
       IF NOT EXISTS (
@@ -213,7 +215,7 @@ const ensureCapitalSchema = async (): Promise<void> => {
     $$;
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     DO $$
     BEGIN
       IF NOT EXISTS (
@@ -231,7 +233,7 @@ const ensureCapitalSchema = async (): Promise<void> => {
     $$;
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     CREATE TABLE IF NOT EXISTS ims.journal_entries (
       journal_id BIGSERIAL PRIMARY KEY,
       branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
@@ -244,7 +246,7 @@ const ensureCapitalSchema = async (): Promise<void> => {
     )
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     CREATE TABLE IF NOT EXISTS ims.journal_lines (
       journal_line_id BIGSERIAL PRIMARY KEY,
       journal_id BIGINT NOT NULL REFERENCES ims.journal_entries(journal_id) ON UPDATE CASCADE ON DELETE CASCADE,
@@ -257,7 +259,7 @@ const ensureCapitalSchema = async (): Promise<void> => {
     )
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     CREATE TABLE IF NOT EXISTS ims.capital_contributions (
       capital_id BIGSERIAL PRIMARY KEY,
       branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
@@ -275,12 +277,12 @@ const ensureCapitalSchema = async (): Promise<void> => {
     )
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     ALTER TABLE ims.capital_contributions
       ADD COLUMN IF NOT EXISTS share_pct NUMERIC(7,4) NOT NULL DEFAULT 0
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     CREATE TABLE IF NOT EXISTS ims.owner_drawings (
       draw_id BIGSERIAL PRIMARY KEY,
       branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
@@ -297,7 +299,7 @@ const ensureCapitalSchema = async (): Promise<void> => {
     )
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     DO $$
     BEGIN
       IF NOT EXISTS (
@@ -317,22 +319,22 @@ const ensureCapitalSchema = async (): Promise<void> => {
     $$;
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     CREATE INDEX IF NOT EXISTS idx_capital_contributions_branch_date
       ON ims.capital_contributions(branch_id, contribution_date DESC, capital_id DESC)
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     CREATE INDEX IF NOT EXISTS idx_capital_contributions_branch_owner
       ON ims.capital_contributions(branch_id, owner_name)
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     CREATE INDEX IF NOT EXISTS idx_owner_drawings_branch_date
       ON ims.owner_drawings(branch_id, draw_date DESC, draw_id DESC)
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     CREATE INDEX IF NOT EXISTS idx_owner_drawings_branch_owner
       ON ims.owner_drawings(branch_id, owner_name)
   `);
@@ -495,8 +497,8 @@ const mapCompany = (row: {
   company_name: row.company_name,
   phone: row.phone,
   manager_name: row.address,
-  logo_img: row.logo_url,
-  banner_img: row.banner_url,
+  logo_img: row.logo_url ? getUploadedImageUrl(row.logo_url) : null,
+  banner_img: row.banner_url ? getUploadedImageUrl(row.banner_url) : null,
   capital_amount: Number(row.capital_amount || 0),
   created_at: row.created_at,
   updated_at: row.updated_at,
@@ -647,8 +649,6 @@ export const settingsService = {
          LEFT JOIN ims.account_transactions at
            ON at.branch_id = a.branch_id
           AND at.acc_id = a.acc_id
-          AND at.txn_type::text NOT IN ('capital_contribution', 'owner_drawing')
-          AND COALESCE(at.ref_table, '') NOT IN ('capital_contributions', 'owner_drawings')
          WHERE ${where.join(' AND ')}
          GROUP BY a.acc_id, a.name, a.institution, a.balance
        )

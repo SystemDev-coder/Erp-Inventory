@@ -45,6 +45,8 @@ const hasColumn = async (table: string, column: string): Promise<boolean> => {
   return Boolean(row?.exists);
 };
 
+type DateRange = { fromDate?: string; toDate?: string };
+
 const OPENING_EXPENSE_NOTE_PREFIX = '[OPENING BALANCE]';
 
 const isOpeningExpenseNote = (note?: string | null): boolean =>
@@ -116,7 +118,7 @@ const creditAccount = async (branchId: number, accId: number, amount: number) =>
 
 export const financeService = {
   /* Account transfers */
-  async listTransfers(scope: BranchScope, branchId?: number) {
+  async listTransfers(scope: BranchScope, branchId?: number, range: DateRange = {}) {
     const params: any[] = [];
     let where = 'WHERE 1=1';
     if (branchId) {
@@ -126,6 +128,12 @@ export const financeService = {
     } else if (!scope.isAdmin) {
       params.push(scope.branchIds);
       where += ` AND at.branch_id = ANY($${params.length})`;
+    }
+    if (range.fromDate && range.toDate) {
+      params.push(range.fromDate);
+      where += ` AND at.transfer_date::date >= $${params.length}::date`;
+      params.push(range.toDate);
+      where += ` AND at.transfer_date::date <= $${params.length}::date`;
     }
 
     return queryMany(
@@ -227,7 +235,7 @@ export const financeService = {
   },
 
   /* Receipts */
-  async listCustomerReceipts(scope: BranchScope, branchId?: number) {
+  async listCustomerReceipts(scope: BranchScope, branchId?: number, range: DateRange = {}) {
     const params: any[] = [];
     let where = 'WHERE 1=1';
     if (branchId) {
@@ -237,6 +245,12 @@ export const financeService = {
     } else if (!scope.isAdmin) {
       params.push(scope.branchIds);
       where += ` AND r.branch_id = ANY($${params.length})`;
+    }
+    if (range.fromDate && range.toDate) {
+      params.push(range.fromDate);
+      where += ` AND r.receipt_date::date >= $${params.length}::date`;
+      params.push(range.toDate);
+      where += ` AND r.receipt_date::date <= $${params.length}::date`;
     }
 
     return queryMany(
@@ -354,7 +368,7 @@ export const financeService = {
     }
   },
 
-  async listSupplierReceipts(scope: BranchScope, branchId?: number) {
+  async listSupplierReceipts(scope: BranchScope, branchId?: number, range: DateRange = {}) {
     const params: any[] = [];
     let where = 'WHERE 1=1';
     if (branchId) {
@@ -364,6 +378,12 @@ export const financeService = {
     } else if (!scope.isAdmin) {
       params.push(scope.branchIds);
       where += ` AND r.branch_id = ANY($${params.length})`;
+    }
+    if (range.fromDate && range.toDate) {
+      params.push(range.fromDate);
+      where += ` AND r.receipt_date::date >= $${params.length}::date`;
+      params.push(range.toDate);
+      where += ` AND r.receipt_date::date <= $${params.length}::date`;
     }
 
     return queryMany(
@@ -1076,7 +1096,7 @@ export const financeService = {
   },
 
   /* Expenses */
-  async listExpenses(scope: BranchScope, branchId?: number) {
+  async listExpenses(scope: BranchScope, branchId?: number, range: DateRange = {}) {
     const params: any[] = [];
     let where = 'WHERE 1=1';
     if (branchId) {
@@ -1086,6 +1106,12 @@ export const financeService = {
     } else if (!scope.isAdmin) {
       params.push(scope.branchIds);
       where += ` AND e.branch_id = ANY($${params.length})`;
+    }
+    if (range.fromDate && range.toDate) {
+      params.push(range.fromDate);
+      where += ` AND e.created_at::date >= $${params.length}::date`;
+      params.push(range.toDate);
+      where += ` AND e.created_at::date <= $${params.length}::date`;
     }
 
     return queryMany(
@@ -1147,7 +1173,7 @@ export const financeService = {
     await queryOne(`DELETE FROM ims.expenses ${where} RETURNING exp_id`, params);
   },
 
-  async listExpenseCharges(scope: BranchScope, branchId?: number) {
+  async listExpenseCharges(scope: BranchScope, branchId?: number, range: DateRange = {}) {
     const params: any[] = [];
     let where = 'WHERE 1=1';
     if (branchId) {
@@ -1157,6 +1183,12 @@ export const financeService = {
     } else if (!scope.isAdmin) {
       params.push(scope.branchIds);
       where += ` AND c.branch_id = ANY($${params.length})`;
+    }
+    if (range.fromDate && range.toDate) {
+      params.push(range.fromDate);
+      where += ` AND c.charge_date::date >= $${params.length}::date`;
+      params.push(range.toDate);
+      where += ` AND c.charge_date::date <= $${params.length}::date`;
     }
 
     return queryMany(
@@ -1537,7 +1569,7 @@ export const financeService = {
   },
 
   /* Expense budgets */
-  async listExpenseBudgets(scope: BranchScope, branchId?: number) {
+  async listExpenseBudgets(scope: BranchScope, branchId?: number, range: DateRange = {}) {
     const params: any[] = [];
     let where = 'WHERE 1=1';
     if (branchId) {
@@ -1547,6 +1579,15 @@ export const financeService = {
     } else if (!scope.isAdmin) {
       params.push(scope.branchIds);
       where += ` AND e.branch_id = ANY($${params.length})`;
+    }
+    if (range.fromDate && range.toDate) {
+      const hasCreatedAt = await hasColumn('expense_budgets', 'created_at');
+      if (hasCreatedAt) {
+        params.push(range.fromDate);
+        where += ` AND b.created_at::date >= $${params.length}::date`;
+        params.push(range.toDate);
+        where += ` AND b.created_at::date <= $${params.length}::date`;
+      }
     }
 
     return queryMany(
@@ -1739,7 +1780,7 @@ export const financeService = {
     return { created: res?.sp_charge_salary ?? 0 };
   },
 
-  async listPayroll(scope: BranchScope, period?: string) {
+  async listPayroll(scope: BranchScope, period?: string, range: DateRange = {}) {
     const params: any[] = [];
     let where = 'WHERE e.status = $1';
     params.push('active');
@@ -1749,6 +1790,12 @@ export const financeService = {
         params.push(y, m);
         where += ` AND pr.period_year = $${params.length - 1} AND pr.period_month = $${params.length}`;
       }
+    }
+    if (range.fromDate && range.toDate) {
+      params.push(range.fromDate);
+      where += ` AND make_date(pr.period_year, pr.period_month, 1) >= $${params.length}::date`;
+      params.push(range.toDate);
+      where += ` AND make_date(pr.period_year, pr.period_month, 1) <= $${params.length}::date`;
     }
     if (!scope.isAdmin) {
       params.push(scope.branchIds);

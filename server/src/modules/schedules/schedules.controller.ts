@@ -1,9 +1,10 @@
 import { Response } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiResponse } from '../../utils/ApiResponse';
+import { ApiError } from '../../utils/ApiError';
 import { schedulesService } from './schedules.service';
 import { scheduleSchema, scheduleUpdateSchema, scheduleStatusSchema } from './schedules.schemas';
-import { logAudit } from '../../services/audit.service';
+import { logAudit } from '../../utils/audit';
 import { AuthRequest } from '../../middlewares/requireAuth';
 
 export const listSchedules = asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -19,7 +20,7 @@ export const listSchedules = asyncHandler(async (req: AuthRequest, res: Response
 export const getSchedule = asyncHandler(async (req: AuthRequest, res: Response) => {
   const schedule = await schedulesService.getById(Number(req.params.id));
   if (!schedule) {
-    return ApiResponse.notFound(res, 'Schedule not found');
+    throw ApiError.notFound('Schedule not found');
   }
   return ApiResponse.success(res, { schedule });
 });
@@ -46,7 +47,7 @@ export const updateSchedule = asyncHandler(async (req: AuthRequest, res: Respons
   const schedule = await schedulesService.update(Number(req.params.id), input);
   
   if (!schedule) {
-    return ApiResponse.notFound(res, 'Schedule not found');
+    throw ApiError.notFound('Schedule not found');
   }
 
   await logAudit({
@@ -71,7 +72,7 @@ export const updateScheduleStatus = asyncHandler(async (req: AuthRequest, res: R
   );
 
   if (!schedule) {
-    return ApiResponse.notFound(res, 'Schedule not found');
+    throw ApiError.notFound('Schedule not found');
   }
 
   await logAudit({
@@ -91,7 +92,7 @@ export const deleteSchedule = asyncHandler(async (req: AuthRequest, res: Respons
   const deleted = await schedulesService.delete(Number(req.params.id));
   
   if (!deleted) {
-    return ApiResponse.notFound(res, 'Schedule not found');
+    throw ApiError.notFound('Schedule not found');
   }
 
   await logAudit({

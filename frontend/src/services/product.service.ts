@@ -68,6 +68,8 @@ type ListOptions = {
   includeInactive?: boolean;
   page?: number;
   limit?: number;
+  fromDate?: string;
+  toDate?: string;
 };
 
 type MasterListOptions = {
@@ -105,6 +107,8 @@ export const productService = {
       includeInactive: options.includeInactive,
       page: options.page,
       limit: options.limit,
+      fromDate: options.fromDate,
+      toDate: options.toDate,
     });
     return apiClient.get<{ products: Product[]; pagination?: PaginationMeta }>(`${API.PRODUCTS.LIST}${qs}`);
   },

@@ -152,7 +152,10 @@ export const closingActionSchema = z.object({
 
 export const closingReopenSchema = z.object({
   reason: z.string().trim().max(250).optional().or(z.literal('')),
+  reverseClosingEntries: z.boolean().optional().default(false),
 });
+
+export const profitDistributionSchema = z.object({});
 
 export type ClosingPeriodCreateInput = z.infer<typeof closingPeriodCreateSchema>;
 export type ClosingPeriodUpdateInput = z.infer<typeof closingPeriodUpdateSchema>;
@@ -161,3 +164,4 @@ export type ProfitShareRuleInput = z.infer<typeof profitShareRuleSchema>;
 export type ProfitShareRuleUpsertInput = z.infer<typeof profitShareRuleUpsertSchema>;
 export type ClosingActionInput = z.infer<typeof closingActionSchema>;
 export type ClosingReopenInput = z.infer<typeof closingReopenSchema>;
+export type ProfitDistributionInput = z.infer<typeof profitDistributionSchema>;

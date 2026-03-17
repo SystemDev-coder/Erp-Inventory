@@ -878,9 +878,19 @@ const itemsDefinition: ImportDefinition<ItemImportRow> = {
 const getDefinition = (
   type: ImportType
 ): ImportDefinition<CustomerImportRow | SupplierImportRow | ItemImportRow> => {
-  if (type === 'customers') return customersDefinition;
-  if (type === 'suppliers') return suppliersDefinition;
-  return itemsDefinition;
+  if (type === 'customers') {
+    return customersDefinition as ImportDefinition<
+      CustomerImportRow | SupplierImportRow | ItemImportRow
+    >;
+  }
+  if (type === 'suppliers') {
+    return suppliersDefinition as ImportDefinition<
+      CustomerImportRow | SupplierImportRow | ItemImportRow
+    >;
+  }
+  return itemsDefinition as ImportDefinition<
+    CustomerImportRow | SupplierImportRow | ItemImportRow
+  >;
 };
 
 const ensureFileHasRows = (rowsCount: number) => {

@@ -27,7 +27,15 @@ import { asyncHandler as ah } from '../../utils/asyncHandler';
 export const listExpenses = ah(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
-  const expenses = await financeService.listExpenses(scope, branchId);
+  const fromDate = (req.query.fromDate as string) || undefined;
+  const toDate = (req.query.toDate as string) || undefined;
+  if ((fromDate && !toDate) || (!fromDate && toDate)) {
+    throw ApiError.badRequest('Both fromDate and toDate are required together');
+  }
+  if (fromDate && toDate && fromDate > toDate) {
+    throw ApiError.badRequest('fromDate cannot be after toDate');
+  }
+  const expenses = await financeService.listExpenses(scope, branchId, { fromDate, toDate });
   return ApiResponse.success(res, { expenses });
 });
 
@@ -60,7 +68,15 @@ export const deleteExpense = ah(async (req: AuthRequest, res: Response) => {
 export const listAccountTransfers = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
-  const transfers = await financeService.listTransfers(scope, branchId);
+  const fromDate = (req.query.fromDate as string) || undefined;
+  const toDate = (req.query.toDate as string) || undefined;
+  if ((fromDate && !toDate) || (!fromDate && toDate)) {
+    throw ApiError.badRequest('Both fromDate and toDate are required together');
+  }
+  if (fromDate && toDate && fromDate > toDate) {
+    throw ApiError.badRequest('fromDate cannot be after toDate');
+  }
+  const transfers = await financeService.listTransfers(scope, branchId, { fromDate, toDate });
   return ApiResponse.success(res, { transfers });
 });
 
@@ -86,7 +102,15 @@ export const updateAccountTransfer = asyncHandler(async (req: AuthRequest, res: 
 export const listCustomerReceipts = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
-  const receipts = await financeService.listCustomerReceipts(scope, branchId);
+  const fromDate = (req.query.fromDate as string) || undefined;
+  const toDate = (req.query.toDate as string) || undefined;
+  if ((fromDate && !toDate) || (!fromDate && toDate)) {
+    throw ApiError.badRequest('Both fromDate and toDate are required together');
+  }
+  if (fromDate && toDate && fromDate > toDate) {
+    throw ApiError.badRequest('fromDate cannot be after toDate');
+  }
+  const receipts = await financeService.listCustomerReceipts(scope, branchId, { fromDate, toDate });
   return ApiResponse.success(res, { receipts });
 });
 
@@ -121,7 +145,15 @@ export const deleteCustomerReceipt = asyncHandler(async (req: AuthRequest, res: 
 export const listSupplierReceipts = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
-  const receipts = await financeService.listSupplierReceipts(scope, branchId);
+  const fromDate = (req.query.fromDate as string) || undefined;
+  const toDate = (req.query.toDate as string) || undefined;
+  if ((fromDate && !toDate) || (!fromDate && toDate)) {
+    throw ApiError.badRequest('Both fromDate and toDate are required together');
+  }
+  if (fromDate && toDate && fromDate > toDate) {
+    throw ApiError.badRequest('fromDate cannot be after toDate');
+  }
+  const receipts = await financeService.listSupplierReceipts(scope, branchId, { fromDate, toDate });
   return ApiResponse.success(res, { receipts });
 });
 
@@ -203,7 +235,15 @@ export const listSupplierOutstandingPurchases = asyncHandler(async (req: AuthReq
 export const listExpenseCharges = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
-  const charges = await financeService.listExpenseCharges(scope, branchId);
+  const fromDate = (req.query.fromDate as string) || undefined;
+  const toDate = (req.query.toDate as string) || undefined;
+  if ((fromDate && !toDate) || (!fromDate && toDate)) {
+    throw ApiError.badRequest('Both fromDate and toDate are required together');
+  }
+  if (fromDate && toDate && fromDate > toDate) {
+    throw ApiError.badRequest('fromDate cannot be after toDate');
+  }
+  const charges = await financeService.listExpenseCharges(scope, branchId, { fromDate, toDate });
   return ApiResponse.success(res, { charges });
 });
 
@@ -240,7 +280,15 @@ export const deleteExpenseCharge = asyncHandler(async (req: AuthRequest, res: Re
 export const listExpenseBudgets = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
-  const budgets = await financeService.listExpenseBudgets(scope, branchId);
+  const fromDate = (req.query.fromDate as string) || undefined;
+  const toDate = (req.query.toDate as string) || undefined;
+  if ((fromDate && !toDate) || (!fromDate && toDate)) {
+    throw ApiError.badRequest('Both fromDate and toDate are required together');
+  }
+  if (fromDate && toDate && fromDate > toDate) {
+    throw ApiError.badRequest('fromDate cannot be after toDate');
+  }
+  const budgets = await financeService.listExpenseBudgets(scope, branchId, { fromDate, toDate });
   return ApiResponse.success(res, { budgets });
 });
 
@@ -327,7 +375,15 @@ export const chargeSalaries = asyncHandler(async (req: AuthRequest, res: Respons
 export const listPayroll = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const period = req.query.period ? String(req.query.period) : undefined;
-  const data = await financeService.listPayroll(scope, period);
+  const fromDate = (req.query.fromDate as string) || undefined;
+  const toDate = (req.query.toDate as string) || undefined;
+  if ((fromDate && !toDate) || (!fromDate && toDate)) {
+    throw ApiError.badRequest('Both fromDate and toDate are required together');
+  }
+  if (fromDate && toDate && fromDate > toDate) {
+    throw ApiError.badRequest('fromDate cannot be after toDate');
+  }
+  const data = await financeService.listPayroll(scope, period, { fromDate, toDate });
   return ApiResponse.success(res, { payroll: data });
 });
 

@@ -3,6 +3,8 @@ import type { File as MulterFile, FileFilterCallback } from 'multer';
 import https from 'https';
 import http from 'http';
 import { URL } from 'url';
+import fs from 'fs';
+import path from 'path';
 
 let cloudinary: any;
 let CloudinaryStorage: any;
@@ -22,14 +24,23 @@ try {
 
   // Cloudinary Configuration
   cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'dac0jrcn3',
-    api_key: process.env.CLOUDINARY_API_KEY || '989533525192336',
-    api_secret: process.env.CLOUDINARY_API_SECRET || '9IjoFVXJZPebh5puWN8itycGfDg',
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
   });
 } catch (error) {
-  console.warn('⚠️  Cloudinary packages not installed. Image uploads will not work.');
-  console.warn('   Run: npm install cloudinary multer multer-storage-cloudinary @types/multer');
+  console.warn('⚠️  Cloudinary packages not installed. Falling back to local uploads.');
 }
+
+if (!multer) {
+  try {
+    const multerModule = require('multer');
+    multer = multerModule.default || multerModule;
+  } catch (error) {
+    console.warn('⚠️  Multer not installed. Image uploads will not work.');
+  }
+}
+
 
 // Verify Cloudinary connection
 export const verifyCloudinaryConfig = () => {
@@ -132,18 +143,57 @@ const createStorage = (folder: string) => {
   });
 };
 
+const ensureDir = (dir: string) => {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch (error) {
+    console.error('Failed to create upload directory:', dir, error);
+  }
+};
+
+const sanitizeFileName = (value: string) =>
+  value
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-zA-Z0-9-_]/g, '')
+    .toLowerCase();
+
+const createLocalStorage = (folder: string) => {
+  if (!multer) {
+    throw new Error('Multer not configured. Install multer to enable local uploads.');
+  }
+  const baseDir = path.join(process.cwd(), 'uploads', folder);
+  ensureDir(baseDir);
+  return multer.diskStorage({
+    destination: (_req: Request, _file: MulterFile, cb: (error: Error | null, destination: string) => void) => {
+      ensureDir(baseDir);
+      cb(null, baseDir);
+    },
+    filename: (_req: Request, file: MulterFile, cb: (error: Error | null, filename: string) => void) => {
+      const ext = path.extname(file.originalname || '').toLowerCase() || '.png';
+      const base = sanitizeFileName(path.basename(file.originalname || 'image', ext)) || 'image';
+      const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+      cb(null, `${base}-${uniqueSuffix}${ext}`);
+    },
+  });
+};
+
 // Create a dummy middleware if multer not available
 const createDummyUpload = () => ({
   single:
     (_field?: string) =>
       (_req: Request, _res: Response, next: NextFunction) => {
-        next(new Error('Image upload not available. Install Cloudinary packages.'));
+        next(new Error('Image upload not available. Install multer or configure Cloudinary.'));
       },
 });
 
 // Multer middleware for different upload types
-export const uploadSystemImage = (multer && cloudinary && CloudinaryStorage) ? multer({
-  storage: createStorage('system'),
+const systemStorage = (multer && cloudinary && CloudinaryStorage)
+  ? createStorage('system')
+  : (multer ? createLocalStorage('system') : null);
+
+export const uploadSystemImage = systemStorage ? multer({
+  storage: systemStorage,
   limits: { fileSize: 15 * 1024 * 1024 },
   fileFilter: (_req: Request, file: MulterFile, cb: FileFilterCallback) => {
     const allowedTypes = /jpeg|jpg|png|gif|webp|svg/;
@@ -154,8 +204,12 @@ export const uploadSystemImage = (multer && cloudinary && CloudinaryStorage) ? m
   },
 }) : createDummyUpload();
 
-export const uploadProductImage = (multer && cloudinary && CloudinaryStorage) ? multer({
-  storage: createStorage('products'),
+const productStorage = (multer && cloudinary && CloudinaryStorage)
+  ? createStorage('products')
+  : (multer ? createLocalStorage('products') : null);
+
+export const uploadProductImage = productStorage ? multer({
+  storage: productStorage,
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req: Request, file: MulterFile, cb: FileFilterCallback) => {
     const allowedTypes = /jpeg|jpg|png|gif|webp/;
@@ -165,8 +219,12 @@ export const uploadProductImage = (multer && cloudinary && CloudinaryStorage) ? 
   },
 }) : createDummyUpload();
 
-export const uploadSupplierImage = (multer && cloudinary && CloudinaryStorage) ? multer({
-  storage: createStorage('suppliers'),
+const supplierStorage = (multer && cloudinary && CloudinaryStorage)
+  ? createStorage('suppliers')
+  : (multer ? createLocalStorage('suppliers') : null);
+
+export const uploadSupplierImage = supplierStorage ? multer({
+  storage: supplierStorage,
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req: Request, file: MulterFile, cb: FileFilterCallback) => {
     const allowedTypes = /jpeg|jpg|png|gif|webp|svg/;
@@ -176,10 +234,41 @@ export const uploadSupplierImage = (multer && cloudinary && CloudinaryStorage) ?
   },
 }) : createDummyUpload();
 
+export const getUploadedImageUrl = (value: string): string => {
+  if (!value) return value;
+  if (/^https?:\/\//i.test(value)) return value;
+  const normalized = value.replace(/\\/g, '/');
+  const idx = normalized.lastIndexOf('/uploads/');
+  if (idx >= 0) return normalized.slice(idx);
+
+  // Handle relative paths like "uploads/system/logo/xyz.png"
+  if (normalized.startsWith('uploads/')) return `/${normalized}`;
+  const idx2 = normalized.lastIndexOf('uploads/');
+  if (idx2 >= 0) return `/${normalized.slice(idx2)}`;
+
+  return normalized;
+};
+
 // Helper function to delete image from Cloudinary
 export const deleteCloudinaryImage = async (imageUrl: string): Promise<boolean> => {
+  if (!imageUrl) return false;
   if (!cloudinary) {
-    console.warn('Cloudinary not configured. Cannot delete image.');
+    const normalized = imageUrl.replace(/\\/g, '/');
+    const idx = normalized.lastIndexOf('/uploads/');
+    if (idx >= 0) {
+      const relativePath = normalized.slice(idx + '/uploads/'.length);
+      const localPath = path.join(process.cwd(), 'uploads', relativePath);
+      try {
+        if (fs.existsSync(localPath)) {
+          fs.unlinkSync(localPath);
+          console.log(`âœ“ Deleted local image: ${localPath}`);
+          return true;
+        }
+      } catch (error) {
+        console.error('Error deleting local image:', error);
+      }
+    }
+    console.warn('Cloudinary not configured. Cannot delete remote image.');
     return false;
   }
   try {
@@ -264,3 +353,4 @@ export const uploadImageFromUrl = async (imageUrl: string, folder = 'system'): P
 };
 
 export default cloudinary || {};
+

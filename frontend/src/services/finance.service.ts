@@ -182,6 +182,8 @@ export interface FinanceClosingPeriod {
   profit_json?: any;
   closed_at?: string | null;
   journal_id?: number | null;
+  closing_journal_id?: number | null;
+  closing_reversal_journal_id?: number | null;
   created_at: string;
 }
 
@@ -193,7 +195,6 @@ export interface ClosingSnapshot {
   grossProfit: number;
   expenseCharges: number;
   payrollExpense: number;
-  otherIncome: number;
   netIncome: number;
   stockValuation: number;
   cashBalance: number;
@@ -210,8 +211,12 @@ export interface ProfitAllocation {
 
 export const financeService = {
   // Transfers
-  async listTransfers(branchId?: number) {
-    const qs = branchId ? `?branchId=${branchId}` : '';
+  async listTransfers(params?: { branchId?: number; fromDate?: string; toDate?: string }) {
+    const qsParts: string[] = [];
+    if (params?.branchId) qsParts.push(`branchId=${params.branchId}`);
+    if (params?.fromDate) qsParts.push(`fromDate=${encodeURIComponent(params.fromDate)}`);
+    if (params?.toDate) qsParts.push(`toDate=${encodeURIComponent(params.toDate)}`);
+    const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
     return apiClient.get<{ transfers: AccountTransfer[] }>(`${API.FINANCE.TRANSFERS}${qs}`);
   },
   async createTransfer(payload: Partial<AccountTransfer> & { from_acc_id: number; to_acc_id: number; amount: number; postNow?: boolean; branch_id?: number }) {
@@ -236,8 +241,12 @@ export const financeService = {
     });
   },
 
-  async listCustomerReceipts(branchId?: number) {
-    const qs = branchId ? `?branchId=${branchId}` : '';
+  async listCustomerReceipts(params?: { branchId?: number; fromDate?: string; toDate?: string }) {
+    const qsParts: string[] = [];
+    if (params?.branchId) qsParts.push(`branchId=${params.branchId}`);
+    if (params?.fromDate) qsParts.push(`fromDate=${encodeURIComponent(params.fromDate)}`);
+    if (params?.toDate) qsParts.push(`toDate=${encodeURIComponent(params.toDate)}`);
+    const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
     return apiClient.get<{ receipts: Receipt[] }>(`${API.FINANCE.CUSTOMER_RECEIPTS}${qs}`);
   },
   async listCustomerUnpaid(month?: string, branchId?: number) {
@@ -277,8 +286,12 @@ export const financeService = {
     return apiClient.get<{ balance: CustomerCombinedBalance }>(`${API.FINANCE.CUSTOMER_BALANCE(customerId)}${qs}`);
   },
 
-  async listSupplierReceipts(branchId?: number) {
-    const qs = branchId ? `?branchId=${branchId}` : '';
+  async listSupplierReceipts(params?: { branchId?: number; fromDate?: string; toDate?: string }) {
+    const qsParts: string[] = [];
+    if (params?.branchId) qsParts.push(`branchId=${params.branchId}`);
+    if (params?.fromDate) qsParts.push(`fromDate=${encodeURIComponent(params.fromDate)}`);
+    if (params?.toDate) qsParts.push(`toDate=${encodeURIComponent(params.toDate)}`);
+    const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
     return apiClient.get<{ receipts: Receipt[] }>(`${API.FINANCE.SUPPLIER_RECEIPTS}${qs}`);
   },
   async listSupplierUnpaid(month?: string, branchId?: number) {
@@ -324,8 +337,12 @@ export const financeService = {
   },
 
   // Expense charges
-  async listExpenseCharges(branchId?: number) {
-    const qs = branchId ? `?branchId=${branchId}` : '';
+  async listExpenseCharges(params?: { branchId?: number; fromDate?: string; toDate?: string }) {
+    const qsParts: string[] = [];
+    if (params?.branchId) qsParts.push(`branchId=${params.branchId}`);
+    if (params?.fromDate) qsParts.push(`fromDate=${encodeURIComponent(params.fromDate)}`);
+    if (params?.toDate) qsParts.push(`toDate=${encodeURIComponent(params.toDate)}`);
+    const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
     return apiClient.get<{ charges: ExpenseCharge[] }>(`${API.FINANCE.EXPENSE_CHARGES}${qs}`);
   },
   async createExpenseCharge(payload: { branch_id?: number; exp_id?: number; exp_type_id?: number; amount: number; note?: string; exp_date?: string; reg_date?: string; is_opening_paid?: boolean }) {
@@ -375,8 +392,12 @@ export const financeService = {
   },
 
   // Expense budgets
-  async listExpenseBudgets(branchId?: number) {
-    const qs = branchId ? `?branchId=${branchId}` : '';
+  async listExpenseBudgets(params?: { branchId?: number; fromDate?: string; toDate?: string }) {
+    const qsParts: string[] = [];
+    if (params?.branchId) qsParts.push(`branchId=${params.branchId}`);
+    if (params?.fromDate) qsParts.push(`fromDate=${encodeURIComponent(params.fromDate)}`);
+    if (params?.toDate) qsParts.push(`toDate=${encodeURIComponent(params.toDate)}`);
+    const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
     return apiClient.get<{ budgets: ExpenseBudget[] }>(`${API.FINANCE.EXPENSE_BUDGETS}${qs}`);
   },
   async createExpenseBudget(payload: { branch_id?: number; exp_id: number; fixed_amount?: number; amount_limit?: number; note?: string }) {
@@ -416,8 +437,12 @@ export const financeService = {
   },
 
   // Payroll
-  async listPayroll(period?: string) {
-    const qs = period ? `?period=${period}` : '';
+  async listPayroll(params?: { period?: string; fromDate?: string; toDate?: string }) {
+    const qsParts: string[] = [];
+    if (params?.period) qsParts.push(`period=${encodeURIComponent(params.period)}`);
+    if (params?.fromDate) qsParts.push(`fromDate=${encodeURIComponent(params.fromDate)}`);
+    if (params?.toDate) qsParts.push(`toDate=${encodeURIComponent(params.toDate)}`);
+    const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
     return apiClient.get<{ payroll: PayrollRow[] }>(`${API.FINANCE.PAYROLL}${qs}`);
   },
   async chargeSalaries(payload: { periodDate: string }) {
@@ -441,8 +466,12 @@ export const financeService = {
   },
 
   // Expenses
-  async listExpenses(branchId?: number) {
-    const qs = branchId ? `?branchId=${branchId}` : '';
+  async listExpenses(params?: { branchId?: number; fromDate?: string; toDate?: string }) {
+    const qsParts: string[] = [];
+    if (params?.branchId) qsParts.push(`branchId=${params.branchId}`);
+    if (params?.fromDate) qsParts.push(`fromDate=${encodeURIComponent(params.fromDate)}`);
+    if (params?.toDate) qsParts.push(`toDate=${encodeURIComponent(params.toDate)}`);
+    const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
     return apiClient.get<{ expenses: Expense[] }>(`${API.FINANCE.EXPENSES}${qs}`);
   },
   async createExpense(payload: { branch_id?: number; name: string }) {
@@ -539,11 +568,12 @@ export const financeService = {
         rule: ProfitShareRule;
         allocations: ProfitAllocation[];
         journalId: number | null;
+        closingJournalId: number | null;
         warnings: string[];
       };
     }>(API.FINANCE.CLOSING_CLOSE(closingId), payload);
   },
-  async reopenClosingPeriod(closingId: number, payload?: { reason?: string }) {
+  async reopenClosingPeriod(closingId: number, payload?: { reason?: string; reverseClosingEntries?: boolean }) {
     return apiClient.post<{ period: FinanceClosingPeriod }>(API.FINANCE.CLOSING_REOPEN(closingId), payload || {});
   },
   async getClosingSummary(closingId: number) {
@@ -559,6 +589,21 @@ export const financeService = {
         };
       };
     }>(API.FINANCE.CLOSING_SUMMARY(closingId));
+  },
+  async postClosingProfitDistribution(closingId: number) {
+    return apiClient.post<{
+      result: {
+        period: FinanceClosingPeriod;
+        summary: ClosingSnapshot;
+        profit: {
+          rule?: ProfitShareRule;
+          allocations?: ProfitAllocation[];
+          warnings?: string[];
+          transferPosted?: boolean;
+        };
+        journalId: number | null;
+      };
+    }>(API.FINANCE.CLOSING_TRANSFER(closingId), {});
   },
   async listProfitShareRules(branchId?: number) {
     const qs = branchId ? `?branchId=${branchId}` : '';

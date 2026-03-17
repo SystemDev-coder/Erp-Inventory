@@ -11,6 +11,7 @@ import {
   closingPeriodsQuerySchema,
   closingReopenSchema,
   profitShareRuleUpsertSchema,
+  profitDistributionSchema,
 } from './financeClosing.schemas';
 import { financeClosingService } from './financeClosing.service';
 
@@ -75,6 +76,16 @@ export const getClosingSummary = asyncHandler(async (req: AuthRequest, res: Resp
   if (!Number.isFinite(closingId) || closingId <= 0) throw ApiError.badRequest('Invalid closing id');
   const summary = await financeClosingService.getSummary(scope, closingId);
   return ApiResponse.success(res, { summary });
+});
+
+export const postProfitDistribution = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const closingId = Number(req.params.id);
+  if (!Number.isFinite(closingId) || closingId <= 0) throw ApiError.badRequest('Invalid closing id');
+  profitDistributionSchema.parse(req.body || {});
+  const userId = req.user?.userId ?? null;
+  const result = await financeClosingService.postProfitDistribution(scope, closingId, userId);
+  return ApiResponse.success(res, { result }, 'Profit distribution posted');
 });
 
 export const listProfitShareRules = asyncHandler(async (req: AuthRequest, res: Response) => {

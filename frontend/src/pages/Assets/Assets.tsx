@@ -6,6 +6,7 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { Modal } from '../../components/ui/modal/Modal';
 import { assetsService, CreateFixedAssetInput, FixedAsset } from '../../services/assets.service';
+import { defaultDateRange } from '../../utils/dateRange';
 
 type AssetViewMode = 'list' | 'register';
 
@@ -44,6 +45,7 @@ export default function Assets({
   const [hasDisplayed, setHasDisplayed] = useState(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [dateRange, setDateRange] = useState(() => defaultDateRange());
   const [form, setForm] = useState<CreateFixedAssetInput>(initialForm);
   const [submitting, setSubmitting] = useState(false);
   const [editingAssetId, setEditingAssetId] = useState<number | null>(null);
@@ -53,6 +55,10 @@ export default function Assets({
   const useModalForm = embedded && registerInModal;
 
   const loadAssets = async () => {
+    if (dateRange.fromDate && dateRange.toDate && dateRange.fromDate > dateRange.toDate) {
+      showToast('error', 'Assets', 'From date cannot be after To date');
+      return;
+    }
     setHasDisplayed(true);
     setLoading(true);
     setError('');
@@ -60,6 +66,8 @@ export default function Assets({
       const response = await assetsService.list({
         search: search || undefined,
         status: statusFilter || undefined,
+        fromDate: dateRange.fromDate,
+        toDate: dateRange.toDate,
       });
       if (!response.success || !response.data?.assets) {
         setAssets([]);
@@ -279,7 +287,7 @@ export default function Assets({
 
       {useModalForm || mode === 'list' ? (
         <div className="space-y-4 rounded-xl border border-zinc-300 bg-white p-4 shadow-sm">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
             <label className="space-y-1 text-sm font-medium text-black">
               <span>Search</span>
               <input
@@ -304,6 +312,24 @@ export default function Assets({
                   </option>
                 ))}
               </select>
+            </label>
+            <label className="space-y-1 text-sm font-medium text-black">
+              <span>From Date</span>
+              <input
+                type="date"
+                value={dateRange.fromDate}
+                onChange={(event) => setDateRange((prev) => ({ ...prev, fromDate: event.target.value }))}
+                className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-black focus:border-black focus:outline-none"
+              />
+            </label>
+            <label className="space-y-1 text-sm font-medium text-black">
+              <span>To Date</span>
+              <input
+                type="date"
+                value={dateRange.toDate}
+                onChange={(event) => setDateRange((prev) => ({ ...prev, toDate: event.target.value }))}
+                className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-black focus:border-black focus:outline-none"
+              />
             </label>
             <div className="flex items-end">
               <button

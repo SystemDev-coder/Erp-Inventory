@@ -8,7 +8,7 @@ export interface AuthRequest extends Request {
 
 export const requireAuth = (
   req: AuthRequest,
-  res: Response,
+  _res: Response,
   next: NextFunction
 ) => {
   try {

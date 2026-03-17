@@ -11,6 +11,7 @@ import { useToast } from '../../components/ui/toast/Toast';
 import Badge from '../../components/ui/badge/Badge';
 import { customerService, Customer } from '../../services/customer.service';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
+import { defaultDateRange } from '../../utils/dateRange';
 
 type CustomerForm = {
     customer_id?: number;
@@ -49,9 +50,14 @@ const Customers = () => {
     const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null);
     const [importModalOpen, setImportModalOpen] = useState(false);
 
+    const [dateRange, setDateRange] = useState(() => defaultDateRange());
+
     const fetchCustomers = async () => {
         setLoading(true);
-        const res = await customerService.list();
+        const res = await customerService.list({
+            fromDate: dateRange.fromDate,
+            toDate: dateRange.toDate,
+        });
         if (res.success && res.data?.customers) {
             setCustomers(res.data.customers);
         } else {
@@ -179,6 +185,18 @@ const Customers = () => {
                         onDisplay={handleDisplay}
                         displayLoading={loading}
                         onExport={() => showToast('info', 'Export', 'Customer export coming soon')}
+                        dateRange={{
+                            fromDate: dateRange.fromDate,
+                            toDate: dateRange.toDate,
+                            onFromDateChange: (value) => {
+                                setDateRange((prev) => ({ ...prev, fromDate: value }));
+                                setHasDisplayed(false);
+                            },
+                            onToDateChange: (value) => {
+                                setDateRange((prev) => ({ ...prev, toDate: value }));
+                                setHasDisplayed(false);
+                            },
+                        }}
                     />
                     {!hasDisplayed && (
                         <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
@@ -213,6 +231,18 @@ const Customers = () => {
                         secondaryAction={{ label: 'Upload Data', onClick: () => setImportModalOpen(true) }}
                         onDisplay={handleDisplay}
                         displayLoading={loading}
+                        dateRange={{
+                            fromDate: dateRange.fromDate,
+                            toDate: dateRange.toDate,
+                            onFromDateChange: (value) => {
+                                setDateRange((prev) => ({ ...prev, fromDate: value }));
+                                setHasDisplayed(false);
+                            },
+                            onToDateChange: (value) => {
+                                setDateRange((prev) => ({ ...prev, toDate: value }));
+                                setHasDisplayed(false);
+                            },
+                        }}
                     />
                     {!hasDisplayed && (
                         <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
@@ -246,6 +276,18 @@ const Customers = () => {
                         secondaryAction={{ label: 'Upload Data', onClick: () => setImportModalOpen(true) }}
                         onDisplay={handleDisplay}
                         displayLoading={loading}
+                        dateRange={{
+                            fromDate: dateRange.fromDate,
+                            toDate: dateRange.toDate,
+                            onFromDateChange: (value) => {
+                                setDateRange((prev) => ({ ...prev, fromDate: value }));
+                                setHasDisplayed(false);
+                            },
+                            onToDateChange: (value) => {
+                                setDateRange((prev) => ({ ...prev, toDate: value }));
+                                setHasDisplayed(false);
+                            },
+                        }}
                     />
                     {!hasDisplayed && (
                         <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">

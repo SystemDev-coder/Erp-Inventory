@@ -1,5 +1,6 @@
 import { apiClient } from './api';
-import { API } from '../config/env';
+import { API, env } from '../config/env';
+import { getAccessToken } from './authStore';
 
 export interface PurchaseItem {
   purchase_item_id?: number;
@@ -71,12 +72,14 @@ export interface PurchaseCreateInput {
 }
 
 export const purchaseService = {
-  async list(search?: string, status?: string, branchId?: number) {
-    const params: string[] = [];
-    if (search) params.push(`search=${encodeURIComponent(search)}`);
-    if (status && status !== 'all') params.push(`status=${encodeURIComponent(status)}`);
-    if (branchId) params.push(`branchId=${encodeURIComponent(String(branchId))}`);
-    const qs = params.length ? `?${params.join('&')}` : '';
+  async list(params?: { search?: string; status?: string; branchId?: number; fromDate?: string; toDate?: string }) {
+    const qsParts: string[] = [];
+    if (params?.search) qsParts.push(`search=${encodeURIComponent(params.search)}`);
+    if (params?.status && params.status !== 'all') qsParts.push(`status=${encodeURIComponent(params.status)}`);
+    if (params?.branchId) qsParts.push(`branchId=${encodeURIComponent(String(params.branchId))}`);
+    if (params?.fromDate) qsParts.push(`fromDate=${encodeURIComponent(params.fromDate)}`);
+    if (params?.toDate) qsParts.push(`toDate=${encodeURIComponent(params.toDate)}`);
+    const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
     return apiClient.get<{ purchases: Purchase[] }>(`${API.PURCHASES.LIST}${qs}`);
   },
 
@@ -105,5 +108,49 @@ export const purchaseService = {
 
   async remove(id: number) {
     return apiClient.delete<{ message: string }>(API.PURCHASES.ITEM(id));
+  },
+
+  async exportXlsx(params?: { search?: string; status?: string; branchId?: number; fromDate?: string; toDate?: string }) {
+    const qsParts: string[] = [];
+    if (params?.search) qsParts.push(`search=${encodeURIComponent(params.search)}`);
+    if (params?.status && params.status !== 'all') qsParts.push(`status=${encodeURIComponent(params.status)}`);
+    if (params?.branchId) qsParts.push(`branchId=${encodeURIComponent(String(params.branchId))}`);
+    if (params?.fromDate) qsParts.push(`fromDate=${encodeURIComponent(params.fromDate)}`);
+    if (params?.toDate) qsParts.push(`toDate=${encodeURIComponent(params.toDate)}`);
+    const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
+
+    const token = getAccessToken();
+    const res = await fetch(`${env.API_URL}${API.PURCHASES.EXPORT}${qs}`, {
+      method: 'GET',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      credentials: 'include',
+    });
+
+    if (!res.ok) {
+      let message = res.statusText || 'Export failed';
+      try {
+        const data = await res.clone().json();
+        message = data?.error || data?.message || message;
+      } catch {
+        try {
+          const text = await res.text();
+          if (text) message = text;
+        } catch {
+          // ignore
+        }
+      }
+      return { success: false, error: message };
+    }
+
+    const blob = await res.blob();
+    let filename: string | undefined;
+    const contentDisposition = res.headers.get('content-disposition') || '';
+    const match = /filename\\*=UTF-8''([^;]+)|filename="?([^\";]+)"?/i.exec(contentDisposition);
+    const rawName = match?.[1] || match?.[2];
+    if (rawName) filename = decodeURIComponent(rawName);
+
+    return { success: true, blob, filename };
   },
 };

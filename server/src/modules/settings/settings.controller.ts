@@ -68,10 +68,17 @@ const buildClosingSummaryFromIncomeRows = (rows: IncomeRow[]) => {
   const salesRevenue = getIncomeRowAmount(rows, /^sales revenue$/i);
   const salesReturns = Math.abs(getIncomeRowAmount(rows, /^sales returns$/i));
   const cogs = Math.abs(getIncomeRowAmount(rows, /^cost of goods sold$/i));
-  const expenseCharges = Math.abs(getIncomeRowAmount(rows, /^operating expenses$/i, 'detail'));
-  const payrollExpense = Math.abs(getIncomeRowAmount(rows, /^payroll expense$/i, 'detail'));
-  const otherIncome = getIncomeRowAmount(rows, /^other income$/i);
   const netIncome = getIncomeRowAmount(rows, /^net income$/i, 'total');
+
+  const isDetailRow = (row: IncomeRow) => String(row.row_type || '').toLowerCase() === 'detail';
+  const bySection = (sectionName: string) =>
+    rows.filter((row) => String(row.section || '').toLowerCase() === sectionName.toLowerCase());
+  const sumAbs = (list: IncomeRow[]) => list.reduce((sum, row) => sum + Math.abs(Number(row.amount || 0)), 0);
+
+  const operatingDetails = bySection('Operating Expenses').filter(isDetailRow);
+  const payrollRows = operatingDetails.filter((row) => /payroll|salary|wage/i.test(String(row.line_item || '')));
+  const payrollExpense = sumAbs(payrollRows);
+  const expenseCharges = sumAbs(operatingDetails.filter((row) => !/payroll|salary|wage/i.test(String(row.line_item || ''))));
   const netRevenue = salesRevenue - salesReturns;
   const grossProfit = netRevenue - cogs;
 
@@ -83,7 +90,6 @@ const buildClosingSummaryFromIncomeRows = (rows: IncomeRow[]) => {
     grossProfit,
     expenseCharges,
     payrollExpense,
-    otherIncome,
     netIncome,
   };
 };
@@ -599,7 +605,7 @@ export const createSettingsClosingPeriod = asyncHandler(async (req: AuthRequest,
     scope,
     {
       branchId: input.branchId,
-      closeMode: 'custom',
+      closeMode: input.closeMode || 'custom',
       periodFrom: input.periodFrom,
       periodTo: input.periodTo,
       note: (input.note || '').trim() || undefined,
@@ -620,7 +626,7 @@ export const updateSettingsClosingPeriod = asyncHandler(async (req: AuthRequest,
     scope,
     closingId,
     {
-      closeMode: 'custom',
+      closeMode: input.closeMode || 'custom',
       periodFrom: input.periodFrom,
       periodTo: input.periodTo,
       note: (input.note || '').trim() || '',

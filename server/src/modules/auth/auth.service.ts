@@ -39,8 +39,6 @@ const normalizeIdentifier = (value: string) => value.trim().toLowerCase();
 
 const now = () => new Date();
 
-const defaultPermissions: string[] = [];
-
 const ensureRole = async (requestedRoleId?: number): Promise<number> => {
   if (requestedRoleId) {
     const role = await queryOne<{ role_id: number }>(

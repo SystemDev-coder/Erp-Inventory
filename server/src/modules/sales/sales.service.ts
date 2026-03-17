@@ -5,6 +5,7 @@ import { ApiError } from '../../utils/ApiError';
 import { BranchScope } from '../../utils/branchScope';
 import { syncLowStockNotifications } from '../../utils/stockAlerts';
 import { adjustSystemAccountBalance } from '../../utils/systemAccounts';
+import { financeClosingService } from '../finance/financeClosing.service';
 import {
   QuotationConvertInput,
   SaleInput,
@@ -59,6 +60,8 @@ interface SalesListFilters {
   branchId?: number;
   docType?: string;
   includeVoided?: boolean;
+  fromDate?: string;
+  toDate?: string;
 }
 
 interface UpdateSaleContext {
@@ -641,7 +644,7 @@ const listScopeCondition = (scope: BranchScope, branchId?: number) => {
 export const salesService = {
   async listSales(scope: BranchScope, filters: SalesListFilters): Promise<Sale[]> {
     const schema = await getSalesSchemaMeta();
-    const { search, status, branchId, docType, includeVoided } = filters;
+    const { search, status, branchId, docType, includeVoided, fromDate, toDate } = filters;
     const scoped = listScopeCondition(scope, branchId);
     const params = scoped.params;
     const clauses = scoped.clauses;
@@ -661,6 +664,12 @@ export const salesService = {
       clauses.push(`s.status = $${params.length}`);
     } else if (!includeVoided) {
       clauses.push(`s.status <> 'void'`);
+    }
+    if (fromDate && toDate) {
+      params.push(fromDate);
+      clauses.push(`s.sale_date::date >= $${params.length}::date`);
+      params.push(toDate);
+      clauses.push(`s.sale_date::date <= $${params.length}::date`);
     }
 
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
@@ -885,6 +894,14 @@ export const salesService = {
         await client.query('ROLLBACK');
         return null;
       }
+
+      await financeClosingService.autoUnlockPeriodForDate(
+        client,
+        Number(current.branch_id),
+        current.sale_date,
+        ctx?.userId ?? null,
+        `Auto reopen for sale edit #${current.sale_id}`
+      );
 
       const currentItems = await listSaleItemsTx(client, id);
       const rawItems = input.items ? input.items : currentItems.map(mapCurrentItemToInput);
@@ -1140,6 +1157,14 @@ export const salesService = {
         await client.query('ROLLBACK');
         return null;
       }
+
+      await financeClosingService.autoUnlockPeriodForDate(
+        client,
+        Number(current.branch_id),
+        current.sale_date,
+        context.userId ?? null,
+        `Auto reopen for sale void #${current.sale_id}`
+      );
       if (current.status === 'void') {
         await client.query('COMMIT');
         return current;
@@ -1294,7 +1319,7 @@ export const salesService = {
     );
   },
 
-  async deleteSale(id: number, scope: BranchScope): Promise<void> {
+  async deleteSale(id: number, scope: BranchScope, context?: { userId?: number | null }): Promise<void> {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -1309,6 +1334,14 @@ export const salesService = {
       if (!(current.status === 'void' || allowQuotationDelete)) {
         throw ApiError.badRequest('Only voided sales or quotations can be deleted');
       }
+
+      await financeClosingService.autoUnlockPeriodForDate(
+        client,
+        Number(current.branch_id),
+        current.sale_date,
+        context?.userId ?? null,
+        `Auto reopen for sale delete #${current.sale_id}`
+      );
 
       await client.query(`DELETE FROM ims.sale_items WHERE sale_id = $1`, [id]);
       await client.query(`DELETE FROM ims.sales WHERE sale_id = $1`, [id]);

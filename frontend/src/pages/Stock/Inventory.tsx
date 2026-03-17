@@ -7,6 +7,7 @@ import { Modal } from '../../components/ui/modal/Modal';
 import { inventoryService } from '../../services/inventory.service';
 import { productService } from '../../services/product.service';
 import { useToast } from '../../components/ui/toast/Toast';
+import { defaultDateRange } from '../../utils/dateRange';
 
 const Inventory = () => {
   const { showToast } = useToast();
@@ -15,6 +16,7 @@ const Inventory = () => {
   const [loadingStock, setLoadingStock] = useState(false);
   const [loadingMove, setLoadingMove] = useState(false);
   const [filters, setFilters] = useState({ branchId: '', whId: '', productId: '', search: '' });
+  const [dateRange, setDateRange] = useState(() => defaultDateRange());
   const [showAdjust, setShowAdjust] = useState(false);
   const [showTransfer, setShowTransfer] = useState(false);
   const [products, setProducts] = useState<any[]>([]);
@@ -56,12 +58,18 @@ const Inventory = () => {
   };
 
   const loadMovements = async () => {
+    if (dateRange.fromDate && dateRange.toDate && dateRange.fromDate > dateRange.toDate) {
+      showToast('error', 'Inventory', 'From date cannot be after To date');
+      return;
+    }
     setLoadingMove(true);
     const res = await inventoryService.listMovements({
       ...filters,
       branchId: filters.branchId || undefined,
       whId: filters.whId || undefined,
       productId: filters.productId || undefined,
+      fromDate: dateRange.fromDate,
+      toDate: dateRange.toDate,
     });
     setLoadingMove(false);
     if (res.success && res.data?.rows) setMovements(res.data.rows);
@@ -128,7 +136,7 @@ const Inventory = () => {
       />
 
       <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 mb-6">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
           <input
             className="rounded-lg border px-3 py-2 text-sm"
             placeholder="Search product..."
@@ -152,6 +160,18 @@ const Inventory = () => {
             placeholder="Product ID"
             value={filters.productId}
             onChange={(e) => setFilters({ ...filters, productId: e.target.value })}
+          />
+          <input
+            type="date"
+            className="rounded-lg border px-3 py-2 text-sm"
+            value={dateRange.fromDate}
+            onChange={(e) => setDateRange((prev) => ({ ...prev, fromDate: e.target.value }))}
+          />
+          <input
+            type="date"
+            className="rounded-lg border px-3 py-2 text-sm"
+            value={dateRange.toDate}
+            onChange={(e) => setDateRange((prev) => ({ ...prev, toDate: e.target.value }))}
           />
         </div>
         <div className="flex justify-end mt-3">

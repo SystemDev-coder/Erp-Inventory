@@ -576,7 +576,14 @@ const applyPurchasePayment = async (
 };
 
 export const purchasesService = {
-  async listPurchases(scope: BranchScope, search?: string, status?: string, branchId?: number): Promise<Purchase[]> {
+  async listPurchases(
+    scope: BranchScope,
+    search?: string,
+    status?: string,
+    branchId?: number,
+    fromDate?: string,
+    toDate?: string
+  ): Promise<Purchase[]> {
     const params: any[] = [];
     const clauses: string[] = [];
     if (branchId) {
@@ -593,6 +600,12 @@ export const purchasesService = {
     if (status && status !== 'all') {
       params.push(status);
       clauses.push(`p.status = $${params.length}`);
+    }
+    if (fromDate && toDate) {
+      params.push(fromDate);
+      clauses.push(`p.purchase_date::date >= $${params.length}::date`);
+      params.push(toDate);
+      clauses.push(`p.purchase_date::date <= $${params.length}::date`);
     }
 
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';

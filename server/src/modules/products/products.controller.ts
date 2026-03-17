@@ -42,6 +42,8 @@ const parseListFilters = (query: Record<string, unknown>) => {
     includeInactive: parsed.includeInactive,
     page: parsed.page,
     limit: parsed.limit,
+    fromDate: parsed.fromDate,
+    toDate: parsed.toDate,
   };
 };
 

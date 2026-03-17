@@ -85,6 +85,19 @@ export const getStockAdjustmentLogReport = asyncHandler(async (req: AuthRequest,
   });
 });
 
+export const getInventoryLossReport = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const branchId = await resolveBranchIdForReports(req);
+  const { fromDate, toDate } = parseDateRange(req);
+  const rows = await inventoryReportsService.getInventoryLoss(branchId, fromDate, toDate);
+  return ApiResponse.success(res, {
+    branchId,
+    reportKey: 'inventory-loss',
+    fromDate,
+    toDate,
+    rows,
+  });
+});
+
 export const getStoreStockReport = asyncHandler(async (req: AuthRequest, res: Response) => {
   const branchId = await resolveBranchIdForReports(req);
   const mode = parseSelectionMode(req.query.mode);

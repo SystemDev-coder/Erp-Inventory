@@ -24,7 +24,7 @@ router.get('/proxy', (req, res) => {
   }
 
   const client = url.startsWith('https') ? https : http;
-  client
+  return client
     .get(url, (upstream) => {
       if (upstream.statusCode && upstream.statusCode >= 400) {
         res.status(upstream.statusCode).end();

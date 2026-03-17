@@ -48,6 +48,7 @@ import {
   closeClosingPeriod,
   reopenClosingPeriod,
   getClosingSummary,
+  postProfitDistribution,
   listProfitShareRules,
   saveProfitShareRule,
   runScheduledClosings,
@@ -114,6 +115,7 @@ router.post('/closing/periods/:id/preview', requireAnyPerm(['finance.reports', '
 router.post('/closing/periods/:id/close', requireAnyPerm(['finance.reports', 'accounts.view']), closeClosingPeriod);
 router.post('/closing/periods/:id/reopen', requireAnyPerm(['system.settings']), reopenClosingPeriod);
 router.get('/closing/periods/:id/summary', requireAnyPerm(['finance.reports', 'accounts.view']), getClosingSummary);
+router.post('/closing/periods/:id/transfer', requireAnyPerm(['finance.reports', 'accounts.view']), postProfitDistribution);
 router.get('/closing/rules', requireAnyPerm(['finance.reports', 'accounts.view']), listProfitShareRules);
 router.post('/closing/rules', requireAnyPerm(['finance.reports', 'accounts.view']), saveProfitShareRule);
 router.post('/closing/run-scheduled', requireAnyPerm(['system.settings', 'finance.reports']), runScheduledClosings);

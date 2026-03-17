@@ -13,13 +13,13 @@ export class AuthController {
       const validatedData = signupSchema.parse(req.body);
       const result = await authService.signup(validatedData);
 
-      res.status(201).json({
+      return res.status(201).json({
         success: true,
         message: 'User registered successfully',
         data: result,
       });
     } catch (error) {
-      next(error);
+      return next(error);
     }
   }
 
@@ -40,7 +40,7 @@ export class AuthController {
         path: '/',
       });
 
-      res.json({
+      return res.json({
         success: true,
         message: 'Login successful',
         data: {
@@ -49,7 +49,7 @@ export class AuthController {
         },
       });
     } catch (error) {
-      next(error);
+      return next(error);
     }
   }
 
@@ -69,13 +69,13 @@ export class AuthController {
 
       const result = await authService.refresh(refreshToken);
 
-      res.json({
+      return res.json({
         success: true,
         message: 'Token refreshed successfully',
         data: result,
       });
     } catch (error) {
-      next(error);
+      return next(error);
     }
   }
 
@@ -93,12 +93,12 @@ export class AuthController {
 
       const profile = await authService.getProfile(req.user.userId);
 
-      res.json({
+      return res.json({
         success: true,
         data: profile,
       });
     } catch (error) {
-      next(error);
+      return next(error);
     }
   }
 
@@ -121,12 +121,12 @@ export class AuthController {
         path: '/',
       });
 
-      res.json({
+      return res.json({
         success: true,
         message: 'Logged out successfully',
       });
     } catch (error) {
-      next(error);
+      return next(error);
     }
   }
 }

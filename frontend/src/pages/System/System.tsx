@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { History, Lock, Pencil, Plus, Shield, Trash2, Users } from 'lucide-react';
+import { Lock, Pencil, Plus, Shield, Trash2, Users } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
 import { Tabs } from '../../components/ui/tabs';
 import { Modal } from '../../components/ui/modal/Modal';
@@ -7,28 +7,17 @@ import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { useToast } from '../../components/ui/toast/Toast';
 import {
   systemService,
-  SystemAuditLog,
   SystemBranch,
   SystemPermission,
   SystemRole,
   SystemUser,
 } from '../../services/system.service';
 
-const LOGS_LIMIT = 20;
 const SHOW_PERMISSION_TAB = false;
-const todayDateInput = () => {
-  const now = new Date();
-  const yyyy = now.getFullYear();
-  const mm = String(now.getMonth() + 1).padStart(2, '0');
-  const dd = String(now.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-};
 type ConfirmTarget =
   | { type: 'user'; payload: SystemUser }
   | { type: 'role'; payload: SystemRole }
-  | { type: 'permission'; payload: SystemPermission }
-  | { type: 'log'; payload: SystemAuditLog }
-  | { type: 'clearLogs' };
+  | { type: 'permission'; payload: SystemPermission };
 
 const System = () => {
   const { showToast } = useToast();
@@ -36,19 +25,12 @@ const System = () => {
   const [roles, setRoles] = useState<SystemRole[]>([]);
   const [permissions, setPermissions] = useState<SystemPermission[]>([]);
   const [branches, setBranches] = useState<SystemBranch[]>([]);
-  const [logs, setLogs] = useState<SystemAuditLog[]>([]);
-  const [logsStartDate, setLogsStartDate] = useState(todayDateInput);
-  const [logsEndDate, setLogsEndDate] = useState(todayDateInput);
-  const [logsDisplayed, setLogsDisplayed] = useState(false);
-  const [logsLoading, setLogsLoading] = useState(false);
   const [usersDisplayed, setUsersDisplayed] = useState(false);
   const [rolesDisplayed, setRolesDisplayed] = useState(false);
   const [permissionsDisplayed, setPermissionsDisplayed] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [loadingRoles, setLoadingRoles] = useState(false);
   const [loadingPermissions, setLoadingPermissions] = useState(false);
-  const [logsPage, setLogsPage] = useState(1);
-  const [logsTotal, setLogsTotal] = useState(0);
   const [userModalOpen, setUserModalOpen] = useState(false);
   const [savingUser, setSavingUser] = useState(false);
   const [editingUser, setEditingUser] = useState<SystemUser | null>(null);
@@ -144,28 +126,6 @@ const System = () => {
     return [];
   }, [showToast]);
 
-  const loadLogs = useCallback(async (page = 1) => {
-    if (!logsStartDate || !logsEndDate) {
-      showToast('error', 'Activity Logs', 'Select start and end date first');
-      return;
-    }
-    if (logsStartDate > logsEndDate) {
-      showToast('error', 'Activity Logs', 'End date must be after start date');
-      return;
-    }
-
-    setLogsLoading(true);
-    const res = await systemService.getLogs(page, LOGS_LIMIT, logsStartDate, logsEndDate);
-    setLogsLoading(false);
-    if (res.success && res.data?.logs) {
-      setLogs(res.data.logs);
-      setLogsPage(res.data.page || page);
-      setLogsTotal(res.data.total || 0);
-      setLogsDisplayed(true);
-      return;
-    }
-    showToast('error', 'Activity Logs', res.error || 'Failed to load logs');
-  }, [logsEndDate, logsStartDate, showToast]);
 
   useEffect(() => {
     void loadBranches();
@@ -362,9 +322,6 @@ const System = () => {
   const requestDeletePermission = (permission: SystemPermission) =>
     setConfirmTarget({ type: 'permission', payload: permission });
 
-  const requestDeleteLog = (log: SystemAuditLog) => setConfirmTarget({ type: 'log', payload: log });
-
-  const requestClearLogs = () => setConfirmTarget({ type: 'clearLogs' });
 
   const confirmAction = async () => {
     if (!confirmTarget) return;
@@ -393,22 +350,6 @@ const System = () => {
         showToast('success', 'Permissions', 'Permission deleted');
         await loadPermissions();
       }
-    } else if (confirmTarget.type === 'log') {
-      const res = await systemService.deleteLog(confirmTarget.payload.audit_id);
-      if (!res.success) {
-        showToast('error', 'Activity Logs', res.error || 'Delete failed');
-      } else {
-        showToast('success', 'Activity Logs', 'Log deleted');
-        if (logsDisplayed) await loadLogs(logsPage);
-      }
-    } else {
-      const res = await systemService.clearLogs();
-      if (!res.success) {
-        showToast('error', 'Activity Logs', res.error || 'Clear failed');
-      } else {
-        showToast('success', 'Activity Logs', 'Logs cleared');
-        if (logsDisplayed) await loadLogs(1);
-      }
     }
     setConfirmLoading(false);
     setConfirmTarget(null);
@@ -419,8 +360,7 @@ const System = () => {
     if (confirmTarget.type === 'user') return 'Delete User?';
     if (confirmTarget.type === 'role') return 'Delete Role?';
     if (confirmTarget.type === 'permission') return 'Delete Permission?';
-    if (confirmTarget.type === 'log') return 'Delete Activity Log?';
-    return 'Clear All Activity Logs?';
+    return '';
   })();
 
   const confirmMessage = (() => {
@@ -428,8 +368,7 @@ const System = () => {
     if (confirmTarget.type === 'user') return 'This user account and related assignments may stop working.';
     if (confirmTarget.type === 'role') return 'Users mapped to this role may lose access.';
     if (confirmTarget.type === 'permission') return 'This permission will be removed from role mappings.';
-    if (confirmTarget.type === 'log') return 'This audit entry will be removed permanently.';
-    return 'All audit logs will be deleted permanently.';
+    return '';
   })();
 
   const confirmHighlightedName = (() => {
@@ -550,88 +489,6 @@ const System = () => {
           },
         ]
       : []),
-    {
-      id: 'logs',
-      label: 'Activity Logs',
-      icon: History,
-      badge: logsTotal,
-      content: (
-        <div className="space-y-3">
-          <div className="flex flex-wrap items-end justify-between gap-2">
-            <div className="flex flex-wrap items-end gap-2">
-              <label className="flex flex-col gap-1 text-xs font-medium text-slate-600 dark:text-slate-300">
-                Start Date
-                <input
-                  type="date"
-                  value={logsStartDate}
-                  onChange={(e) => {
-                    setLogsStartDate(e.target.value);
-                    setLogsDisplayed(false);
-                    setLogs([]);
-                    setLogsPage(1);
-                    setLogsTotal(0);
-                  }}
-                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-                />
-              </label>
-              <label className="flex flex-col gap-1 text-xs font-medium text-slate-600 dark:text-slate-300">
-                End Date
-                <input
-                  type="date"
-                  value={logsEndDate}
-                  onChange={(e) => {
-                    setLogsEndDate(e.target.value);
-                    setLogsDisplayed(false);
-                    setLogs([]);
-                    setLogsPage(1);
-                    setLogsTotal(0);
-                  }}
-                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-                />
-              </label>
-              <button
-                onClick={() => loadLogs(1)}
-                className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
-                disabled={logsLoading}
-              >
-                {logsLoading ? 'Loading...' : 'Display'}
-              </button>
-            </div>
-            <button
-              onClick={requestClearLogs}
-              className="px-3 py-2 rounded-lg border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-300 text-sm hover:bg-rose-50 dark:hover:bg-rose-500/10 disabled:opacity-50"
-              disabled={!logsDisplayed || logsLoading || logsTotal === 0}
-            >
-              Clear All
-            </button>
-          </div>
-
-          {!logsDisplayed ? (
-            <div className="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-              Choose <span className="font-semibold">Start Date</span> and <span className="font-semibold">End Date</span>, then click <span className="font-semibold">Display</span>.
-            </div>
-          ) : logs.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-              No activity logs found for selected date range.
-            </div>
-          ) : (
-            <div className="overflow-x-auto bg-white rounded-xl border border-slate-200 p-4 dark:bg-slate-900 dark:border-slate-800">
-              <table className="min-w-full text-sm"><thead><tr className="text-left text-slate-500 dark:text-slate-300"><th>Action</th><th>Entity</th><th>User</th><th>Date</th><th>Actions</th></tr></thead><tbody>
-                {logs.map((l) => <tr key={l.audit_id} className="border-t border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200"><td>{l.action}</td><td>{l.entity || '-'}</td><td>{l.username || l.user_id || '-'}</td><td>{new Date(l.created_at).toLocaleString()}</td><td className="py-2"><button onClick={() => requestDeleteLog(l)} className="px-2 py-1 border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-300 rounded hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="w-3 h-3 inline" /></button></td></tr>)}
-              </tbody></table>
-            </div>
-          )}
-
-          <div className="flex justify-between text-sm text-slate-600 dark:text-slate-300">
-            <span>Page {logsPage} of {Math.max(1, Math.ceil(logsTotal / LOGS_LIMIT))}</span>
-            <div className="space-x-2">
-              <button onClick={() => loadLogs(Math.max(1, logsPage - 1))} disabled={!logsDisplayed || logsLoading || logsPage <= 1} className="px-3 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50">Prev</button>
-              <button onClick={() => loadLogs(logsPage + 1)} disabled={!logsDisplayed || logsLoading || logsPage * LOGS_LIMIT >= logsTotal} className="px-3 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50">Next</button>
-            </div>
-          </div>
-        </div>
-      ),
-    },
   ];
 
   return (
@@ -874,9 +731,9 @@ const System = () => {
         title={confirmTitle}
         highlightedName={confirmHighlightedName}
         message={confirmMessage}
-        confirmText={confirmTarget?.type === 'clearLogs' ? 'Clear All' : 'Delete'}
+        confirmText="Delete"
         cancelText="Cancel"
-        variant={confirmTarget?.type === 'clearLogs' ? 'warning' : 'danger'}
+        variant="danger"
         isLoading={confirmLoading}
       />
     </div>

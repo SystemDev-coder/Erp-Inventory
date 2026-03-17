@@ -62,7 +62,7 @@ export const schedulesService = {
 
     sql += ' ORDER BY s.start_date DESC, s.created_at DESC';
 
-    return query<Schedule>(sql, params);
+    return queryMany<Schedule>(sql, params);
   },
 
   async getById(id: number): Promise<Schedule | null> {
@@ -178,6 +178,6 @@ export const schedulesService = {
       ORDER BY s.start_date ASC
     `;
 
-    return query<Schedule>(sql, empId ? [empId] : []);
+    return queryMany<Schedule>(sql, empId ? [empId] : []);
   },
 };

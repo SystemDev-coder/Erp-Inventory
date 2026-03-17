@@ -12,6 +12,7 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { purchaseService, Purchase, PurchaseItemView } from '../../services/purchase.service';
 import { supplierService, Supplier } from '../../services/supplier.service';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
+import { defaultDateRange } from '../../utils/dateRange';
 
 type PurchaseForm = {
   purchase_id?: number;
@@ -35,6 +36,7 @@ const Purchases = () => {
   const [loading, setLoading] = useState(false);
   const [search] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | PurchaseForm['status']>('all');
+  const [dateRange, setDateRange] = useState(() => defaultDateRange());
   const [suppliersDisplayed, setSuppliersDisplayed] = useState(false);
   const [itemsDisplayed, setItemsDisplayed] = useState(false);
   const [purchasesDisplayed, setPurchasesDisplayed] = useState(false);
@@ -60,7 +62,12 @@ const Purchases = () => {
 
   const loadPurchases = async (term?: string, status?: string) => {
     setLoading(true);
-    const res = await purchaseService.list(term, status);
+    const res = await purchaseService.list({
+      search: term,
+      status,
+      fromDate: dateRange.fromDate,
+      toDate: dateRange.toDate,
+    });
     if (res.success && res.data?.purchases) {
       setPurchases(res.data.purchases);
     } else {
@@ -71,7 +78,11 @@ const Purchases = () => {
 
   const loadSuppliers = async (term?: string) => {
     setLoading(true);
-    const res = await supplierService.list(term);
+    const res = await supplierService.list({
+      search: term,
+      fromDate: dateRange.fromDate,
+      toDate: dateRange.toDate,
+    });
     if (res.success && res.data?.suppliers) {
       setSuppliers(res.data.suppliers);
     } else {
@@ -82,7 +93,11 @@ const Purchases = () => {
 
   const loadItems = async (term?: string) => {
     setLoading(true);
-    const res = await purchaseService.listItems({ search: term });
+    const res = await purchaseService.listItems({
+      search: term,
+      from: dateRange.fromDate,
+      to: dateRange.toDate,
+    });
     if (res.success && res.data?.items) {
       setItems(res.data.items);
     } else {
@@ -153,11 +168,21 @@ const Purchases = () => {
     if (exporting) return;
 
     setExporting(true);
-    const res = await purchaseService.exportXlsx({ search, status: statusFilter });
+    const res = await purchaseService.exportXlsx({
+      search,
+      status: statusFilter,
+      fromDate: dateRange.fromDate,
+      toDate: dateRange.toDate,
+    });
     setExporting(false);
 
     if (!res.success) {
       showToast('error', 'Export failed', res.error || 'Could not export purchases');
+      return;
+    }
+
+    if (!res.blob) {
+      showToast('error', 'Export failed', 'No file returned from server.');
       return;
     }
 
@@ -315,6 +340,12 @@ const Purchases = () => {
               void loadSuppliers();
             }}
             displayLoading={loading}
+            dateRange={{
+              fromDate: dateRange.fromDate,
+              toDate: dateRange.toDate,
+              onFromDateChange: (value) => setDateRange((prev) => ({ ...prev, fromDate: value })),
+              onToDateChange: (value) => setDateRange((prev) => ({ ...prev, toDate: value })),
+            }}
           />
           {!suppliersDisplayed && !loading && (
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
@@ -343,7 +374,27 @@ const Purchases = () => {
       icon: ShoppingBag,
       content: (
         <div className="space-y-2">
-          <div className="flex justify-end">
+          <div className="flex flex-wrap items-center justify-end gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                From Date
+              </span>
+              <input
+                type="date"
+                value={dateRange.fromDate}
+                onChange={(e) => setDateRange((prev) => ({ ...prev, fromDate: e.target.value }))}
+                className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              />
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                To Date
+              </span>
+              <input
+                type="date"
+                value={dateRange.toDate}
+                onChange={(e) => setDateRange((prev) => ({ ...prev, toDate: e.target.value }))}
+                className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              />
+            </div>
             <button
               type="button"
               disabled={loading}
@@ -391,6 +442,12 @@ const Purchases = () => {
             }}
             displayLoading={loading}
             onExport={downloadPurchasesXlsx}
+            dateRange={{
+              fromDate: dateRange.fromDate,
+              toDate: dateRange.toDate,
+              onFromDateChange: (value) => setDateRange((prev) => ({ ...prev, fromDate: value })),
+              onToDateChange: (value) => setDateRange((prev) => ({ ...prev, toDate: value })),
+            }}
           />
           <div className="flex flex-wrap gap-2 px-1">
             {statusFilters.map((s) => (

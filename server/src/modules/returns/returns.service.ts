@@ -906,13 +906,23 @@ export const returnsService = {
         );
     },
 
-    async listSalesReturns(scope: BranchScope): Promise<SalesReturn[]> {
+    async listSalesReturns(
+        scope: BranchScope,
+        dateRange?: { fromDate?: string; toDate?: string }
+    ): Promise<SalesReturn[]> {
         const params: any[] = [];
-        let where = '';
+        const whereParts: string[] = [];
         if (!scope.isAdmin) {
             params.push(scope.branchIds);
-            where = `WHERE sr.branch_id = ANY($1)`;
+            whereParts.push(`sr.branch_id = ANY($${params.length})`);
         }
+        if (dateRange?.fromDate && dateRange?.toDate) {
+            params.push(dateRange.fromDate);
+            whereParts.push(`sr.return_date::date >= $${params.length}::date`);
+            params.push(dateRange.toDate);
+            whereParts.push(`sr.return_date::date <= $${params.length}::date`);
+        }
+        const where = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
 
         return queryMany<SalesReturn>(
             `SELECT
@@ -1558,14 +1568,24 @@ export const returnsService = {
         }
     },
 
-    async listPurchaseReturns(scope: BranchScope): Promise<PurchaseReturn[]> {
+    async listPurchaseReturns(
+        scope: BranchScope,
+        dateRange?: { fromDate?: string; toDate?: string }
+    ): Promise<PurchaseReturn[]> {
         const supplierNameColumn = await getSupplierNameColumn();
         const params: any[] = [];
-        let where = '';
+        const whereParts: string[] = [];
         if (!scope.isAdmin) {
             params.push(scope.branchIds);
-            where = `WHERE pr.branch_id = ANY($1)`;
+            whereParts.push(`pr.branch_id = ANY($${params.length})`);
         }
+        if (dateRange?.fromDate && dateRange?.toDate) {
+            params.push(dateRange.fromDate);
+            whereParts.push(`pr.return_date::date >= $${params.length}::date`);
+            params.push(dateRange.toDate);
+            whereParts.push(`pr.return_date::date <= $${params.length}::date`);
+        }
+        const where = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
 
         return queryMany<PurchaseReturn>(
             `SELECT

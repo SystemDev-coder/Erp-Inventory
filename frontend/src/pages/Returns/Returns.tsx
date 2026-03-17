@@ -6,6 +6,7 @@ import { Tabs } from '../../components/ui/tabs';
 import { useToast } from '../../components/ui/toast/Toast';
 import { returnsService, PurchaseReturn, SalesReturn } from '../../services/returns.service';
 import DeleteConfirmModal from '../../components/ui/modal/DeleteConfirmModal';
+import { defaultDateRange } from '../../utils/dateRange';
 
 const tableHeadCls = 'px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400';
 const tableCellCls = 'px-3 py-2 text-sm text-slate-800 dark:text-slate-200';
@@ -29,12 +30,16 @@ const Returns = () => {
   const [purchaseRows, setPurchaseRows] = useState<PurchaseReturn[]>([]);
   const [salesDisplayed, setSalesDisplayed] = useState(false);
   const [purchaseDisplayed, setPurchaseDisplayed] = useState(false);
+  const [dateRange, setDateRange] = useState(() => defaultDateRange());
   const [deleteTarget, setDeleteTarget] = useState<DeleteReturnTarget | null>(null);
   const [deletingReturn, setDeletingReturn] = useState(false);
 
   const loadSalesReturns = async () => {
     setLoading(true);
-    const res = await returnsService.listSalesReturns();
+    const res = await returnsService.listSalesReturns({
+      fromDate: dateRange.fromDate,
+      toDate: dateRange.toDate,
+    });
     setLoading(false);
     if (res.success && res.data?.rows) {
       setSalesRows(res.data.rows);
@@ -45,7 +50,10 @@ const Returns = () => {
 
   const loadPurchaseReturns = async () => {
     setLoading(true);
-    const res = await returnsService.listPurchaseReturns();
+    const res = await returnsService.listPurchaseReturns({
+      fromDate: dateRange.fromDate,
+      toDate: dateRange.toDate,
+    });
     setLoading(false);
     if (res.success && res.data?.rows) {
       setPurchaseRows(res.data.rows);
@@ -117,7 +125,28 @@ const Returns = () => {
       badge: salesRows.length,
       content: (
         <div className="space-y-4">
-          <div className="flex items-center justify-end gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                From Date
+              </span>
+              <input
+                type="date"
+                value={dateRange.fromDate}
+                onChange={(e) => setDateRange((prev) => ({ ...prev, fromDate: e.target.value }))}
+                className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              />
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                To Date
+              </span>
+              <input
+                type="date"
+                value={dateRange.toDate}
+                onChange={(e) => setDateRange((prev) => ({ ...prev, toDate: e.target.value }))}
+                className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              />
+            </div>
+            <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => {
@@ -136,6 +165,7 @@ const Returns = () => {
             >
               <Plus className="h-4 w-4" /> New Return
             </button>
+            </div>
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
@@ -209,7 +239,28 @@ const Returns = () => {
       badge: purchaseRows.length,
       content: (
         <div className="space-y-4">
-          <div className="flex items-center justify-end gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                From Date
+              </span>
+              <input
+                type="date"
+                value={dateRange.fromDate}
+                onChange={(e) => setDateRange((prev) => ({ ...prev, fromDate: e.target.value }))}
+                className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              />
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                To Date
+              </span>
+              <input
+                type="date"
+                value={dateRange.toDate}
+                onChange={(e) => setDateRange((prev) => ({ ...prev, toDate: e.target.value }))}
+                className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              />
+            </div>
+            <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => {
@@ -228,6 +279,7 @@ const Returns = () => {
             >
               <Plus className="h-4 w-4" /> New Return
             </button>
+            </div>
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 overflow-hidden">

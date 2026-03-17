@@ -1,6 +1,7 @@
 import { PoolClient, QueryResult } from 'pg';
 import { pool } from '../../db/pool';
 import { queryMany, queryOne } from '../../db/query';
+import { adminQueryOne } from '../../db/adminQuery';
 import { ApiError } from '../../utils/ApiError';
 import { assertBranchAccess, BranchScope, pickBranchForWrite } from '../../utils/branchScope';
 import { logAudit } from '../../utils/audit';
@@ -26,11 +27,15 @@ interface ClosingSnapshot {
   grossProfit: number;
   expenseCharges: number;
   payrollExpense: number;
-  otherIncome: number;
   netIncome: number;
   stockValuation: number;
   cashBalance: number;
   capitalBalance: number;
+}
+
+interface ClosingValidationResult {
+  errors: string[];
+  warnings: string[];
 }
 
 interface RuleRow {
@@ -99,6 +104,8 @@ interface ClosingPeriodRow {
   summary_json: any;
   profit_json: any;
   journal_id: number | null;
+  closing_journal_id: number | null;
+  closing_reversal_journal_id: number | null;
   closed_at: string | null;
   closed_by: number | null;
   reopened_at: string | null;
@@ -113,12 +120,14 @@ interface CloseResult {
   rule: ResolvedRule;
   allocations: ProfitAllocation[];
   journalId: number | null;
+  closingJournalId: number | null;
   warnings: string[];
 }
 
 const roundMoney = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 const toMoney = (value: unknown) => roundMoney(Number(value || 0));
 const OPENING_EXPENSE_NOTE_PREFIX = '[OPENING BALANCE]';
+const CLOSING_ENTRY_NOTE_PREFIX = '[Closing Entry]';
 const openingExpensePredicate = (alias: string) =>
   `COALESCE(NULLIF(to_jsonb(${alias}) ->> 'is_opening_paid', '')::boolean, COALESCE(${alias}.note, '') ILIKE '${OPENING_EXPENSE_NOTE_PREFIX}%')`;
 
@@ -291,6 +300,7 @@ let schemaBootstrapPromise: Promise<void> | null = null;
 export const ensureFinanceClosingSchema = async () => {
   if (!schemaBootstrapPromise) {
     schemaBootstrapPromise = (async () => {
+      const queryOne = adminQueryOne;
       await queryOne(
         `CREATE TABLE IF NOT EXISTS ims.finance_closing_periods (
            closing_id BIGSERIAL PRIMARY KEY,
@@ -307,6 +317,8 @@ export const ensureFinanceClosingSchema = async () => {
            summary_json JSONB NOT NULL DEFAULT '{}'::jsonb,
            profit_json JSONB NOT NULL DEFAULT '{}'::jsonb,
            journal_id BIGINT REFERENCES ims.journal_entries(journal_id) ON UPDATE CASCADE ON DELETE SET NULL,
+           closing_journal_id BIGINT REFERENCES ims.journal_entries(journal_id) ON UPDATE CASCADE ON DELETE SET NULL,
+           closing_reversal_journal_id BIGINT REFERENCES ims.journal_entries(journal_id) ON UPDATE CASCADE ON DELETE SET NULL,
            created_by BIGINT REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE SET NULL,
            closed_by BIGINT REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE SET NULL,
            reopened_by BIGINT REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE SET NULL,
@@ -316,6 +328,31 @@ export const ensureFinanceClosingSchema = async () => {
            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
            CONSTRAINT chk_finance_closing_dates CHECK (period_from <= period_to),
            CONSTRAINT uq_finance_closing_period UNIQUE (branch_id, period_from, period_to)
+         )`
+      );
+
+      await queryOne(
+        `ALTER TABLE ims.finance_closing_periods
+           ADD COLUMN IF NOT EXISTS closing_journal_id BIGINT REFERENCES ims.journal_entries(journal_id) ON UPDATE CASCADE ON DELETE SET NULL,
+           ADD COLUMN IF NOT EXISTS closing_reversal_journal_id BIGINT REFERENCES ims.journal_entries(journal_id) ON UPDATE CASCADE ON DELETE SET NULL`
+      );
+
+      await queryOne(
+        `ALTER TABLE ims.journal_entries
+           ADD COLUMN IF NOT EXISTS is_closing_entry BOOLEAN NOT NULL DEFAULT FALSE,
+           ADD COLUMN IF NOT EXISTS closing_period_id BIGINT REFERENCES ims.finance_closing_periods(closing_id) ON UPDATE CASCADE ON DELETE SET NULL`
+      );
+
+      await queryOne(
+        `CREATE TABLE IF NOT EXISTS ims.finance_closing_summaries (
+           summary_id BIGSERIAL PRIMARY KEY,
+           closing_id BIGINT NOT NULL REFERENCES ims.finance_closing_periods(closing_id) ON UPDATE CASCADE ON DELETE CASCADE,
+           branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+           period_from DATE NOT NULL,
+           period_to DATE NOT NULL,
+           summary_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+           CONSTRAINT uq_finance_closing_summary UNIQUE (closing_id)
          )`
       );
 
@@ -411,9 +448,9 @@ export const ensureFinanceClosingSchema = async () => {
            END IF;
 
            IF ims.fn_finance_period_locked(v_branch_id, v_txn_date) THEN
-             SELECT period_from, period_to
-               INTO v_period
-               FROM ims.finance_closing_periods cp
+            SELECT closing_id, period_from, period_to
+              INTO v_period
+              FROM ims.finance_closing_periods cp
               WHERE cp.branch_id = v_branch_id
                 AND cp.status = 'closed'
                 AND cp.is_locked = TRUE
@@ -421,9 +458,20 @@ export const ensureFinanceClosingSchema = async () => {
               ORDER BY cp.period_to DESC
               LIMIT 1;
 
-             RAISE EXCEPTION 'Transaction date % is inside closed finance period (% to %). Reopen period before editing.',
-               v_txn_date, v_period.period_from, v_period.period_to
-               USING ERRCODE = 'P0001';
+            UPDATE ims.finance_closing_periods
+               SET is_locked = CASE WHEN closing_id = v_period.closing_id THEN FALSE ELSE TRUE END,
+                   status = CASE WHEN closing_id = v_period.closing_id THEN 'reopened' ELSE status END,
+                   reopened_at = CASE WHEN closing_id = v_period.closing_id THEN NOW() ELSE reopened_at END,
+                   reopened_by = CASE WHEN closing_id = v_period.closing_id THEN reopened_by ELSE reopened_by END,
+                   note = CASE
+                     WHEN closing_id = v_period.closing_id
+                       AND COALESCE(note, '') NOT ILIKE '%auto reopened%'
+                       THEN COALESCE(note, '') || ' [Auto reopened]'
+                     ELSE note
+                   END,
+                   updated_at = NOW()
+             WHERE branch_id = v_branch_id
+               AND status IN ('closed', 'reopened');
            END IF;
 
            IF TG_OP = 'DELETE' THEN
@@ -512,7 +560,8 @@ const computeClosingSnapshot = async (
     payrollExpense,
     expensePaid,
     payrollPaid,
-    otherIncome,
+    expenseLedger,
+    payrollLedger,
     stockValuation,
     cashBalance,
     capitalBalance,
@@ -612,11 +661,39 @@ const computeClosingSnapshot = async (
     ),
     queryAmount(
       runner,
-      `SELECT COALESCE(SUM(GREATEST(at.credit - at.debit, 0)), 0)::double precision AS amount
+      `SELECT COALESCE(SUM(ABS(COALESCE(at.debit, 0) - COALESCE(at.credit, 0))), 0)::double precision AS amount
          FROM ims.account_transactions at
+         JOIN ims.accounts a ON a.acc_id = at.acc_id
         WHERE at.branch_id = $1
           AND at.txn_date::date BETWEEN $2::date AND $3::date
-          AND at.txn_type IN ('other', 'return_refund')`,
+          AND (
+            LOWER(COALESCE(a.account_type::text, '')) IN ('expense', 'cost')
+            OR LOWER(COALESCE(a.name, '')) LIKE '%expense%'
+            OR LOWER(COALESCE(a.name, '')) LIKE '%rent%'
+            OR LOWER(COALESCE(a.name, '')) LIKE '%cogs%'
+            OR LOWER(COALESCE(a.name, '')) LIKE '%cost of goods%'
+            OR LOWER(COALESCE(a.name, '')) LIKE '%purchase%'
+            OR LOWER(COALESCE(a.name, '')) LIKE '%depreciation%'
+          )
+          AND NOT (
+            LOWER(COALESCE(a.name, '')) LIKE '%payroll%'
+            OR LOWER(COALESCE(a.name, '')) LIKE '%salary%'
+            OR LOWER(COALESCE(a.name, '')) LIKE '%wage%'
+          )`,
+      params
+    ),
+    queryAmount(
+      runner,
+      `SELECT COALESCE(SUM(ABS(COALESCE(at.debit, 0) - COALESCE(at.credit, 0))), 0)::double precision AS amount
+         FROM ims.account_transactions at
+         JOIN ims.accounts a ON a.acc_id = at.acc_id
+        WHERE at.branch_id = $1
+          AND at.txn_date::date BETWEEN $2::date AND $3::date
+          AND (
+            LOWER(COALESCE(a.name, '')) LIKE '%payroll%'
+            OR LOWER(COALESCE(a.name, '')) LIKE '%salary%'
+            OR LOWER(COALESCE(a.name, '')) LIKE '%wage%'
+          )`,
       params
     ),
     queryAmount(
@@ -672,9 +749,9 @@ const computeClosingSnapshot = async (
   const fallbackCogs = roundMoney(Math.max(purchaseTotals - purchaseReturns, 0));
   const cogs = movementCogs > 0 ? movementCogs : fallbackCogs;
   const grossProfit = roundMoney(netRevenue - cogs);
-  const effectiveExpense = Math.max(expenseCharges, expensePaid);
-  const effectivePayroll = Math.max(payrollExpense, payrollPaid);
-  const netIncome = roundMoney(grossProfit - effectiveExpense - effectivePayroll + otherIncome);
+  const effectiveExpense = Math.max(expenseCharges, expensePaid, expenseLedger);
+  const effectivePayroll = Math.max(payrollExpense, payrollPaid, payrollLedger);
+  const netIncome = roundMoney(grossProfit - effectiveExpense - effectivePayroll);
 
   return {
     salesRevenue: grossSales,
@@ -684,12 +761,433 @@ const computeClosingSnapshot = async (
     grossProfit,
     expenseCharges: effectiveExpense,
     payrollExpense: effectivePayroll,
-    otherIncome,
     netIncome,
     stockValuation,
     cashBalance,
     capitalBalance,
   };
+};
+
+const resolveRetainedEarningsAccount = async (
+  runner: SqlRunner,
+  branchId: number
+): Promise<{ accId: number; name: string } | null> => {
+  const result = await runner.query(
+    `SELECT acc_id, name
+       FROM ims.accounts
+      WHERE branch_id = $1
+        AND is_active = TRUE
+        AND account_type = 'equity'
+      ORDER BY acc_id ASC`,
+    [branchId]
+  );
+  const rows = result.rows as Array<{ acc_id: number; name: string }>;
+  if (!rows.length) return null;
+  const retained = rows.find((row) => /retained|accumulated/i.test(row.name));
+  if (retained) return { accId: Number(retained.acc_id), name: retained.name };
+  const capital = rows.find((row) => /capital|owner|equity/i.test(row.name));
+  if (capital) return { accId: Number(capital.acc_id), name: capital.name };
+  const fallback = rows[0];
+  return fallback ? { accId: Number(fallback.acc_id), name: fallback.name } : null;
+};
+
+const fetchTemporaryAccountBalances = async (
+  runner: SqlRunner,
+  branchId: number,
+  toDate: string
+): Promise<Array<{ accId: number; name: string; accountType: string; balance: number }>> => {
+  const result = await runner.query(
+    `SELECT
+        a.acc_id,
+        a.name,
+        a.account_type,
+        COALESCE(txn.txn_count, 0)::int AS txn_count,
+        COALESCE(txn.txn_balance, 0)::double precision AS txn_balance,
+        COALESCE(a.balance, 0)::double precision AS base_balance
+       FROM ims.accounts a
+       LEFT JOIN (
+         SELECT
+           acc_id,
+           COUNT(*)::int AS txn_count,
+           COALESCE(SUM(credit - debit), 0)::double precision AS txn_balance
+          FROM ims.account_transactions
+         WHERE branch_id = $1
+           AND txn_date::date <= $2::date
+         GROUP BY acc_id
+       ) txn
+         ON txn.acc_id = a.acc_id
+      WHERE a.branch_id = $1
+        AND a.is_active = TRUE
+        AND a.account_type IN ('revenue', 'income', 'expense', 'cost')
+      ORDER BY a.acc_id ASC`,
+    [branchId, toDate]
+  );
+  const rows = result.rows as Array<{
+    acc_id: number;
+    name: string;
+    account_type: string;
+    txn_count: number;
+    txn_balance: number;
+    base_balance: number;
+  }>;
+  return rows.map((row) => ({
+    accId: Number(row.acc_id),
+    name: row.name,
+    accountType: row.account_type,
+    balance: Number(row.txn_count || 0) > 0 ? toMoney(row.txn_balance) : toMoney(row.base_balance),
+  }));
+};
+
+const buildClosingEntryLines = async (
+  runner: SqlRunner,
+  branchId: number,
+  toDate: string
+): Promise<{
+  lines: Array<{ accId: number; debit: number; credit: number; note: string }>;
+  retainedDelta: number;
+}> => {
+  const tempAccounts = await fetchTemporaryAccountBalances(runner, branchId, toDate);
+  const lines: Array<{ accId: number; debit: number; credit: number; note: string }> = [];
+  let totalDebit = 0;
+  let totalCredit = 0;
+
+  for (const account of tempAccounts) {
+    if (Math.abs(account.balance) < 0.005) continue;
+    if (account.balance > 0) {
+      const debit = roundMoney(account.balance);
+      lines.push({
+        accId: account.accId,
+        debit,
+        credit: 0,
+        note: `${CLOSING_ENTRY_NOTE_PREFIX} Close ${account.name}`,
+      });
+      totalDebit += debit;
+    } else {
+      const credit = roundMoney(Math.abs(account.balance));
+      lines.push({
+        accId: account.accId,
+        debit: 0,
+        credit,
+        note: `${CLOSING_ENTRY_NOTE_PREFIX} Close ${account.name}`,
+      });
+      totalCredit += credit;
+    }
+  }
+
+  const retainedDelta = roundMoney(totalDebit - totalCredit);
+  return { lines, retainedDelta };
+};
+
+const postClosingEntries = async (
+  client: PoolClient,
+  closingPeriod: ClosingPeriodRow,
+  userId: number | null
+): Promise<{ journalId: number | null; warnings: string[] }> => {
+  const warnings: string[] = [];
+  const toDate = toDateOnly(closingPeriod.period_to);
+  const { lines, retainedDelta } = await buildClosingEntryLines(client, Number(closingPeriod.branch_id), toDate);
+
+  if (lines.length === 0 && Math.abs(retainedDelta) < 0.005) {
+    return { journalId: null, warnings };
+  }
+
+  if (Math.abs(retainedDelta) >= 0.005) {
+    const retained = await resolveRetainedEarningsAccount(client, Number(closingPeriod.branch_id));
+    if (!retained) {
+      throw ApiError.badRequest('Retained earnings account is required for closing entries');
+    }
+    if (!/retained|accumulated/i.test(retained.name)) {
+      warnings.push(`Using equity account "${retained.name}" as retained earnings for closing.`);
+    }
+    if (retainedDelta > 0) {
+      lines.push({
+        accId: retained.accId,
+        debit: 0,
+        credit: roundMoney(retainedDelta),
+        note: `${CLOSING_ENTRY_NOTE_PREFIX} Transfer net income to retained earnings`,
+      });
+    } else {
+      lines.push({
+        accId: retained.accId,
+        debit: roundMoney(Math.abs(retainedDelta)),
+        credit: 0,
+        note: `${CLOSING_ENTRY_NOTE_PREFIX} Transfer net loss to retained earnings`,
+      });
+    }
+  }
+
+  if (lines.length === 0) {
+    return { journalId: null, warnings };
+  }
+
+  const journal = await client.query<{ journal_id: number }>(
+    `INSERT INTO ims.journal_entries
+       (branch_id, entry_date, memo, source_table, source_id, created_by, is_closing_entry, closing_period_id)
+     VALUES ($1, $2::date, $3, 'finance_closing_periods', $4, $5, TRUE, $4)
+     RETURNING journal_id`,
+    [
+      closingPeriod.branch_id,
+      toDate,
+      `Closing entries #${closingPeriod.closing_id} (${toDateOnly(closingPeriod.period_from)} to ${toDate})`,
+      closingPeriod.closing_id,
+      userId,
+    ]
+  );
+  const journalId = Number(journal.rows[0]?.journal_id || 0) || null;
+  if (!journalId) throw ApiError.internal('Failed to create closing journal entry');
+
+  for (const line of lines) {
+    await client.query(
+      `INSERT INTO ims.journal_lines (journal_id, acc_id, debit, credit, note)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [journalId, line.accId, line.debit, line.credit, line.note]
+    );
+
+    await client.query(
+      `INSERT INTO ims.account_transactions
+         (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
+       VALUES ($1, $2, 'other', 'finance_closing_periods', $3, $4, $5, $6::timestamptz, $7)`,
+      [
+        closingPeriod.branch_id,
+        line.accId,
+        closingPeriod.closing_id,
+        line.debit,
+        line.credit,
+        toDate,
+        line.note,
+      ]
+    );
+
+    const balanceDelta = roundMoney(line.credit - line.debit);
+    if (Math.abs(balanceDelta) > 0) {
+      await client.query(
+        `UPDATE ims.accounts
+            SET balance = balance + $3
+          WHERE branch_id = $1
+            AND acc_id = $2`,
+        [closingPeriod.branch_id, line.accId, balanceDelta]
+      );
+    }
+  }
+
+  return { journalId, warnings };
+};
+
+const reverseClosingEntries = async (
+  client: PoolClient,
+  closingPeriod: ClosingPeriodRow,
+  userId: number | null
+): Promise<number | null> => {
+  if (!closingPeriod.closing_journal_id) return null;
+  if (closingPeriod.closing_reversal_journal_id) return closingPeriod.closing_reversal_journal_id;
+
+  const linesResult = await client.query(
+    `SELECT acc_id, debit::double precision AS debit, credit::double precision AS credit, note
+       FROM ims.journal_lines
+      WHERE journal_id = $1
+      ORDER BY journal_line_id ASC`,
+    [closingPeriod.closing_journal_id]
+  );
+  const lines = linesResult.rows as Array<{ acc_id: number; debit: number; credit: number; note: string | null }>;
+  if (!lines.length) {
+    return null;
+  }
+
+  const toDate = toDateOnly(closingPeriod.period_to);
+  const journal = await client.query<{ journal_id: number }>(
+    `INSERT INTO ims.journal_entries
+       (branch_id, entry_date, memo, source_table, source_id, created_by, is_closing_entry, closing_period_id)
+     VALUES ($1, $2::date, $3, 'finance_closing_periods', $4, $5, TRUE, $4)
+     RETURNING journal_id`,
+    [
+      closingPeriod.branch_id,
+      toDate,
+      `Reversal of closing entries #${closingPeriod.closing_id}`,
+      closingPeriod.closing_id,
+      userId,
+    ]
+  );
+  const journalId = Number(journal.rows[0]?.journal_id || 0) || null;
+  if (!journalId) throw ApiError.internal('Failed to create closing reversal journal');
+
+  for (const line of lines) {
+    const debit = roundMoney(Number(line.credit || 0));
+    const credit = roundMoney(Number(line.debit || 0));
+    const note = line.note ? `${line.note} (Reversal)` : `${CLOSING_ENTRY_NOTE_PREFIX} Reversal`;
+
+    await client.query(
+      `INSERT INTO ims.journal_lines (journal_id, acc_id, debit, credit, note)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [journalId, line.acc_id, debit, credit, note]
+    );
+
+    await client.query(
+      `INSERT INTO ims.account_transactions
+         (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
+       VALUES ($1, $2, 'other', 'finance_closing_periods', $3, $4, $5, $6::timestamptz, $7)`,
+      [
+        closingPeriod.branch_id,
+        line.acc_id,
+        closingPeriod.closing_id,
+        debit,
+        credit,
+        toDate,
+        note,
+      ]
+    );
+
+    const balanceDelta = roundMoney(credit - debit);
+    if (Math.abs(balanceDelta) > 0) {
+      await client.query(
+        `UPDATE ims.accounts
+            SET balance = balance + $3
+          WHERE branch_id = $1
+            AND acc_id = $2`,
+        [closingPeriod.branch_id, line.acc_id, balanceDelta]
+      );
+    }
+  }
+
+  return journalId;
+};
+
+const runPreCloseValidation = async (
+  runner: SqlRunner,
+  branchId: number,
+  fromDate: string,
+  toDate: string,
+  stockValuation: number
+): Promise<ClosingValidationResult> => {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  const trialBalanceRes = await runner.query(
+    `SELECT
+        COALESCE(SUM(debit), 0)::double precision AS debit,
+        COALESCE(SUM(credit), 0)::double precision AS credit
+       FROM ims.account_transactions
+      WHERE branch_id = $1
+        AND txn_date::date BETWEEN $2::date AND $3::date`,
+    [branchId, fromDate, toDate]
+  );
+  const trialBalance = trialBalanceRes.rows[0] as { debit?: number; credit?: number } | undefined;
+  const totalDebit = toMoney(trialBalance?.debit);
+  const totalCredit = toMoney(trialBalance?.credit);
+  const diff = roundMoney(totalDebit - totalCredit);
+  if (Math.abs(diff) > 0.01) {
+    errors.push(`Trial balance is not balanced (debit ${totalDebit.toFixed(2)} vs credit ${totalCredit.toFixed(2)}).`);
+  }
+
+  const draftTransfersRes = await runner.query(
+    `SELECT COUNT(*)::int AS count
+       FROM ims.account_transfers
+      WHERE branch_id = $1
+        AND status = 'draft'
+        AND transfer_date::date BETWEEN $2::date AND $3::date`,
+    [branchId, fromDate, toDate]
+  );
+  const draftTransfers = draftTransfersRes.rows[0] as { count?: number } | undefined;
+  if ((draftTransfers?.count || 0) > 0) {
+    errors.push('There are draft account transfers in this period. Post or delete them before closing.');
+  }
+
+  const negativeStockRes = await runner.query(
+    `SELECT COUNT(*)::int AS count
+       FROM ims.store_items si
+       JOIN ims.stores s ON s.store_id = si.store_id
+      WHERE s.branch_id = $1
+        AND si.quantity < 0`,
+    [branchId]
+  );
+  const negativeStock = negativeStockRes.rows[0] as { count?: number } | undefined;
+  if ((negativeStock?.count || 0) > 0) {
+    errors.push('Negative inventory quantities exist. Adjust stock before closing.');
+  }
+
+  const negativeOpeningRes = await runner.query(
+    `SELECT COUNT(*)::int AS count
+       FROM ims.items i
+      WHERE i.branch_id = $1
+        AND COALESCE(i.opening_balance, 0) < 0`,
+    [branchId]
+  );
+  const negativeOpening = negativeOpeningRes.rows[0] as { count?: number } | undefined;
+  if ((negativeOpening?.count || 0) > 0) {
+    errors.push('Some items have negative opening balances. Fix opening inventory before closing.');
+  }
+
+  const pendingSalesRes = await runner.query(
+    `SELECT COUNT(*)::int AS count
+       FROM ims.sales s
+      WHERE s.branch_id = $1
+        AND s.sale_date::date BETWEEN $2::date AND $3::date
+        AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') = 'quotation'`,
+    [branchId, fromDate, toDate]
+  );
+  const pendingSales = pendingSalesRes.rows[0] as { count?: number } | undefined;
+  if ((pendingSales?.count || 0) > 0) {
+    errors.push('Sales quotations exist in this period. Finalize them before closing.');
+  }
+
+  const purchaseDraftsRes = await runner.query(
+    `SELECT COUNT(*)::int AS count
+       FROM ims.purchases p
+      WHERE p.branch_id = $1
+        AND p.purchase_date::date BETWEEN $2::date AND $3::date
+        AND COALESCE(p.status::text, '') = ''`,
+    [branchId, fromDate, toDate]
+  );
+  const purchaseDrafts = purchaseDraftsRes.rows[0] as { count?: number } | undefined;
+  if ((purchaseDrafts?.count || 0) > 0) {
+    warnings.push('Some purchases do not have a status. Review them before closing.');
+  }
+
+  const inventoryLedgerRes = await runner.query(
+    `WITH inv_txn AS (
+        SELECT
+          at.acc_id,
+          COUNT(*)::int AS txn_count,
+          COALESCE(SUM(at.credit - at.debit), 0)::double precision AS balance
+         FROM ims.account_transactions at
+         JOIN ims.accounts a ON a.acc_id = at.acc_id
+        WHERE at.branch_id = $1
+          AND at.txn_date::date <= $2::date
+          AND a.account_type = 'asset'
+          AND (LOWER(COALESCE(a.name, '')) LIKE '%inventory%' OR LOWER(COALESCE(a.name, '')) LIKE '%stock%')
+        GROUP BY at.acc_id
+      ),
+      inv_acc AS (
+        SELECT
+          a.acc_id,
+          COALESCE(a.balance, 0)::double precision AS base_balance
+        FROM ims.accounts a
+        WHERE a.branch_id = $1
+          AND a.account_type = 'asset'
+          AND a.is_active = TRUE
+          AND (LOWER(COALESCE(a.name, '')) LIKE '%inventory%' OR LOWER(COALESCE(a.name, '')) LIKE '%stock%')
+      )
+      SELECT COALESCE(SUM(
+        CASE
+          WHEN COALESCE(t.txn_count, 0) > 0 THEN t.balance
+          ELSE a.base_balance
+        END
+      ), 0)::double precision AS balance
+      FROM inv_acc a
+      LEFT JOIN inv_txn t ON t.acc_id = a.acc_id`,
+    [branchId, toDate]
+  );
+  const inventoryLedger = inventoryLedgerRes.rows[0] as { balance?: number } | undefined;
+  const inventoryBalance = toMoney(inventoryLedger?.balance);
+  const invDelta = roundMoney(stockValuation - inventoryBalance);
+  if (Math.abs(invDelta) > 0.5) {
+    errors.push(
+      `Inventory valuation mismatch (stock ${stockValuation.toFixed(2)} vs accounting ${inventoryBalance.toFixed(
+        2
+      )}).`
+    );
+  }
+
+  return { errors, warnings };
 };
 
 const loadRuleById = async (branchId: number, ruleId: number): Promise<ResolvedRule | null> => {
@@ -1047,8 +1545,8 @@ const closePeriodInternal = async (
     if (!period) throw ApiError.notFound('Closing period not found');
     assertBranchAccess(scope, Number(period.branch_id));
 
-    if (period.status === 'closed' && !action.force) {
-      throw ApiError.badRequest('This period is already closed');
+    if (period.status === 'closed') {
+      throw ApiError.badRequest('This period is already closed. Reopen it before closing again.');
     }
 
     const summary = await computeClosingSnapshot(
@@ -1057,11 +1555,31 @@ const closePeriodInternal = async (
       toDateOnly(period.period_from),
       toDateOnly(period.period_to)
     );
+    const validation = await runPreCloseValidation(
+      client,
+      Number(period.branch_id),
+      toDateOnly(period.period_from),
+      toDateOnly(period.period_to),
+      summary.stockValuation
+    );
+    if (validation.errors.length && !action.force) {
+      throw ApiError.badRequest(validation.errors.join(' '));
+    }
     const rule = await resolveRuleForPeriod(Number(period.branch_id), action, userId);
     const allocations = buildProfitAllocations(summary.netIncome, rule);
 
     const warnings: string[] = [];
+    warnings.push(...validation.warnings);
+    if (validation.errors.length) {
+      warnings.push(...validation.errors);
+    }
     let journalId: number | null = null;
+    let closingJournalId: number | null = null;
+
+    const closingPost = await postClosingEntries(client, period, userId);
+    closingJournalId = closingPost.journalId;
+    warnings.push(...closingPost.warnings);
+
     if (action.autoTransfer && summary.netIncome > 0) {
       const posted = await postProfitShareJournal(client, period, allocations, rule, userId, Boolean(action.force));
       journalId = posted.journalId;
@@ -1089,6 +1607,21 @@ const closePeriodInternal = async (
     }
 
     await client.query(
+      `INSERT INTO ims.finance_closing_summaries
+         (closing_id, branch_id, period_from, period_to, summary_json)
+       VALUES ($1, $2, $3::date, $4::date, $5::jsonb)
+       ON CONFLICT (closing_id)
+       DO UPDATE SET summary_json = EXCLUDED.summary_json, period_from = EXCLUDED.period_from, period_to = EXCLUDED.period_to`,
+      [
+        closingId,
+        period.branch_id,
+        toDateOnly(period.period_from),
+        toDateOnly(period.period_to),
+        JSON.stringify(summary),
+      ]
+    );
+
+    await client.query(
       `UPDATE ims.finance_closing_periods
           SET status = 'closed',
               is_locked = TRUE,
@@ -1099,6 +1632,8 @@ const closePeriodInternal = async (
               summary_json = $3::jsonb,
               profit_json = $4::jsonb,
               journal_id = $5,
+              closing_journal_id = $6,
+              closing_reversal_journal_id = NULL,
               updated_at = NOW()
         WHERE closing_id = $1`,
       [
@@ -1110,9 +1645,11 @@ const closePeriodInternal = async (
           allocations,
           warnings,
           transferPosted: Boolean(journalId),
+          closingPosted: Boolean(closingJournalId),
           closedByMode: source,
         }),
         journalId,
+        closingJournalId,
       ]
     );
 
@@ -1135,6 +1672,7 @@ const closePeriodInternal = async (
         summary,
         allocations,
         journalId,
+        closingJournalId,
         closedByMode: source,
       },
     });
@@ -1145,12 +1683,61 @@ const closePeriodInternal = async (
       rule,
       allocations,
       journalId,
+      closingJournalId,
       warnings,
     };
   });
 };
 
 export const financeClosingService = {
+  async autoUnlockPeriodForDate(
+    client: PoolClient,
+    branchId: number,
+    txnDate: string | Date | null | undefined,
+    userId: number | null,
+    reason?: string
+  ) {
+    await ensureFinanceClosingSchema();
+    if (!branchId || !txnDate) return null;
+    const periodResult = await client.query<ClosingPeriodRow>(
+      `SELECT *
+         FROM ims.finance_closing_periods
+        WHERE branch_id = $1
+          AND status = 'closed'
+          AND is_locked = TRUE
+          AND $2::date BETWEEN period_from AND period_to
+        ORDER BY period_to DESC
+        LIMIT 1
+        FOR UPDATE`,
+      [branchId, txnDate]
+    );
+    const period = periodResult.rows[0];
+    if (!period) return null;
+
+    await client.query(
+      `UPDATE ims.finance_closing_periods
+          SET is_locked = CASE WHEN closing_id = $2::bigint THEN FALSE ELSE TRUE END,
+              status = CASE WHEN closing_id = $2::bigint THEN 'reopened' ELSE status END,
+              reopened_at = CASE WHEN closing_id = $2::bigint THEN NOW() ELSE reopened_at END,
+              reopened_by = CASE WHEN closing_id = $2::bigint THEN $3::bigint ELSE reopened_by END,
+              note = CASE WHEN closing_id = $2::bigint THEN COALESCE($4, note) ELSE note END,
+              updated_at = NOW()
+        WHERE branch_id = $1`,
+      [branchId, period.closing_id, userId, reason || 'Auto reopened for edit']
+    );
+
+    await logAudit({
+      userId,
+      action: 'finance.close.auto_reopen',
+      entity: 'finance_closing_periods',
+      entityId: Number(period.closing_id),
+      branchId: Number(period.branch_id),
+      oldValue: { status: period.status, is_locked: period.is_locked },
+      newValue: { status: 'reopened', is_locked: false, reason: reason || null },
+    });
+
+    return period;
+  },
   async listPeriods(scope: BranchScope, input: ClosingPeriodsQueryInput) {
     await ensureFinanceClosingSchema();
     await financeClosingService.runScheduledClosings(scope, null);
@@ -1245,8 +1832,36 @@ export const financeClosingService = {
     if (!before) throw ApiError.notFound('Closing period not found');
     assertBranchAccess(scope, Number(before.branch_id));
 
+    let autoReopened = false;
     if (before.status === 'closed') {
-      throw ApiError.badRequest('Closed period must be reopened before editing');
+      await queryOne(
+        `UPDATE ims.finance_closing_periods
+            SET is_locked = CASE WHEN closing_id = $2::bigint THEN FALSE ELSE TRUE END,
+                status = CASE WHEN closing_id = $2::bigint THEN 'reopened' ELSE status END,
+                reopened_at = CASE WHEN closing_id = $2::bigint THEN NOW() ELSE reopened_at END,
+                reopened_by = CASE WHEN closing_id = $2::bigint THEN $3::bigint ELSE reopened_by END,
+                note = CASE
+                  WHEN closing_id = $2::bigint
+                    AND COALESCE(note, '') NOT ILIKE '%auto reopened%'
+                    THEN COALESCE(note, '') || ' [Auto reopened]'
+                  ELSE note
+                END,
+                updated_at = NOW()
+          WHERE branch_id = $1
+            AND status IN ('closed', 'reopened')`,
+        [before.branch_id, closingId, userId]
+      );
+      autoReopened = true;
+
+      await logAudit({
+        userId,
+        action: 'finance.close.auto_reopen',
+        entity: 'finance_closing_periods',
+        entityId: closingId,
+        branchId: Number(before.branch_id),
+        oldValue: { status: before.status, is_locked: before.is_locked },
+        newValue: { status: 'reopened', is_locked: false, reason: 'Auto reopened for edit' },
+      });
     }
 
     const basePeriodFrom = toDateOnly(before.period_from);
@@ -1304,6 +1919,9 @@ export const financeClosingService = {
     const shouldResetComputedData = periodWindowChanged;
 
     if (!settingsChanged && !periodWindowChanged) {
+      if (!autoReopened) return before;
+      const refreshed = await getClosingPeriod(pool, closingId);
+      if (refreshed) return refreshed;
       return before;
     }
 
@@ -1319,6 +1937,8 @@ export const financeClosingService = {
               summary_json = CASE WHEN $9 THEN '{}'::jsonb ELSE summary_json END,
               profit_json = CASE WHEN $9 THEN '{}'::jsonb ELSE profit_json END,
               journal_id = CASE WHEN $9 THEN NULL ELSE journal_id END,
+              closing_journal_id = CASE WHEN $9 THEN NULL ELSE closing_journal_id END,
+              closing_reversal_journal_id = CASE WHEN $9 THEN NULL ELSE closing_reversal_journal_id END,
               updated_at = NOW()
         WHERE closing_id = $1
         RETURNING *`,
@@ -1377,9 +1997,16 @@ export const financeClosingService = {
       toDateOnly(period.period_from),
       toDateOnly(period.period_to)
     );
+    const validation = await runPreCloseValidation(
+      pool,
+      Number(period.branch_id),
+      toDateOnly(period.period_from),
+      toDateOnly(period.period_to),
+      summary.stockValuation
+    );
     const rule = await resolveRuleForPeriod(Number(period.branch_id), input, userId);
     const allocations = buildProfitAllocations(summary.netIncome, rule);
-    const warnings: string[] = [];
+    const warnings: string[] = [...validation.warnings, ...validation.errors];
 
     if (summary.netIncome <= 0) {
       warnings.push('Net income is zero or negative. Profit sharing allocation will be skipped.');
@@ -1406,43 +2033,181 @@ export const financeClosingService = {
   async closePeriod(scope: BranchScope, closingId: number, input: ClosingActionInput, userId: number | null) {
     return closePeriodInternal(scope, closingId, input, userId, 'manual');
   },
+  async postProfitDistribution(scope: BranchScope, closingId: number, userId: number | null) {
+    await ensureFinanceClosingSchema();
+
+    return withTransaction(async (client) => {
+      const periodResult = await client.query<ClosingPeriodRow>(
+        `SELECT *
+           FROM ims.finance_closing_periods
+          WHERE closing_id = $1
+          FOR UPDATE`,
+        [closingId]
+      );
+      const period = periodResult.rows[0];
+      if (!period) throw ApiError.notFound('Closing period not found');
+      assertBranchAccess(scope, Number(period.branch_id));
+
+      if (period.status !== 'closed') {
+        throw ApiError.badRequest('Only closed periods can post profit distribution');
+      }
+      if (period.journal_id) {
+        throw ApiError.badRequest('Profit distribution already posted for this period');
+      }
+
+      const parsedSummary = parseJsonSafe<ClosingSnapshot | null>(period.summary_json, null);
+      const summary =
+        parsedSummary && !isEmptyObject(parsedSummary)
+          ? parsedSummary
+          : await computeClosingSnapshot(
+              client,
+              Number(period.branch_id),
+              toDateOnly(period.period_from),
+              toDateOnly(period.period_to)
+            );
+
+      if (summary.netIncome <= 0) {
+        throw ApiError.badRequest('Net income is zero or negative; no profit distribution available');
+      }
+
+      const profit = parseJsonSafe<any>(period.profit_json, {});
+      const fallbackRule = await resolveRuleForPeriod(
+        Number(period.branch_id),
+        { autoTransfer: false, saveRuleAsDefault: false, force: false },
+        userId
+      );
+      const rule = profit.rule ? (profit.rule as ResolvedRule) : fallbackRule;
+      const allocations =
+        Array.isArray(profit.allocations) && profit.allocations.length
+          ? (profit.allocations as ProfitAllocation[])
+          : buildProfitAllocations(summary.netIncome, rule);
+
+      if (!allocations.length) {
+        throw ApiError.badRequest('No allocation rows available for profit distribution');
+      }
+
+      const posted = await postProfitShareJournal(client, period, allocations, rule, userId, false);
+      const journalId = posted.journalId;
+      if (!journalId) {
+        const warning = posted.warnings.filter(Boolean).join(' ');
+        throw ApiError.badRequest(warning || 'Profit distribution not posted');
+      }
+
+      if (!Array.isArray(profit.allocations) || profit.allocations.length === 0) {
+        await client.query(`DELETE FROM ims.finance_profit_allocations WHERE closing_id = $1`, [closingId]);
+        for (const row of allocations) {
+          await client.query(
+            `INSERT INTO ims.finance_profit_allocations
+               (closing_id, branch_id, allocation_type, partner_name, share_pct, amount, acc_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [
+              closingId,
+              period.branch_id,
+              row.allocationType,
+              row.allocationType === 'partner' ? row.label : null,
+              row.sharePct,
+              row.amount,
+              row.accId,
+            ]
+          );
+        }
+      }
+
+      const existingWarnings = Array.isArray(profit.warnings) ? profit.warnings : [];
+      const nextProfit = {
+        ...profit,
+        rule,
+        allocations,
+        warnings: [...existingWarnings, ...posted.warnings],
+        transferPosted: true,
+        closingPosted: profit?.closingPosted ?? Boolean(period.closing_journal_id),
+      };
+
+      await client.query(
+        `UPDATE ims.finance_closing_periods
+            SET journal_id = $2,
+                profit_json = $3::jsonb,
+                updated_at = NOW()
+          WHERE closing_id = $1`,
+        [closingId, journalId, JSON.stringify(nextProfit)]
+      );
+
+      const updated = await getClosingPeriod(client, closingId);
+      if (!updated) throw ApiError.internal('Failed to update closing period');
+
+      await logAudit({
+        userId,
+        action: 'finance.close.transfer',
+        entity: 'finance_closing_periods',
+        entityId: closingId,
+        branchId: Number(period.branch_id),
+        oldValue: { journalId: period.journal_id, transferPosted: Boolean(profit?.transferPosted) },
+        newValue: { journalId, transferPosted: true },
+      });
+
+      return { period: updated, summary, profit: nextProfit, journalId };
+    });
+  },
 
   async reopenPeriod(scope: BranchScope, closingId: number, input: ClosingReopenInput, userId: number | null) {
     await ensureFinanceClosingSchema();
+    return withTransaction(async (client) => {
+      const periodResult = await client.query<ClosingPeriodRow>(
+        `SELECT *
+           FROM ims.finance_closing_periods
+          WHERE closing_id = $1
+          FOR UPDATE`,
+        [closingId]
+      );
+      const before = periodResult.rows[0];
+      if (!before) throw ApiError.notFound('Closing period not found');
+      assertBranchAccess(scope, Number(before.branch_id));
 
-    const before = await getClosingPeriod(pool, closingId);
-    if (!before) throw ApiError.notFound('Closing period not found');
-    assertBranchAccess(scope, Number(before.branch_id));
+      if (before.status !== 'closed') {
+        throw ApiError.badRequest('Only closed periods can be reopened');
+      }
 
-    if (before.status !== 'closed') {
-      throw ApiError.badRequest('Only closed periods can be reopened');
-    }
+      let reversalId = before.closing_reversal_journal_id ? Number(before.closing_reversal_journal_id) : null;
+      if (before.closing_journal_id && !reversalId) {
+        if (!input.reverseClosingEntries) {
+          throw ApiError.badRequest('Closing entries must be reversed before reopening this period.');
+        }
+        reversalId = await reverseClosingEntries(client, before, userId);
+      }
 
-    const reopened = await queryOne<ClosingPeriodRow>(
-      `UPDATE ims.finance_closing_periods
-          SET status = 'reopened',
-              is_locked = FALSE,
-              reopened_at = NOW(),
-              reopened_by = $2,
-              note = COALESCE($3, note),
-              updated_at = NOW()
-        WHERE closing_id = $1
-        RETURNING *`,
-      [closingId, userId, input.reason || null]
-    );
-    if (!reopened) throw ApiError.internal('Failed to reopen closing period');
+      const reopened = await client.query<ClosingPeriodRow>(
+        `UPDATE ims.finance_closing_periods
+            SET status = 'reopened',
+                is_locked = FALSE,
+                reopened_at = NOW(),
+                reopened_by = $2,
+                note = COALESCE($3, note),
+                closing_reversal_journal_id = COALESCE($4, closing_reversal_journal_id),
+                updated_at = NOW()
+          WHERE closing_id = $1
+          RETURNING *`,
+        [closingId, userId, input.reason || null, reversalId]
+      );
+      const reopenedRow = reopened.rows[0];
+      if (!reopenedRow) throw ApiError.internal('Failed to reopen closing period');
 
-    await logAudit({
-      userId,
-      action: 'finance.close.reopen',
-      entity: 'finance_closing_periods',
-      entityId: closingId,
-      branchId: Number(reopened.branch_id),
-      oldValue: { status: before.status, is_locked: before.is_locked },
-      newValue: { status: reopened.status, is_locked: reopened.is_locked, reason: input.reason || null },
+      await logAudit({
+        userId,
+        action: 'finance.close.reopen',
+        entity: 'finance_closing_periods',
+        entityId: closingId,
+        branchId: Number(reopenedRow.branch_id),
+        oldValue: { status: before.status, is_locked: before.is_locked },
+        newValue: {
+          status: reopenedRow.status,
+          is_locked: reopenedRow.is_locked,
+          reason: input.reason || null,
+          reversalJournalId: reversalId,
+        },
+      });
+
+      return reopenedRow;
     });
-
-    return reopened;
   },
 
   async getSummary(scope: BranchScope, closingId: number, options?: { live?: boolean }) {

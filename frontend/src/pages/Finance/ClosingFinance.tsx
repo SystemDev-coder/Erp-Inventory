@@ -118,12 +118,16 @@ const ClosingFinance = () => {
     period: FinanceClosingPeriod;
     summary: ClosingSnapshot | null;
     profit?: {
+      rule?: ProfitShareRule;
       allocations?: ProfitAllocation[];
       warnings?: string[];
+      transferPosted?: boolean;
     };
   } | null>(null);
+  const [postTransferBusy, setPostTransferBusy] = useState(false);
   const [reopenTarget, setReopenTarget] = useState<FinanceClosingPeriod | null>(null);
   const [reopenReason, setReopenReason] = useState('');
+  const [reopenReverse, setReopenReverse] = useState(false);
 
   const equityAccounts = useMemo(
     () =>
@@ -173,7 +177,7 @@ const ClosingFinance = () => {
 
   const createPeriod = async () => {
     if (!createForm.periodFrom || !createForm.periodTo) {
-      showToast({ type: 'error', title: 'Period dates are required' });
+      showToast('error', 'Period dates are required');
       return;
     }
     const payload = {
@@ -187,11 +191,11 @@ const ClosingFinance = () => {
     };
     const res = await financeService.createClosingPeriod(payload);
     if (res.success) {
-      showToast({ type: 'success', title: 'Closing period created' });
+      showToast('success', 'Closing period created');
       setCreateOpen(false);
       await loadData();
     } else {
-      showToast({ type: 'error', title: res.message || 'Failed to create period' });
+      showToast('error', 'Failed to create period', res.message);
     }
   };
 
@@ -212,7 +216,7 @@ const ClosingFinance = () => {
   const updatePeriod = async () => {
     if (!editTarget) return;
     if (!editForm.periodFrom || !editForm.periodTo) {
-      showToast({ type: 'error', title: 'Period dates are required' });
+      showToast('error', 'Period dates are required');
       return;
     }
     const payload = {
@@ -247,11 +251,11 @@ const ClosingFinance = () => {
         setSummaryOpen(true);
       }
 
-      showToast({ type: 'success', title: 'Closing period updated and preview refreshed' });
+      showToast('success', 'Closing period updated and preview refreshed');
       await loadData();
       return;
     }
-    showToast({ type: 'error', title: res.message || 'Failed to update period' });
+    showToast('error', 'Failed to update period', res.message);
   };
 
   const openCloseWizard = (period: FinanceClosingPeriod) => {
@@ -283,7 +287,7 @@ const ClosingFinance = () => {
     if (!closeTarget) return;
     const res = await financeService.previewClosingPeriod(closeTarget.closing_id, buildClosePayload());
     if (!res.success || !res.data?.preview) {
-      showToast({ type: 'error', title: res.message || 'Failed to preview closing' });
+      showToast('error', 'Failed to preview closing', res.message);
       return;
     }
     setPreviewData({
@@ -297,15 +301,15 @@ const ClosingFinance = () => {
   const closePeriod = async () => {
     if (!closeTarget) return;
     if (!confirmClose) {
-      showToast({ type: 'warning', title: 'Please confirm before closing this period' });
+      showToast('warning', 'Please confirm before closing this period');
       return;
     }
     const res = await financeService.closeClosingPeriod(closeTarget.closing_id, buildClosePayload());
     if (!res.success) {
-      showToast({ type: 'error', title: res.message || 'Failed to close period' });
+      showToast('error', 'Failed to close period', res.message);
       return;
     }
-    showToast({ type: 'success', title: 'Finance period closed successfully' });
+    showToast('success', 'Finance period closed successfully');
     setCloseOpen(false);
     resetCloseWizard();
     await loadData();
@@ -313,36 +317,58 @@ const ClosingFinance = () => {
 
   const reopenPeriod = async () => {
     if (!reopenTarget) return;
-    const res = await financeService.reopenClosingPeriod(reopenTarget.closing_id, { reason: reopenReason });
+    const res = await financeService.reopenClosingPeriod(reopenTarget.closing_id, {
+      reason: reopenReason,
+      reverseClosingEntries: reopenReverse,
+    });
     if (res.success) {
-      showToast({ type: 'success', title: 'Period reopened' });
+      showToast('success', 'Period reopened');
       setReopenTarget(null);
       setReopenReason('');
+      setReopenReverse(false);
       await loadData();
       return;
     }
-    showToast({ type: 'error', title: res.message || 'Failed to reopen period' });
+    showToast('error', 'Failed to reopen period', res.message);
   };
 
   const openSummary = async (period: FinanceClosingPeriod) => {
     const res = await financeService.getClosingSummary(period.closing_id);
     if (!res.success || !res.data?.summary) {
-      showToast({ type: 'error', title: res.message || 'Failed to load summary' });
+      showToast('error', 'Failed to load summary', res.message);
       return;
     }
     setSummaryData(res.data.summary);
     setSummaryOpen(true);
   };
 
+  const postProfitDistribution = async () => {
+    if (!summaryData) return;
+    setPostTransferBusy(true);
+    const res = await financeService.postClosingProfitDistribution(summaryData.period.closing_id);
+    if (!res.success) {
+      showToast('error', 'Failed to post profit distribution', res.message);
+      setPostTransferBusy(false);
+      return;
+    }
+    showToast('success', 'Profit distribution posted');
+    const refreshed = await financeService.getClosingSummary(summaryData.period.closing_id);
+    if (refreshed.success && refreshed.data?.summary) {
+      setSummaryData(refreshed.data.summary);
+    }
+    await loadData();
+    setPostTransferBusy(false);
+  };
+
   const runScheduled = async () => {
     const res = await financeService.runScheduledClosings();
     if (res.success) {
       const done = res.data?.result?.closed ?? 0;
-      showToast({ type: 'success', title: `Scheduled closing completed (${done} period${done === 1 ? '' : 's'})` });
+      showToast('success', `Scheduled closing completed (${done} period${done === 1 ? '' : 's'})`);
       await loadData();
       return;
     }
-    showToast({ type: 'error', title: res.message || 'Failed to run scheduled closing' });
+    showToast('error', 'Failed to run scheduled closing', res.message);
   };
 
   const updatePartner = (index: number, patch: Partial<{ partnerName: string; sharePct: number; accId: number | null }>) => {
@@ -519,10 +545,7 @@ const ClosingFinance = () => {
                               type="button"
                               onClick={() => {
                                 if (period.status === 'closed') {
-                                  showToast({
-                                    type: 'warning',
-                                    title: 'This period is closed. Reopen it first to edit dates.',
-                                  });
+                                  showToast('warning', 'This period is closed. Reopen it first to edit dates.');
                                   return;
                                 }
                                 openEditPeriod(period);
@@ -553,6 +576,7 @@ const ClosingFinance = () => {
                                 onClick={() => {
                                   setReopenTarget(period);
                                   setReopenReason('');
+                                  setReopenReverse(Boolean(period.closing_journal_id) && !period.closing_reversal_journal_id);
                                 }}
                                 className="rounded-lg border border-[#c58044] bg-[#fff6ed] px-3 py-1.5 text-xs font-semibold text-[#995923] hover:bg-[#ffe7d3]"
                               >
@@ -585,9 +609,8 @@ const ClosingFinance = () => {
                 className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
               >
                 <option value="monthly">Monthly</option>
-                <option value="quarterly">Quarterly</option>
                 <option value="yearly">Yearly</option>
-                <option value="custom">Custom</option>
+                <option value="quarterly">Quarterly</option>
               </select>
             </label>
             <div className="hidden md:block" />
@@ -688,9 +711,8 @@ const ClosingFinance = () => {
                 className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
               >
                 <option value="monthly">Monthly</option>
-                <option value="quarterly">Quarterly</option>
                 <option value="yearly">Yearly</option>
-                <option value="custom">Custom</option>
+                <option value="quarterly">Quarterly</option>
               </select>
             </label>
             <div className="hidden md:block" />
@@ -1160,6 +1182,40 @@ const ClosingFinance = () => {
               </div>
             </div>
 
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#d7e8f7] bg-white p-4">
+              <div className="space-y-1 text-sm text-[#4c7194]">
+                <div>
+                  Profit Distribution:{' '}
+                  {summaryData.period.journal_id
+                    ? `Posted (Journal #${summaryData.period.journal_id})`
+                    : summaryData.profit?.transferPosted
+                    ? 'Posted'
+                    : summaryData.summary && summaryData.summary.netIncome <= 0
+                    ? 'Not posted (Net income <= 0)'
+                    : 'Not posted'}
+                </div>
+                <div className="text-xs text-[#6a87a3]">
+                  Retained earnings source:{' '}
+                  {summaryData.profit?.rule?.sourceAccId
+                    ? accounts.find((acc) => acc.acc_id === summaryData.profit?.rule?.sourceAccId)?.name ||
+                      `Account #${summaryData.profit?.rule?.sourceAccId}`
+                    : 'Not configured'}
+                </div>
+              </div>
+              {summaryData.period.status === 'closed' &&
+                !summaryData.period.journal_id &&
+                (summaryData.summary?.netIncome ?? 0) > 0 && (
+                  <button
+                    type="button"
+                    onClick={postProfitDistribution}
+                    disabled={postTransferBusy || !summaryData.profit?.rule?.sourceAccId}
+                    className="rounded-xl border border-[#2e7e4f] bg-[#1f8f4d] px-4 py-2 text-sm font-semibold text-white hover:bg-[#16723d] disabled:cursor-not-allowed disabled:bg-[#8abf9b]"
+                  >
+                    {postTransferBusy ? 'Sharing...' : 'Share Profit'}
+                  </button>
+                )}
+            </div>
+
             {summaryData.summary && (
               <div className="grid gap-3 md:grid-cols-2">
                 {[
@@ -1168,7 +1224,6 @@ const ClosingFinance = () => {
                   ['COGS', summaryData.summary.cogs],
                   ['Expense Charges', summaryData.summary.expenseCharges],
                   ['Payroll Expense', summaryData.summary.payrollExpense],
-                  ['Other Income', summaryData.summary.otherIncome],
                   ['Net Income', summaryData.summary.netIncome],
                   ['Stock Valuation', summaryData.summary.stockValuation],
                 ].map(([label, value]) => (
@@ -1234,6 +1289,7 @@ const ClosingFinance = () => {
         onClose={() => {
           setReopenTarget(null);
           setReopenReason('');
+          setReopenReverse(false);
         }}
         title="Reopen Closing Period"
         size="md"
@@ -1245,6 +1301,21 @@ const ClosingFinance = () => {
           <div className="text-sm text-[#2a557b]">
             {reopenTarget ? `${formatDateOnly(reopenTarget.period_from)} to ${formatDateOnly(reopenTarget.period_to)}` : ''}
           </div>
+          {reopenTarget?.closing_journal_id && (
+            <div className="rounded-xl border border-[#f0d0b1] bg-[#fff4ea] p-3 text-xs text-[#7a4a12]">
+              Closing entries were posted for this period (Journal #{reopenTarget.closing_journal_id}).
+              Reverse them before unlocking transactions.
+            </div>
+          )}
+          <label className="flex items-start gap-3 rounded-xl border border-[#dde8f5] bg-[#f7fbff] p-3 text-sm text-[#274d70]">
+            <input
+              type="checkbox"
+              checked={reopenReverse}
+              onChange={(e) => setReopenReverse(e.target.checked)}
+              className="mt-1 h-4 w-4 rounded border-[#8fb3d6]"
+            />
+            <span>Reverse closing entries automatically when reopening.</span>
+          </label>
           <label className="space-y-1">
             <span className="text-sm font-semibold text-[#264c70]">Reason (optional)</span>
             <textarea

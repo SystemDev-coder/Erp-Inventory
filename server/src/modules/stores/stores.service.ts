@@ -61,6 +61,12 @@ export const storesService = {
     if (!filters.includeInactive) {
       where.push('s.is_active = TRUE');
     }
+    if (filters.fromDate && filters.toDate) {
+      params.push(filters.fromDate);
+      where.push(`s.created_at::date >= $${params.length}::date`);
+      params.push(filters.toDate);
+      where.push(`s.created_at::date <= $${params.length}::date`);
+    }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const count = await queryOne<{ total: string }>(

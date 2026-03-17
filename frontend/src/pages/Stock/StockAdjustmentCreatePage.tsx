@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router';
 import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
 import { useToast } from '../../components/ui/toast/Toast';
-import { inventoryService, InventoryItem, StockLevelRow } from '../../services/inventory.service';
+import { inventoryService, InventoryItem } from '../../services/inventory.service';
 
 type AdjustmentType = 'INCREASE' | 'DECREASE';
 

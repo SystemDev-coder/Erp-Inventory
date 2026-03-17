@@ -139,7 +139,11 @@ const scopedSupplier = async (
 };
 
 export const suppliersService = {
-  async listSuppliers(scope: BranchScope, search?: string): Promise<Supplier[]> {
+  async listSuppliers(
+    scope: BranchScope,
+    search?: string,
+    dateRange?: { fromDate?: string; toDate?: string }
+  ): Promise<Supplier[]> {
     const shape = await detectSupplierShape();
     const params: unknown[] = [];
     const where: string[] = [];
@@ -154,6 +158,13 @@ export const suppliersService = {
       where.push(
         `(${shape.nameColumn} ILIKE $${params.length} OR COALESCE(${shape.locationColumn}, '') ILIKE $${params.length} OR COALESCE(phone, '') ILIKE $${params.length})`
       );
+    }
+
+    if (dateRange?.fromDate && dateRange?.toDate) {
+      params.push(dateRange.fromDate);
+      where.push(`created_at::date >= $${params.length}::date`);
+      params.push(dateRange.toDate);
+      where.push(`created_at::date <= $${params.length}::date`);
     }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';

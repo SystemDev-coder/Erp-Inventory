@@ -18,6 +18,7 @@ export const pool = new Pool(poolConfig);
 pool.on('connect', async (client) => {
   try {
     await client.query(`SET search_path TO ${config.db.schema}, public`);
+    await client.query(`SET app.include_deleted = '0'`);
   } catch (error) {
     console.error('Failed to set search_path:', error);
   }

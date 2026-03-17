@@ -12,6 +12,8 @@ interface ImageUploadProps {
   maxSizeMB?: number;
   disabled?: boolean;
   maxWidthClass?: string; // allows parent to control rendered size
+  centered?: boolean;
+  variant?: 'card' | 'inline';
 }
 
 export const ImageUpload: React.FC<ImageUploadProps> = ({
@@ -23,6 +25,8 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
   maxSizeMB = 5,
   disabled = false,
   maxWidthClass = 'max-w-2xl',
+  centered = true,
+  variant = 'card',
 }) => {
   const { showToast } = useToast();
   const [preview, setPreview] = useState<string | null>(currentImage || null);
@@ -98,6 +102,73 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
     setDeleteConfirmOpen(true);
   };
 
+  if (variant === 'inline') {
+    return (
+      <>
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+            {label}
+          </label>
+          <div className={`w-full ${maxWidthClass} ${centered ? 'mx-auto' : 'mx-0'} rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-2`}>
+            <div className="flex items-center gap-3">
+              {preview && (
+                <img
+                  src={preview}
+                  alt="Preview"
+                  className="h-8 w-8 rounded object-cover border border-slate-200 dark:border-slate-700"
+                />
+              )}
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={disabled || uploading || deleting}
+                className="rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-1.5 text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {preview ? 'Change file' : 'Select file...'}
+              </button>
+              <span className="text-xs text-slate-500 dark:text-slate-400">
+                PNG, JPG, GIF, WEBP up to {maxSizeMB}MB
+              </span>
+              {onDelete && preview && (
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  disabled={disabled || uploading || deleting}
+                  className="ml-auto rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleFileSelect}
+            disabled={disabled || uploading || deleting}
+            className="hidden"
+          />
+        </div>
+        <ConfirmDialog
+          isOpen={deleteConfirmOpen}
+          onClose={() => {
+            if (!deleting) setDeleteConfirmOpen(false);
+          }}
+          onConfirm={() => {
+            void confirmDelete();
+          }}
+          title="Delete Image?"
+          message="Are you sure you want to delete this image?"
+          confirmText="Delete"
+          cancelText="Cancel"
+          variant="danger"
+          isLoading={deleting}
+        />
+      </>
+    );
+  }
+
   return (
     <>
       <div className="space-y-2">
@@ -105,7 +176,7 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
           {label}
         </label>
 
-        <div className={`relative ${aspectClasses[aspectRatio]} w-full ${maxWidthClass} mx-auto overflow-hidden rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 transition-all`}>
+        <div className={`relative ${aspectClasses[aspectRatio]} w-full ${maxWidthClass} ${centered ? 'mx-auto' : 'mx-0'} overflow-hidden rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 transition-all`}>
           {preview ? (
             <>
               {/* Image Preview */}

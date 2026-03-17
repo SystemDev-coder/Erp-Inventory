@@ -1,4 +1,5 @@
 import { queryMany, queryOne } from '../../db/query';
+import { adminQueryMany } from '../../db/adminQuery';
 import { BranchScope } from '../../utils/branchScope';
 import { ApiError } from '../../utils/ApiError';
 import { AccountInput } from './accounts.schemas';
@@ -43,11 +44,11 @@ const mapAccount = (row: {
 let accountsSchemaReady = false;
 const ensureAccountsSchema = async () => {
   if (accountsSchemaReady) return;
-  await queryMany(`
+  await adminQueryMany(`
     ALTER TABLE ims.accounts
       ADD COLUMN IF NOT EXISTS account_type VARCHAR(20) NOT NULL DEFAULT 'asset'
   `);
-  await queryMany(`
+  await adminQueryMany(`
     UPDATE ims.accounts
        SET account_type = 'asset'
      WHERE account_type IS NULL

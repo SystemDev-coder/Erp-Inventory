@@ -41,7 +41,15 @@ const customerUpdateSchema = customerBaseSchema
 export const listCustomers = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const search = req.query.search as string | undefined;
-  const customers = await customersService.listCustomers(scope, search);
+  const fromDate = req.query.fromDate as string | undefined;
+  const toDate = req.query.toDate as string | undefined;
+  if ((fromDate && !toDate) || (!fromDate && toDate)) {
+    throw ApiError.badRequest('Both fromDate and toDate are required together');
+  }
+  if (fromDate && toDate && fromDate > toDate) {
+    throw ApiError.badRequest('fromDate cannot be after toDate');
+  }
+  const customers = await customersService.listCustomers(scope, search, { fromDate, toDate });
   return ApiResponse.success(res, { customers });
 });
 

@@ -17,6 +17,7 @@ import {
     UnpaidSupplier,
     SupplierOutstandingPurchase,
 } from '../../services/finance.service';
+import { defaultDateRange } from '../../utils/dateRange';
 
 type ActiveTab = 'customer-receipts' | 'supplier-receipts';
 
@@ -76,6 +77,7 @@ const Receipts = () => {
     const [loading, setLoading] = useState(false);
     const [customerDisplayed, setCustomerDisplayed] = useState(false);
     const [supplierDisplayed, setSupplierDisplayed] = useState(false);
+    const [dateRange, setDateRange] = useState(() => defaultDateRange());
 
     // Data
     const [accounts, setAccounts] = useState<Account[]>([]);
@@ -111,8 +113,8 @@ const Receipts = () => {
         try {
             const [accRes, custRes, crRes, unpaidC] = await Promise.all([
                 accountService.list(),
-                customerService.list(),
-                financeService.listCustomerReceipts(),
+                customerService.list({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
+                financeService.listCustomerReceipts({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
                 financeService.listCustomerUnpaid(),
             ]);
             if (accRes.success && accRes.data?.accounts) setAccounts(accRes.data.accounts);
@@ -134,8 +136,8 @@ const Receipts = () => {
         try {
             const [accRes, supRes, srRes, unpaidS, outPurch] = await Promise.all([
                 accountService.list(),
-                supplierService.list(),
-                financeService.listSupplierReceipts(),
+                supplierService.list({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
+                financeService.listSupplierReceipts({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
                 financeService.listSupplierUnpaid(),
                 financeService.listSupplierOutstandingPurchases(),
             ]);
@@ -161,6 +163,14 @@ const Receipts = () => {
             return;
         }
         setCustomerDisplayed(true);
+        await loadCustomerData();
+    };
+
+    const loadAll = async () => {
+        if (activeTab === 'supplier-receipts') {
+            await loadSupplierData();
+            return;
+        }
         await loadCustomerData();
     };
 
@@ -536,6 +546,24 @@ const Receipts = () => {
 
                     {/* Toolbar */}
                     <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-semibold text-slate-600 whitespace-nowrap">
+                            From Date
+                        </span>
+                        <input
+                            type="date"
+                            value={dateRange.fromDate}
+                            onChange={(e) => setDateRange((prev) => ({ ...prev, fromDate: e.target.value }))}
+                            className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
+                        />
+                        <span className="text-xs font-semibold text-slate-600 whitespace-nowrap">
+                            To Date
+                        </span>
+                        <input
+                            type="date"
+                            value={dateRange.toDate}
+                            onChange={(e) => setDateRange((prev) => ({ ...prev, toDate: e.target.value }))}
+                            className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
+                        />
                         <button
                             type="button"
                             disabled={loading}
@@ -626,6 +654,24 @@ const Receipts = () => {
 
                     {/* Toolbar */}
                     <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-semibold text-slate-600 whitespace-nowrap">
+                            From Date
+                        </span>
+                        <input
+                            type="date"
+                            value={dateRange.fromDate}
+                            onChange={(e) => setDateRange((prev) => ({ ...prev, fromDate: e.target.value }))}
+                            className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                        />
+                        <span className="text-xs font-semibold text-slate-600 whitespace-nowrap">
+                            To Date
+                        </span>
+                        <input
+                            type="date"
+                            value={dateRange.toDate}
+                            onChange={(e) => setDateRange((prev) => ({ ...prev, toDate: e.target.value }))}
+                            className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                        />
                         <button
                             type="button"
                             disabled={loading}

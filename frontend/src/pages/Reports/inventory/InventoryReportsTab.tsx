@@ -3,7 +3,7 @@ import { ChevronDown, Loader2 } from 'lucide-react';
 import type { ReportColumn, ReportTotalItem } from '../../../components/reports/ReportModal';
 import { inventoryReportsService } from '../../../services/reports/inventoryReports.service';
 import type { DateRange, ModalReportState } from '../types';
-import { formatCurrency, formatDateOnly, formatDateTime, formatQuantity, toRecordRows, todayDate, defaultReportRange } from '../reportUtils';
+import { formatCurrency, formatDateOnly, formatDateTime, formatQuantity, toRecordRows, defaultReportRange } from '../reportUtils';
 
 type InventoryCardId =
   | 'current-stock'
@@ -12,6 +12,7 @@ type InventoryCardId =
   | 'valuation'
   | 'reorder-plan'
   | 'adjustments'
+  | 'inventory-loss'
   | 'store-stock'
   | 'store-wise';
 
@@ -22,6 +23,7 @@ const inventoryCards: Array<{ id: InventoryCardId; title: string; hint: string }
   { id: 'valuation', title: 'Inventory Valuation', hint: 'Current stock value' },
   { id: 'reorder-plan', title: 'Reorder Planning', hint: 'Useful restock suggestion' },
   { id: 'adjustments', title: 'Stock Adjustment Log', hint: 'Between two dates' },
+  { id: 'inventory-loss', title: 'Inventory Loss', hint: 'Lost/damaged adjustments' },
   { id: 'store-stock', title: 'Store Stock Report', hint: 'Show selected store or all' },
   { id: 'store-wise', title: 'Store-wise Stock', hint: 'Detailed by store' },
 ];
@@ -87,6 +89,18 @@ const adjustmentColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'created_by', header: 'Created By' },
 ];
 
+const lossColumns: ReportColumn<Record<string, unknown>>[] = [
+  { key: 'loss_id', header: 'Loss #' },
+  { key: 'loss_date', header: 'Date', render: (row) => formatDateTime(row.loss_date) },
+  { key: 'item_name', header: 'Item' },
+  { key: 'quantity', header: 'Qty Lost', align: 'right', render: (row) => formatQuantity(row.quantity) },
+  { key: 'unit_cost', header: 'Unit Cost', align: 'right', render: (row) => formatCurrency(row.unit_cost) },
+  { key: 'total_loss', header: 'Total Loss', align: 'right', render: (row) => formatCurrency(row.total_loss) },
+  { key: 'reason', header: 'Reason' },
+  { key: 'status', header: 'Status' },
+  { key: 'created_by', header: 'Created By' },
+];
+
 const storeStockColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'store_name', header: 'Store' },
   { key: 'item_count', header: 'Items', align: 'right' },
@@ -136,6 +150,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
 
   const [movementRange, setMovementRange] = useState<DateRange>(defaultReportRange());
   const [adjustmentRange, setAdjustmentRange] = useState<DateRange>(defaultReportRange());
+  const [lossRange, setLossRange] = useState<DateRange>(defaultReportRange());
 
   const [optionsLoading, setOptionsLoading] = useState(false);
   const [optionsError, setOptionsError] = useState('');
@@ -404,6 +419,36 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
       });
     });
 
+  const handleInventoryLoss = () =>
+    runCardAction('inventory-loss', async () => {
+      ensureRangeValid(lossRange, 'Inventory Loss');
+      const response = await inventoryReportsService.getInventoryLoss(lossRange);
+      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load inventory loss');
+      const rows = toRecordRows(response.data.rows || []);
+      const totalQty = sumByKey(rows, 'quantity');
+      const totalLoss = sumByKey(rows, 'total_loss');
+      onOpenModal({
+        title: 'Inventory Loss',
+        subtitle: `${formatDateOnly(lossRange.fromDate)} - ${formatDateOnly(lossRange.toDate)}`,
+        fileName: 'inventory-loss',
+        data: rows,
+        columns: lossColumns,
+        filters: { 'From Date': lossRange.fromDate, 'To Date': lossRange.toDate, Type: 'Decrease Adjustments' },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            quantity: formatQuantity(totalQty),
+            total_loss: formatCurrency(totalLoss),
+          },
+        },
+        totals: [
+          countTotal('Loss Records', rows.length),
+          quantityTotal('Total Qty Lost', totalQty),
+          moneyTotal('Total Loss', totalLoss),
+        ],
+      });
+    });
+
   const handleStoreStockReport = (mode: 'show' | 'all') =>
     runCardAction('store-stock', async () => {
       const storeId = mode === 'show' ? Number(selectedStoreSummaryId || 0) : undefined;
@@ -486,6 +531,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
     if (cardId === 'valuation') return <button onClick={handleInventoryValuation} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show Valuation</button>;
     if (cardId === 'reorder-plan') return <button onClick={handleReorderPlanning} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show Reorder Plan</button>;
     if (cardId === 'adjustments') return <div className="space-y-3">{renderDateRange(adjustmentRange, setAdjustmentRange)}<button onClick={handleStockAdjustmentLog} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
+    if (cardId === 'inventory-loss') return <div className="space-y-3">{renderDateRange(lossRange, setLossRange)}<button onClick={handleInventoryLoss} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
 
     if (cardId === 'store-stock') {
       return (

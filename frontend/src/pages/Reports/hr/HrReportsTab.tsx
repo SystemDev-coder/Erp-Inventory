@@ -3,13 +3,12 @@ import { ChevronDown, Loader2 } from 'lucide-react';
 import type { ReportColumn } from '../../../components/reports/ReportModal';
 import { hrReportsService } from '../../../services/reports/hrReports.service';
 import type { DateRange, ModalReportState } from '../types';
-import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, todayDate, defaultReportRange } from '../reportUtils';
+import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange } from '../reportUtils';
 
 type HrCardId =
   | 'employee-list'
   | 'payroll-summary'
   | 'salary-payments'
-  | 'employee-attendance'
   | 'loan-balances'
   | 'employee-ledger'
   | 'payroll-by-month'
@@ -19,7 +18,6 @@ const hrCards: Array<{ id: HrCardId; title: string; hint: string }> = [
   { id: 'employee-list', title: 'Employee List', hint: 'Dropdown + Show / All' },
   { id: 'payroll-summary', title: 'Payroll Summary', hint: 'Between two dates' },
   { id: 'salary-payments', title: 'Salary Payments', hint: 'Date range + Show / All' },
-  { id: 'employee-attendance', title: 'Employee Attendance', hint: 'Date range + Show / All' },
   { id: 'loan-balances', title: 'Loan Balances', hint: 'Dropdown + Show / All' },
   { id: 'employee-ledger', title: 'Employee Ledger', hint: 'Date range + Show / All' },
   { id: 'payroll-by-month', title: 'Payroll by Month', hint: 'Between two dates' },
@@ -66,16 +64,6 @@ const salaryPaymentsColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'note', header: 'Note' },
 ];
 
-const attendanceColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'assignment_id', header: 'Assignment #' },
-  { key: 'effective_date', header: 'Date' },
-  { key: 'employee_name', header: 'Employee' },
-  { key: 'role_name', header: 'Role / Department' },
-  { key: 'shift_type', header: 'Shift' },
-  { key: 'is_active', header: 'Active', render: (row) => (row.is_active ? 'Yes' : 'No') },
-  { key: 'employee_status', header: 'Employee Status' },
-];
-
 const loanBalancesColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'loan_id', header: 'Loan #' },
   { key: 'loan_date', header: 'Loan Date' },
@@ -92,8 +80,6 @@ const employeeLedgerColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'entry_date', header: 'Date', render: (row) => formatDateTime(row.entry_date) },
   { key: 'employee_name', header: 'Employee' },
   { key: 'entry_type', header: 'Type' },
-  { key: 'ref_table', header: 'Ref Table' },
-  { key: 'ref_id', header: 'Ref Id' },
   { key: 'amount_in', header: 'In', align: 'right', render: (row) => formatCurrency(row.amount_in) },
   { key: 'amount_out', header: 'Out', align: 'right', render: (row) => formatCurrency(row.amount_out) },
   { key: 'net_amount', header: 'Net', align: 'right', render: (row) => formatCurrency(row.net_amount) },
@@ -134,13 +120,11 @@ export function HrReportsTab({ onOpenModal }: Props) {
 
   const [selectedEmployeeListId, setSelectedEmployeeListId] = useState('');
   const [selectedSalaryEmployeeId, setSelectedSalaryEmployeeId] = useState('');
-  const [selectedAttendanceEmployeeId, setSelectedAttendanceEmployeeId] = useState('');
   const [selectedLoanEmployeeId, setSelectedLoanEmployeeId] = useState('');
   const [selectedLedgerEmployeeId, setSelectedLedgerEmployeeId] = useState('');
 
   const [payrollSummaryRange, setPayrollSummaryRange] = useState<DateRange>(defaultReportRange());
   const [salaryPaymentsRange, setSalaryPaymentsRange] = useState<DateRange>(defaultReportRange());
-  const [attendanceRange, setAttendanceRange] = useState<DateRange>(defaultReportRange());
   const [ledgerRange, setLedgerRange] = useState<DateRange>(defaultReportRange());
   const [payrollByMonthRange, setPayrollByMonthRange] = useState<DateRange>(defaultReportRange());
 
@@ -179,10 +163,6 @@ export function HrReportsTab({ onOpenModal }: Props) {
   const selectedSalaryEmployeeLabel = useMemo(
     () => employees.find((option) => String(option.id) === selectedSalaryEmployeeId)?.label || '',
     [employees, selectedSalaryEmployeeId]
-  );
-  const selectedAttendanceEmployeeLabel = useMemo(
-    () => employees.find((option) => String(option.id) === selectedAttendanceEmployeeId)?.label || '',
-    [employees, selectedAttendanceEmployeeId]
   );
   const selectedLoanEmployeeLabel = useMemo(
     () => employees.find((option) => String(option.id) === selectedLoanEmployeeId)?.label || '',
@@ -296,40 +276,6 @@ export function HrReportsTab({ onOpenModal }: Props) {
           label: 'Total',
           values: {
             amount_paid: formatCurrency(sumNumericField(rows, 'amount_paid')),
-          },
-        },
-      });
-    });
-
-  const handleAttendance = (mode: 'show' | 'all') =>
-    runCardAction('employee-attendance', async () => {
-      ensureRangeValid(attendanceRange, 'Employee Attendance');
-      const employeeId = mode === 'show' ? Number(selectedAttendanceEmployeeId || 0) : undefined;
-      if (mode === 'show' && !employeeId) throw new Error('Select an employee first');
-      const response = await hrReportsService.getEmployeeAttendance({
-        fromDate: attendanceRange.fromDate,
-        toDate: attendanceRange.toDate,
-        mode,
-        employeeId,
-      });
-      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load employee attendance');
-      const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
-        title: 'Employee Attendance',
-        subtitle: `${formatDateOnly(attendanceRange.fromDate)} - ${formatDateOnly(attendanceRange.toDate)}`,
-        fileName: 'employee-attendance',
-        data: rows,
-        columns: attendanceColumns,
-        filters: {
-          'From Date': attendanceRange.fromDate,
-          'To Date': attendanceRange.toDate,
-          Mode: mode === 'show' ? 'Show' : 'All',
-          Employee: mode === 'show' ? selectedAttendanceEmployeeLabel || 'Selected Employee' : 'All Employees',
-        },
-        tableTotals: {
-          label: 'Total',
-          values: {
-            assignment_id: rows.length.toLocaleString(),
           },
         },
       });
@@ -543,16 +489,6 @@ export function HrReportsTab({ onOpenModal }: Props) {
           {renderDateRange(salaryPaymentsRange, setSalaryPaymentsRange)}
           {renderEmployeeSelector(selectedSalaryEmployeeId, setSelectedSalaryEmployeeId)}
           {renderShowAllButtons(() => handleSalaryPayments('show'), () => handleSalaryPayments('all'), cardId)}
-        </div>
-      );
-    }
-
-    if (cardId === 'employee-attendance') {
-      return (
-        <div className="space-y-3">
-          {renderDateRange(attendanceRange, setAttendanceRange)}
-          {renderEmployeeSelector(selectedAttendanceEmployeeId, setSelectedAttendanceEmployeeId)}
-          {renderShowAllButtons(() => handleAttendance('show'), () => handleAttendance('all'), cardId)}
         </div>
       );
     }

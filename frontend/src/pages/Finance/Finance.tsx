@@ -21,6 +21,7 @@ import {
 } from '../../services/finance.service';
 import { Modal } from '../../components/ui/modal/Modal';
 import DeleteConfirmModal from '../../components/ui/modal/DeleteConfirmModal';
+import { defaultDateRange } from '../../utils/dateRange';
 
 const Finance = () => {
   const location = useLocation();
@@ -51,6 +52,7 @@ const Finance = () => {
   const firstLoadRef = useRef(true);
   const [custMonthOnly, setCustMonthOnly] = useState(false);
   const [supMonthOnly, setSupMonthOnly] = useState(false);
+  const [dateRange, setDateRange] = useState(() => defaultDateRange());
 
 const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
 const [editingAccount, setEditingAccount] = useState<Account | null>(null);
@@ -481,15 +483,15 @@ const [deletingBudget, setDeletingBudget] = useState(false);
     setLoading(true);
     const [acc, tr, cr, sr, ch, bd, ex, unpaidC, unpaidS, pr] = await Promise.all([
       accountService.list(),
-      financeService.listTransfers(),
-      financeService.listCustomerReceipts(),
-      financeService.listSupplierReceipts(),
-      financeService.listExpenseCharges(),
-      financeService.listExpenseBudgets(),
-      financeService.listExpenses(),
+      financeService.listTransfers({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
+      financeService.listCustomerReceipts({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
+      financeService.listSupplierReceipts({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
+      financeService.listExpenseCharges({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
+      financeService.listExpenseBudgets({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
+      financeService.listExpenses({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
       financeService.listCustomerUnpaid(custMonthOnly ? currentMonth() : undefined),
       financeService.listSupplierUnpaid(supMonthOnly ? currentMonth() : undefined),
-      financeService.listPayroll(payrollPeriod),
+      financeService.listPayroll({ period: payrollPeriod, fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
     ]);
     if (acc.success && acc.data?.accounts) setAccounts(acc.data.accounts);
     if (tr.success && tr.data?.transfers) setTransfers(tr.data.transfers);
@@ -525,6 +527,29 @@ const [deletingBudget, setDeletingBudget] = useState(false);
   const emptyHint = (message: string) => (
     <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
       {message}
+    </div>
+  );
+
+  const renderDateRange = () => (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
+        From Date
+      </span>
+      <input
+        type="date"
+        value={dateRange.fromDate}
+        onChange={(e) => setDateRange((prev) => ({ ...prev, fromDate: e.target.value }))}
+        className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+      />
+      <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
+        To Date
+      </span>
+      <input
+        type="date"
+        value={dateRange.toDate}
+        onChange={(e) => setDateRange((prev) => ({ ...prev, toDate: e.target.value }))}
+        className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+      />
     </div>
   );
 
@@ -1010,21 +1035,24 @@ const submitBudgetCharge = async () => {
       label: 'Account Transfers',
       content: (
         <div className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <button
-              type="button"
-              disabled={loading}
-              onClick={() => void displayFinanceData()}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
-            </button>
-            <button
-              onClick={() => openTransferModal()}
-              className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm text-white"
-            >
-              <Plus className="h-4 w-4" /> New Transfer
-            </button>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {renderDateRange()}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => void displayFinanceData()}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
+              </button>
+              <button
+                onClick={() => openTransferModal()}
+                className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm text-white"
+              >
+                <Plus className="h-4 w-4" /> New Transfer
+              </button>
+            </div>
           </div>
           {!financeDisplayed && !loading && emptyHint('Click Display to load data.')}
           {financeDisplayed && !loading && transfers.length === 0 && emptyHint('No data found for the selected filters.')}
@@ -1046,8 +1074,9 @@ const submitBudgetCharge = async () => {
       label: 'Customer Receipts',
       content: (
         <div className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {renderDateRange()}
+            <div className="flex flex-wrap items-center gap-2 text-sm">
               <button
                 type="button"
                 disabled={loading}
@@ -1121,8 +1150,9 @@ const submitBudgetCharge = async () => {
       label: 'Supplier Receipts',
       content: (
         <div className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {renderDateRange()}
+            <div className="flex flex-wrap items-center gap-2 text-sm">
               <button
                 type="button"
                 disabled={loading}
@@ -1231,8 +1261,9 @@ const submitBudgetCharge = async () => {
       label: 'Expenses',
       content: (
         <div className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {renderDateRange()}
+            <div className="flex flex-wrap items-center gap-2 text-sm">
               <button
                 type="button"
                 disabled={loading}
@@ -1272,8 +1303,9 @@ const submitBudgetCharge = async () => {
       label: 'Expense Charge',
       content: (
         <div className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {renderDateRange()}
+            <div className="flex flex-wrap items-center gap-2 text-sm">
               <button
                 type="button"
                 disabled={loading}
@@ -1342,8 +1374,9 @@ const submitBudgetCharge = async () => {
       label: 'Expense Budget',
       content: (
         <div className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {renderDateRange()}
+            <div className="flex flex-wrap items-center gap-2 text-sm">
               <button
                 type="button"
                 disabled={loading}
@@ -1398,11 +1431,11 @@ const submitBudgetCharge = async () => {
 
   const payrollTab = {
     id: 'employee-payment',
-    label: 'Employee Payment',
-    content: (
-      <div className="space-y-3">
+      label: 'Employee Payment',
+      content: (
+        <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-sm">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
             <button
               type="button"
               disabled={loading}
@@ -1422,6 +1455,7 @@ const submitBudgetCharge = async () => {
               <CalendarClock className="h-4 w-4" /> Charge Salary
             </button>
           </div>
+          {renderDateRange()}
           <div className="flex items-center gap-2 text-sm">
             <label className="text-sm flex items-center gap-2">
               <span className="text-slate-600">Period</span>
@@ -2362,7 +2396,7 @@ const submitBudgetCharge = async () => {
         onConfirm={confirmDeleteBudget}
         title="Delete Budget?"
         message="This budget will be deleted permanently."
-        itemName={pendingDeleteBudget?.expense_name}
+        itemName={pendingDeleteBudget?.expense_name ?? undefined}
         isDeleting={deletingBudget}
       />
       <Modal

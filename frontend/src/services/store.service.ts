@@ -33,6 +33,8 @@ type StoreListOptions = {
   branchId?: number;
   search?: string;
   includeInactive?: boolean;
+  fromDate?: string;
+  toDate?: string;
   page?: number;
   limit?: number;
 };
@@ -49,6 +51,8 @@ export const storeService = {
     if (options.branchId != null) params.set('branchId', String(options.branchId));
     if (options.search) params.set('search', options.search);
     if (options.includeInactive !== undefined) params.set('includeInactive', String(options.includeInactive));
+    if (options.fromDate) params.set('fromDate', options.fromDate);
+    if (options.toDate) params.set('toDate', options.toDate);
     if (options.page) params.set('page', String(options.page));
     if (options.limit) params.set('limit', String(options.limit));
     const qs = params.toString() ? `?${params.toString()}` : '';

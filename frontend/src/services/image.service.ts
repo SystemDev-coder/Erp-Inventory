@@ -6,22 +6,22 @@ export const imageService = {
     const formData = new FormData();
     formData.append('logo', file);
     
-    return apiClient.post('/system/logo', formData);
+    return apiClient.post('/api/system/logo', formData);
   },
 
   async uploadSystemBanner(file: File): Promise<ApiResponse<{ banner_image_url: string }>> {
     const formData = new FormData();
     formData.append('banner', file);
     
-    return apiClient.post('/system/banner', formData);
+    return apiClient.post('/api/system/banner', formData);
   },
 
   async deleteSystemLogo(): Promise<ApiResponse> {
-    return apiClient.delete('/system/logo');
+    return apiClient.delete('/api/system/logo');
   },
 
   async deleteSystemBanner(): Promise<ApiResponse> {
-    return apiClient.delete('/system/banner');
+    return apiClient.delete('/api/system/banner');
   },
 
   // Product Images
@@ -29,11 +29,11 @@ export const imageService = {
     const formData = new FormData();
     formData.append('image', file);
     
-    return apiClient.post(`/products/${productId}/image`, formData);
+    return apiClient.post(`/api/products/${productId}/image`, formData);
   },
 
   async deleteProductImage(productId: number): Promise<ApiResponse> {
-    return apiClient.delete(`/products/${productId}/image`);
+    return apiClient.delete(`/api/products/${productId}/image`);
   },
 
 };

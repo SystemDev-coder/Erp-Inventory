@@ -13,7 +13,15 @@ import { ApiError } from '../../utils/ApiError';
 // GET /api/returns/sales
 export const listSalesReturns = async (req: AuthRequest, res: Response): Promise<void> => {
     const scope = await resolveBranchScope(req);
-    const rows = await returnsService.listSalesReturns(scope);
+    const fromDate = (req.query.fromDate as string) || undefined;
+    const toDate = (req.query.toDate as string) || undefined;
+    if ((fromDate && !toDate) || (!fromDate && toDate)) {
+        throw ApiError.badRequest('Both fromDate and toDate are required together');
+    }
+    if (fromDate && toDate && fromDate > toDate) {
+        throw ApiError.badRequest('fromDate cannot be after toDate');
+    }
+    const rows = await returnsService.listSalesReturns(scope, { fromDate, toDate });
     res.json({ success: true, data: { rows } });
 };
 
@@ -78,7 +86,15 @@ export const deleteSalesReturn = async (req: AuthRequest, res: Response): Promis
 // GET /api/returns/purchases
 export const listPurchaseReturns = async (req: AuthRequest, res: Response): Promise<void> => {
     const scope = await resolveBranchScope(req);
-    const rows = await returnsService.listPurchaseReturns(scope);
+    const fromDate = (req.query.fromDate as string) || undefined;
+    const toDate = (req.query.toDate as string) || undefined;
+    if ((fromDate && !toDate) || (!fromDate && toDate)) {
+        throw ApiError.badRequest('Both fromDate and toDate are required together');
+    }
+    if (fromDate && toDate && fromDate > toDate) {
+        throw ApiError.badRequest('fromDate cannot be after toDate');
+    }
+    const rows = await returnsService.listPurchaseReturns(scope, { fromDate, toDate });
     res.json({ success: true, data: { rows } });
 };
 

@@ -13,6 +13,7 @@ import {
   InventoryItem,
 } from '../../services/inventory.service';
 import { itemLabelWithAvailability } from '../../utils/itemAvailability';
+import { defaultDateRange } from '../../utils/dateRange';
 
 const inputClass =
   'h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
@@ -38,6 +39,7 @@ const StockRecountPage = () => {
     itemId: '',
     search: '',
   });
+  const [dateRange, setDateRange] = useState(() => defaultDateRange());
 
   const [form, setForm] = useState({
     branchId: '',
@@ -152,12 +154,18 @@ const StockRecountPage = () => {
 
   const loadRecounts = async () => {
     await ensureMastersLoaded();
+    if (dateRange.fromDate && dateRange.toDate && dateRange.fromDate > dateRange.toDate) {
+      showToast('error', 'Stock Recount', 'From date cannot be after To date');
+      return;
+    }
     setLoading(true);
     const res = await inventoryService.listRecounts({
       branchId: filters.branchId || undefined,
       whId: filters.whId || undefined,
       itemId: filters.itemId || undefined,
       search: filters.search || undefined,
+      fromDate: dateRange.fromDate,
+      toDate: dateRange.toDate,
     });
     setLoading(false);
     setHasLoaded(true);
@@ -252,7 +260,7 @@ const StockRecountPage = () => {
       />
 
       <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-6">
           <div>
             <label className={labelClass}>Branch</label>
             <select
@@ -312,6 +320,24 @@ const StockRecountPage = () => {
               value={filters.search}
               onChange={(e) => setFilters((prev) => ({ ...prev, search: e.target.value }))}
               placeholder="Search notes..."
+            />
+          </div>
+          <div>
+            <label className={labelClass}>From Date</label>
+            <input
+              type="date"
+              className={inputClass}
+              value={dateRange.fromDate}
+              onChange={(e) => setDateRange((prev) => ({ ...prev, fromDate: e.target.value }))}
+            />
+          </div>
+          <div>
+            <label className={labelClass}>To Date</label>
+            <input
+              type="date"
+              className={inputClass}
+              value={dateRange.toDate}
+              onChange={(e) => setDateRange((prev) => ({ ...prev, toDate: e.target.value }))}
             />
           </div>
         </div>

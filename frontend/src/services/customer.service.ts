@@ -16,8 +16,12 @@ export interface Customer {
 }
 
 export const customerService = {
-  async list(search?: string) {
-    const qs = search ? `?search=${encodeURIComponent(search)}` : '';
+  async list(params?: { search?: string; fromDate?: string; toDate?: string }) {
+    const qsParts: string[] = [];
+    if (params?.search) qsParts.push(`search=${encodeURIComponent(params.search)}`);
+    if (params?.fromDate) qsParts.push(`fromDate=${encodeURIComponent(params.fromDate)}`);
+    if (params?.toDate) qsParts.push(`toDate=${encodeURIComponent(params.toDate)}`);
+    const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
     return apiClient.get<{ customers: Customer[] }>(`${API.CUSTOMERS.LIST}${qs}`);
   },
 

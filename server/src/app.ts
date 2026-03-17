@@ -1,4 +1,5 @@
 import express from 'express';
+import path from 'path';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
@@ -30,6 +31,7 @@ import systemRoutes from './modules/system/system.routes';
 import reportsRoutes from './modules/reports/reports.routes';
 import importRoutes from './modules/import/import.routes';
 import assetsRoutes from './modules/assets/assets.routes';
+import trashRoutes from './modules/trash/trash.routes';
 // import scheduleRoutes from './modules/schedules/schedules.routes'; // TEMP: Disabled - has import errors
 import { config } from './config/env';
 
@@ -53,6 +55,17 @@ app.use(cookieParser());
 if (config.isDev) {
   app.use(morgan('dev'));
 }
+
+// Serve local uploads
+app.use(
+  '/uploads',
+  (_req, res, next) => {
+    // Allow the frontend (different origin/port) to embed uploaded images (logo/banner) in pages and printouts.
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    next();
+  },
+  express.static(path.join(process.cwd(), 'uploads'))
+);
 
 // Health check
 app.get('/api/health', (_req, res) => {
@@ -88,6 +101,7 @@ app.use('/api/system', systemRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/import', importRoutes);
 app.use('/api/assets', assetsRoutes);
+app.use('/api/trash', trashRoutes);
 // app.use('/api/schedules', scheduleRoutes); // TEMP: Disabled - has import errors
 
 // 404 handler

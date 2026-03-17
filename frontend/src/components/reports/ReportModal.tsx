@@ -3,7 +3,7 @@ import { FileSpreadsheet, Printer } from "lucide-react";
 import { Modal } from "../ui/modal/Modal";
 
 const BORDER_COLOR = "#0f172a";
-const REPORT_SURFACE_MAX_WIDTH = "178mm";
+const REPORT_SCREEN_MAX_WIDTH = "1120px";
 
 // Column and props definitions
 export type ReportColumn<T> = {
@@ -37,6 +37,7 @@ type ReportModalProps<T> = {
   companyInfo?: {
     name?: string;
     logoUrl?: string;
+    bannerUrl?: string;
     manager?: string;
     phone?: string;
     updatedAt?: string;
@@ -89,23 +90,37 @@ const formatStatementCurrency = (value: number) => {
   return value < 0 ? `($${absolute})` : `$${absolute}`;
 };
 
-const formatFilterValue = (value: string | number) => {
-  if (value === null || value === undefined) return "";
-  const raw = String(value);
-  if (!raw.trim()) return "";
-  // if it looks like a date, format lightly
-  const d = new Date(raw);
-  if (!Number.isNaN(d.getTime()) && /^\d{4}-\d{2}-\d{2}/.test(raw)) {
-    return d.toLocaleDateString();
-  }
-  return raw;
-};
-
 const formatTrialAmount = (value: number) =>
   Math.abs(value).toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+
+const resolveSortKey = <T,>(columns: ReportColumn<T>[]) => {
+  const matchesIdKey = (value: string) =>
+    value === "id" || value.endsWith("_id") || value.endsWith("_no") || value.endsWith("_number");
+  const headerHasHash = (value: string) => value.includes("#");
+
+  const match = columns.find((col) => {
+    const key = String(col.key || "").toLowerCase();
+    return matchesIdKey(key) || headerHasHash(col.header);
+  });
+
+  return match ? String(match.key) : null;
+};
+
+const parseSortableNumber = (value: unknown) => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "number" && !Number.isNaN(value)) return value;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const direct = Number(raw);
+  if (!Number.isNaN(direct)) return direct;
+  const match = raw.match(/-?\d+(\.\d+)?/);
+  if (!match) return null;
+  const parsed = Number(match[0]);
+  return Number.isNaN(parsed) ? null : parsed;
+};
 
 export function ReportModal<T extends Record<string, any>>({
   isOpen,
@@ -137,7 +152,29 @@ export function ReportModal<T extends Record<string, any>>({
   const isBalanceSheet = variant === "balance-sheet";
   const isCashFlowStatement = variant === "cash-flow-statement";
   const isTrialBalance = variant === "trial-balance";
-  const reportSurfaceWidth = REPORT_SURFACE_MAX_WIDTH;
+  const reportSurfaceWidth = REPORT_SCREEN_MAX_WIDTH;
+
+  const tableRows = useMemo(() => {
+    if (isIncomeStatement || isBalanceSheet || isCashFlowStatement || isTrialBalance) return data;
+    if (!data || data.length === 0) return data;
+    const sortKey = resolveSortKey(columns);
+    if (!sortKey) return data;
+
+    const sorted = [...data].sort((a, b) => {
+      const aValue = parseSortableNumber((a as Record<string, unknown>)[sortKey]);
+      const bValue = parseSortableNumber((b as Record<string, unknown>)[sortKey]);
+      if (aValue === null && bValue === null) {
+        const aText = String((a as Record<string, unknown>)[sortKey] ?? "");
+        const bText = String((b as Record<string, unknown>)[sortKey] ?? "");
+        return aText.localeCompare(bText, undefined, { numeric: true });
+      }
+      if (aValue === null) return 1;
+      if (bValue === null) return -1;
+      return aValue - bValue;
+    });
+
+    return sorted;
+  }, [data, columns, isIncomeStatement, isBalanceSheet, isCashFlowStatement, isTrialBalance]);
 
   const statementData = useMemo(() => {
     if (!isIncomeStatement) return null;
@@ -434,10 +471,13 @@ export function ReportModal<T extends Record<string, any>>({
 
     doc.open();
     doc.write(
-      `<!doctype html><html><head><title></title>${styles}<style>
-        @page { size: A4; margin: 10mm; }
+      `<!doctype html><html><head><base href="${escapeHtml(document.baseURI)}" /><title></title>${styles}<style>
+        @page { size: A4 landscape; margin: 8mm; }
         body { margin: 0; padding: 0; background: #ffffff; color: #0f172a; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-        #report-print-area { width: 100% !important; max-width: ${REPORT_SURFACE_MAX_WIDTH} !important; margin: 0 auto !important; box-shadow: none !important; border: none !important; }
+        #report-print-area { width: 100% !important; max-width: none !important; margin: 0 auto !important; box-shadow: none !important; border: none !important; border-radius: 0 !important; }
+        #report-print-area table { width: 100% !important; table-layout: fixed; }
+        #report-print-area th, #report-print-area td { font-size: 11px !important; padding: 6px 6px !important; word-break: break-word; white-space: normal; }
+        #report-print-area .report-letterhead-banner { height: 32mm !important; width: 100% !important; object-fit: cover !important; object-position: center !important; }
       </style></head><body>${contentNode.outerHTML}</body></html>`
     );
     doc.close();
@@ -475,7 +515,7 @@ export function ReportModal<T extends Record<string, any>>({
     const headerRow = columns
       .map((col) => `<th style="padding:8px;text-align:${col.align ?? "left"};background:#0f172a;color:#fff;">${escapeHtml(col.header)}</th>`)
       .join("");
-    const bodyRows = data
+    const bodyRows = tableRows
       .map(
         (row, i) =>
           `<tr>${columns
@@ -513,7 +553,7 @@ export function ReportModal<T extends Record<string, any>>({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Report Preview" size="lg" resizable centerTitle>
+    <Modal isOpen={isOpen} onClose={onClose} title="Report Preview" size="2xl" resizable centerTitle>
       <div className="space-y-4">
         {/* Screen controls (hidden on print) */}
         <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3 rounded-2xl border border-slate-200 bg-white px-6 py-4 text-black shadow-sm print:hidden dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100">
@@ -543,21 +583,50 @@ export function ReportModal<T extends Record<string, any>>({
         <div
           ref={printRef}
           id="report-print-area"
-          className="mx-auto bg-white text-black"
+          className="mx-auto overflow-hidden rounded-2xl border border-zinc-200 bg-white text-black shadow-sm"
           style={{ pageBreakInside: "avoid", width: "100%", maxWidth: reportSurfaceWidth }}
         >
-          <div className="border-b border-zinc-300 px-8 py-5" style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}>
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex items-center gap-3">
-                {companyInfo?.logoUrl ? (
-                  <img src={companyInfo.logoUrl} alt="Logo" className="h-10 w-10 object-contain" />
-                ) : null}
-                <div>
-                  <div className="text-[16px] font-semibold leading-tight">{companyInfo?.name || "Business Name"}</div>
-                  <div className="text-[12px] text-slate-600">
-                    {title}
-                    {subtitle ? ` — ${subtitle}` : ""}
+          <div className="border-b border-zinc-300" style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}>
+            {companyInfo?.bannerUrl ? (
+              <div className="w-full bg-white">
+                <img
+                  src={companyInfo.bannerUrl}
+                  alt={`${companyInfo?.name || "Company"} banner`}
+                  className="report-letterhead-banner block w-full bg-white"
+                  style={{ height: "140px", width: "100%", objectFit: "cover", objectPosition: "center" }}
+                />
+                <div
+                  aria-hidden="true"
+                  className="h-[2px]"
+                  style={{ background: "linear-gradient(90deg, #0f172a 0%, #f59e0b 50%, #0f172a 100%)" }}
+                />
+              </div>
+            ) : null}
+
+            <div className="px-6 pb-5 pt-4">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="flex min-w-[220px] items-center gap-3">
+                  {!companyInfo?.bannerUrl && companyInfo?.logoUrl ? (
+                    <img src={companyInfo.logoUrl} alt="Logo" className="h-10 w-10 object-contain" />
+                  ) : null}
+                  <div className="space-y-0.5">
+                    <div className="text-[16px] font-semibold leading-tight">{companyInfo?.name || "Business Name"}</div>
+                    <div className="text-[12px] text-slate-600">
+                      {title}
+                      {subtitle ? ` — ${subtitle}` : ""}
+                    </div>
+                    {companyInfo?.manager || companyInfo?.phone ? (
+                      <div className="text-[11px] text-slate-500">
+                        <span>Manager: {companyInfo.manager || "-"}</span> <span className="mx-1">·</span>
+                        <span>Phone: {companyInfo.phone || "-"}</span>
+                      </div>
+                    ) : null}
                   </div>
+                </div>
+
+                <div className="min-w-[160px] text-right text-[11px] text-slate-500">
+                  <div>Print Date: {formatStatementDate(reportDate)}</div>
+                  {companyInfo?.updatedAt ? <div>Updated: {companyInfo.updatedAt}</div> : null}
                 </div>
               </div>
             </div>
@@ -567,11 +636,13 @@ export function ReportModal<T extends Record<string, any>>({
               className="px-10 py-9 text-slate-900"
               style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}
             >
-              <div className="space-y-0.5 leading-tight">
-                <h2 className="text-[14px] font-bold leading-none text-[#1164a1]">Income Statement</h2>
-                <p className="text-[14px] text-slate-500">{companyInfo?.name || "Business Name"}</p>
-                <p className="text-[14px] text-slate-500">{periodLabel || subtitle || ""}</p>
-              </div>
+              {!companyInfo?.bannerUrl ? (
+                <div className="space-y-0.5 leading-tight">
+                  <h2 className="text-[14px] font-bold leading-none text-[#1164a1]">Income Statement</h2>
+                  <p className="text-[14px] text-slate-500">{companyInfo?.name || "Business Name"}</p>
+                  <p className="text-[14px] text-slate-500">{periodLabel || subtitle || ""}</p>
+                </div>
+              ) : null}
 
               <div className="mx-auto mt-9 max-w-2xl space-y-6 text-[15px]">
                 {statementData.sections.map((section, sectionIndex) => (
@@ -611,11 +682,15 @@ export function ReportModal<T extends Record<string, any>>({
               className="px-8 py-8 text-slate-900"
               style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}
             >
-              <div className="space-y-0.5 leading-tight">
-                <h2 className="text-[30px] font-semibold text-[#1976bc]">Balance Sheet</h2>
-                <p className="text-[15px] text-slate-500">{companyInfo?.name || "Business Name"}</p>
-                <p className="text-[14px] text-slate-500">{balanceSheetDateLabel || `As of ${reportDate}`}</p>
-              </div>
+              {!companyInfo?.bannerUrl ? (
+                <div className="space-y-0.5 leading-tight">
+                  <h2 className="text-[30px] font-semibold text-[#1976bc]">Balance Sheet</h2>
+                  <p className="text-[15px] text-slate-500">{companyInfo?.name || "Business Name"}</p>
+                  <p className="text-[14px] text-slate-500">{balanceSheetDateLabel || `As of ${reportDate}`}</p>
+                </div>
+              ) : (
+                <div className="text-right text-[13px] font-semibold text-slate-600">{balanceSheetDateLabel || `As of ${reportDate}`}</div>
+              )}
 
               <div className="mx-auto mt-8 max-w-3xl space-y-7 text-[14px]">
                 <section>
@@ -737,10 +812,16 @@ export function ReportModal<T extends Record<string, any>>({
               className="overflow-hidden rounded-[24px] border border-zinc-300 text-slate-900"
               style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}
             >
-              <div className="border-b border-zinc-300 px-8 py-6 text-center text-slate-900">
-                <h2 className="text-[47px] font-semibold leading-tight">Cash Flow Statement</h2>
-                {cashFlowPeriodLabel && <p className="mt-1 text-[16px]">{cashFlowPeriodLabel}</p>}
-              </div>
+              {!companyInfo?.bannerUrl ? (
+                <div className="border-b border-zinc-300 px-8 py-6 text-center text-slate-900">
+                  <h2 className="text-[47px] font-semibold leading-tight">Cash Flow Statement</h2>
+                  {cashFlowPeriodLabel && <p className="mt-1 text-[16px]">{cashFlowPeriodLabel}</p>}
+                </div>
+              ) : cashFlowPeriodLabel ? (
+                <div className="border-b border-zinc-300 px-8 py-4 text-right text-[13px] font-semibold text-slate-600">
+                  {cashFlowPeriodLabel}
+                </div>
+              ) : null}
 
               <div className="px-0 py-0">
                 {cashFlowData.sections.map((section) => (
@@ -795,10 +876,14 @@ export function ReportModal<T extends Record<string, any>>({
             </div>
           ) : isTrialBalance && trialBalanceData ? (
             <div className="px-6 pb-6 pt-5 text-slate-900" style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}>
-              <div className="mb-4 text-center">
-                <h2 className="text-[26px] font-semibold leading-tight">Trial Balance</h2>
-                <p className="text-[14px] text-slate-600">{subtitle || periodLabel || ""}</p>
-              </div>
+              {!companyInfo?.bannerUrl ? (
+                <div className="mb-4 text-center">
+                  <h2 className="text-[26px] font-semibold leading-tight">Trial Balance</h2>
+                  <p className="text-[14px] text-slate-600">{subtitle || periodLabel || ""}</p>
+                </div>
+              ) : subtitle || periodLabel ? (
+                <div className="mb-3 text-right text-[12px] font-semibold text-slate-600">{subtitle || periodLabel}</div>
+              ) : null}
 
               <div className="overflow-hidden rounded-md">
                 <table className="w-full border-collapse text-[12px]">
@@ -843,33 +928,7 @@ export function ReportModal<T extends Record<string, any>>({
             </div>
           ) : (
             <>
-              <div className="flex items-start justify-between text-[11px] text-slate-500 px-6 pt-4">
-                <span>{reportDate}</span>
-                <span className="uppercase tracking-[0.25em]">{companyInfo?.name || title}</span>
-              </div>
-
-              <div className="flex flex-col items-center gap-2 px-6 pb-2 pt-3">
-                <h1 className="text-3xl font-extrabold tracking-[0.12em] text-slate-900 text-center uppercase">
-                  {companyInfo?.name || title}
-                </h1>
-                <div className="h-1 w-28 rounded-full" style={{ backgroundColor: BORDER_COLOR }} />
-              </div>
-
-              <div className="flex flex-col gap-1 px-6 pb-3 text-sm font-semibold text-slate-800">
-                <div className="flex flex-wrap justify-between gap-3">
-                  <span>{subtitle || "Student Report"}</span>
-                  <span>Print Date: {reportDate}</span>
-                </div>
-                {companyInfo && (
-                  <div className="flex flex-wrap gap-4 text-[12px] font-medium text-slate-700">
-                    <span>Manager: {companyInfo.manager || "-"}</span>
-                    <span>Phone: {companyInfo.phone || "-"}</span>
-                    <span>Updated: {companyInfo.updatedAt || "-"}</span>
-                  </div>
-                )}
-              </div>
-
-              <div className="px-6 pb-6">
+              <div className="px-6 pb-6 pt-6">
                 <div className="overflow-x-auto">
                   <table
                     className="w-full text-sm"
@@ -882,12 +941,12 @@ export function ReportModal<T extends Record<string, any>>({
                             key={col.header}
                             style={{
                               borderBottom: `1px solid ${BORDER_COLOR}`,
-                              padding: "10px 8px",
+                              padding: "12px 10px",
                               textAlign: col.align ?? "left",
-                              background: "#ffffff",
-                              color: "#000000",
+                              background: "#f8fafc",
+                              color: "#0f172a",
                               fontWeight: 700,
-                              fontSize: "12px",
+                              fontSize: "13px",
                               width: col.width,
                             }}
                           >
@@ -897,17 +956,17 @@ export function ReportModal<T extends Record<string, any>>({
                       </tr>
                     </thead>
                     <tbody>
-                      {data.map((row, i) => (
-                        <tr key={i}>
+                      {tableRows.map((row, i) => (
+                        <tr key={i} style={{ background: i % 2 === 0 ? "#ffffff" : "#f8fafc" }}>
                           {columns.map((col) => (
                             <td
                               key={col.header}
                               style={{
                                 borderBottom: "1px solid #d4d4d8",
-                                padding: "8px 6px",
+                                padding: "10px 8px",
                                 textAlign: col.align ?? "left",
-                                fontSize: "12px",
-                                lineHeight: 1.4,
+                                fontSize: "13px",
+                                lineHeight: 1.5,
                               }}
                             >
                               {(() => {
@@ -963,7 +1022,7 @@ export function ReportModal<T extends Record<string, any>>({
                           })}
                         </tr>
                       )}
-                      {data.length === 0 && !tableTotals && (
+                      {tableRows.length === 0 && !tableTotals && (
                         <tr>
                           <td
                             colSpan={columns.length}

@@ -1,8 +1,10 @@
 import { queryMany, queryOne } from '../../db/query';
+import { adminQueryMany } from '../../db/adminQuery';
 import { withTransaction } from '../../db/withTx';
 import { ApiError } from '../../utils/ApiError';
 import { syncSystemAccountBalancesWithClient } from '../../utils/systemAccounts';
 import { usersService, UserRow } from '../users/users.service';
+import { getUploadedImageUrl } from '../../config/cloudinary';
 import {
   CreatePermissionInput,
   CreateRoleInput,
@@ -51,6 +53,30 @@ export interface RoleRow {
   is_system: boolean;
   permission_count: number;
 }
+
+type SystemInfoTable = 'system_information' | 'company' | null;
+let systemInfoTableCache: SystemInfoTable | null = null;
+
+const detectSystemInfoTable = async (): Promise<SystemInfoTable> => {
+  if (systemInfoTableCache !== null) return systemInfoTableCache;
+  const rows = await queryMany<{ table_name: string }>(
+    `SELECT table_name
+       FROM information_schema.tables
+      WHERE table_schema = 'ims'
+        AND table_name IN ('system_information', 'company')`
+  );
+  const names = new Set(rows.map((row) => row.table_name));
+  if (names.has('system_information')) {
+    systemInfoTableCache = 'system_information';
+    return systemInfoTableCache;
+  }
+  if (names.has('company')) {
+    systemInfoTableCache = 'company';
+    return systemInfoTableCache;
+  }
+  systemInfoTableCache = null;
+  return systemInfoTableCache;
+};
 
 export interface PermissionRow {
   perm_id: number;
@@ -119,11 +145,11 @@ const normalizeRoleCode = (value: string): string =>
 let rolesMonthlySalaryReady = false;
 const ensureRolesMonthlySalaryColumn = async (): Promise<void> => {
   if (rolesMonthlySalaryReady) return;
-  await queryMany(`
+  await adminQueryMany(`
     ALTER TABLE ims.roles
       ADD COLUMN IF NOT EXISTS monthly_salary NUMERIC(14,2) NOT NULL DEFAULT 0
   `);
-  await queryMany(`
+  await adminQueryMany(`
     UPDATE ims.roles
        SET monthly_salary = 0
      WHERE monthly_salary IS NULL
@@ -183,12 +209,152 @@ const ensureUniqueRoleCode = async (
 
 export const systemService = {
   async getSystemInfo(): Promise<SystemInfo | null> {
-    return queryOne<SystemInfo>(
-      `SELECT * FROM ims.system_information WHERE system_id = 1`
+    const table = await detectSystemInfoTable();
+    if (!table) return null;
+    if (table === 'system_information') {
+      const row = await queryOne<SystemInfo>(
+        `SELECT
+            system_id,
+            system_name,
+            logo_url,
+            banner_image_url,
+            address,
+            phone,
+            email,
+            website,
+            created_at::text AS created_at,
+            updated_at::text AS updated_at
+         FROM ims.system_information
+        WHERE system_id = 1`
+      );
+      if (!row) return null;
+      return {
+        ...row,
+        logo_url: row.logo_url ? getUploadedImageUrl(row.logo_url) : row.logo_url,
+        banner_image_url: row.banner_image_url ? getUploadedImageUrl(row.banner_image_url) : row.banner_image_url,
+      };
+    }
+
+    const row = await queryOne<SystemInfo>(
+      `SELECT
+          company_id::bigint AS system_id,
+          company_name AS system_name,
+          logo_url,
+          banner_url AS banner_image_url,
+          address,
+          phone,
+          NULL::text AS email,
+          NULL::text AS website,
+          created_at::text AS created_at,
+          updated_at::text AS updated_at
+       FROM ims.company
+      WHERE company_id = 1`
     );
+    if (!row) return null;
+    return {
+      ...row,
+      logo_url: row.logo_url ? getUploadedImageUrl(row.logo_url) : row.logo_url,
+      banner_image_url: row.banner_image_url ? getUploadedImageUrl(row.banner_image_url) : row.banner_image_url,
+    };
   },
 
   async updateSystemInfo(input: SystemInfoInput): Promise<SystemInfo> {
+    const table = await detectSystemInfoTable();
+    if (!table) {
+      throw ApiError.internal('System information table is not available');
+    }
+
+    if (table === 'company') {
+      const existing = await queryOne<{ company_id: number }>(
+        `SELECT company_id FROM ims.company WHERE company_id = 1`
+      );
+      const updates: string[] = [];
+      const values: unknown[] = [];
+      let paramCount = 1;
+
+      if (input.systemName !== undefined) {
+        updates.push(`company_name = $${paramCount++}`);
+        values.push(input.systemName);
+      }
+      if (input.logoUrl !== undefined) {
+        updates.push(`logo_url = $${paramCount++}`);
+        values.push(input.logoUrl || null);
+      }
+      if (input.bannerImageUrl !== undefined) {
+        updates.push(`banner_url = $${paramCount++}`);
+        values.push(input.bannerImageUrl || null);
+      }
+      if (input.address !== undefined) {
+        updates.push(`address = $${paramCount++}`);
+        values.push(input.address || null);
+      }
+      if (input.phone !== undefined) {
+        updates.push(`phone = $${paramCount++}`);
+        values.push(input.phone || null);
+      }
+
+      if (existing && updates.length) {
+        const updated = await queryOne<SystemInfo>(
+          `UPDATE ims.company
+              SET ${updates.join(', ')}, updated_at = NOW()
+            WHERE company_id = 1
+            RETURNING
+              company_id::bigint AS system_id,
+              company_name AS system_name,
+              logo_url,
+              banner_url AS banner_image_url,
+              address,
+              phone,
+              NULL::text AS email,
+              NULL::text AS website,
+              created_at::text AS created_at,
+              updated_at::text AS updated_at`,
+          values
+        );
+        if (!updated) {
+          throw ApiError.internal('Failed to update system information');
+        }
+        return updated;
+      }
+
+      if (existing) {
+        const row = await this.getSystemInfo();
+        if (!row) {
+          throw ApiError.internal('Failed to load system information');
+        }
+        return row;
+      }
+
+      const created = await queryOne<SystemInfo>(
+        `INSERT INTO ims.company
+           (company_id, company_name, phone, address, logo_url, banner_url, capital_amount, is_active)
+         VALUES (1, $1, $2, $3, $4, $5, 0, TRUE)
+         RETURNING
+           company_id::bigint AS system_id,
+           company_name AS system_name,
+           logo_url,
+           banner_url AS banner_image_url,
+           address,
+           phone,
+           NULL::text AS email,
+           NULL::text AS website,
+           created_at::text AS created_at,
+           updated_at::text AS updated_at`,
+        [
+          input.systemName || 'My ERP System',
+          input.phone || null,
+          input.address || null,
+          input.logoUrl || null,
+          input.bannerImageUrl || null,
+        ]
+      );
+
+      if (!created) {
+        throw ApiError.internal('Failed to create system information');
+      }
+      return created;
+    }
+
     const existing = await this.getSystemInfo();
 
     if (existing) {
@@ -1144,7 +1310,7 @@ export const systemService = {
          );
          if (fixedAssetsTable.rows[0]?.exists) {
            // Ensure column exists even on older DBs.
-           await client.query(`ALTER TABLE ims.fixed_assets ADD COLUMN IF NOT EXISTS acc_id BIGINT`);
+           await adminQueryMany(`ALTER TABLE ims.fixed_assets ADD COLUMN IF NOT EXISTS acc_id BIGINT`);
 
            // Assign a default cash/bank account when missing.
            await client.query(

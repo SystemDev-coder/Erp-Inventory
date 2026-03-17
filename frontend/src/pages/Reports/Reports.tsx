@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Boxes, LineChart, ShoppingBag, UserCheck, UserSquare, Wallet } from 'lucide-react';
+import { Boxes, LineChart, ShoppingBag, TrendingUp, Truck, UserCheck, UserSquare, Wallet } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { ReportModal } from '../../components/reports/ReportModal';
 import { settingsService } from '../../services/settings.service';
@@ -9,15 +9,20 @@ import { HrReportsTab } from './hr/HrReportsTab';
 import { InventoryReportsTab } from './inventory/InventoryReportsTab';
 import { PurchaseReportsTab } from './purchase/PurchaseReportsTab';
 import { SalesReportsTab } from './sales/SalesReportsTab';
+import { SupplierReportsTab } from './supplier/SupplierReportsTab';
+import { ProfitReportsTab } from './profit/ProfitReportsTab';
 import type { ModalReportState, TabId } from './types';
+import { env } from '../../config/env';
 
 const reportTabs: Array<{ id: TabId; title: string; icon: LucideIcon }> = [
   { id: 'sales', title: 'Sales', icon: LineChart },
   { id: 'inventory', title: 'Inventory', icon: Boxes },
   { id: 'purchase', title: 'Purchases', icon: ShoppingBag },
   { id: 'financial', title: 'Financial', icon: Wallet },
+  { id: 'profit', title: 'Profit', icon: TrendingUp },
   { id: 'hr', title: 'HR', icon: UserSquare },
   { id: 'customer', title: 'Customers', icon: UserCheck },
+  { id: 'supplier', title: 'Suppliers', icon: Truck },
 ];
 
 export default function Reports() {
@@ -25,6 +30,7 @@ export default function Reports() {
   const [companyInfo, setCompanyInfo] = useState<{
     name?: string;
     logoUrl?: string;
+    bannerUrl?: string;
     manager?: string;
     phone?: string;
     updatedAt?: string;
@@ -32,13 +38,23 @@ export default function Reports() {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalReport, setModalReport] = useState<ModalReportState | null>(null);
 
+  const resolveImageUrl = (value?: string | null) => {
+    const raw = (value || '').trim();
+    if (!raw) return undefined;
+    if (/^https?:\/\//i.test(raw) || raw.startsWith('data:')) return raw;
+    if (raw.startsWith('uploads/')) return `${env.API_URL}/${raw}`;
+    if (raw.startsWith('/')) return `${env.API_URL}${raw}`;
+    return raw;
+  };
+
   useEffect(() => {
     settingsService.getCompany().then((response) => {
       if (!response.success || !response.data?.company) return;
       const company = response.data.company;
       setCompanyInfo({
         name: company.company_name || undefined,
-        logoUrl: company.logo_img || undefined,
+        logoUrl: resolveImageUrl(company.logo_img),
+        bannerUrl: resolveImageUrl(company.banner_img),
         manager: company.manager_name || undefined,
         phone: company.phone || undefined,
         updatedAt: company.updated_at ? new Date(company.updated_at).toLocaleString() : undefined,
@@ -89,15 +105,19 @@ export default function Reports() {
         {activeTab === 'inventory' && <InventoryReportsTab onOpenModal={handleOpenModal} />}
         {activeTab === 'purchase' && <PurchaseReportsTab onOpenModal={handleOpenModal} />}
         {activeTab === 'financial' && <FinancialReportsTab onOpenModal={handleOpenModal} />}
+        {activeTab === 'profit' && <ProfitReportsTab onOpenModal={handleOpenModal} />}
         {activeTab === 'hr' && <HrReportsTab onOpenModal={handleOpenModal} />}
         {activeTab === 'customer' && <CustomerReportsTab onOpenModal={handleOpenModal} />}
+        {activeTab === 'supplier' && <SupplierReportsTab onOpenModal={handleOpenModal} />}
 
         {activeTab !== 'sales' &&
           activeTab !== 'inventory' &&
           activeTab !== 'purchase' &&
           activeTab !== 'financial' &&
+          activeTab !== 'profit' &&
           activeTab !== 'hr' &&
-          activeTab !== 'customer' && (
+          activeTab !== 'customer' &&
+          activeTab !== 'supplier' && (
           <div className="rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-8 text-center text-zinc-700">
             <p className="text-lg font-semibold">{reportTabs.find((tab) => tab.id === activeTab)?.title} reports tab</p>
             <p className="mt-1 text-sm">This tab is ready for modular implementation in its own report subfolder.</p>

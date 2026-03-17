@@ -1,4 +1,5 @@
 import { queryMany, queryOne } from '../../db/query';
+import { adminQueryMany } from '../../db/adminQuery';
 import {
   EmployeeInput,
   EmployeeUpdateInput,
@@ -74,7 +75,7 @@ const detectEmployeeSalaryBranchColumn = async (): Promise<boolean> => {
 
 const ensureRolesMonthlySalaryColumn = async (): Promise<void> => {
   if (rolesMonthlySalaryReady) return;
-  await queryMany(`
+  await adminQueryMany(`
     ALTER TABLE ims.roles
       ADD COLUMN IF NOT EXISTS monthly_salary NUMERIC(14,2) NOT NULL DEFAULT 0
   `);
@@ -106,7 +107,7 @@ export const employeesService = {
   /**
    * List all employees with optional filtering
    */
-  async list(params?: { search?: string; status?: string; branchIds?: number[] }): Promise<Employee[]> {
+  async list(params?: { search?: string; status?: string; branchIds?: number[]; fromDate?: string; toDate?: string }): Promise<Employee[]> {
     const hasGender = await detectEmployeesGenderColumn();
     await ensureRolesMonthlySalaryColumn();
     let query = `
@@ -159,6 +160,15 @@ export const employeesService = {
     if (params?.status && params.status !== 'all') {
       query += ` AND e.status = $${paramCount}::ims.employment_status_enum`;
       values.push(params.status);
+      paramCount++;
+    }
+
+    if (params?.fromDate && params?.toDate) {
+      query += ` AND e.hire_date::date >= $${paramCount}::date`;
+      values.push(params.fromDate);
+      paramCount++;
+      query += ` AND e.hire_date::date <= $${paramCount}::date`;
+      values.push(params.toDate);
       paramCount++;
     }
 

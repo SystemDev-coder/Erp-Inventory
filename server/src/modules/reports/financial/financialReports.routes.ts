@@ -11,6 +11,9 @@ import {
   getExpenseSummaryReport,
   getFinancialReportOptions,
   getIncomeStatementReport,
+  getProfitByCustomerReport,
+  getProfitByItemReport,
+  getProfitByStoreReport,
   getSupplierPaymentsReport,
   getTrialBalanceReport,
 } from './financialReports.controller';
@@ -23,6 +26,9 @@ router.get('/balance-sheet', getBalanceSheetReport);
 router.get('/cash-flow', getCashFlowReport);
 router.get('/account-balances', getAccountBalancesReport);
 router.get('/expense-summary', getExpenseSummaryReport);
+router.get('/profit-by-item', getProfitByItemReport);
+router.get('/profit-by-customer', getProfitByCustomerReport);
+router.get('/profit-by-store', getProfitByStoreReport);
 router.get('/customer-receipts', getCustomerReceiptsReport);
 router.get('/supplier-payments', getSupplierPaymentsReport);
 router.get('/accounts-receivable', getAccountsReceivableReport);

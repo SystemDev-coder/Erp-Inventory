@@ -10,6 +10,7 @@ import { SaleDocType, SaleItem, SaleStatus, salesService } from '../../services/
 import { settingsService } from '../../services/settings.service';
 import { formatAvailableQty, itemLabelWithAvailability } from '../../utils/itemAvailability';
 import { buildPrintableDocument } from './Sales';
+import { env } from '../../config/env';
 
 type FormLine = {
   item_id: number | '';
@@ -349,10 +350,20 @@ const SaleCreate = () => {
           return;
         }
 
+        const resolveAssetUrl = (value?: string | null) => {
+          const raw = String(value || '').trim();
+          if (!raw) return null;
+          if (/^https?:\/\//i.test(raw) || raw.startsWith('data:')) return raw;
+          if (raw.startsWith('uploads/')) return `${env.API_URL}/${raw}`;
+          if (raw.startsWith('/')) return `${env.API_URL}${raw}`;
+          return raw;
+        };
+
         const company = {
           name: companyRes?.data?.company?.company_name || 'My Inventory ERP',
           phone: companyRes?.data?.company?.phone || null,
-          logoUrl: companyRes?.data?.company?.logo_img || null,
+          logoUrl: resolveAssetUrl(companyRes?.data?.company?.logo_img),
+          bannerUrl: resolveAssetUrl(companyRes?.data?.company?.banner_img),
         };
 
         const customer = {

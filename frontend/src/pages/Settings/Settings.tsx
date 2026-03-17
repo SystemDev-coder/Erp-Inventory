@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   BriefcaseBusiness,
   CircleDollarSign,
+  History,
   Home,
   Percent,
   Pencil,
@@ -21,11 +22,15 @@ import {
   SettingsClosingPeriod,
   SettingsClosingSummary,
 } from '../../services/settings.service';
+import { systemService, SystemAuditLog } from '../../services/system.service';
 import { useToast } from '../../components/ui/toast/Toast';
 import { Modal } from '../../components/ui/modal/Modal';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { useAuth } from '../../context/AuthContext';
 import { assetsService } from '../../services/assets.service';
+import { ImageUpload } from '../../components/common/ImageUpload';
+import { imageService } from '../../services/image.service';
+import { env } from '../../config/env';
 
 const emptyCompanyForm = {
   company_name: '',
@@ -50,6 +55,8 @@ const formatDateOnly = (value?: string | null) => {
 const formatMoney = (value: number) =>
   `$${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+const LOGS_LIMIT = 20;
+
 const Settings = () => {
   const modalLabelClass =
     'text-sm font-semibold text-slate-700 dark:text-slate-200 flex flex-col gap-1';
@@ -64,6 +71,9 @@ const Settings = () => {
     'px-4 py-2 rounded-xl bg-primary-600 text-white font-semibold hover:bg-primary-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed';
   const { showToast } = useToast();
   const { permissions } = useAuth();
+  const allowRemoteImageUpload = true;
+  const logoStorageKey = 'erp.company.logo_img';
+  const bannerStorageKey = 'erp.company.banner_img';
 
   const [company, setCompany] = useState<CompanyInfo | null>(null);
   const [companyDisplayed, setCompanyDisplayed] = useState(false);
@@ -73,6 +83,119 @@ const Settings = () => {
   const [companyDeleting, setCompanyDeleting] = useState(false);
   const [companyDeleteConfirmOpen, setCompanyDeleteConfirmOpen] = useState(false);
   const [companyForm, setCompanyForm] = useState(emptyCompanyForm);
+
+  const readFileAsDataUrl = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Failed to read file'));
+      reader.readAsDataURL(file);
+    });
+
+  const saveLocalImage = (key: string, value: string) => {
+    try {
+      window.localStorage.setItem(key, value);
+    } catch (error) {
+      console.warn('Failed to save image in localStorage:', error);
+    }
+  };
+
+  const clearLocalImage = (key: string) => {
+    try {
+      window.localStorage.removeItem(key);
+    } catch (error) {
+      console.warn('Failed to clear image from localStorage:', error);
+    }
+  };
+
+  const handleLogoUpload = async (file: File) => {
+    if (!allowRemoteImageUpload) {
+      const dataUrl = await readFileAsDataUrl(file);
+      setCompanyForm((prev) => ({ ...prev, logo_img: dataUrl }));
+      saveLocalImage(logoStorageKey, dataUrl);
+      return dataUrl;
+    }
+    const res = await imageService.uploadSystemLogo(file);
+    if (!res.success) {
+      throw new Error(res.error || 'Failed to upload logo');
+    }
+    const payload: any = res.data || {};
+    const logoUrl =
+      payload.logoUrl ||
+      payload.logo_url ||
+      payload.systemInfo?.logo_url ||
+      payload.systemInfo?.logoUrl ||
+      '';
+    if (!logoUrl) {
+      throw new Error('Logo upload did not return a URL');
+    }
+    saveLocalImage(logoStorageKey, logoUrl);
+    setCompanyForm((prev) => ({ ...prev, logo_img: logoUrl }));
+    return logoUrl;
+  };
+
+  const handleBannerUpload = async (file: File) => {
+    if (!allowRemoteImageUpload) {
+      const dataUrl = await readFileAsDataUrl(file);
+      setCompanyForm((prev) => ({ ...prev, banner_img: dataUrl }));
+      saveLocalImage(bannerStorageKey, dataUrl);
+      return dataUrl;
+    }
+    const res = await imageService.uploadSystemBanner(file);
+    if (!res.success) {
+      throw new Error(res.error || 'Failed to upload banner');
+    }
+    const payload: any = res.data || {};
+    const bannerUrl =
+      payload.bannerImageUrl ||
+      payload.banner_image_url ||
+      payload.systemInfo?.banner_image_url ||
+      payload.systemInfo?.bannerImageUrl ||
+      '';
+    if (!bannerUrl) {
+      throw new Error('Banner upload did not return a URL');
+    }
+    saveLocalImage(bannerStorageKey, bannerUrl);
+    setCompanyForm((prev) => ({ ...prev, banner_img: bannerUrl }));
+    return bannerUrl;
+  };
+
+  const handleLogoDelete = async () => {
+    if (!allowRemoteImageUpload) {
+      setCompanyForm((prev) => ({ ...prev, logo_img: '' }));
+      clearLocalImage(logoStorageKey);
+      return;
+    }
+    const res = await imageService.deleteSystemLogo();
+    if (!res.success) {
+      throw new Error(res.error || 'Failed to delete logo');
+    }
+    setCompanyForm((prev) => ({ ...prev, logo_img: '' }));
+    clearLocalImage(logoStorageKey);
+  };
+
+  const handleBannerDelete = async () => {
+    if (!allowRemoteImageUpload) {
+      setCompanyForm((prev) => ({ ...prev, banner_img: '' }));
+      clearLocalImage(bannerStorageKey);
+      return;
+    }
+    const res = await imageService.deleteSystemBanner();
+    if (!res.success) {
+      throw new Error(res.error || 'Failed to delete banner');
+    }
+    setCompanyForm((prev) => ({ ...prev, banner_img: '' }));
+    clearLocalImage(bannerStorageKey);
+  };
+
+  const resolveImageUrl = (value?: string | null) => {
+    const raw = (value || '').trim();
+    if (!raw) return '';
+    if (/^https?:\/\//i.test(raw)) return raw;
+    if (raw.startsWith('uploads/')) return `${env.API_URL}/${raw}`;
+    if (raw.startsWith('/')) return `${env.API_URL}${raw}`;
+    return raw;
+  };
 
   const [capitalRows, setCapitalRows] = useState<CapitalContribution[]>([]);
   const [capitalOwnerRows, setCapitalOwnerRows] = useState<CapitalOwnerEquity[]>([]);
@@ -132,6 +255,7 @@ const Settings = () => {
   const [closingFinalizing, setClosingFinalizing] = useState(false);
   const [closingEditingRow, setClosingEditingRow] = useState<SettingsClosingPeriod | null>(null);
   const [closingForm, setClosingForm] = useState({
+    closeMode: 'monthly' as 'monthly' | 'quarterly' | 'yearly' | 'custom',
     periodFrom: today(),
     periodTo: today(),
     note: '',
@@ -165,6 +289,14 @@ const Settings = () => {
     cost: '',
     status: 'active',
   });
+
+  const [logs, setLogs] = useState<SystemAuditLog[]>([]);
+  const [logsStartDate, setLogsStartDate] = useState(today());
+  const [logsEndDate, setLogsEndDate] = useState(today());
+  const [logsDisplayed, setLogsDisplayed] = useState(false);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsPage, setLogsPage] = useState(1);
+  const [logsTotal, setLogsTotal] = useState(0);
 
   const totalCapitalPages = Math.max(1, Math.ceil(capitalTotal / capitalLimit));
   const totalDrawingPages = Math.max(1, Math.ceil(drawingTotal / drawingLimit));
@@ -200,14 +332,20 @@ const Settings = () => {
       !!loaded.banner_img?.trim() ||
       Number(loaded.capital_amount || 0) > 0;
     setCompany(hasValues ? loaded : null);
+    const fallbackLogo =
+      loaded.logo_img || window.localStorage.getItem(logoStorageKey) || '';
+    const fallbackBanner =
+      loaded.banner_img || window.localStorage.getItem(bannerStorageKey) || '';
     setCompanyForm({
       company_name: loaded.company_name || '',
       phone: loaded.phone || '',
       manager_name: loaded.manager_name || '',
-      logo_img: loaded.logo_img || '',
-      banner_img: loaded.banner_img || '',
+      logo_img: fallbackLogo,
+      banner_img: fallbackBanner,
       capital_amount: String(loaded.capital_amount ?? 0),
     });
+    if (fallbackLogo) saveLocalImage(logoStorageKey, fallbackLogo);
+    if (fallbackBanner) saveLocalImage(bannerStorageKey, fallbackBanner);
   };
 
   const loadCapitalOwnerSummary = async (): Promise<CapitalOwnerEquity[] | null> => {
@@ -296,13 +434,23 @@ const Settings = () => {
       showToast('error', 'Company Info', 'Capital must be zero or greater');
       return;
     }
+    const normalizeImageValue = (value: string) => {
+      const trimmed = (value || '').trim();
+      if (!trimmed) return '';
+      if (trimmed.startsWith('data:') || trimmed.length > 2048) {
+        return '';
+      }
+      return trimmed;
+    };
+    const safeLogo = normalizeImageValue(companyForm.logo_img);
+    const safeBanner = normalizeImageValue(companyForm.banner_img);
     setCompanySaving(true);
     const res = await settingsService.updateCompany({
       company_name: companyForm.company_name,
       phone: companyForm.phone,
       manager_name: companyForm.manager_name,
-      logo_img: companyForm.logo_img,
-      banner_img: companyForm.banner_img,
+      logo_img: safeLogo,
+      banner_img: safeBanner,
       capital_amount: capitalAmount,
     });
     setCompanySaving(false);
@@ -524,6 +672,29 @@ const Settings = () => {
     setClosingDisplayed(true);
   };
 
+  const loadLogs = async (page = 1) => {
+    if (!logsStartDate || !logsEndDate) {
+      showToast('error', 'Activity Logs', 'Select start and end date first');
+      return;
+    }
+    if (logsStartDate > logsEndDate) {
+      showToast('error', 'Activity Logs', 'End date must be after start date');
+      return;
+    }
+
+    setLogsLoading(true);
+    const res = await systemService.getLogs(page, LOGS_LIMIT, logsStartDate, logsEndDate);
+    setLogsLoading(false);
+    if (res.success && res.data?.logs) {
+      setLogs(res.data.logs);
+      setLogsPage(res.data.page || page);
+      setLogsTotal(res.data.total || 0);
+      setLogsDisplayed(true);
+      return;
+    }
+    showToast('error', 'Activity Logs', res.error || 'Failed to load logs');
+  };
+
   const createClosingPeriod = async () => {
     if (!closingForm.periodFrom || !closingForm.periodTo) {
       showToast('error', 'Closing Finance', 'Both dates are required');
@@ -532,11 +703,13 @@ const Settings = () => {
     setClosingSaving(true);
     const res = closingEditingRow
       ? await settingsService.updateClosingPeriod(closingEditingRow.closing_id, {
+          closeMode: closingForm.closeMode,
           periodFrom: closingForm.periodFrom,
           periodTo: closingForm.periodTo,
           note: closingForm.note.trim() || undefined,
         })
       : await settingsService.createClosingPeriod({
+          closeMode: closingForm.closeMode,
           periodFrom: closingForm.periodFrom,
           periodTo: closingForm.periodTo,
           note: closingForm.note.trim() || undefined,
@@ -548,14 +721,14 @@ const Settings = () => {
     }
     setClosingModalOpen(false);
     setClosingEditingRow(null);
-    setClosingForm({ periodFrom: today(), periodTo: today(), note: '' });
+    setClosingForm({ closeMode: 'monthly', periodFrom: today(), periodTo: today(), note: '' });
     showToast('success', 'Closing Finance', closingEditingRow ? 'Closing period updated' : 'Closing period created');
     await loadClosing();
   };
 
   const openNewClosingModal = () => {
     setClosingEditingRow(null);
-    setClosingForm({ periodFrom: today(), periodTo: today(), note: '' });
+    setClosingForm({ closeMode: 'monthly', periodFrom: today(), periodTo: today(), note: '' });
     setClosingModalOpen(true);
   };
 
@@ -566,6 +739,7 @@ const Settings = () => {
     }
     setClosingEditingRow(row);
     setClosingForm({
+      closeMode: row.close_mode || 'monthly',
       periodFrom: formatDateOnly(row.period_from) || today(),
       periodTo: formatDateOnly(row.period_to) || today(),
       note: row.note || '',
@@ -859,6 +1033,8 @@ const Settings = () => {
                 <th className="py-2 pr-4">Manager</th>
                 <th className="py-2 pr-4">Phone</th>
                 <th className="py-2 pr-4">Capital</th>
+                <th className="py-2 pr-4">Logo</th>
+                <th className="py-2 pr-4">Banner</th>
                 <th className="py-2 pr-4">Updated</th>
                 <th className="py-2 pr-4">Actions</th>
               </tr>
@@ -869,6 +1045,28 @@ const Settings = () => {
                 <td className="py-2 pr-4">{company.manager_name || '-'}</td>
                 <td className="py-2 pr-4">{company.phone || '-'}</td>
                 <td className="py-2 pr-4">{formatMoney(Number(company.capital_amount || 0))}</td>
+                <td className="py-2 pr-4">
+                  {company.logo_img ? (
+                    <img
+                      src={resolveImageUrl(company.logo_img)}
+                      alt="Logo"
+                      className="h-10 w-10 rounded object-cover border border-slate-200"
+                    />
+                  ) : (
+                    '-'
+                  )}
+                </td>
+                <td className="py-2 pr-4">
+                  {company.banner_img ? (
+                    <img
+                      src={resolveImageUrl(company.banner_img)}
+                      alt="Banner"
+                      className="h-10 w-24 rounded object-cover border border-slate-200"
+                    />
+                  ) : (
+                    '-'
+                  )}
+                </td>
                 <td className="py-2 pr-4">{company.updated_at ? new Date(company.updated_at).toLocaleString() : '-'}</td>
                 <td className="py-2 pr-4">
                   <div className="flex gap-2">
@@ -908,14 +1106,30 @@ const Settings = () => {
             Capital
             <input type="number" min="0" step="0.01" className="rounded border border-black px-3 py-2" value={companyForm.capital_amount} onChange={(e) => setCompanyForm({ ...companyForm, capital_amount: e.target.value })} />
           </label>
-          <label className="text-sm font-medium flex flex-col gap-1">
-            Logo URL / Path
-            <input className="rounded border border-black px-3 py-2" value={companyForm.logo_img} onChange={(e) => setCompanyForm({ ...companyForm, logo_img: e.target.value })} />
-          </label>
-          <label className="text-sm font-medium flex flex-col gap-1 md:col-span-2">
-            Banner URL / Path
-            <input className="rounded border border-black px-3 py-2" value={companyForm.banner_img} onChange={(e) => setCompanyForm({ ...companyForm, banner_img: e.target.value })} />
-          </label>
+          <div className="md:col-span-2">
+            <ImageUpload
+              label="Company Logo"
+              currentImage={companyForm.logo_img || null}
+              aspectRatio="square"
+              maxWidthClass="max-w-full"
+              centered={false}
+              variant="inline"
+              onUpload={handleLogoUpload}
+              onDelete={allowRemoteImageUpload ? handleLogoDelete : undefined}
+            />
+          </div>
+          <div className="md:col-span-2">
+            <ImageUpload
+              label="Company Banner"
+              currentImage={companyForm.banner_img || null}
+              aspectRatio="landscape"
+              maxWidthClass="max-w-full"
+              centered={false}
+              variant="inline"
+              onUpload={handleBannerUpload}
+              onDelete={allowRemoteImageUpload ? handleBannerDelete : undefined}
+            />
+          </div>
         </div>
         <div className="flex justify-end gap-2 pt-4">
           <button className="px-4 py-2 rounded border border-black" onClick={() => setCompanyModalOpen(false)}>Cancel</button>
@@ -1664,6 +1878,18 @@ const Settings = () => {
       >
         <div className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <label className="text-sm font-medium flex flex-col gap-1 md:col-span-2">
+              Closing Mode
+              <select
+                className="rounded border border-black px-3 py-2"
+                value={closingForm.closeMode}
+                onChange={(e) => setClosingForm({ ...closingForm, closeMode: e.target.value as any })}
+              >
+                <option value="monthly">Monthly</option>
+                <option value="yearly">Yearly</option>
+                <option value="quarterly">Quarterly</option>
+              </select>
+            </label>
             <label className="text-sm font-medium flex flex-col gap-1">
               From Date *
               <input
@@ -1915,8 +2141,114 @@ const Settings = () => {
     </div>
   );
 
+  const logsContent = (
+    <div className="space-y-4 text-black">
+      <div className="bg-white border border-black rounded-xl p-4">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+              Start Date
+              <input
+                type="date"
+                value={logsStartDate}
+                onChange={(e) => {
+                  setLogsStartDate(e.target.value);
+                  setLogsDisplayed(false);
+                  setLogs([]);
+                  setLogsPage(1);
+                  setLogsTotal(0);
+                }}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+              End Date
+              <input
+                type="date"
+                value={logsEndDate}
+                onChange={(e) => {
+                  setLogsEndDate(e.target.value);
+                  setLogsDisplayed(false);
+                  setLogs([]);
+                  setLogsPage(1);
+                  setLogsTotal(0);
+                }}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700"
+              />
+            </label>
+            <button
+              onClick={() => loadLogs(1)}
+              className="px-3 py-2 rounded-lg border border-slate-300 text-slate-700 text-sm hover:bg-slate-50"
+              disabled={logsLoading}
+            >
+              {logsLoading ? 'Loading...' : 'Display'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {!logsDisplayed ? (
+        <div className="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">
+          Choose <span className="font-semibold">Start Date</span> and <span className="font-semibold">End Date</span>,
+          then click <span className="font-semibold">Display</span>.
+        </div>
+      ) : logs.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">
+          No activity logs found for selected date range.
+        </div>
+      ) : (
+        <div className="overflow-x-auto bg-white rounded-xl border border-slate-200 p-4">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="text-left text-slate-500">
+                <th>Action</th>
+                <th>Entity</th>
+                <th>User</th>
+                <th>Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {logs.map((l) => (
+                <tr key={l.audit_id} className="border-t border-slate-200 text-slate-700">
+                  <td>{l.action}</td>
+                  <td>{l.entity || '-'}</td>
+                  <td>{l.username || l.user_id || '-'}</td>
+                  <td>{new Date(l.created_at).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="flex justify-between text-sm text-slate-600">
+        <span>Page {logsPage} of {Math.max(1, Math.ceil(logsTotal / LOGS_LIMIT))}</span>
+        <div className="space-x-2">
+          <button
+            onClick={() => loadLogs(Math.max(1, logsPage - 1))}
+            disabled={!logsDisplayed || logsLoading || logsPage <= 1}
+            className="px-3 py-1 border border-slate-300 rounded text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            Prev
+          </button>
+          <button
+            onClick={() => loadLogs(logsPage + 1)}
+            disabled={!logsDisplayed || logsLoading || logsPage * LOGS_LIMIT >= logsTotal}
+            className="px-3 py-1 border border-slate-300 rounded text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            Next
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   const tabs = useMemo(() => {
     const canManageAssets = permissions.includes('accounts.view') || permissions.includes('reports.all');
+    const canViewLogs =
+      permissions.includes('system.audit.view') ||
+      permissions.includes('audit_logs.view') ||
+      permissions.includes('system.settings');
     const result = [
       { id: 'company', label: 'Company Info', icon: Home, content: companyContent },
       { id: 'capital', label: 'Capital', icon: CircleDollarSign, content: capitalContent },
@@ -1926,6 +2258,9 @@ const Settings = () => {
     if (canManageAssets) {
       result.splice(2, 0, { id: 'assets', label: 'Assets', icon: BriefcaseBusiness, content: assetsContent });
     }
+    if (canViewLogs) {
+      result.push({ id: 'activity-logs', label: 'Activity Logs', icon: History, content: logsContent });
+    }
     return result;
   }, [
     permissions,
@@ -1934,6 +2269,7 @@ const Settings = () => {
     capitalContent,
     closingContent,
     profitContent,
+    logsContent,
   ]);
 
   return (

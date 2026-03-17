@@ -69,6 +69,19 @@ export interface StockAdjustmentLogRow {
   created_by: string;
 }
 
+export interface InventoryLossRow {
+  loss_id: number;
+  loss_date: string;
+  item_id: number;
+  item_name: string;
+  quantity: number;
+  unit_cost: number;
+  total_loss: number;
+  reason: string;
+  status: string;
+  created_by: string;
+}
+
 export interface StoreStockSummaryRow {
   store_id: number;
   store_name: string;
@@ -141,6 +154,15 @@ export const inventoryReportsService = {
       toDate: input.toDate,
     });
     return apiClient.get<RowsResponse<StockAdjustmentLogRow>>(`${API.REPORTS.INVENTORY_ADJUSTMENT_LOG}${query}`);
+  },
+
+  async getInventoryLoss(input: { fromDate: string; toDate: string; branchId?: number }) {
+    const query = toQuery({
+      branchId: input.branchId,
+      fromDate: input.fromDate,
+      toDate: input.toDate,
+    });
+    return apiClient.get<RowsResponse<InventoryLossRow>>(`${API.REPORTS.INVENTORY_LOSS}${query}`);
   },
 
   async getStoreStockReport(input: { mode: ReportSelectionMode; storeId?: number; branchId?: number }) {

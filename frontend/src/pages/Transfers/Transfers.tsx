@@ -11,6 +11,7 @@ import {
   InventoryWarehouse,
 } from '../../services/inventory.service';
 import { itemLabelWithAvailability } from '../../utils/itemAvailability';
+import { defaultDateRange } from '../../utils/dateRange';
 
 type MovementRow = {
   move_id: number;
@@ -66,6 +67,7 @@ const Transfers = () => {
   const [itemAvailableQty, setItemAvailableQty] = useState<Record<number, number>>({});
   const [movements, setMovements] = useState<MovementRow[]>([]);
   const [form, setForm] = useState<TransferForm>(initialForm);
+  const [dateRange, setDateRange] = useState(() => defaultDateRange());
 
   const activeBranches = useMemo(() => branches.filter((row) => row.is_active), [branches]);
   const activeWarehouses = useMemo(() => warehouses.filter((row) => row.is_active), [warehouses]);
@@ -116,13 +118,22 @@ const Transfers = () => {
   );
 
   const loadData = async () => {
+    if (dateRange.fromDate && dateRange.toDate && dateRange.fromDate > dateRange.toDate) {
+      showToast('error', 'Transfers', 'From date cannot be after To date');
+      return;
+    }
     setLoading(true);
     const [branchRes, warehouseRes, itemRes, stockRes, movementRes] = await Promise.all([
       inventoryService.listBranches(),
       inventoryService.listWarehouses(),
       inventoryService.listItems({}),
       inventoryService.listStock({ page: 1, limit: 5000 }),
-      inventoryService.listMovements({ limit: 200, page: 1 }),
+      inventoryService.listMovements({
+        limit: 200,
+        page: 1,
+        fromDate: dateRange.fromDate,
+        toDate: dateRange.toDate,
+      }),
     ]);
 
     if (branchRes.success && branchRes.data?.branches) {
@@ -457,7 +468,37 @@ const Transfers = () => {
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-        <h2 className="mb-3 text-base font-semibold text-slate-900 dark:text-slate-100">Transfer History</h2>
+        <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">Transfer History</h2>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              From Date
+              <input
+                type="date"
+                className={inputClass}
+                value={dateRange.fromDate}
+                onChange={(e) => setDateRange((prev) => ({ ...prev, fromDate: e.target.value }))}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              To Date
+              <input
+                type="date"
+                className={inputClass}
+                value={dateRange.toDate}
+                onChange={(e) => setDateRange((prev) => ({ ...prev, toDate: e.target.value }))}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => void loadData()}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            >
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              {loading ? 'Loading...' : 'Display'}
+            </button>
+          </div>
+        </div>
         <DataTable
           data={movementRows}
           columns={movementColumns}

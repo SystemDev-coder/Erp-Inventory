@@ -7,7 +7,6 @@ import { asyncHandler } from '../../utils/asyncHandler';
 import { AuthRequest } from '../../middlewares/requireAuth';
 import {
   updatePreferencesSchema,
-  logoutSessionSchema,
   updateSessionLimitSchema,
 } from './session.schemas';
 

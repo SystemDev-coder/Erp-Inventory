@@ -12,6 +12,7 @@ import { InventoryTransactionRow, inventoryService } from '../../services/invent
 import { storeService, Store as StoreType } from '../../services/store.service';
 import StoresPage from '../Stock/StoresPage';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
+import { defaultDateRange } from '../../utils/dateRange';
 
 type ProductForm = Partial<Product>;
 type TxCategory = 'adjustment' | 'paid' | 'sales' | 'cancelled';
@@ -50,6 +51,7 @@ const Products = () => {
   const [txDisplayed, setTxDisplayed] = useState(false);
   const [inactiveDisplayed, setInactiveDisplayed] = useState(false);
   const [txCategory, setTxCategory] = useState<TxCategory>('adjustment');
+  const [itemsDateRange, setItemsDateRange] = useState(() => defaultDateRange());
   const [txFromDate, setTxFromDate] = useState<string>(() => {
     const d = new Date();
     d.setDate(d.getDate() - 7);
@@ -85,7 +87,11 @@ const Products = () => {
   const loadProducts = async () => {
     setLoading(true);
     await resolveStores();
-    const res = await productService.list({ limit: 200 });
+    const res = await productService.list({
+      limit: 200,
+      fromDate: itemsDateRange.fromDate,
+      toDate: itemsDateRange.toDate,
+    });
     if (res.success && res.data?.products) setProducts(res.data.products);
     else showToast('error', 'Items', res.error || 'Failed to load items');
     setLoading(false);
@@ -115,7 +121,12 @@ const Products = () => {
     setLoading(true);
     await resolveStores();
     // Backend caps list limit at 200; keep within allowed range to avoid validation errors.
-    const res = await productService.list({ includeInactive: true, limit: 200 });
+    const res = await productService.list({
+      includeInactive: true,
+      limit: 200,
+      fromDate: itemsDateRange.fromDate,
+      toDate: itemsDateRange.toDate,
+    });
     if (res.success && res.data?.products) {
       const onlyInactive = res.data.products.filter((item) => !item.is_active || String(item.status).toLowerCase() === 'inactive');
       setStateProducts(onlyInactive);
@@ -234,7 +245,28 @@ const Products = () => {
       icon: Boxes,
       content: (
         <div className="space-y-2">
-          <div className="flex flex-wrap items-center justify-end gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                From Date
+              </span>
+              <input
+                type="date"
+                value={itemsDateRange.fromDate}
+                onChange={(e) => setItemsDateRange((prev) => ({ ...prev, fromDate: e.target.value }))}
+                className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              />
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                To Date
+              </span>
+              <input
+                type="date"
+                value={itemsDateRange.toDate}
+                onChange={(e) => setItemsDateRange((prev) => ({ ...prev, toDate: e.target.value }))}
+                className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              />
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-2">
             <button
               type="button"
               disabled={loading}
@@ -271,6 +303,7 @@ const Products = () => {
             >
               New Item
             </button>
+            </div>
           </div>
           {!itemsDisplayed && !loading && (
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
@@ -399,7 +432,28 @@ const Products = () => {
       icon: BadgeAlert,
       content: (
         <div className="space-y-2">
-          <div className="flex items-center justify-end gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                From Date
+              </span>
+              <input
+                type="date"
+                value={itemsDateRange.fromDate}
+                onChange={(e) => setItemsDateRange((prev) => ({ ...prev, fromDate: e.target.value }))}
+                className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              />
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                To Date
+              </span>
+              <input
+                type="date"
+                value={itemsDateRange.toDate}
+                onChange={(e) => setItemsDateRange((prev) => ({ ...prev, toDate: e.target.value }))}
+                className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2">
             <button
               type="button"
               disabled={loading}
@@ -422,6 +476,7 @@ const Products = () => {
             >
               + Set State
             </button>
+            </div>
           </div>
           {!inactiveDisplayed && !loading && (
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">

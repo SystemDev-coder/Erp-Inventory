@@ -96,10 +96,12 @@ class EmployeeService {
   /**
    * List all employees
    */
-  async list(params?: { search?: string; status?: string }): Promise<ApiResponse<{ employees: Employee[] }>> {
+  async list(params?: { search?: string; status?: string; fromDate?: string; toDate?: string }): Promise<ApiResponse<{ employees: Employee[] }>> {
     const query = new URLSearchParams();
     if (params?.search) query.append('search', params.search);
     if (params?.status) query.append('status', params.status);
+    if (params?.fromDate) query.append('fromDate', params.fromDate);
+    if (params?.toDate) query.append('toDate', params.toDate);
     
     const url = query.toString() ? `/api/employees?${query}` : '/api/employees';
     return apiClient.get<{ employees: Employee[] }>(url);

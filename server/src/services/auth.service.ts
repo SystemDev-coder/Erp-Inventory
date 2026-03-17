@@ -1,10 +1,9 @@
-import pool from '../db/pool';
+import { pool } from '../db/pool';
 import { hashPassword, comparePassword } from '../utils/password';
 import {
-  generateAccessToken,
-  generateRefreshToken,
+  signAccessToken,
+  signRefreshToken,
   hashToken,
-  parseExpiry,
   verifyRefreshToken,
 } from '../utils/jwt';
 import { AppError } from '../middlewares/error';
@@ -25,6 +24,26 @@ interface User {
 }
 
 export class AuthService {
+  private parseExpiryToMs(value: string): number {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return 0;
+    const match = raw.match(/^(\d+)([smhd])?$/);
+    if (!match) return 0;
+    const amount = Number(match[1] || 0);
+    const unit = match[2] || 's';
+    switch (unit) {
+      case 'm':
+        return amount * 60 * 1000;
+      case 'h':
+        return amount * 60 * 60 * 1000;
+      case 'd':
+        return amount * 24 * 60 * 60 * 1000;
+      case 's':
+      default:
+        return amount * 1000;
+    }
+  }
+
   /**
    * Register a new user
    */
@@ -121,13 +140,13 @@ export class AuthService {
       branchId: user.branch_id,
     };
 
-    const accessToken = generateAccessToken(payload);
-    const refreshToken = generateRefreshToken(payload);
+    const accessToken = signAccessToken(payload);
+    const refreshToken = signRefreshToken(payload);
 
     // Store refresh token hash in database
     const tokenHash = hashToken(refreshToken);
     const expiresAt = new Date(
-      Date.now() + parseExpiry(env.JWT_REFRESH_EXPIRY)
+      Date.now() + this.parseExpiryToMs(env.JWT_REFRESH_EXPIRY)
     );
 
     await pool.query(
@@ -171,7 +190,7 @@ export class AuthService {
       }
 
       // Generate new access token
-      const newAccessToken = generateAccessToken({
+      const newAccessToken = signAccessToken({
         userId: payload.userId,
         username: payload.username,
         roleId: payload.roleId,

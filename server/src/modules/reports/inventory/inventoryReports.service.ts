@@ -69,6 +69,19 @@ export interface StockAdjustmentLogRow {
   created_by: string;
 }
 
+export interface InventoryLossRow {
+  loss_id: number;
+  loss_date: string;
+  item_id: number;
+  item_name: string;
+  quantity: number;
+  unit_cost: number;
+  total_loss: number;
+  reason: string;
+  status: string;
+  created_by: string;
+}
+
 export interface StoreStockSummaryRow {
   store_id: number;
   store_name: string;
@@ -304,6 +317,31 @@ export const inventoryReportsService = {
        LEFT JOIN ims.users u ON u.user_id = sa.created_by
       WHERE i.branch_id = $1
         AND sa.adjustment_date::date BETWEEN $2::date AND $3::date
+      ORDER BY sa.adjustment_date ASC, sa.adjustment_id ASC`,
+      [branchId, fromDate, toDate]
+    );
+  },
+
+  async getInventoryLoss(branchId: number, fromDate: string, toDate: string): Promise<InventoryLossRow[]> {
+    return queryMany<InventoryLossRow>(
+      `SELECT
+         sa.adjustment_id AS loss_id,
+         sa.adjustment_date::text AS loss_date,
+         sa.item_id,
+         i.name AS item_name,
+         COALESCE(sa.quantity, 0)::double precision AS quantity,
+         COALESCE(i.cost_price, 0)::double precision AS unit_cost,
+         (COALESCE(sa.quantity, 0) * COALESCE(i.cost_price, 0))::double precision AS total_loss,
+         COALESCE(sa.reason, '') AS reason,
+         UPPER(COALESCE(sa.status, 'POSTED')) AS status,
+         COALESCE(u.full_name, u.name, u.username, 'Unknown') AS created_by
+       FROM ims.stock_adjustment sa
+       JOIN ims.items i ON i.item_id = sa.item_id
+       LEFT JOIN ims.users u ON u.user_id = sa.created_by
+      WHERE i.branch_id = $1
+        AND sa.adjustment_date::date BETWEEN $2::date AND $3::date
+        AND UPPER(COALESCE(sa.adjustment_type, 'INCREASE')) = 'DECREASE'
+        AND UPPER(COALESCE(sa.status, 'POSTED')) <> 'CANCELLED'
       ORDER BY sa.adjustment_date ASC, sa.adjustment_id ASC`,
       [branchId, fromDate, toDate]
     );

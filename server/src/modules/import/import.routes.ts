@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import path from 'path';
-import multer, { FileFilterCallback } from 'multer';
+import multer from 'multer';
+import type { FileFilterCallback } from 'multer';
 import { requireAuth } from '../../middlewares/requireAuth';
 import { requirePerm } from '../../middlewares/requirePerm';
 import {
@@ -18,12 +19,11 @@ const allowedMimeTypes = new Set([
 ]);
 
 const upload = multer({
-  storage: multer.memoryStorage(),
   limits: {
     fileSize: 10 * 1024 * 1024,
     files: 1,
   },
-  fileFilter: (_req, file, cb: FileFilterCallback) => {
+  fileFilter: (_req: any, file: any, cb: FileFilterCallback) => {
     const extension = path.extname(file.originalname || '').toLowerCase();
     const byExtension = allowedExtensions.has(extension);
     const byMimeType = allowedMimeTypes.has((file.mimetype || '').toLowerCase());

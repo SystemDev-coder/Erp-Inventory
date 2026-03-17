@@ -125,7 +125,11 @@ const scopedCustomer = async (
 };
 
 export const customersService = {
-  async listCustomers(scope: BranchScope, search?: string): Promise<Customer[]> {
+  async listCustomers(
+    scope: BranchScope,
+    search?: string,
+    dateRange?: { fromDate?: string; toDate?: string }
+  ): Promise<Customer[]> {
     const balanceColumn = await detectCustomerBalanceColumn();
     const genderSelect = getGenderSelect();
     const params: unknown[] = [];
@@ -141,6 +145,13 @@ export const customersService = {
       where.push(
         `(full_name ILIKE $${params.length} OR COALESCE(phone, '') ILIKE $${params.length})`
       );
+    }
+
+    if (dateRange?.fromDate && dateRange?.toDate) {
+      params.push(dateRange.fromDate);
+      where.push(`registered_date >= $${params.length}::date`);
+      params.push(dateRange.toDate);
+      where.push(`registered_date <= $${params.length}::date`);
     }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';

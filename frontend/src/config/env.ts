@@ -130,6 +130,7 @@ export const API = {
     INVENTORY_VALUATION: '/api/reports/inventory/valuation',
     INVENTORY_EXPIRY_TRACKING: '/api/reports/inventory/expiry-tracking',
     INVENTORY_ADJUSTMENT_LOG: '/api/reports/inventory/adjustment-log',
+    INVENTORY_LOSS: '/api/reports/inventory/loss',
     INVENTORY_STORE_STOCK: '/api/reports/inventory/store-stock',
     INVENTORY_STORE_WISE: '/api/reports/inventory/store-wise',
     PURCHASE_OPTIONS: '/api/reports/purchase/options',
@@ -147,6 +148,9 @@ export const API = {
     FINANCIAL_CASH_FLOW: '/api/reports/financial/cash-flow',
     FINANCIAL_ACCOUNT_BALANCES: '/api/reports/financial/account-balances',
     FINANCIAL_EXPENSE_SUMMARY: '/api/reports/financial/expense-summary',
+    FINANCIAL_PROFIT_BY_ITEM: '/api/reports/financial/profit-by-item',
+    FINANCIAL_PROFIT_BY_CUSTOMER: '/api/reports/financial/profit-by-customer',
+    FINANCIAL_PROFIT_BY_STORE: '/api/reports/financial/profit-by-store',
     FINANCIAL_CUSTOMER_RECEIPTS: '/api/reports/financial/customer-receipts',
     FINANCIAL_SUPPLIER_PAYMENTS: '/api/reports/financial/supplier-payments',
     FINANCIAL_ACCOUNTS_RECEIVABLE: '/api/reports/financial/accounts-receivable',
@@ -211,8 +215,15 @@ export const API = {
     CLOSING_CLOSE: (closingId: number) => `/api/finance/closing/periods/${closingId}/close`,
     CLOSING_REOPEN: (closingId: number) => `/api/finance/closing/periods/${closingId}/reopen`,
     CLOSING_SUMMARY: (closingId: number) => `/api/finance/closing/periods/${closingId}/summary`,
+    CLOSING_TRANSFER: (closingId: number) => `/api/finance/closing/periods/${closingId}/transfer`,
     CLOSING_RULES: '/api/finance/closing/rules',
     CLOSING_RUN_SCHEDULED: '/api/finance/closing/run-scheduled',
+  },
+
+  TRASH: {
+    TABLES: '/api/trash/tables',
+    ROWS: '/api/trash/rows',
+    RESTORE: (table: string, id: number) => `/api/trash/${table}/${id}/restore`,
   },
 
   STORES: {

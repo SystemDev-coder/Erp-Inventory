@@ -1,4 +1,4 @@
-import { queryMany } from '../db/query';
+import { adminQueryMany } from '../db/adminQuery';
 
 let runtimeFinanceSchemaReady = false;
 
@@ -6,19 +6,19 @@ export const ensureRuntimeFinanceSchema = async (): Promise<void> => {
   if (runtimeFinanceSchemaReady) return;
 
   // Account type support for proper financial statements.
-  await queryMany(`
+  await adminQueryMany(`
     ALTER TABLE ims.accounts
       ADD COLUMN IF NOT EXISTS account_type VARCHAR(20) NOT NULL DEFAULT 'asset'
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     UPDATE ims.accounts
        SET account_type = 'asset'
      WHERE account_type IS NULL
         OR BTRIM(account_type) = ''
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     DO $$
     BEGIN
       IF EXISTS (
@@ -51,7 +51,7 @@ export const ensureRuntimeFinanceSchema = async (): Promise<void> => {
   `);
 
   // Ensure enum has expected values (safe on newer DBs).
-  await queryMany(`
+  await adminQueryMany(`
     DO $$
     BEGIN
       IF NOT EXISTS (
@@ -69,7 +69,7 @@ export const ensureRuntimeFinanceSchema = async (): Promise<void> => {
     $$;
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     DO $$
     BEGIN
       IF NOT EXISTS (
@@ -88,7 +88,7 @@ export const ensureRuntimeFinanceSchema = async (): Promise<void> => {
   `);
 
   // Journal support (used by some modules; safe to create).
-  await queryMany(`
+  await adminQueryMany(`
     CREATE TABLE IF NOT EXISTS ims.journal_entries (
       journal_id BIGSERIAL PRIMARY KEY,
       branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
@@ -101,7 +101,7 @@ export const ensureRuntimeFinanceSchema = async (): Promise<void> => {
     )
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     CREATE TABLE IF NOT EXISTS ims.journal_lines (
       journal_line_id BIGSERIAL PRIMARY KEY,
       journal_id BIGINT NOT NULL REFERENCES ims.journal_entries(journal_id) ON UPDATE CASCADE ON DELETE CASCADE,
@@ -113,7 +113,7 @@ export const ensureRuntimeFinanceSchema = async (): Promise<void> => {
   `);
 
   // Owner capital & drawings.
-  await queryMany(`
+  await adminQueryMany(`
     CREATE TABLE IF NOT EXISTS ims.capital_contributions (
       capital_id BIGSERIAL PRIMARY KEY,
       branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
@@ -131,7 +131,7 @@ export const ensureRuntimeFinanceSchema = async (): Promise<void> => {
     )
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     DO $$
     BEGIN
       IF NOT EXISTS (
@@ -151,17 +151,17 @@ export const ensureRuntimeFinanceSchema = async (): Promise<void> => {
     $$;
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     CREATE INDEX IF NOT EXISTS idx_capital_contributions_branch_date
       ON ims.capital_contributions(branch_id, contribution_date DESC, capital_id DESC)
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     CREATE INDEX IF NOT EXISTS idx_capital_contributions_branch_owner
       ON ims.capital_contributions(branch_id, owner_name)
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     CREATE TABLE IF NOT EXISTS ims.owner_drawings (
       draw_id BIGSERIAL PRIMARY KEY,
       branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
@@ -178,18 +178,18 @@ export const ensureRuntimeFinanceSchema = async (): Promise<void> => {
     )
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     CREATE INDEX IF NOT EXISTS idx_owner_drawings_branch_date
       ON ims.owner_drawings(branch_id, draw_date DESC, draw_id DESC)
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     CREATE INDEX IF NOT EXISTS idx_owner_drawings_branch_owner
       ON ims.owner_drawings(branch_id, owner_name)
   `);
 
   // Fixed assets (used by Balance Sheet + Cash Flow investing).
-  await queryMany(`
+  await adminQueryMany(`
     CREATE TABLE IF NOT EXISTS ims.fixed_assets (
       asset_id BIGSERIAL PRIMARY KEY,
       branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
@@ -205,16 +205,15 @@ export const ensureRuntimeFinanceSchema = async (): Promise<void> => {
     )
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     ALTER TABLE ims.fixed_assets
       ADD COLUMN IF NOT EXISTS acc_id BIGINT
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     CREATE INDEX IF NOT EXISTS idx_fixed_assets_branch_created
       ON ims.fixed_assets(branch_id, created_at DESC)
   `);
 
   runtimeFinanceSchemaReady = true;
 };
-

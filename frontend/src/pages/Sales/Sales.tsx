@@ -11,6 +11,8 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { Sale, SaleItem, salesService } from '../../services/sales.service';
 import { settingsService } from '../../services/settings.service';
 import { customerService } from '../../services/customer.service';
+import { defaultDateRange } from '../../utils/dateRange';
+import { env } from '../../config/env';
 
 const formatMoney = (value: number) => `$${Number(value || 0).toFixed(2)}`;
 
@@ -33,6 +35,7 @@ type PrintCompany = {
   name: string;
   phone?: string | null;
   logoUrl?: string | null;
+  bannerUrl?: string | null;
 };
 
 type PrintCustomer = {
@@ -82,6 +85,13 @@ export const buildPrintableDocument = (
       ? 'due'
       : '';
 
+  const formatQty = (value: number) => {
+    const n = Number(value || 0);
+    if (!Number.isFinite(n)) return '0';
+    if (Number.isInteger(n)) return String(n);
+    return n.toFixed(3).replace(/0+$/g, '').replace(/\.$/, '');
+  };
+
   return `
     <!doctype html>
     <html>
@@ -95,9 +105,12 @@ export const buildPrintableDocument = (
           body { margin: 0; color: #0f172a; -webkit-print-color-adjust: exact; print-color-adjust: exact; font-size: 11px; line-height: 1.55; }
           body.invoice { --accent: #1e3a8a; --accent-soft: #e0e7ff; --accent-dark: #1e3a8a; --accent-ink:#111827; --header-bg:#1e3a8a; --border:#c7d2fe; }
           body.quote { --accent: #7c3aed; --accent-soft: #ede9fe; --accent-dark: #6d28d9; --accent-ink:#6d28d9; --header-bg:#6d28d9; --border:#ddd6fe; }
-          .page { padding: 10px 16px 12px; }
-          .sheet { position:relative; border:1px solid var(--border); border-radius:16px; padding:16px; }
-          body.quote .sheet { border-style:dashed; }
+           .page { padding: 0; }
+           .sheet { position:relative; padding:0; }
+           .content { padding: 16px 18px 14px; }
+           .letterhead { width:100%; overflow:hidden; background:#ffffff; }
+           .letterhead-banner { display:block; width:100%; max-height:120px; object-fit:cover; object-position:center; }
+           .letterhead-rule { height:3px; background:linear-gradient(90deg, #0f172a 0%, #f59e0b 50%, #0f172a 100%); }
           .watermark { position:absolute; top:80px; right:24px; font-size:52px; font-weight:800; letter-spacing:0.18em; color:rgba(148,163,184,0.12); transform:rotate(-10deg); pointer-events:none; }
           .stamp { position:absolute; top:18px; right:18px; padding:6px 10px; border:3px solid; border-radius:10px; font-size:13px; font-weight:800; letter-spacing:0.22em; transform:rotate(10deg); text-transform:uppercase; opacity:0.86; }
           .stamp.paid { border-color:#10b981; color:#10b981; }
@@ -125,10 +138,10 @@ export const buildPrintableDocument = (
           .box h4 { margin:0 0 6px; font-size:9px; letter-spacing:0.2em; text-transform:uppercase; color:#64748b; }
           .box p { margin:2px 0; font-size:10.5px; color:#475569; }
           .box .name { font-weight:600; color:#0f172a; }
-          table { width:100%; border-collapse: collapse; margin-top:14px; border:1px solid var(--border); border-radius:10px; overflow:hidden; }
-          thead th { background:var(--header-bg); color:#f8fafc; text-transform:uppercase; letter-spacing:0.16em; font-size:9px; padding:8px; text-align:left; }
-          thead th.num { text-align:right; }
-          tbody td { padding:8px; border-bottom:1px solid #e2e8f0; font-size:10.5px; }
+           table { width:100%; border-collapse: collapse; margin-top:14px; }
+           thead th { background:var(--header-bg); color:#f8fafc; text-transform:uppercase; letter-spacing:0.16em; font-size:9px; padding:8px; text-align:left; border-bottom:1px solid rgba(255,255,255,0.24); }
+           thead th.num { text-align:right; }
+           tbody td { padding:8px; border-bottom:1px solid #e2e8f0; font-size:10.5px; }
           tbody td.num { text-align:right; }
           tbody tr:nth-child(even) { background:#f8fafc; }
           .summary { display:flex; justify-content:flex-end; margin-top:12px; }
@@ -147,7 +160,14 @@ export const buildPrintableDocument = (
       <body class="${themeClass}">
         <div class="page">
           <div class="sheet">
-            <div class="watermark">${escapeHtml((docLabel || 'Document').toUpperCase())}</div>
+            ${company.bannerUrl ? `
+              <div class="letterhead">
+                <img class="letterhead-banner" src="${escapeHtml(company.bannerUrl)}" alt="Banner" />
+                <div class="letterhead-rule"></div>
+              </div>
+            ` : ''}
+            <div class="content">
+            ${!company.bannerUrl ? `<div class="watermark">${escapeHtml((docLabel || 'Document').toUpperCase())}</div>` : ''}
             ${invoiceStampLabel ? `<div class="stamp ${invoiceStampClass}">${escapeHtml(invoiceStampLabel)}</div>` : ''}
             <div class="hero">
               <div class="brand">
@@ -207,31 +227,29 @@ export const buildPrintableDocument = (
           <table>
             <thead>
               <tr>
-                <th style="width:48px;">SL.</th>
-                <th>Item Description</th>
+                <th>Item</th>
+                <th class="num" style="width:90px;">Qty</th>
                 <th class="num" style="width:110px;">Price</th>
-                <th class="num" style="width:80px;">Qty.</th>
                 <th class="num" style="width:130px;">Total</th>
               </tr>
             </thead>
             <tbody>
-              ${items.length ? items.map((line, idx) => {
+              ${items.length ? items.map((line) => {
                 const qty = Number(line.quantity || 0);
                 const unitPrice = Number(line.unit_price || 0);
                 const lineTotal = Number(line.line_total || qty * unitPrice);
                 const itemId = Number(line.item_id || 0);
                 const itemName = line.item_name || '';
                 const itemLabel = itemName ? escapeHtml(itemName) : `Item ${itemId}`;
-                return `
-                  <tr>
-                    <td>${idx + 1}</td>
-                    <td>${itemLabel}</td>
-                    <td class="num">$${unitPrice.toFixed(2)}</td>
-                    <td class="num">${qty.toFixed(0)}</td>
-                    <td class="num">$${lineTotal.toFixed(2)}</td>
-                  </tr>
-                `;
-              }).join('') : '<tr><td colspan="5" style="padding: 12px; color:#6b7280;">No items</td></tr>'}
+                 return `
+                   <tr>
+                     <td>${itemLabel}</td>
+                     <td class="num">${formatQty(qty)}</td>
+                     <td class="num">$${unitPrice.toFixed(2)}</td>
+                     <td class="num">$${lineTotal.toFixed(2)}</td>
+                   </tr>
+                 `;
+              }).join('') : '<tr><td colspan=\"4\" style=\"padding: 12px; color:#6b7280;\">No items</td></tr>'}
             </tbody>
           </table>
 
@@ -257,6 +275,7 @@ export const buildPrintableDocument = (
               <div>${escapeHtml(company.name || 'My Inventory ERP')}</div>
               <div>${company.phone ? escapeHtml(String(company.phone)) : ''}</div>
             </div>
+            </div>
           </div>
         </div>
       </body>
@@ -270,6 +289,7 @@ const Sales = () => {
   const [loading, setLoading] = useState(false);
   const [sales, setSales] = useState<Sale[]>([]);
   const [hasLoaded, setHasLoaded] = useState(false);
+  const [dateRange, setDateRange] = useState(() => defaultDateRange());
   const [voidOpen, setVoidOpen] = useState(false);
   const [saleToVoid, setSaleToVoid] = useState<Sale | null>(null);
   const [convertOpen, setConvertOpen] = useState(false);
@@ -279,7 +299,7 @@ const Sales = () => {
 
   const loadSales = useCallback(async () => {
     setLoading(true);
-    const res = await salesService.list({ includeVoided: true });
+    const res = await salesService.list({ includeVoided: true, fromDate: dateRange.fromDate, toDate: dateRange.toDate });
     if (res.success && res.data?.sales) {
       setSales(res.data.sales);
       setHasLoaded(true);
@@ -287,7 +307,7 @@ const Sales = () => {
       showToast('error', 'Sales', res.error || 'Failed to load sales');
     }
     setLoading(false);
-  }, [showToast]);
+  }, [showToast, dateRange.fromDate, dateRange.toDate]);
 
   const printSaleInvoice = useCallback(
     async (sale: Sale) => {
@@ -307,10 +327,20 @@ const Sales = () => {
           saleRow.customer_id ? customerService.get(Number(saleRow.customer_id)) : Promise.resolve(null as any),
         ]);
 
+        const resolveAssetUrl = (value?: string | null) => {
+          const raw = String(value || '').trim();
+          if (!raw) return null;
+          if (/^https?:\/\//i.test(raw) || raw.startsWith('data:')) return raw;
+          if (raw.startsWith('uploads/')) return `${env.API_URL}/${raw}`;
+          if (raw.startsWith('/')) return `${env.API_URL}${raw}`;
+          return raw;
+        };
+
         const company = {
           name: companyRes?.data?.company?.company_name || 'My Inventory ERP',
           phone: companyRes?.data?.company?.phone || null,
-          logoUrl: companyRes?.data?.company?.logo_img || null,
+          logoUrl: resolveAssetUrl(companyRes?.data?.company?.logo_img),
+          bannerUrl: resolveAssetUrl(companyRes?.data?.company?.banner_img),
         };
 
         const customer = {
@@ -586,6 +616,18 @@ const Sales = () => {
                   secondaryAction={{ label: 'New Invoice', onClick: () => navigate('/sales/new?docType=invoice') }}
                   onDisplay={() => void loadSales()}
                   displayLoading={loading}
+                  dateRange={{
+                    fromDate: dateRange.fromDate,
+                    toDate: dateRange.toDate,
+                    onFromDateChange: (value) => {
+                      setDateRange((prev) => ({ ...prev, fromDate: value }));
+                      setHasLoaded(false);
+                    },
+                    onToDateChange: (value) => {
+                      setDateRange((prev) => ({ ...prev, toDate: value }));
+                      setHasLoaded(false);
+                    },
+                  }}
                 />
                 <DataTable
                   data={salesDocs}
@@ -612,6 +654,18 @@ const Sales = () => {
                   primaryAction={{ label: 'New Quotation', onClick: () => navigate('/sales/new?docType=quotation') }}
                   onDisplay={() => void loadSales()}
                   displayLoading={loading}
+                  dateRange={{
+                    fromDate: dateRange.fromDate,
+                    toDate: dateRange.toDate,
+                    onFromDateChange: (value) => {
+                      setDateRange((prev) => ({ ...prev, fromDate: value }));
+                      setHasLoaded(false);
+                    },
+                    onToDateChange: (value) => {
+                      setDateRange((prev) => ({ ...prev, toDate: value }));
+                      setHasLoaded(false);
+                    },
+                  }}
                 />
                 <DataTable
                   data={quotationDocs}

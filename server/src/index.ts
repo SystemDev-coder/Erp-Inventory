@@ -1,6 +1,6 @@
 import app from './app';
 import { env } from './utils/env';
-import pool from './db/pool';
+import { pool } from './db/pool';
 
 const PORT = env.PORT || 5000;
 

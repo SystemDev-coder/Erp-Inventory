@@ -19,6 +19,14 @@ export const listSales = asyncHandler(async (req: AuthRequest, res: Response) =>
   const docType = (req.query.docType as string) || undefined;
   const includeVoided = String(req.query.includeVoided || '').toLowerCase() === 'true';
   const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
+  const fromDate = (req.query.fromDate as string) || undefined;
+  const toDate = (req.query.toDate as string) || undefined;
+  if ((fromDate && !toDate) || (!fromDate && toDate)) {
+    throw ApiError.badRequest('Both fromDate and toDate are required together');
+  }
+  if (fromDate && toDate && fromDate > toDate) {
+    throw ApiError.badRequest('fromDate cannot be after toDate');
+  }
   if (branchId) {
     assertBranchAccess(scope, branchId);
   }
@@ -28,6 +36,8 @@ export const listSales = asyncHandler(async (req: AuthRequest, res: Response) =>
     docType,
     includeVoided,
     branchId,
+    fromDate,
+    toDate,
   });
   return ApiResponse.success(res, { sales });
 });
@@ -100,7 +110,7 @@ export const deleteSale = asyncHandler(async (req: AuthRequest, res: Response) =
   const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
   if (!id) throw ApiError.badRequest('Invalid sale id');
-  await salesService.deleteSale(id, scope);
+  await salesService.deleteSale(id, scope, { userId: req.user?.userId ?? null });
   return ApiResponse.success(res, null, 'Sale deleted');
 });
 

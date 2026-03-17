@@ -58,7 +58,7 @@ export const markAllNotificationsRead = asyncHandler(async (req: AuthRequest, re
     userId: req.user.userId,
     action: 'notification.mark_all_read',
     entity: 'notifications',
-    meta: { updated },
+    newValue: { updated },
     ip: req.ip,
     userAgent: req.get('user-agent') ?? null,
   });

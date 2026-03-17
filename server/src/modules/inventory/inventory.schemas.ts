@@ -37,6 +37,7 @@ const requiredPositiveRoundedInt = z.preprocess(roundToInt, z.number().int().pos
 const nonnegativeRoundedInt = z.preprocess(roundToInt, z.number().int().nonnegative());
 
 const requiredPositiveInt = z.coerce.number().int().positive();
+const dateStringSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format');
 
 const resolveTransferType = (
   explicitType: 'warehouse' | 'branch' | undefined,
@@ -55,8 +56,25 @@ export const stockQuerySchema = z.object({
   productId: optionalPositiveInt,
   itemId: optionalPositiveInt,
   search: z.string().optional(),
+  fromDate: dateStringSchema.optional(),
+  toDate: dateStringSchema.optional(),
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(5000).default(50),
+}).superRefine((value, ctx) => {
+  if ((value.fromDate && !value.toDate) || (!value.fromDate && value.toDate)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Both fromDate and toDate are required together',
+      path: ['fromDate'],
+    });
+  }
+  if (value.fromDate && value.toDate && value.fromDate > value.toDate) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'fromDate cannot be after toDate',
+      path: ['fromDate'],
+    });
+  }
 }).transform((value) => ({
   ...value,
   productId: value.productId ?? value.itemId,
@@ -67,7 +85,6 @@ export const adjustmentListQuerySchema = stockQuerySchema;
 export const recountListQuerySchema = stockQuerySchema;
 const adjustmentTypeSchema = z.enum(['INCREASE', 'DECREASE']);
 const adjustmentStatusSchema = z.enum(['POSTED', 'CANCELLED']);
-const dateStringSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format');
 
 export const locationQuerySchema = z.object({
   branchId: optionalPositiveInt,

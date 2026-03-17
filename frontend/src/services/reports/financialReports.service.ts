@@ -29,6 +29,36 @@ export interface AccountBalanceRow {
   last_transaction_date: string | null;
 }
 
+export interface ProfitByItemRow {
+  item_id: number;
+  item_name: string;
+  quantity_sold: number;
+  sales_amount: number;
+  cost_amount: number;
+  gross_profit: number;
+  margin_pct: number;
+}
+
+export interface ProfitByCustomerRow {
+  customer_id: number;
+  customer_name: string;
+  quantity_sold: number;
+  sales_amount: number;
+  cost_amount: number;
+  gross_profit: number;
+  margin_pct: number;
+}
+
+export interface ProfitByStoreRow {
+  store_id: number;
+  store_name: string;
+  quantity_sold: number;
+  sales_amount: number;
+  cost_amount: number;
+  gross_profit: number;
+  margin_pct: number;
+}
+
 export interface ExpenseSummaryRow {
   exp_id: number;
   expense_name: string;
@@ -136,6 +166,7 @@ interface FinancialOptionsResponse {
   accounts: ReportOption[];
   customers: ReportOption[];
   suppliers: ReportOption[];
+  salesStoreEnabled?: boolean;
 }
 
 interface BalanceSheetResponse extends RowsResponse<BalanceSheetRow> {
@@ -190,6 +221,61 @@ export const financialReportsService = {
       toDate: input.toDate,
     });
     return apiClient.get<RowsResponse<ExpenseSummaryRow>>(`${API.REPORTS.FINANCIAL_EXPENSE_SUMMARY}${query}`);
+  },
+
+  async getProfitByItem(input: {
+    fromDate: string;
+    toDate: string;
+    itemId?: number;
+    customerId?: number;
+    storeId?: number;
+    branchId?: number;
+  }) {
+    const query = toQuery({
+      branchId: input.branchId,
+      fromDate: input.fromDate,
+      toDate: input.toDate,
+      itemId: input.itemId,
+      customerId: input.customerId,
+      storeId: input.storeId,
+    });
+    return apiClient.get<RowsResponse<ProfitByItemRow>>(`${API.REPORTS.FINANCIAL_PROFIT_BY_ITEM}${query}`);
+  },
+
+  async getProfitByCustomer(input: {
+    fromDate: string;
+    toDate: string;
+    customerId?: number;
+    itemId?: number;
+    storeId?: number;
+    branchId?: number;
+  }) {
+    const query = toQuery({
+      branchId: input.branchId,
+      fromDate: input.fromDate,
+      toDate: input.toDate,
+      customerId: input.customerId,
+      itemId: input.itemId,
+      storeId: input.storeId,
+    });
+    return apiClient.get<RowsResponse<ProfitByCustomerRow>>(`${API.REPORTS.FINANCIAL_PROFIT_BY_CUSTOMER}${query}`);
+  },
+
+  async getProfitByStore(input: {
+    fromDate: string;
+    toDate: string;
+    customerId?: number;
+    itemId?: number;
+    branchId?: number;
+  }) {
+    const query = toQuery({
+      branchId: input.branchId,
+      fromDate: input.fromDate,
+      toDate: input.toDate,
+      customerId: input.customerId,
+      itemId: input.itemId,
+    });
+    return apiClient.get<RowsResponse<ProfitByStoreRow>>(`${API.REPORTS.FINANCIAL_PROFIT_BY_STORE}${query}`);
   },
 
   async getCustomerReceipts(input: {

@@ -82,6 +82,61 @@ export const getExpenseSummaryReport = asyncHandler(async (req: AuthRequest, res
   });
 });
 
+export const getProfitByItemReport = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const branchId = await resolveBranchIdForReports(req);
+  const { fromDate, toDate } = parseDateRange(req);
+  const itemId = req.query.itemId ? parseNumericId(req.query.itemId, 'itemId') : undefined;
+  const customerId = req.query.customerId ? parseNumericId(req.query.customerId, 'customerId') : undefined;
+  const storeId = req.query.storeId ? parseNumericId(req.query.storeId, 'storeId') : undefined;
+  const rows = await financialReportsService.getProfitByItem(branchId, fromDate, toDate, itemId, customerId, storeId);
+  return ApiResponse.success(res, {
+    branchId,
+    reportKey: 'profit-by-item',
+    fromDate,
+    toDate,
+    itemId: itemId ?? null,
+    customerId: customerId ?? null,
+    storeId: storeId ?? null,
+    rows,
+  });
+});
+
+export const getProfitByCustomerReport = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const branchId = await resolveBranchIdForReports(req);
+  const { fromDate, toDate } = parseDateRange(req);
+  const customerId = req.query.customerId ? parseNumericId(req.query.customerId, 'customerId') : undefined;
+  const itemId = req.query.itemId ? parseNumericId(req.query.itemId, 'itemId') : undefined;
+  const storeId = req.query.storeId ? parseNumericId(req.query.storeId, 'storeId') : undefined;
+  const rows = await financialReportsService.getProfitByCustomer(branchId, fromDate, toDate, customerId, itemId, storeId);
+  return ApiResponse.success(res, {
+    branchId,
+    reportKey: 'profit-by-customer',
+    fromDate,
+    toDate,
+    customerId: customerId ?? null,
+    itemId: itemId ?? null,
+    storeId: storeId ?? null,
+    rows,
+  });
+});
+
+export const getProfitByStoreReport = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const branchId = await resolveBranchIdForReports(req);
+  const { fromDate, toDate } = parseDateRange(req);
+  const customerId = req.query.customerId ? parseNumericId(req.query.customerId, 'customerId') : undefined;
+  const itemId = req.query.itemId ? parseNumericId(req.query.itemId, 'itemId') : undefined;
+  const rows = await financialReportsService.getProfitByStore(branchId, fromDate, toDate, customerId, itemId);
+  return ApiResponse.success(res, {
+    branchId,
+    reportKey: 'profit-by-store',
+    fromDate,
+    toDate,
+    customerId: customerId ?? null,
+    itemId: itemId ?? null,
+    rows,
+  });
+});
+
 export const getCustomerReceiptsReport = asyncHandler(async (req: AuthRequest, res: Response) => {
   const branchId = await resolveBranchIdForReports(req);
   const { fromDate, toDate } = parseDateRange(req);

@@ -6,6 +6,10 @@ DB_PORT="${PGPORT:-5432}"
 DB_USER="${PGUSER:-postgres}"
 DB_NAME="${PGDATABASE:-erp_inventory}"
 DB_SCHEMA="${PGSCHEMA:-ims}"
+DB_ADMIN_USER="${ADMIN_PGUSER:-${DB_USER}}"
+DB_ADMIN_PASSWORD="${ADMIN_PGPASSWORD:-${PGPASSWORD}}"
+APP_DB_USER="${DB_USER}"
+APP_DB_PASSWORD="${PGPASSWORD}"
 MIGRATIONS_DIR="${MIGRATIONS_DIR:-/app/sql}"
 BASE_SCHEMA_FILE="${BASE_SCHEMA_FILE:-Full_complete_scheme.sql}"
 DEMO_SEED_FILE="${DEMO_SEED_FILE:-seed_demo_data.sql}"
@@ -60,15 +64,17 @@ ensure_node_dependencies() {
 
 ensure_node_dependencies
 
+psql_admin() {
+  PGPASSWORD="$DB_ADMIN_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_ADMIN_USER" -d "$DB_NAME" "$@"
+}
+
 echo "Waiting for postgres at ${DB_HOST}:${DB_PORT}..."
-until pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" >/dev/null 2>&1; do
+until pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_ADMIN_USER" >/dev/null 2>&1; do
   sleep 1
 done
 
-export PGPASSWORD="${PGPASSWORD}"
-
 ensure_schema_tracking() {
-psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 <<SQL
+psql_admin -v ON_ERROR_STOP=1 <<SQL
 CREATE SCHEMA IF NOT EXISTS "${DB_SCHEMA}";
 SET search_path TO "${DB_SCHEMA}", public;
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -82,7 +88,7 @@ SQL
 }
 
 existing_schema_table_count() {
-  psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -tAc "
+  psql_admin -tAc "
     SELECT COUNT(*)
     FROM information_schema.tables
     WHERE table_schema = '${DB_SCHEMA}'
@@ -91,7 +97,7 @@ existing_schema_table_count() {
 }
 
 is_schema_compatible() {
-  psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -tAc "
+  psql_admin -tAc "
     SELECT CASE WHEN
       EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='${DB_SCHEMA}' AND table_name='roles' AND column_name='role_code')
       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='${DB_SCHEMA}' AND table_name='roles' AND column_name='description')
@@ -122,7 +128,7 @@ reset_schema_if_incompatible() {
 
   if [ "$AUTO_RESET_ON_SCHEMA_MISMATCH" = "true" ]; then
     echo "Detected incompatible legacy schema in ${DB_SCHEMA}. Resetting schema (AUTO_RESET_ON_SCHEMA_MISMATCH=true)."
-    psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS \"${DB_SCHEMA}\" CASCADE; CREATE SCHEMA \"${DB_SCHEMA}\";"
+    psql_admin -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS \"${DB_SCHEMA}\" CASCADE; CREATE SCHEMA \"${DB_SCHEMA}\";"
     ensure_schema_tracking
   else
     echo "ERROR: Incompatible schema detected in ${DB_SCHEMA}."
@@ -133,6 +139,49 @@ reset_schema_if_incompatible() {
 
 ensure_schema_tracking
 reset_schema_if_incompatible
+
+ensure_app_role() {
+  if [ -z "$APP_DB_USER" ] || [ "$APP_DB_USER" = "$DB_ADMIN_USER" ]; then
+    return
+  fi
+
+  echo "Ensuring application role ${APP_DB_USER} exists..."
+  psql_admin -v ON_ERROR_STOP=1 <<SQL
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${APP_DB_USER}') THEN
+    EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L', '${APP_DB_USER}', '${APP_DB_PASSWORD}');
+  END IF;
+END
+\$\$;
+
+GRANT CONNECT ON DATABASE "${DB_NAME}" TO "${APP_DB_USER}";
+GRANT USAGE ON SCHEMA "${DB_SCHEMA}" TO "${APP_DB_USER}";
+ALTER ROLE "${APP_DB_USER}" NOBYPASSRLS;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA "${DB_SCHEMA}"
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "${APP_DB_USER}";
+ALTER DEFAULT PRIVILEGES IN SCHEMA "${DB_SCHEMA}"
+  GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO "${APP_DB_USER}";
+ALTER DEFAULT PRIVILEGES IN SCHEMA "${DB_SCHEMA}"
+  GRANT EXECUTE ON FUNCTIONS TO "${APP_DB_USER}";
+SQL
+}
+
+grant_app_privileges() {
+  if [ -z "$APP_DB_USER" ] || [ "$APP_DB_USER" = "$DB_ADMIN_USER" ]; then
+    return
+  fi
+
+  echo "Granting privileges to ${APP_DB_USER}..."
+  psql_admin -v ON_ERROR_STOP=1 <<SQL
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "${DB_SCHEMA}" TO "${APP_DB_USER}";
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA "${DB_SCHEMA}" TO "${APP_DB_USER}";
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA "${DB_SCHEMA}" TO "${APP_DB_USER}";
+SQL
+}
+
+ensure_app_role
 
 compute_checksum() {
   file_path="$1"
@@ -149,7 +198,7 @@ apply_base_schema() {
   file_path="$1"
   file_name=$(basename "$file_path")
   file_checksum=$(compute_checksum "$file_path")
-  stored_checksum=$(psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -tAc "SELECT checksum FROM ${DB_SCHEMA}.schema_migrations WHERE filename='${file_name}'" | tr -d '[:space:]')
+  stored_checksum=$(psql_admin -tAc "SELECT checksum FROM ${DB_SCHEMA}.schema_migrations WHERE filename='${file_name}'" | tr -d '[:space:]')
 
   if [ -n "$stored_checksum" ] && [ "$stored_checksum" = "$file_checksum" ]; then
     echo "Skipping ${file_name} (already applied)"
@@ -162,16 +211,16 @@ apply_base_schema() {
     echo "Applying base schema ${file_name}"
   fi
 
-  psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 -f "$file_path"
+  psql_admin -v ON_ERROR_STOP=1 -f "$file_path"
 
-  psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 -c "INSERT INTO ${DB_SCHEMA}.schema_migrations (filename, checksum) VALUES ('${file_name}', '${file_checksum}') ON CONFLICT (filename) DO UPDATE SET checksum = EXCLUDED.checksum, applied_at = now()"
+  psql_admin -v ON_ERROR_STOP=1 -c "INSERT INTO ${DB_SCHEMA}.schema_migrations (filename, checksum) VALUES ('${file_name}', '${file_checksum}') ON CONFLICT (filename) DO UPDATE SET checksum = EXCLUDED.checksum, applied_at = now()"
 }
 
 apply_seed_file() {
   file_path="$1"
   file_name=$(basename "$file_path")
   file_checksum=$(compute_checksum "$file_path")
-  stored_checksum=$(psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -tAc "SELECT checksum FROM ${DB_SCHEMA}.schema_migrations WHERE filename='${file_name}'" | tr -d '[:space:]')
+  stored_checksum=$(psql_admin -tAc "SELECT checksum FROM ${DB_SCHEMA}.schema_migrations WHERE filename='${file_name}'" | tr -d '[:space:]')
 
   if [ -n "$stored_checksum" ] && [ "$stored_checksum" = "$file_checksum" ]; then
     echo "Skipping ${file_name} (already applied)"
@@ -184,14 +233,14 @@ apply_seed_file() {
     echo "Applying demo seed ${file_name}"
   fi
 
-  psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 -f "$file_path"
+  psql_admin -v ON_ERROR_STOP=1 -f "$file_path"
 
-  psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 -c "INSERT INTO ${DB_SCHEMA}.schema_migrations (filename, checksum) VALUES ('${file_name}', '${file_checksum}') ON CONFLICT (filename) DO UPDATE SET checksum = EXCLUDED.checksum, applied_at = now()"
+  psql_admin -v ON_ERROR_STOP=1 -c "INSERT INTO ${DB_SCHEMA}.schema_migrations (filename, checksum) VALUES ('${file_name}', '${file_checksum}') ON CONFLICT (filename) DO UPDATE SET checksum = EXCLUDED.checksum, applied_at = now()"
 }
 
 run_bootstrap_seed() {
   echo "Running bootstrap seed checks (company, branch, roles, sample users)"
-  psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 <<SQL
+  psql_admin -v ON_ERROR_STOP=1 <<SQL
 SET search_path TO "${DB_SCHEMA}", public;
 DO \$\$
 BEGIN
@@ -256,6 +305,8 @@ BEGIN
     ('system.settings', 'System Settings', 'System Administration', 'System', 'settings', 'Configure system settings'),
     ('system.company.manage', 'Manage Company', 'System Administration', 'Company', 'manage', 'Update company profile'),
     ('system.audit.view', 'View Audit Logs', 'System Administration', 'Audit', 'view', 'View audit trail'),
+    ('trash.view', 'View Trash', 'System Administration', 'Trash', 'view', 'View deleted records'),
+    ('trash.restore', 'Restore Trash', 'System Administration', 'Trash', 'restore', 'Restore deleted records'),
     ('company.view', 'View Company', 'System Administration', 'Company', 'view', 'View company profile'),
     ('company.create', 'Create Company', 'System Administration', 'Company', 'create', 'Create company profile'),
     ('company.update', 'Update Company', 'System Administration', 'Company', 'update', 'Update company profile'),
@@ -271,6 +322,8 @@ BEGIN
       'system.settings',
       'system.company.manage',
       'system.audit.view',
+      'trash.view',
+      'trash.restore',
       'company.view',
       'company.create',
       'company.update',
@@ -289,6 +342,8 @@ BEGIN
       'system.settings',
       'system.company.manage',
       'system.audit.view',
+      'trash.view',
+      'trash.restore',
       'company.view',
       'company.create',
       'company.update',
@@ -307,6 +362,8 @@ BEGIN
       'system.settings',
       'system.company.manage',
       'system.audit.view',
+      'trash.view',
+      'trash.restore',
       'company.view',
       'company.create',
       'company.update',
@@ -332,7 +389,7 @@ fi
 run_bootstrap_seed
 
 echo "Applying runtime schema fixes..."
-psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 <<SQL
+psql_admin -v ON_ERROR_STOP=1 <<SQL
 SET search_path TO "${DB_SCHEMA}", public;
 ALTER TABLE ims.accounts DROP CONSTRAINT IF EXISTS accounts_balance_check;
 ALTER TABLE ims.customers ADD COLUMN IF NOT EXISTS remaining_balance NUMERIC(14,2) NOT NULL DEFAULT 0;
@@ -340,7 +397,267 @@ UPDATE ims.customers
    SET remaining_balance = open_balance
  WHERE remaining_balance = 0
    AND open_balance <> 0;
+
+-- Soft delete support for all tables
+DO \$\$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN
+    SELECT table_name
+      FROM information_schema.tables
+     WHERE table_schema = '${DB_SCHEMA}'
+       AND table_type = 'BASE TABLE'
+  LOOP
+    EXECUTE format('ALTER TABLE ${DB_SCHEMA}.%I ADD COLUMN IF NOT EXISTS is_deleted SMALLINT NOT NULL DEFAULT 0', r.table_name);
+    EXECUTE format('ALTER TABLE ${DB_SCHEMA}.%I ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ', r.table_name);
+  END LOOP;
+END
+\$\$;
+
+CREATE OR REPLACE FUNCTION ims.fn_table_has_column(p_table TEXT, p_column TEXT)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+AS \$\$
+DECLARE
+  v_exists BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1
+      FROM information_schema.columns
+     WHERE table_schema = '${DB_SCHEMA}'
+       AND table_name = p_table
+       AND column_name = p_column
+  ) INTO v_exists;
+  RETURN COALESCE(v_exists, FALSE);
+END;
+\$\$;
+
+CREATE OR REPLACE FUNCTION ims.fn_table_pk_column(p_table TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql
+AS \$\$
+DECLARE
+  v_col TEXT;
+  v_count INT;
+BEGIN
+  SELECT COUNT(*) INTO v_count
+    FROM pg_index i
+    JOIN pg_class c ON c.oid = i.indrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE i.indisprimary
+     AND n.nspname = '${DB_SCHEMA}'
+     AND c.relname = p_table;
+
+  IF v_count = 0 THEN
+    RETURN NULL;
+  END IF;
+
+  SELECT a.attname INTO v_col
+    FROM pg_index i
+    JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+    JOIN pg_class c ON c.oid = i.indrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE i.indisprimary
+     AND n.nspname = '${DB_SCHEMA}'
+     AND c.relname = p_table
+   ORDER BY a.attnum
+   LIMIT 1;
+
+  RETURN v_col;
+END;
+\$\$;
+
+CREATE OR REPLACE FUNCTION ims.sp_soft_delete(p_table TEXT, p_id BIGINT, p_user BIGINT DEFAULT NULL)
+RETURNS TABLE(success BOOLEAN, message TEXT)
+LANGUAGE plpgsql
+AS \$\$
+DECLARE
+  v_pk TEXT;
+  v_has_deleted_at BOOLEAN;
+  v_has_updated_at BOOLEAN;
+  v_exists INT;
+  v_ref RECORD;
+  v_sql TEXT;
+  v_set TEXT;
+BEGIN
+  PERFORM set_config('app.include_deleted', '1', true);
+
+  IF to_regclass(format('${DB_SCHEMA}.%I', p_table)) IS NULL THEN
+    RAISE EXCEPTION 'Table not found: %', p_table;
+  END IF;
+
+  IF NOT ims.fn_table_has_column(p_table, 'is_deleted') THEN
+    RAISE EXCEPTION 'Table % does not support soft delete', p_table;
+  END IF;
+
+  v_pk := ims.fn_table_pk_column(p_table);
+  IF v_pk IS NULL THEN
+    RAISE EXCEPTION 'Primary key not found for table %', p_table;
+  END IF;
+
+  v_sql := format('SELECT 1 FROM ${DB_SCHEMA}.%I WHERE %I = \$1 LIMIT 1', p_table, v_pk);
+  EXECUTE v_sql INTO v_exists USING p_id;
+  IF v_exists IS NULL THEN
+    RETURN QUERY SELECT FALSE, 'Record not found';
+    RETURN;
+  END IF;
+
+  FOR v_ref IN
+    SELECT
+      c.conrelid::regclass::text AS ref_table,
+      a.attname AS ref_column
+    FROM pg_constraint c
+    JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+    JOIN pg_class t ON t.oid = c.confrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE c.contype = 'f'
+      AND n.nspname = '${DB_SCHEMA}'
+      AND t.relname = p_table
+  LOOP
+    v_sql := format(
+      'SELECT 1 FROM %s WHERE %I = \$1 AND COALESCE(is_deleted, 0) = 0 LIMIT 1',
+      v_ref.ref_table,
+      v_ref.ref_column
+    );
+    EXECUTE v_sql INTO v_exists USING p_id;
+    IF v_exists IS NOT NULL THEN
+      RAISE EXCEPTION 'This record cannot be deleted because it is already used in %.',
+        replace(v_ref.ref_table, '${DB_SCHEMA}.', '');
+    END IF;
+  END LOOP;
+
+  v_has_deleted_at := ims.fn_table_has_column(p_table, 'deleted_at');
+  v_has_updated_at := ims.fn_table_has_column(p_table, 'updated_at');
+
+  v_set := 'is_deleted = 1';
+  IF v_has_deleted_at THEN
+    v_set := v_set || ', deleted_at = NOW()';
+  END IF;
+  IF v_has_updated_at THEN
+    v_set := v_set || ', updated_at = NOW()';
+  END IF;
+
+  v_sql := format('UPDATE ${DB_SCHEMA}.%I SET %s WHERE %I = \$1', p_table, v_set, v_pk);
+  EXECUTE v_sql USING p_id;
+
+  RETURN QUERY SELECT TRUE, 'Deleted';
+END;
+\$\$;
+
+CREATE OR REPLACE FUNCTION ims.sp_restore(p_table TEXT, p_id BIGINT, p_user BIGINT DEFAULT NULL)
+RETURNS TABLE(success BOOLEAN, message TEXT)
+LANGUAGE plpgsql
+AS \$\$
+DECLARE
+  v_pk TEXT;
+  v_has_deleted_at BOOLEAN;
+  v_has_updated_at BOOLEAN;
+  v_exists INT;
+  v_sql TEXT;
+  v_set TEXT;
+BEGIN
+  PERFORM set_config('app.include_deleted', '1', true);
+
+  IF to_regclass(format('${DB_SCHEMA}.%I', p_table)) IS NULL THEN
+    RAISE EXCEPTION 'Table not found: %', p_table;
+  END IF;
+
+  IF NOT ims.fn_table_has_column(p_table, 'is_deleted') THEN
+    RAISE EXCEPTION 'Table % does not support restore', p_table;
+  END IF;
+
+  v_pk := ims.fn_table_pk_column(p_table);
+  IF v_pk IS NULL THEN
+    RAISE EXCEPTION 'Primary key not found for table %', p_table;
+  END IF;
+
+  v_sql := format('SELECT 1 FROM ${DB_SCHEMA}.%I WHERE %I = \$1 LIMIT 1', p_table, v_pk);
+  EXECUTE v_sql INTO v_exists USING p_id;
+  IF v_exists IS NULL THEN
+    RETURN QUERY SELECT FALSE, 'Record not found';
+    RETURN;
+  END IF;
+
+  v_has_deleted_at := ims.fn_table_has_column(p_table, 'deleted_at');
+  v_has_updated_at := ims.fn_table_has_column(p_table, 'updated_at');
+
+  v_set := 'is_deleted = 0';
+  IF v_has_deleted_at THEN
+    v_set := v_set || ', deleted_at = NULL';
+  END IF;
+  IF v_has_updated_at THEN
+    v_set := v_set || ', updated_at = NOW()';
+  END IF;
+
+  v_sql := format('UPDATE ${DB_SCHEMA}.%I SET %s WHERE %I = \$1', p_table, v_set, v_pk);
+  EXECUTE v_sql USING p_id;
+
+  RETURN QUERY SELECT TRUE, 'Restored';
+END;
+\$\$;
+
+CREATE OR REPLACE FUNCTION ims.trg_soft_delete()
+RETURNS trigger
+LANGUAGE plpgsql
+AS \$\$
+DECLARE
+  v_pk TEXT;
+  v_id BIGINT;
+BEGIN
+  v_pk := ims.fn_table_pk_column(TG_TABLE_NAME);
+  IF v_pk IS NULL THEN
+    RETURN OLD;
+  END IF;
+  -- Avoid dynamic record field access errors by using jsonb lookup
+  v_id := NULLIF(to_jsonb(OLD)->>v_pk, '')::bigint;
+  IF v_id IS NULL THEN
+    RETURN OLD;
+  END IF;
+  PERFORM ims.sp_soft_delete(TG_TABLE_NAME, v_id, NULL);
+  RETURN NULL;
+END;
+\$\$;
+
+DO \$\$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN
+    SELECT table_name
+      FROM information_schema.tables
+     WHERE table_schema = '${DB_SCHEMA}'
+       AND table_type = 'BASE TABLE'
+  LOOP
+    EXECUTE format('DROP TRIGGER IF EXISTS trg_soft_delete ON ${DB_SCHEMA}.%I', r.table_name);
+    EXECUTE format('CREATE TRIGGER trg_soft_delete BEFORE DELETE ON ${DB_SCHEMA}.%I FOR EACH ROW EXECUTE FUNCTION ims.trg_soft_delete()', r.table_name);
+  END LOOP;
+END
+\$\$;
+
+DO \$\$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN
+    SELECT table_name
+      FROM information_schema.tables
+     WHERE table_schema = '${DB_SCHEMA}'
+       AND table_type = 'BASE TABLE'
+  LOOP
+    EXECUTE format('ALTER TABLE ${DB_SCHEMA}.%I ENABLE ROW LEVEL SECURITY', r.table_name);
+    EXECUTE format('ALTER TABLE ${DB_SCHEMA}.%I FORCE ROW LEVEL SECURITY', r.table_name);
+    EXECUTE format('DROP POLICY IF EXISTS rls_soft_delete ON ${DB_SCHEMA}.%I', r.table_name);
+    EXECUTE format(
+      'CREATE POLICY rls_soft_delete ON ${DB_SCHEMA}.%I USING (COALESCE(is_deleted::int, 0) = 0 OR current_setting(''app.include_deleted'', true) = ''1'') WITH CHECK (true)',
+      r.table_name
+    );
+  END LOOP;
+END
+\$\$;
 SQL
+
+grant_app_privileges
 
 if [ "$RUN_DEMO_SEED" = "true" ]; then
   if [ -f "${DEMO_SEED_PATH}" ]; then

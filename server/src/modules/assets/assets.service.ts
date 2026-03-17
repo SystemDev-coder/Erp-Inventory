@@ -1,4 +1,5 @@
 import { queryMany, queryOne } from '../../db/query';
+import { adminQueryMany } from '../../db/adminQuery';
 import { ApiError } from '../../utils/ApiError';
 import { BranchScope, pickBranchForWrite } from '../../utils/branchScope';
 
@@ -38,7 +39,7 @@ let fixedAssetsSchemaReady = false;
 const ensureFixedAssetsSchema = async () => {
   if (fixedAssetsSchemaReady) return;
 
-  await queryMany(`
+  await adminQueryMany(`
     CREATE TABLE IF NOT EXISTS ims.fixed_assets (
       asset_id BIGSERIAL PRIMARY KEY,
       branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
@@ -54,7 +55,7 @@ const ensureFixedAssetsSchema = async () => {
     )
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     ALTER TABLE ims.fixed_assets
       ADD COLUMN IF NOT EXISTS category VARCHAR(100),
       ADD COLUMN IF NOT EXISTS status VARCHAR(30),
@@ -64,7 +65,7 @@ const ensureFixedAssetsSchema = async () => {
       ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     UPDATE ims.fixed_assets
        SET category = COALESCE(NULLIF(category, ''), 'Fixed Asset'),
            status = COALESCE(NULLIF(status, ''), 'active'),
@@ -72,7 +73,7 @@ const ensureFixedAssetsSchema = async () => {
            updated_at = COALESCE(updated_at, NOW())
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     ALTER TABLE ims.fixed_assets
       ALTER COLUMN category SET DEFAULT 'Fixed Asset',
       ALTER COLUMN status SET DEFAULT 'active',
@@ -80,7 +81,7 @@ const ensureFixedAssetsSchema = async () => {
       ALTER COLUMN updated_at SET DEFAULT NOW()
   `);
 
-  await queryMany(`
+  await adminQueryMany(`
     CREATE INDEX IF NOT EXISTS idx_fixed_assets_branch_created
       ON ims.fixed_assets(branch_id, created_at DESC)
   `);
@@ -113,7 +114,7 @@ const mapRow = (row: {
 export const assetsService = {
   async listFixedAssets(
     scope: BranchScope,
-    filters: { search?: string; status?: string }
+    filters: { search?: string; status?: string; fromDate?: string; toDate?: string }
   ): Promise<FixedAssetRow[]> {
     await ensureFixedAssetsSchema();
 
@@ -133,6 +134,12 @@ export const assetsService = {
     if (filters.status) {
       params.push(filters.status.trim().toLowerCase());
       where.push(`LOWER(fa.status) = $${params.length}`);
+    }
+    if (filters.fromDate && filters.toDate) {
+      params.push(filters.fromDate);
+      where.push(`fa.purchase_date::date >= $${params.length}::date`);
+      params.push(filters.toDate);
+      where.push(`fa.purchase_date::date <= $${params.length}::date`);
     }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';

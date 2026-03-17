@@ -140,6 +140,7 @@ export const capitalDrawingListQuerySchema = z
 
 export const settingsClosingCreateSchema = z.object({
   branchId: z.coerce.number().int().positive().optional(),
+  closeMode: z.enum(['monthly', 'quarterly', 'yearly', 'custom']).optional(),
   periodFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   periodTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   note: z.string().trim().max(500).optional().or(z.literal('')),
@@ -150,6 +151,7 @@ export const settingsClosingCreateSchema = z.object({
 
 export const settingsClosingUpdateSchema = z
   .object({
+    closeMode: z.enum(['monthly', 'quarterly', 'yearly', 'custom']).optional(),
     periodFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     periodTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     note: z.string().trim().max(500).optional().or(z.literal('')),

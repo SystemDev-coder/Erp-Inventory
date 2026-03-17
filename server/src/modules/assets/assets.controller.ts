@@ -37,10 +37,20 @@ export const listFixedAssets = asyncHandler(async (req: AuthRequest, res: Respon
   const scope = await resolveBranchScope(req);
   const search = (req.query.search as string | undefined)?.trim();
   const status = (req.query.status as string | undefined)?.trim();
+  const fromDate = (req.query.fromDate as string) || undefined;
+  const toDate = (req.query.toDate as string) || undefined;
+  if ((fromDate && !toDate) || (!fromDate && toDate)) {
+    throw ApiError.badRequest('Both fromDate and toDate are required together');
+  }
+  if (fromDate && toDate && fromDate > toDate) {
+    throw ApiError.badRequest('fromDate cannot be after toDate');
+  }
 
   const assets = await assetsService.listFixedAssets(scope, {
     search: search || undefined,
     status: status || undefined,
+    fromDate,
+    toDate,
   });
 
   return ApiResponse.success(res, { assets });

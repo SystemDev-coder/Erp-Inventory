@@ -5,9 +5,9 @@ import { config } from '../config/env';
 
 export const errorHandler = (
   err: Error | ApiError | ZodError,
-  req: Request,
+  _req: Request,
   res: Response,
-  next: NextFunction
+  _next: NextFunction
 ) => {
   console.error('Error:', err);
 
@@ -49,6 +49,14 @@ export const errorHandler = (
       return res.status(400).json({
         success: false,
         message: 'Referenced record does not exist',
+      });
+    }
+
+    // Custom business rule exceptions (RAISE EXCEPTION)
+    if (pgError.code === 'P0001') {
+      return res.status(400).json({
+        success: false,
+        message: pgError.message || 'Operation blocked by business rule',
       });
     }
   }

@@ -30,6 +30,7 @@ import AccountsPayableReportPage from "./pages/Reports/financial/AccountsPayable
 import Settings from "./pages/Settings/Settings";
 import System from "./pages/System/System";
 import Support from "./pages/Support/Support";
+import Trash from "./pages/Trash/Trash";
 
 // Auth Pages
 import SignIn from "./pages/AuthPages/SignIn";
@@ -106,6 +107,7 @@ function AppRoutes() {
           <Route path="/system" element={<ProtectedRoute><System /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute permission="system.settings"><Settings /></ProtectedRoute>} />
           <Route path="/support" element={<ProtectedRoute><Support /></ProtectedRoute>} />
+          <Route path="/trash" element={<ProtectedRoute permission="trash.view"><Trash /></ProtectedRoute>} />
         </Route>
 
         {/* Auth Layout */}

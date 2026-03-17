@@ -55,6 +55,7 @@ const nullablePositiveInt = z.preprocess(
 );
 
 const textField = z.string().trim().max(1000).optional().or(z.literal(''));
+const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 export const listQuerySchema = z.object({
   search: z.string().trim().optional(),
@@ -71,6 +72,23 @@ export const listQuerySchema = z.object({
   includeInactive: z.coerce.boolean().optional().default(false),
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(200).default(50),
+  fromDate: dateString.optional(),
+  toDate: dateString.optional(),
+}).superRefine((value, ctx) => {
+  if ((value.fromDate && !value.toDate) || (!value.fromDate && value.toDate)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Both fromDate and toDate are required together',
+      path: ['fromDate'],
+    });
+  }
+  if (value.fromDate && value.toDate && value.fromDate > value.toDate) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'fromDate must be before or equal to toDate',
+      path: ['toDate'],
+    });
+  }
 });
 
 export const categoryCreateSchema = z.object({

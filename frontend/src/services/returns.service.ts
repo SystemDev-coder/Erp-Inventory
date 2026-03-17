@@ -86,8 +86,12 @@ export const returnsService = {
     listPurchaseItemsBySupplier(supplierId: number) {
         return apiClient.get<{ items: ReturnItemOption[] }>(`/api/returns/purchases/supplier-items?supplierId=${supplierId}`);
     },
-    listSalesReturns() {
-        return apiClient.get<{ rows: SalesReturn[] }>('/api/returns/sales');
+    listSalesReturns(params?: { fromDate?: string; toDate?: string }) {
+        const qsParts: string[] = [];
+        if (params?.fromDate) qsParts.push(`fromDate=${encodeURIComponent(params.fromDate)}`);
+        if (params?.toDate) qsParts.push(`toDate=${encodeURIComponent(params.toDate)}`);
+        const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
+        return apiClient.get<{ rows: SalesReturn[] }>(`/api/returns/sales${qs}`);
     },
     getSalesReturn(id: number) {
         return apiClient.get<{ return: SalesReturn }>(`/api/returns/sales/${id}`);
@@ -120,8 +124,12 @@ export const returnsService = {
     deleteSalesReturn(id: number) {
         return apiClient.delete(`/api/returns/sales/${id}`);
     },
-    listPurchaseReturns() {
-        return apiClient.get<{ rows: PurchaseReturn[] }>('/api/returns/purchases');
+    listPurchaseReturns(params?: { fromDate?: string; toDate?: string }) {
+        const qsParts: string[] = [];
+        if (params?.fromDate) qsParts.push(`fromDate=${encodeURIComponent(params.fromDate)}`);
+        if (params?.toDate) qsParts.push(`toDate=${encodeURIComponent(params.toDate)}`);
+        const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
+        return apiClient.get<{ rows: PurchaseReturn[] }>(`/api/returns/purchases${qs}`);
     },
     getPurchaseReturn(id: number) {
         return apiClient.get<{ return: PurchaseReturn }>(`/api/returns/purchases/${id}`);

@@ -6,26 +6,20 @@ import type { DateRange, ModalReportState } from '../types';
 import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange } from '../reportUtils';
 
 type FinancialCardId =
-  | 'income-statement'
   | 'balance-sheet'
   | 'cash-flow'
   | 'account-balances'
   | 'expense-summary'
-  | 'customer-receipts'
-  | 'supplier-payments'
   | 'accounts-receivable'
   | 'accounts-payable'
   | 'account-statement'
   | 'trial-balance';
 
 const financialCards: Array<{ id: FinancialCardId; title: string }> = [
-  { id: 'income-statement', title: 'Income Statement' },
   { id: 'balance-sheet', title: 'Balance Sheet' },
   { id: 'cash-flow', title: 'Cash Flow Statement' },
   { id: 'account-balances', title: 'Account Balances' },
   { id: 'expense-summary', title: 'Expense Summary' },
-  { id: 'customer-receipts', title: 'Customer Receipts' },
-  { id: 'supplier-payments', title: 'Supplier Payments' },
   { id: 'accounts-receivable', title: 'Accounts Receivable' },
   { id: 'accounts-payable', title: 'Accounts Payable' },
   { id: 'account-statement', title: 'Account Statement' },
@@ -56,26 +50,6 @@ const expenseSummaryColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'last_charge_date', header: 'Last Charge', render: (row) => formatDateTime(row.last_charge_date) },
 ];
 
-const customerReceiptsColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'receipt_id', header: 'Receipt #' },
-  { key: 'receipt_date', header: 'Date', render: (row) => formatDateTime(row.receipt_date) },
-  { key: 'customer_name', header: 'Customer' },
-  { key: 'sale_id', header: 'Sale #' },
-  { key: 'account_name', header: 'Account' },
-  { key: 'amount', header: 'Amount', align: 'right', render: (row) => formatCurrency(row.amount) },
-  { key: 'payment_method', header: 'Method' },
-  { key: 'reference_no', header: 'Reference' },
-];
-
-const supplierPaymentsColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'sup_payment_id', header: 'Payment #' },
-  { key: 'pay_date', header: 'Date', render: (row) => formatDateTime(row.pay_date) },
-  { key: 'purchase_id', header: 'Purchase #' },
-  { key: 'supplier_name', header: 'Supplier' },
-  { key: 'account_name', header: 'Account' },
-  { key: 'amount_paid', header: 'Amount', align: 'right', render: (row) => formatCurrency(row.amount_paid) },
-  { key: 'reference_no', header: 'Reference' },
-];
 
 const accountsReceivableColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'customer_name', header: 'Customer' },
@@ -104,8 +78,6 @@ const accountStatementColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'txn_date', header: 'Date', render: (row) => formatDateTime(row.txn_date) },
   { key: 'account_name', header: 'Account' },
   { key: 'txn_type', header: 'Type' },
-  { key: 'ref_table', header: 'Ref Table' },
-  { key: 'ref_id', header: 'Ref Id' },
   { key: 'debit', header: 'Debit', align: 'right', render: (row) => formatCurrency(row.debit) },
   { key: 'credit', header: 'Credit', align: 'right', render: (row) => formatCurrency(row.credit) },
   { key: 'running_balance', header: 'Running Balance', align: 'right', render: (row) => formatCurrency(row.running_balance) },
@@ -130,26 +102,19 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
   const [loadingCardId, setLoadingCardId] = useState<FinancialCardId | null>(null);
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
 
-  const [incomeRange, setIncomeRange] = useState<DateRange>(defaultReportRange());
   const [cashFlowRange, setCashFlowRange] = useState<DateRange>(defaultReportRange());
   const [balanceRange, setBalanceRange] = useState<DateRange>(defaultReportRange());
   const [expenseRange, setExpenseRange] = useState<DateRange>(defaultReportRange());
-  const [customerRange, setCustomerRange] = useState<DateRange>(defaultReportRange());
-  const [supplierRange, setSupplierRange] = useState<DateRange>(defaultReportRange());
   const [receivableRange, setReceivableRange] = useState<DateRange>(defaultReportRange());
   const [payableRange, setPayableRange] = useState<DateRange>(defaultReportRange());
   const [statementRange, setStatementRange] = useState<DateRange>(defaultReportRange());
   const [trialBalanceRange, setTrialBalanceRange] = useState<DateRange>(defaultReportRange());
   const [selectedAccountBalanceId, setSelectedAccountBalanceId] = useState('');
-  const [selectedCustomerId, setSelectedCustomerId] = useState('');
-  const [selectedSupplierId, setSelectedSupplierId] = useState('');
   const [selectedAccountStatementId, setSelectedAccountStatementId] = useState('');
 
   const [optionsLoading, setOptionsLoading] = useState(false);
   const [optionsError, setOptionsError] = useState('');
   const [accounts, setAccounts] = useState<Array<{ id: number; label: string }>>([]);
-  const [customers, setCustomers] = useState<Array<{ id: number; label: string }>>([]);
-  const [suppliers, setSuppliers] = useState<Array<{ id: number; label: string }>>([]);
 
   useEffect(() => {
     let alive = true;
@@ -165,8 +130,6 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
           return;
         }
         setAccounts(response.data.accounts || []);
-        setCustomers(response.data.customers || []);
-        setSuppliers(response.data.suppliers || []);
       })
       .catch((error: unknown) => {
         if (!alive) return;
@@ -184,14 +147,6 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
   const selectedAccountBalanceLabel = useMemo(
     () => accounts.find((option) => String(option.id) === selectedAccountBalanceId)?.label || '',
     [accounts, selectedAccountBalanceId]
-  );
-  const selectedCustomerLabel = useMemo(
-    () => customers.find((option) => String(option.id) === selectedCustomerId)?.label || '',
-    [customers, selectedCustomerId]
-  );
-  const selectedSupplierLabel = useMemo(
-    () => suppliers.find((option) => String(option.id) === selectedSupplierId)?.label || '',
-    [suppliers, selectedSupplierId]
   );
   const selectedAccountStatementLabel = useMemo(
     () => accounts.find((option) => String(option.id) === selectedAccountStatementId)?.label || '',
@@ -217,22 +172,6 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
 
   const sumNumericField = (rows: Record<string, unknown>[], field: string) =>
     rows.reduce((sum, row) => sum + Number(row[field] || 0), 0);
-
-  const handleIncomeStatement = () =>
-    runCardAction('income-statement', async () => {
-      ensureRangeValid(incomeRange, 'Income Statement');
-      const response = await financialReportsService.getIncomeStatement(incomeRange);
-      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load income statement');
-      onOpenModal({
-        title: 'Income Statement',
-        subtitle: `${formatDateOnly(incomeRange.fromDate)} - ${formatDateOnly(incomeRange.toDate)}`,
-        fileName: 'income-statement',
-        variant: 'income-statement',
-        data: toRecordRows(response.data.rows || []),
-        columns: statementColumns,
-        filters: { 'From Date': incomeRange.fromDate, 'To Date': incomeRange.toDate },
-      });
-    });
 
   const handleBalanceSheet = () =>
     runCardAction('balance-sheet', async () => {
@@ -337,75 +276,6 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
       });
     });
 
-  const handleCustomerReceipts = (mode: 'show' | 'all') =>
-    runCardAction('customer-receipts', async () => {
-      ensureRangeValid(customerRange, 'Customer Receipts');
-      const customerId = mode === 'show' ? Number(selectedCustomerId || 0) : undefined;
-      if (mode === 'show' && !customerId) throw new Error('Select a customer first');
-      const response = await financialReportsService.getCustomerReceipts({
-        fromDate: customerRange.fromDate,
-        toDate: customerRange.toDate,
-        mode,
-        customerId,
-      });
-      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load customer receipts');
-      const rows = toRecordRows(response.data.rows || []);
-      const totalAmount = sumNumericField(rows, 'amount');
-      onOpenModal({
-        title: 'Customer Receipts',
-        subtitle: `${formatDateOnly(customerRange.fromDate)} - ${formatDateOnly(customerRange.toDate)}`,
-        fileName: 'customer-receipts',
-        data: rows,
-        columns: customerReceiptsColumns,
-        tableTotals: {
-          label: 'Total',
-          values: {
-            amount: formatCurrency(totalAmount),
-          },
-        },
-        filters: {
-          'From Date': customerRange.fromDate,
-          'To Date': customerRange.toDate,
-          Mode: mode === 'show' ? 'Show' : 'All',
-          Customer: mode === 'show' ? selectedCustomerLabel || 'Selected Customer' : 'All Customers',
-        },
-      });
-    });
-
-  const handleSupplierPayments = (mode: 'show' | 'all') =>
-    runCardAction('supplier-payments', async () => {
-      ensureRangeValid(supplierRange, 'Supplier Payments');
-      const supplierId = mode === 'show' ? Number(selectedSupplierId || 0) : undefined;
-      if (mode === 'show' && !supplierId) throw new Error('Select a supplier first');
-      const response = await financialReportsService.getSupplierPayments({
-        fromDate: supplierRange.fromDate,
-        toDate: supplierRange.toDate,
-        mode,
-        supplierId,
-      });
-      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load supplier payments');
-      const rows = toRecordRows(response.data.rows || []);
-      const totalAmount = sumNumericField(rows, 'amount_paid');
-      onOpenModal({
-        title: 'Supplier Payments',
-        subtitle: `${formatDateOnly(supplierRange.fromDate)} - ${formatDateOnly(supplierRange.toDate)}`,
-        fileName: 'supplier-payments',
-        data: rows,
-        columns: supplierPaymentsColumns,
-        tableTotals: {
-          label: 'Total',
-          values: {
-            amount_paid: formatCurrency(totalAmount),
-          },
-        },
-        filters: {
-          'From Date': supplierRange.fromDate,
-          'To Date': supplierRange.toDate,
-          Mode: mode === 'show' ? 'Show' : 'All',
-          Supplier: mode === 'show' ? selectedSupplierLabel || 'Selected Supplier' : 'All Suppliers',
-        },
-      });
-    });
 
   const handleAccountStatement = (mode: 'show' | 'all') =>
     runCardAction('account-statement', async () => {
@@ -555,21 +425,6 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
   );
 
   const renderCardBody = (cardId: FinancialCardId) => {
-    if (cardId === 'income-statement') {
-      return (
-        <div className="space-y-3">
-          {renderDateRange(incomeRange, setIncomeRange)}
-          <button
-            onClick={handleIncomeStatement}
-            disabled={loadingCardId === cardId}
-            className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            Show
-          </button>
-        </div>
-      );
-    }
-
     if (cardId === 'balance-sheet') {
       return (
         <div className="space-y-3">
@@ -650,77 +505,6 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
       );
     }
 
-    if (cardId === 'customer-receipts') {
-      return (
-        <div className="space-y-3">
-          {renderDateRange(customerRange, setCustomerRange)}
-          <select
-            value={selectedCustomerId}
-            onChange={(event) => setSelectedCustomerId(event.target.value)}
-            className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2.5 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none"
-          >
-            <option value="">Select Customer</option>
-            {customers.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <div className="grid grid-cols-2 gap-3">
-            <button
-              onClick={() => handleCustomerReceipts('show')}
-              disabled={loadingCardId === cardId}
-              className="inline-flex items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              Show
-            </button>
-            <button
-              onClick={() => handleCustomerReceipts('all')}
-              disabled={loadingCardId === cardId}
-              className="rounded-md border border-[#9ec5df] bg-white px-4 py-2.5 text-sm font-semibold text-[#0f4f76] hover:bg-[#edf5fb] disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              All
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    if (cardId === 'supplier-payments') {
-      return (
-        <div className="space-y-3">
-          {renderDateRange(supplierRange, setSupplierRange)}
-          <select
-            value={selectedSupplierId}
-            onChange={(event) => setSelectedSupplierId(event.target.value)}
-            className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2.5 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none"
-          >
-            <option value="">Select Supplier</option>
-            {suppliers.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <div className="grid grid-cols-2 gap-3">
-            <button
-              onClick={() => handleSupplierPayments('show')}
-              disabled={loadingCardId === cardId}
-              className="inline-flex items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              Show
-            </button>
-            <button
-              onClick={() => handleSupplierPayments('all')}
-              disabled={loadingCardId === cardId}
-              className="rounded-md border border-[#9ec5df] bg-white px-4 py-2.5 text-sm font-semibold text-[#0f4f76] hover:bg-[#edf5fb] disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              All
-            </button>
-          </div>
-        </div>
-      );
-    }
 
     if (cardId === 'account-statement') {
       return (
@@ -839,7 +623,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
       {optionsLoading && (
         <div className="inline-flex items-center gap-2 rounded-md border border-[#b8c8d7] bg-white px-3 py-2 text-sm text-[#38556d]">
           <Loader2 className="h-4 w-4 animate-spin" />
-          Loading accounts, customers, and suppliers...
+          Loading financial options...
         </div>
       )}
       <div className="space-y-3 lg:hidden">

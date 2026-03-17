@@ -156,7 +156,7 @@ export const validateBranchAccess = (paramName = 'branchId') => {
 export const buildBranchFilter = (
   req: Request,
   tableAlias?: string
-): { clause: string; params: number[] } => {
+): { clause: string; params: Array<number | number[]> } => {
   const prefix = tableAlias ? `${tableAlias}.` : '';
 
   if (!req.userBranches?.length) {

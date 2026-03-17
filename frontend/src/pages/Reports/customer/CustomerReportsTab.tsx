@@ -3,7 +3,7 @@ import { ChevronDown, Loader2 } from 'lucide-react';
 import type { ReportColumn, ReportTotalItem } from '../../../components/reports/ReportModal';
 import { customerReportsService } from '../../../services/reports/customerReports.service';
 import type { DateRange, ModalReportState } from '../types';
-import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, todayDate, defaultReportRange } from '../reportUtils';
+import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange } from '../reportUtils';
 
 type CustomerCardId =
   | 'customer-list'
@@ -36,14 +36,37 @@ const customerListColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'status', header: 'Status' },
 ];
 
+const formatCustomerLedgerType = (value: unknown) => {
+  const key = String(value || '').toLowerCase();
+  if (key === 'opening') return 'Opening Balance';
+  if (key === 'sale') return 'Sale';
+  if (key === 'receipt') return 'Receipt';
+  if (key === 'return') return 'Return';
+  if (key === 'adjustment') return 'Adjustment';
+  return key ? key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : '-';
+};
+
+const formatCustomerLedgerRef = (row: Record<string, unknown>) => {
+  const table = String(row.ref_table || '').toLowerCase();
+  const id = row.ref_id ? `#${row.ref_id}` : '';
+  if (table === 'customers') return 'Opening Balance';
+  if (table === 'sales') return `Sale ${id}`.trim();
+  if (table === 'customer_receipts') return `Receipt ${id}`.trim();
+  if (table === 'sale_returns' || table === 'sales_returns') return `Return ${id}`.trim();
+  if (!table && !id) return '-';
+  return `${table.replace(/_/g, ' ')} ${id}`.trim();
+};
+
 const customerLedgerColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'cust_ledger_id', header: 'Entry #' },
   { key: 'entry_date', header: 'Date', render: (row) => formatDateTime(row.entry_date) },
   { key: 'customer_name', header: 'Customer' },
-  { key: 'entry_type', header: 'Type' },
+  { key: 'entry_type', header: 'Type', render: (row) => formatCustomerLedgerType(row.entry_type) },
+  { key: 'reference', header: 'Reference', render: (row) => formatCustomerLedgerRef(row) },
+  { key: 'note', header: 'Note' },
   { key: 'debit', header: 'Debit', align: 'right', render: (row) => formatCurrency(row.debit) },
   { key: 'credit', header: 'Credit', align: 'right', render: (row) => formatCurrency(row.credit) },
-  { key: 'running_balance', header: 'Running Balance', align: 'right', render: (row) => formatCurrency(row.running_balance) },
+  { key: 'running_balance', header: 'Balance', align: 'right', render: (row) => formatCurrency(row.running_balance) },
 ];
 
 const outstandingColumns: ReportColumn<Record<string, unknown>>[] = [
@@ -231,12 +254,28 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load customer ledger');
       const rows = toRecordRows(response.data.rows || []);
+      const totalDebit = sumByKey(rows, 'debit');
+      const totalCredit = sumByKey(rows, 'credit');
+      const closingBalance = rows.length > 0 ? Number(rows[rows.length - 1].running_balance || 0) : 0;
       onOpenModal({
         title: 'Customer Ledger',
         subtitle: `${formatDateOnly(ledgerRange.fromDate)} - ${formatDateOnly(ledgerRange.toDate)}`,
         fileName: 'customer-ledger',
         data: rows,
         columns: customerLedgerColumns,
+        tableTotals: {
+          label: 'Total',
+          values: {
+            debit: formatCurrency(totalDebit),
+            credit: formatCurrency(totalCredit),
+            running_balance: formatCurrency(closingBalance),
+          },
+        },
+        totals: [
+          moneyTotal('Total Debit', totalDebit),
+          moneyTotal('Total Credit', totalCredit),
+          moneyTotal('Closing Balance', closingBalance),
+        ],
         filters: {
           'From Date': ledgerRange.fromDate,
           'To Date': ledgerRange.toDate,

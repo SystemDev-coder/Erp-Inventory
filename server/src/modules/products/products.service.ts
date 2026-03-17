@@ -22,6 +22,8 @@ type MasterFilters = {
   search?: string;
   branchId?: number;
   includeInactive?: boolean;
+  fromDate?: string;
+  toDate?: string;
   page: number;
   limit: number;
 };
@@ -157,7 +159,7 @@ const scopeClause = (
   }
   if (!scope.isAdmin) {
     params.push(scope.branchIds);
-    return `${alias}.branch_id = ANY($${params.length})`;
+    return `${alias}.branch_id = ANY($${params.length}::bigint[])`;
   }
   return 'TRUE';
 };
@@ -307,6 +309,12 @@ export const productsService = {
       where.push(`(c.cat_name ILIKE $${params.length} OR COALESCE(c.description, '') ILIKE $${params.length})`);
     }
     if (!filters.includeInactive) where.push('COALESCE(c.is_active, TRUE) = TRUE');
+    if (filters.fromDate && filters.toDate) {
+      params.push(filters.fromDate);
+      where.push(`c.created_at::date >= $${params.length}::date`);
+      params.push(filters.toDate);
+      where.push(`c.created_at::date <= $${params.length}::date`);
+    }
 
     const count = await queryOne<{ total: string }>(
       `SELECT COUNT(*)::text AS total FROM ims.categories c WHERE ${where.join(' AND ')}`,
@@ -327,7 +335,7 @@ export const productsService = {
       return queryOne<Category>(`${getCategorySql} WHERE c.cat_id = $1`, [id]);
     }
     return queryOne<Category>(
-      `${getCategorySql} WHERE c.cat_id = $1 AND c.branch_id = ANY($2)`,
+      `${getCategorySql} WHERE c.cat_id = $1 AND c.branch_id = ANY($2::bigint[])`,
       [id, scope.branchIds]
     );
   },
@@ -357,14 +365,17 @@ export const productsService = {
       await queryOne(`UPDATE ims.categories SET ${updates.join(', ')} WHERE cat_id = $1`, values);
     } else {
       values.push(scope.branchIds);
-      await queryOne(`UPDATE ims.categories SET ${updates.join(', ')} WHERE cat_id = $1 AND branch_id = ANY($${p})`, values);
+      await queryOne(
+        `UPDATE ims.categories SET ${updates.join(', ')} WHERE cat_id = $1 AND branch_id = ANY($${p}::bigint[])`,
+        values
+      );
     }
     return this.getCategory(id, scope);
   },
 
   async deleteCategory(id: number, scope: BranchScope): Promise<void> {
     if (scope.isAdmin) await queryOne(`DELETE FROM ims.categories WHERE cat_id = $1`, [id]);
-    else await queryOne(`DELETE FROM ims.categories WHERE cat_id = $1 AND branch_id = ANY($2)`, [id, scope.branchIds]);
+    else await queryOne(`DELETE FROM ims.categories WHERE cat_id = $1 AND branch_id = ANY($2::bigint[])`, [id, scope.branchIds]);
   },
 
   async listUnits(scope: BranchScope, filters: MasterFilters): Promise<Paged<Unit>> {
@@ -376,6 +387,12 @@ export const productsService = {
       where.push(`(u.unit_name ILIKE $${params.length} OR COALESCE(u.symbol, '') ILIKE $${params.length})`);
     }
     if (!filters.includeInactive) where.push('u.is_active = TRUE');
+    if (filters.fromDate && filters.toDate) {
+      params.push(filters.fromDate);
+      where.push(`u.created_at::date >= $${params.length}::date`);
+      params.push(filters.toDate);
+      where.push(`u.created_at::date <= $${params.length}::date`);
+    }
 
     const count = await queryOne<{ total: string }>(
       `SELECT COUNT(*)::text AS total FROM ims.units u WHERE ${where.join(' AND ')}`,
@@ -393,7 +410,7 @@ export const productsService = {
 
   async getUnit(id: number, scope: BranchScope): Promise<Unit | null> {
     if (scope.isAdmin) return queryOne<Unit>(`${getUnitSql} WHERE u.unit_id = $1`, [id]);
-    return queryOne<Unit>(`${getUnitSql} WHERE u.unit_id = $1 AND u.branch_id = ANY($2)`, [id, scope.branchIds]);
+    return queryOne<Unit>(`${getUnitSql} WHERE u.unit_id = $1 AND u.branch_id = ANY($2::bigint[])`, [id, scope.branchIds]);
   },
 
   async createUnit(input: UnitCreateInput, scope: BranchScope): Promise<Unit> {
@@ -421,14 +438,14 @@ export const productsService = {
       await queryOne(`UPDATE ims.units SET ${updates.join(', ')} WHERE unit_id = $1`, values);
     } else {
       values.push(scope.branchIds);
-      await queryOne(`UPDATE ims.units SET ${updates.join(', ')} WHERE unit_id = $1 AND branch_id = ANY($${p})`, values);
+      await queryOne(`UPDATE ims.units SET ${updates.join(', ')} WHERE unit_id = $1 AND branch_id = ANY($${p}::bigint[])`, values);
     }
     return this.getUnit(id, scope);
   },
 
   async deleteUnit(id: number, scope: BranchScope): Promise<void> {
     if (scope.isAdmin) await queryOne(`DELETE FROM ims.units WHERE unit_id = $1`, [id]);
-    else await queryOne(`DELETE FROM ims.units WHERE unit_id = $1 AND branch_id = ANY($2)`, [id, scope.branchIds]);
+    else await queryOne(`DELETE FROM ims.units WHERE unit_id = $1 AND branch_id = ANY($2::bigint[])`, [id, scope.branchIds]);
   },
 
   async listTaxes(scope: BranchScope, filters: MasterFilters): Promise<Paged<Tax>> {
@@ -440,6 +457,12 @@ export const productsService = {
       where.push(`t.tax_name ILIKE $${params.length}`);
     }
     if (!filters.includeInactive) where.push('t.is_active = TRUE');
+    if (filters.fromDate && filters.toDate) {
+      params.push(filters.fromDate);
+      where.push(`t.created_at::date >= $${params.length}::date`);
+      params.push(filters.toDate);
+      where.push(`t.created_at::date <= $${params.length}::date`);
+    }
 
     const count = await queryOne<{ total: string }>(
       `SELECT COUNT(*)::text AS total FROM ims.taxes t WHERE ${where.join(' AND ')}`,
@@ -457,7 +480,7 @@ export const productsService = {
 
   async getTax(id: number, scope: BranchScope): Promise<Tax | null> {
     if (scope.isAdmin) return queryOne<Tax>(`${getTaxSql} WHERE t.tax_id = $1`, [id]);
-    return queryOne<Tax>(`${getTaxSql} WHERE t.tax_id = $1 AND t.branch_id = ANY($2)`, [id, scope.branchIds]);
+    return queryOne<Tax>(`${getTaxSql} WHERE t.tax_id = $1 AND t.branch_id = ANY($2::bigint[])`, [id, scope.branchIds]);
   },
 
   async createTax(input: TaxCreateInput, scope: BranchScope): Promise<Tax> {
@@ -486,14 +509,14 @@ export const productsService = {
       await queryOne(`UPDATE ims.taxes SET ${updates.join(', ')} WHERE tax_id = $1`, values);
     } else {
       values.push(scope.branchIds);
-      await queryOne(`UPDATE ims.taxes SET ${updates.join(', ')} WHERE tax_id = $1 AND branch_id = ANY($${p})`, values);
+      await queryOne(`UPDATE ims.taxes SET ${updates.join(', ')} WHERE tax_id = $1 AND branch_id = ANY($${p}::bigint[])`, values);
     }
     return this.getTax(id, scope);
   },
 
   async deleteTax(id: number, scope: BranchScope): Promise<void> {
     if (scope.isAdmin) await queryOne(`DELETE FROM ims.taxes WHERE tax_id = $1`, [id]);
-    else await queryOne(`DELETE FROM ims.taxes WHERE tax_id = $1 AND branch_id = ANY($2)`, [id, scope.branchIds]);
+    else await queryOne(`DELETE FROM ims.taxes WHERE tax_id = $1 AND branch_id = ANY($2::bigint[])`, [id, scope.branchIds]);
   },
 
   async listProducts(scope: BranchScope, filters: ProductFilters): Promise<Paged<Product>> {
@@ -506,6 +529,12 @@ export const productsService = {
       where.push(`(i.name ILIKE $${params.length} OR COALESCE(i.barcode, '') ILIKE $${params.length})`);
     }
     if (!filters.includeInactive) where.push('i.is_active = TRUE');
+    if (filters.fromDate && filters.toDate) {
+      params.push(filters.fromDate);
+      where.push(`i.created_at::date >= $${params.length}::date`);
+      params.push(filters.toDate);
+      where.push(`i.created_at::date <= $${params.length}::date`);
+    }
 
     const count = await queryOne<{ total: string }>(
       `SELECT COUNT(*)::text AS total FROM ims.items i WHERE ${where.join(' AND ')}`,
@@ -528,13 +557,13 @@ export const productsService = {
     const stockAlertExpr = (await hasItemsStockAlertColumn()) ? 'i.stock_alert' : 'COALESCE(i.reorder_level, 5)';
     if (scope.isAdmin) {
       const params: unknown[] = [id];
-      const storeExpr = storeId ? `$${params.push(storeId)}` : 'NULL::bigint';
+      const storeExpr = storeId ? `$${params.push(storeId)}::bigint` : 'NULL::bigint';
       return queryOne<Product>(`${getProductSql(stockAlertExpr, storeExpr)} WHERE i.item_id = $1`, params);
     }
     const params: unknown[] = [id, scope.branchIds];
-    const storeExpr = storeId ? `$${params.push(storeId)}` : 'NULL::bigint';
+    const storeExpr = storeId ? `$${params.push(storeId)}::bigint` : 'NULL::bigint';
     return queryOne<Product>(
-      `${getProductSql(stockAlertExpr, storeExpr)} WHERE i.item_id = $1 AND i.branch_id = ANY($2)`,
+      `${getProductSql(stockAlertExpr, storeExpr)} WHERE i.item_id = $1 AND i.branch_id = ANY($2::bigint[])`,
       params
     );
   },
@@ -604,7 +633,7 @@ export const productsService = {
           [id]
         )
       : await queryOne<{ item_id: number; branch_id: number; store_id: number | null }>(
-          `SELECT item_id, branch_id, store_id FROM ims.items WHERE item_id = $1 AND branch_id = ANY($2)`,
+          `SELECT item_id, branch_id, store_id FROM ims.items WHERE item_id = $1 AND branch_id = ANY($2::bigint[])`,
           [id, scope.branchIds]
         );
     if (!current) return null;
@@ -631,7 +660,10 @@ export const productsService = {
           await client.query(`UPDATE ims.items SET ${updates.join(', ')} WHERE item_id = $1`, values);
         } else {
           values.push(scope.branchIds);
-          await client.query(`UPDATE ims.items SET ${updates.join(', ')} WHERE item_id = $1 AND branch_id = ANY($${p})`, values);
+          await client.query(
+            `UPDATE ims.items SET ${updates.join(', ')} WHERE item_id = $1 AND branch_id = ANY($${p}::bigint[])`,
+            values
+          );
         }
       }
 
@@ -650,6 +682,6 @@ export const productsService = {
 
   async deleteProduct(id: number, scope: BranchScope): Promise<void> {
     if (scope.isAdmin) await queryOne(`DELETE FROM ims.items WHERE item_id = $1`, [id]);
-    else await queryOne(`DELETE FROM ims.items WHERE item_id = $1 AND branch_id = ANY($2)`, [id, scope.branchIds]);
+    else await queryOne(`DELETE FROM ims.items WHERE item_id = $1 AND branch_id = ANY($2::bigint[])`, [id, scope.branchIds]);
   },
 };

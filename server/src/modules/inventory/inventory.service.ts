@@ -732,12 +732,12 @@ export const inventoryService = {
   },
 
   async listMovements(filters: any) {
-    const { branchId, branchIds, whId, productId, search, page, limit } = filters;
+    const { branchId, branchIds, whId, productId, search, page, limit, fromDate, toDate } = filters;
     const movementHasSoftDelete = await hasInventoryMovementSoftDelete();
     const params: any[] = [];
     const where: string[] = ['1=1'];
     if (movementHasSoftDelete) {
-      where.unshift('(m.is_deleted IS NULL OR m.is_deleted = FALSE)');
+      where.unshift('(m.is_deleted IS NULL OR COALESCE(m.is_deleted::int, 0) = 0)');
     }
     if (branchId) { params.push(branchId); where.push(`m.branch_id = $${params.length}`); }
     else if (Array.isArray(branchIds) && branchIds.length) {
@@ -747,6 +747,12 @@ export const inventoryService = {
     if (whId) { params.push(whId); where.push(`m.wh_id = $${params.length}`); }
     if (productId) { params.push(productId); where.push(`m.item_id = $${params.length}`); }
     if (search) { params.push(`%${search}%`); where.push(`p.name ILIKE $${params.length}`); }
+    if (fromDate && toDate) {
+      params.push(fromDate);
+      where.push(`m.move_date::date >= $${params.length}::date`);
+      params.push(toDate);
+      where.push(`m.move_date::date <= $${params.length}::date`);
+    }
     const offset = (page - 1) * limit;
     params.push(limit, offset);
 
@@ -766,10 +772,10 @@ export const inventoryService = {
   async listAdjustments(filters: any) {
     if (!(await hasStockAdjustmentTable())) {
       const movementHasSoftDelete = await hasInventoryMovementSoftDelete();
-      const { branchId, branchIds, productId, search, page, limit } = filters;
+      const { branchId, branchIds, productId, search, page, limit, fromDate, toDate } = filters;
       const params: any[] = [];
       const where: string[] = [`m.move_type = 'adjustment'`];
-      if (movementHasSoftDelete) where.push('(m.is_deleted IS NULL OR m.is_deleted = FALSE)');
+      if (movementHasSoftDelete) where.push('(m.is_deleted IS NULL OR COALESCE(m.is_deleted::int, 0) = 0)');
       if (branchId) {
         params.push(branchId);
         where.push(`m.branch_id = $${params.length}`);
@@ -788,6 +794,12 @@ export const inventoryService = {
           OR COALESCE(m.note,'') ILIKE $${params.length}
           OR b.branch_name ILIKE $${params.length}
         )`);
+      }
+      if (fromDate && toDate) {
+        params.push(fromDate);
+        where.push(`m.move_date::date >= $${params.length}::date`);
+        params.push(toDate);
+        where.push(`m.move_date::date <= $${params.length}::date`);
       }
       const offset = (page - 1) * limit;
       params.push(limit, offset);
@@ -822,7 +834,7 @@ export const inventoryService = {
       );
     }
 
-    const { branchId, branchIds, productId, search, page, limit } = filters;
+    const { branchId, branchIds, productId, search, page, limit, fromDate, toDate } = filters;
     const params: any[] = [];
     const where: string[] = ['1=1'];
 
@@ -844,6 +856,12 @@ export const inventoryService = {
         OR a.reason ILIKE $${params.length}
         OR b.branch_name ILIKE $${params.length}
       )`);
+    }
+    if (fromDate && toDate) {
+      params.push(fromDate);
+      where.push(`a.adjustment_date::date >= $${params.length}::date`);
+      params.push(toDate);
+      where.push(`a.adjustment_date::date <= $${params.length}::date`);
     }
 
     const offset = (page - 1) * limit;
@@ -882,13 +900,13 @@ export const inventoryService = {
   async listRecounts(filters: any) {
     if (!(await hasStockAdjustmentTable())) {
       const movementHasSoftDelete = await hasInventoryMovementSoftDelete();
-      const { branchId, branchIds, productId, search, page, limit } = filters;
+      const { branchId, branchIds, productId, search, page, limit, fromDate, toDate } = filters;
       const params: any[] = [];
       const where: string[] = [
         `m.move_type = 'adjustment'`,
         `LOWER(COALESCE(m.note, '')) LIKE 'recount current %'`,
       ];
-      if (movementHasSoftDelete) where.push('(m.is_deleted IS NULL OR m.is_deleted = FALSE)');
+      if (movementHasSoftDelete) where.push('(m.is_deleted IS NULL OR COALESCE(m.is_deleted::int, 0) = 0)');
       if (branchId) {
         params.push(branchId);
         where.push(`m.branch_id = $${params.length}`);
@@ -907,6 +925,12 @@ export const inventoryService = {
           OR COALESCE(m.note,'') ILIKE $${params.length}
           OR b.branch_name ILIKE $${params.length}
         )`);
+      }
+      if (fromDate && toDate) {
+        params.push(fromDate);
+        where.push(`m.move_date::date >= $${params.length}::date`);
+        params.push(toDate);
+        where.push(`m.move_date::date <= $${params.length}::date`);
       }
       const offset = (page - 1) * limit;
       params.push(limit, offset);
@@ -941,7 +965,7 @@ export const inventoryService = {
       );
     }
 
-    const { branchId, branchIds, productId, search, page, limit } = filters;
+    const { branchId, branchIds, productId, search, page, limit, fromDate, toDate } = filters;
     const params: any[] = [];
     const where: string[] = [`LOWER(a.reason) LIKE 'stock recount%'`];
 
@@ -962,6 +986,12 @@ export const inventoryService = {
         p.name ILIKE $${params.length}
         OR b.branch_name ILIKE $${params.length}
       )`);
+    }
+    if (fromDate && toDate) {
+      params.push(fromDate);
+      where.push(`a.adjustment_date::date >= $${params.length}::date`);
+      params.push(toDate);
+      where.push(`a.adjustment_date::date <= $${params.length}::date`);
     }
 
     const offset = (page - 1) * limit;
@@ -1308,7 +1338,7 @@ export const inventoryService = {
     params.push(limit, offset);
 
     const movementSoftDeleteWhere = movementHasSoftDelete
-      ? 'AND (m.is_deleted IS NULL OR m.is_deleted = FALSE)'
+      ? 'AND (m.is_deleted IS NULL OR COALESCE(m.is_deleted::int, 0) = 0)'
       : '';
 
     const adjustmentQuery = stockAdjustmentTableExists

@@ -1,6 +1,6 @@
 import type { ReportColumn, ReportTableTotals, ReportTotalItem } from '../../components/reports/ReportModal';
 
-export type TabId = 'sales' | 'inventory' | 'purchase' | 'financial' | 'hr' | 'customer';
+export type TabId = 'sales' | 'inventory' | 'purchase' | 'financial' | 'profit' | 'hr' | 'customer' | 'supplier';
 
 export type ModalReportState = {
   title: string;

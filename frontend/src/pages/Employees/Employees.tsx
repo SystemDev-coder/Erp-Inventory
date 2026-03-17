@@ -12,6 +12,7 @@ import { RoleRow } from '../../services/user.service';
 import { EmployeeModal } from './EmployeeModal';
 import { Modal } from '../../components/ui/modal/Modal';
 import DeleteConfirmModal from '../../components/ui/modal/DeleteConfirmModal';
+import { defaultDateRange } from '../../utils/dateRange';
 
 const Employees = () => {
   const location = useLocation();
@@ -23,6 +24,7 @@ const Employees = () => {
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [hasDisplayed, setHasDisplayed] = useState(false);
+  const [dateRange, setDateRange] = useState(() => defaultDateRange());
 
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [isEmployeeModalOpen, setIsEmployeeModalOpen] = useState(false);
@@ -38,7 +40,12 @@ const Employees = () => {
 
   const fetchEmployees = async (term?: string) => {
     setLoading(true);
-    const res = await employeeService.list({ search: term || undefined, status: 'active' });
+    const res = await employeeService.list({
+      search: term || undefined,
+      status: 'active',
+      fromDate: dateRange.fromDate,
+      toDate: dateRange.toDate,
+    });
     if (res.success && res.data?.employees) {
       setEmployees(res.data.employees);
       setHasDisplayed(true);
@@ -50,7 +57,12 @@ const Employees = () => {
 
   const fetchStateEmployees = async (status: 'active' | 'inactive') => {
     setLoading(true);
-    const res = await employeeService.list({ status, search: search || undefined });
+    const res = await employeeService.list({
+      status,
+      search: search || undefined,
+      fromDate: dateRange.fromDate,
+      toDate: dateRange.toDate,
+    });
     if (res.success && res.data?.employees) {
       setStateEmployees(res.data.employees);
       setStateLoaded(true);
@@ -163,6 +175,12 @@ const Employees = () => {
           onSearch={(value) => {
             setSearch(value);
           }}
+          dateRange={{
+            fromDate: dateRange.fromDate,
+            toDate: dateRange.toDate,
+            onFromDateChange: (value) => setDateRange((prev) => ({ ...prev, fromDate: value })),
+            onToDateChange: (value) => setDateRange((prev) => ({ ...prev, toDate: value })),
+          }}
         />
         {!hasDisplayed && !loading && (
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
@@ -198,7 +216,28 @@ const Employees = () => {
     icon: ToggleRight,
     content: (
       <div className="space-y-2">
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
+              From Date
+            </span>
+            <input
+              type="date"
+              value={dateRange.fromDate}
+              onChange={(e) => setDateRange((prev) => ({ ...prev, fromDate: e.target.value }))}
+              className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            />
+            <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
+              To Date
+            </span>
+            <input
+              type="date"
+              value={dateRange.toDate}
+              onChange={(e) => setDateRange((prev) => ({ ...prev, toDate: e.target.value }))}
+              className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            />
+          </div>
+          <div className="flex items-center gap-2">
           <button
             onClick={() => fetchStateEmployees('active')}
             disabled={loading}
@@ -219,6 +258,7 @@ const Employees = () => {
           >
             <Plus className="h-4 w-4" /> Set State
           </button>
+          </div>
         </div>
         {!stateLoaded && !loading && (
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">

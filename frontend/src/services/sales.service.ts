@@ -73,6 +73,8 @@ export interface SalesListFilters {
   docType?: SaleDocType | 'all';
   branchId?: number;
   includeVoided?: boolean;
+  fromDate?: string;
+  toDate?: string;
 }
 
 const makeQueryString = (filters: SalesListFilters = {}) => {
@@ -82,6 +84,8 @@ const makeQueryString = (filters: SalesListFilters = {}) => {
   if (filters.docType && filters.docType !== 'all') params.set('docType', filters.docType);
   if (filters.branchId) params.set('branchId', String(filters.branchId));
   if (filters.includeVoided) params.set('includeVoided', 'true');
+  if (filters.fromDate) params.set('fromDate', filters.fromDate);
+  if (filters.toDate) params.set('toDate', filters.toDate);
   const qs = params.toString();
   return qs ? `?${qs}` : '';
 };

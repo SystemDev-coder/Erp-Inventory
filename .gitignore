@@ -1,3 +1,18 @@
 # Local login payloads
 _login_payload.json
 tmp_login.json
+
+# Node / build
+node_modules/
+frontend/node_modules/
+server/node_modules/
+frontend/dist/
+server/dist/
+*.log
+
+# Local uploads (generated at runtime)
+server/uploads/
+
+# OS / editor
+.DS_Store
+Thumbs.db

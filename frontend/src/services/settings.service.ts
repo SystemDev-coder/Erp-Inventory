@@ -113,7 +113,6 @@ export interface SettingsClosingSummary {
     grossProfit?: number;
     expenseCharges?: number;
     payrollExpense?: number;
-    otherIncome?: number;
     netIncome?: number;
     stockValuation?: number;
     cashBalance?: number;
@@ -352,6 +351,7 @@ export const settingsService = {
   },
 
   async createClosingPeriod(input: {
+    closeMode?: 'monthly' | 'quarterly' | 'yearly' | 'custom';
     periodFrom: string;
     periodTo: string;
     note?: string;
@@ -363,6 +363,7 @@ export const settingsService = {
   async updateClosingPeriod(
     closingId: number,
     input: {
+      closeMode?: 'monthly' | 'quarterly' | 'yearly' | 'custom';
       periodFrom: string;
       periodTo: string;
       note?: string;

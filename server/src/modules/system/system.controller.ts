@@ -4,7 +4,7 @@ import { ApiResponse } from '../../utils/ApiResponse';
 import { ApiError } from '../../utils/ApiError';
 import { systemService } from './system.service';
 import { AuthRequest } from '../../middlewares/requireAuth';
-import { deleteCloudinaryImage } from '../../config/cloudinary';
+import { deleteCloudinaryImage, getUploadedImageUrl } from '../../config/cloudinary';
 import {
   createPermissionSchema,
   createRoleSchema,
@@ -57,7 +57,7 @@ export const uploadLogo = asyncHandler(async (req: AuthRequest, res: Response) =
     throw ApiError.badRequest('No file uploaded');
   }
   
-  const logoUrl = req.file.path; // Cloudinary URL
+  const logoUrl = getUploadedImageUrl(req.file.path);
   
   // Get existing system info to delete old logo
   const existing = await systemService.getSystemInfo();
@@ -76,7 +76,7 @@ export const uploadBanner = asyncHandler(async (req: AuthRequest, res: Response)
     throw ApiError.badRequest('No file uploaded');
   }
   
-  const bannerImageUrl = req.file.path; // Cloudinary URL
+  const bannerImageUrl = getUploadedImageUrl(req.file.path);
   
   // Get existing system info to delete old banner
   const existing = await systemService.getSystemInfo();

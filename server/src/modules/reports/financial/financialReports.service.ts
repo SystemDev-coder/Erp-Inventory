@@ -34,6 +34,36 @@ export interface AccountBalanceRow {
   last_transaction_date: string | null;
 }
 
+export interface ProfitByItemRow {
+  item_id: number;
+  item_name: string;
+  quantity_sold: number;
+  sales_amount: number;
+  cost_amount: number;
+  gross_profit: number;
+  margin_pct: number;
+}
+
+export interface ProfitByCustomerRow {
+  customer_id: number;
+  customer_name: string;
+  quantity_sold: number;
+  sales_amount: number;
+  cost_amount: number;
+  gross_profit: number;
+  margin_pct: number;
+}
+
+export interface ProfitByStoreRow {
+  store_id: number;
+  store_name: string;
+  quantity_sold: number;
+  sales_amount: number;
+  cost_amount: number;
+  gross_profit: number;
+  margin_pct: number;
+}
+
 export interface ExpenseSummaryRow {
   exp_id: number;
   expense_name: string;
@@ -137,6 +167,7 @@ const openingExpensePredicate = (alias: string) =>
   `COALESCE(NULLIF(to_jsonb(${alias}) ->> 'is_opening_paid', '')::boolean, COALESCE(${alias}.note, '') ILIKE '${OPENING_EXPENSE_NOTE_PREFIX}%')`;
 
 const balanceColumnCache: Partial<Record<BalanceTable, BalanceColumn>> = {};
+const columnExistsCache: Record<string, boolean> = {};
 
 const resolveBalanceColumn = async (table: BalanceTable): Promise<BalanceColumn> => {
   const cached = balanceColumnCache[table];
@@ -187,6 +218,24 @@ const resolveBalanceExpression = async (
     return `COALESCE(${alias}.open_balance, 0)`;
   }
   return '0';
+};
+
+const resolveColumnExists = async (table: string, column: string): Promise<boolean> => {
+  const cacheKey = `${table}.${column}`;
+  if (cacheKey in columnExistsCache) return columnExistsCache[cacheKey];
+  const row = await queryOne<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM information_schema.columns
+        WHERE table_schema = 'ims'
+          AND table_name = $1
+          AND column_name = $2
+     ) AS exists`,
+    [table, column]
+  );
+  const exists = Boolean(row?.exists);
+  columnExistsCache[cacheKey] = exists;
+  return exists;
 };
 
 const toMoney = (value: unknown) => Number(value || 0);
@@ -302,12 +351,6 @@ const resolveNaturalSide = (accountType: string, accountName: string): 'debit' |
   if (type === 'asset' || type === 'expense') return 'debit';
   if (type === 'liability' || type === 'equity' || type === 'revenue' || type === 'income') return 'credit';
   return 'debit';
-};
-
-const isMissingBalanceSheetProcedureError = (error: unknown) => {
-  if (!error || typeof error !== 'object') return false;
-  const code = String((error as { code?: string }).code || '');
-  return code === '42883' || code === '42P01' || code === '42703';
 };
 
 const normalizedAccountTransactionsCte = `
@@ -1223,7 +1266,6 @@ const buildIncomeStatementFromLedger = async (
 
   let salesRevenue = 0;
   let salesReturns = 0;
-  let otherIncome = 0;
   let costOfGoodsSold = 0;
   let payrollExpense = 0;
   let operatingExpense = 0;
@@ -1276,16 +1318,14 @@ const buildIncomeStatementFromLedger = async (
       payrollExpense += Math.abs(amount);
       continue;
     }
-    if (naturalSide === 'credit') {
-      otherIncome += amount;
-    } else {
+    if (naturalSide !== 'credit') {
       operatingExpense += Math.abs(amount);
     }
   }
 
   if (plSignal <= 0.000001) return null;
 
-  const totalRevenue = salesRevenue - salesReturns + otherIncome;
+  const totalRevenue = salesRevenue - salesReturns;
   const grossProfit = totalRevenue - costOfGoodsSold;
   const totalOperatingExpenses = operatingExpense + payrollExpense;
   const netIncome = grossProfit - totalOperatingExpenses;
@@ -1293,7 +1333,6 @@ const buildIncomeStatementFromLedger = async (
   const rows: IncomeStatementRow[] = [
     { section: 'Revenue', line_item: 'Sales Revenue', amount: salesRevenue, row_type: 'detail' },
     { section: 'Revenue', line_item: 'Sales Returns', amount: -salesReturns, row_type: 'detail' },
-    { section: 'Revenue', line_item: 'Other Income', amount: otherIncome, row_type: 'detail' },
     { section: 'Revenue', line_item: 'Total Revenue', amount: totalRevenue, row_type: 'total' },
     { section: 'Cost of Goods Sold', line_item: 'Cost of Goods Sold', amount: -costOfGoodsSold, row_type: 'detail' },
     { section: 'Cost of Goods Sold', line_item: 'Total Cost of Goods Sold', amount: -costOfGoodsSold, row_type: 'total' },
@@ -1311,8 +1350,9 @@ export const financialReportsService = {
     accounts: FinancialReportOption[];
     customers: FinancialReportOption[];
     suppliers: FinancialReportOption[];
+    salesStoreEnabled: boolean;
   }> {
-    const [accounts, customers, suppliers] = await Promise.all([
+    const [accounts, customers, suppliers, salesStoreEnabled] = await Promise.all([
       queryMany<FinancialReportOption>(
         `SELECT acc_id AS id, name AS label
            FROM ims.accounts
@@ -1332,14 +1372,15 @@ export const financialReportsService = {
       queryMany<FinancialReportOption>(
         `SELECT supplier_id AS id, name AS label
            FROM ims.suppliers
-          WHERE branch_id = $1
+         WHERE branch_id = $1
             AND is_active = TRUE
           ORDER BY supplier_id ASC`,
         [branchId]
       ),
+      resolveColumnExists('sales', 'store_id'),
     ]);
 
-    return { accounts, customers, suppliers };
+    return { accounts, customers, suppliers, salesStoreEnabled };
   },
 
   async getIncomeStatement(branchId: number, fromDate: string, toDate: string): Promise<IncomeStatementRow[]> {
@@ -1357,8 +1398,6 @@ export const financialReportsService = {
       stockPurchases,
       purchaseReturns,
       payrollExpense,
-      otherIncome,
-      supplierRefunds,
       expenseRows,
     ] = await Promise.all([
       queryAmount(
@@ -1419,21 +1458,6 @@ export const financialReportsService = {
             AND pr.period_to::date BETWEEN $2::date AND $3::date`,
         params
       ),
-      queryAmount(
-        `SELECT COALESCE(SUM(GREATEST(at.credit - at.debit, 0)), 0)::double precision AS amount
-           FROM ims.account_transactions at
-          WHERE at.branch_id = $1
-            AND at.txn_date::date BETWEEN $2::date AND $3::date
-            AND at.txn_type IN ('other', 'return_refund')`,
-        params
-      ),
-      queryAmount(
-        `SELECT COALESCE(SUM(sr.amount), 0)::double precision AS amount
-           FROM ims.supplier_receipts sr
-          WHERE sr.branch_id = $1
-            AND sr.receipt_date::date BETWEEN $2::date AND $3::date`,
-        params
-      ),
       queryMany<{ expense_name: string; amount: number }>(
         `SELECT
            COALESCE(NULLIF(BTRIM(e.name), ''), 'Operating Expense') AS expense_name,
@@ -1457,8 +1481,7 @@ export const financialReportsService = {
     const costOfGoodsSold = movementCost > 0 ? movementCost : purchaseCostFallback;
     const detailedExpenseTotal = expenseRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
     const totalOperatingExpenses = detailedExpenseTotal + payrollExpense;
-    const totalOtherIncome = otherIncome + supplierRefunds;
-    const totalRevenue = revenueFromSales + totalOtherIncome;
+    const totalRevenue = revenueFromSales;
     const grossProfit = totalRevenue - costOfGoodsSold;
     const netIncome = grossProfit - totalOperatingExpenses;
 
@@ -1467,12 +1490,6 @@ export const financialReportsService = {
       { section: 'Revenue', line_item: 'Sales Returns', amount: -salesReturns, row_type: 'detail' },
     ];
 
-    if (Math.abs(otherIncome) > 0.000001) {
-      rows.push({ section: 'Revenue', line_item: 'Other Income', amount: otherIncome, row_type: 'detail' });
-    }
-    if (Math.abs(supplierRefunds) > 0.000001) {
-      rows.push({ section: 'Revenue', line_item: 'Supplier Refunds', amount: supplierRefunds, row_type: 'detail' });
-    }
     rows.push({ section: 'Revenue', line_item: 'Total Revenue', amount: totalRevenue, row_type: 'total' });
 
     rows.push({ section: 'Cost of Goods Sold', line_item: 'Cost of Goods Sold', amount: -costOfGoodsSold, row_type: 'detail' });
@@ -1525,8 +1542,6 @@ export const financialReportsService = {
       cogsByMovementToDate,
       operatingExpensesToDate,
       payrollExpenseToDate,
-      otherIncomeToDate,
-      supplierRefundsToDate,
       ownerCapitalToDate,
       capitalByOwnerRows,
       drawingToDate,
@@ -1863,21 +1878,6 @@ export const financialReportsService = {
             AND pr.period_to <= $2::date`,
         params
       ),
-      queryAmount(
-        `SELECT COALESCE(SUM(GREATEST(at.credit - at.debit, 0)), 0)::double precision AS amount
-           FROM ims.account_transactions at
-          WHERE at.branch_id = $1
-            AND at.txn_date::date <= $2::date
-            AND at.txn_type = 'other'`,
-        params
-      ),
-      queryAmount(
-        `SELECT COALESCE(SUM(sr.amount), 0)::double precision AS amount
-           FROM ims.supplier_receipts sr
-          WHERE sr.branch_id = $1
-            AND sr.receipt_date::date <= $2::date`,
-        params
-      ),
       queryAmountIfTableExists(
         'capital_contributions',
         `SELECT COALESCE(SUM(cc.amount), 0)::double precision AS amount
@@ -2011,7 +2011,7 @@ export const financialReportsService = {
     const netPurchasesToDate = Math.max(purchasesToDate - purchaseReturnsToDate, 0);
     const costOfSalesToDate = cogsByMovementToDate > 0 ? cogsByMovementToDate : netPurchasesToDate;
     const netProfitToDate =
-      netSalesToDate + otherIncomeToDate + supplierRefundsToDate - costOfSalesToDate - operatingExpensesToDate - payrollExpenseToDate;
+      netSalesToDate - costOfSalesToDate - operatingExpensesToDate - payrollExpenseToDate;
     const totalCurrentAssets =
       cashAmount + accountsReceivable + inventoryValue + prepaidAmount;
     const totalNonCurrentAssets = employeeLoanReceivableAmount + fixedAssetsAmount;
@@ -2214,59 +2214,128 @@ export const financialReportsService = {
   },
 
   async getAccountsPayable(branchId: number, fromDate: string, toDate: string): Promise<AccountsPayableRow[]> {
-    return queryMany<AccountsPayableRow>(
-      `WITH purchases_scope AS (
+    const supplierBalanceExpr = await resolveBalanceExpression('suppliers', 's');
+    const params: Array<number | string> = [branchId, fromDate, toDate];
+
+    const [purchaseRows, openingRows, unallocatedRows] = await Promise.all([
+      queryMany<AccountsPayableRow>(
+        `WITH purchases_scope AS (
+           SELECT
+             p.purchase_id::bigint AS bill_no,
+             COALESCE(s.name, 'Unknown Supplier') AS supplier_name,
+             p.purchase_date::date AS bill_date,
+             COALESCE(NULLIF(to_jsonb(p) ->> 'due_date', '')::date, p.purchase_date::date) AS due_date,
+             COALESCE(p.total, 0)::double precision AS amount
+           FROM ims.purchases p
+           LEFT JOIN ims.suppliers s ON s.supplier_id = p.supplier_id
+           WHERE p.branch_id = $1
+             AND p.purchase_date::date BETWEEN $2::date AND $3::date
+             AND LOWER(COALESCE(p.status::text, '')) <> 'void'
+         ),
+         purchase_payments AS (
+           SELECT
+             sp.purchase_id::bigint AS bill_no,
+             COALESCE(SUM(sp.amount_paid), 0)::double precision AS paid
+           FROM ims.supplier_payments sp
+           WHERE sp.branch_id = $1
+             AND sp.pay_date::date <= $3::date
+           GROUP BY sp.purchase_id
+         ),
+         receipt_payments AS (
+           SELECT
+             sr.purchase_id::bigint AS bill_no,
+             COALESCE(SUM(sr.amount), 0)::double precision AS paid
+           FROM ims.supplier_receipts sr
+           WHERE sr.branch_id = $1
+             AND sr.purchase_id IS NOT NULL
+             AND sr.receipt_date::date <= $3::date
+           GROUP BY sr.purchase_id
+         )
          SELECT
-           p.purchase_id::bigint AS bill_no,
+           ps.supplier_name,
+           ps.bill_no,
+           ps.bill_date::text AS bill_date,
+           ps.due_date::text AS due_date,
+           ps.amount,
+           LEAST(ps.amount, COALESCE(pp.paid, 0) + COALESCE(rp.paid, 0))::double precision AS paid,
+           GREATEST(ps.amount - (COALESCE(pp.paid, 0) + COALESCE(rp.paid, 0)), 0)::double precision AS balance,
+           CASE
+             WHEN GREATEST(ps.amount - (COALESCE(pp.paid, 0) + COALESCE(rp.paid, 0)), 0) <= 0.009 THEN 'Settled'
+             WHEN ps.due_date < $3::date THEN 'Overdue'
+             ELSE 'Open'
+           END AS status
+         FROM purchases_scope ps
+         LEFT JOIN purchase_payments pp ON pp.bill_no = ps.bill_no
+         LEFT JOIN receipt_payments rp ON rp.bill_no = ps.bill_no
+          ORDER BY ps.bill_date ASC, ps.bill_no ASC
+          LIMIT 5000`,
+        params
+      ),
+      queryMany<{ supplier_id: number; supplier_name: string; opening_balance: number }>(
+        `SELECT
+           s.supplier_id,
            COALESCE(s.name, 'Unknown Supplier') AS supplier_name,
-           p.purchase_date::date AS bill_date,
-           COALESCE(NULLIF(to_jsonb(p) ->> 'due_date', '')::date, p.purchase_date::date) AS due_date,
-           COALESCE(p.total, 0)::double precision AS amount
-         FROM ims.purchases p
-         LEFT JOIN ims.suppliers s ON s.supplier_id = p.supplier_id
-         WHERE p.branch_id = $1
-           AND p.purchase_date::date BETWEEN $2::date AND $3::date
-           AND LOWER(COALESCE(p.status::text, '')) <> 'void'
-       ),
-       purchase_payments AS (
-         SELECT
-           sp.purchase_id::bigint AS bill_no,
-           COALESCE(SUM(sp.amount_paid), 0)::double precision AS paid
-         FROM ims.supplier_payments sp
-         WHERE sp.branch_id = $1
-           AND sp.pay_date::date <= $3::date
-         GROUP BY sp.purchase_id
-       ),
-       receipt_payments AS (
-         SELECT
-           sr.purchase_id::bigint AS bill_no,
-           COALESCE(SUM(sr.amount), 0)::double precision AS paid
-         FROM ims.supplier_receipts sr
-         WHERE sr.branch_id = $1
-           AND sr.purchase_id IS NOT NULL
-           AND sr.receipt_date::date <= $3::date
-         GROUP BY sr.purchase_id
-       )
-       SELECT
-         ps.supplier_name,
-         ps.bill_no,
-         ps.bill_date::text AS bill_date,
-         ps.due_date::text AS due_date,
-         ps.amount,
-         LEAST(ps.amount, COALESCE(pp.paid, 0) + COALESCE(rp.paid, 0))::double precision AS paid,
-         GREATEST(ps.amount - (COALESCE(pp.paid, 0) + COALESCE(rp.paid, 0)), 0)::double precision AS balance,
-         CASE
-           WHEN GREATEST(ps.amount - (COALESCE(pp.paid, 0) + COALESCE(rp.paid, 0)), 0) <= 0.009 THEN 'Settled'
-           WHEN ps.due_date < $3::date THEN 'Overdue'
-           ELSE 'Open'
-         END AS status
-       FROM purchases_scope ps
-       LEFT JOIN purchase_payments pp ON pp.bill_no = ps.bill_no
-       LEFT JOIN receipt_payments rp ON rp.bill_no = ps.bill_no
-        ORDER BY ps.bill_date ASC, ps.bill_no ASC
-        LIMIT 5000`,
-       [branchId, fromDate, toDate]
-     );
+           GREATEST(${supplierBalanceExpr}, 0)::double precision AS opening_balance
+         FROM ims.suppliers s
+        WHERE s.branch_id = $1
+          AND s.is_active = TRUE
+          AND GREATEST(${supplierBalanceExpr}, 0) > 0.000001`,
+        [branchId]
+      ),
+      queryMany<{ supplier_id: number; supplier_name: string; unallocated_paid: number }>(
+        `SELECT
+           s.supplier_id,
+           COALESCE(s.name, 'Unknown Supplier') AS supplier_name,
+           COALESCE(SUM(sr.amount), 0)::double precision AS unallocated_paid
+         FROM ims.suppliers s
+         LEFT JOIN ims.supplier_receipts sr
+           ON sr.branch_id = s.branch_id
+          AND sr.supplier_id = s.supplier_id
+          AND sr.purchase_id IS NULL
+          AND sr.receipt_date::date <= $3::date
+        WHERE s.branch_id = $1
+          AND s.is_active = TRUE
+        GROUP BY s.supplier_id, s.name
+        HAVING COALESCE(SUM(sr.amount), 0) > 0.000001`,
+        params
+      ),
+    ]);
+
+    const rows = [...purchaseRows];
+
+    openingRows.forEach((row) => {
+      rows.push({
+        supplier_name: row.supplier_name,
+        bill_no: 0,
+        bill_date: toDate,
+        due_date: toDate,
+        amount: row.opening_balance,
+        paid: 0,
+        balance: row.opening_balance,
+        status: 'Opening',
+      });
+    });
+
+    unallocatedRows.forEach((row) => {
+      rows.push({
+        supplier_name: row.supplier_name,
+        bill_no: 0,
+        bill_date: toDate,
+        due_date: toDate,
+        amount: 0,
+        paid: row.unallocated_paid,
+        balance: -row.unallocated_paid,
+        status: 'Unallocated',
+      });
+    });
+
+    return rows.sort((a, b) => {
+      const supplierCompare = String(a.supplier_name || '').localeCompare(String(b.supplier_name || ''));
+      if (supplierCompare !== 0) return supplierCompare;
+      const dateCompare = String(a.bill_date || '').localeCompare(String(b.bill_date || ''));
+      if (dateCompare !== 0) return dateCompare;
+      return Number(a.bill_no || 0) - Number(b.bill_no || 0);
+    });
   },
 
   async getCashFlowStatement(branchId: number, fromDate: string, toDate: string): Promise<CashFlowRow[]> {
@@ -2756,7 +2825,10 @@ export const financialReportsService = {
       });
     }
 
-    return reportRows.sort((a, b) => String(a.account_name).localeCompare(String(b.account_name)));
+    const withoutOtherIncome = reportRows.filter(
+      (row) => !normalizeAccountName(row.account_name).includes('other income')
+    );
+    return withoutOtherIncome.sort((a, b) => String(a.account_name).localeCompare(String(b.account_name)));
   },
 
   async getAccountBalances(branchId: number, accountId?: number): Promise<AccountBalanceRow[]> {
@@ -2796,6 +2868,234 @@ export const financialReportsService = {
         AND a.is_active = TRUE
         ${filter}
       ORDER BY a.acc_id ASC`,
+      params
+    );
+  },
+
+  async getProfitByItem(
+    branchId: number,
+    fromDate: string,
+    toDate: string,
+    itemId?: number,
+    customerId?: number,
+    storeId?: number
+  ): Promise<ProfitByItemRow[]> {
+    const params: Array<number | string> = [branchId, fromDate, toDate];
+    let salesFilter = '';
+    let itemFilter = '';
+    if (customerId) {
+      params.push(customerId);
+      salesFilter += ` AND s.customer_id = $${params.length}`;
+    }
+    if (storeId) {
+      const hasStoreId = await resolveColumnExists('sales', 'store_id');
+      if (hasStoreId) {
+        params.push(storeId);
+        salesFilter += ` AND s.store_id = $${params.length}`;
+      }
+    }
+    if (itemId) {
+      params.push(itemId);
+      itemFilter = `AND i.item_id = $${params.length}`;
+    }
+
+    return queryMany<ProfitByItemRow>(
+      `WITH sale_item_map AS (
+         SELECT
+           si.sale_id,
+           COALESCE(
+             (to_jsonb(si) ->> 'product_id')::bigint,
+             (to_jsonb(si) ->> 'item_id')::bigint
+           ) AS item_id,
+           COALESCE((to_jsonb(si) ->> 'quantity')::numeric, 0) AS quantity,
+           COALESCE((to_jsonb(si) ->> 'line_total')::numeric, 0) AS line_total
+         FROM ims.sale_items si
+       ),
+       scoped_sales AS (
+         SELECT
+           m.item_id,
+           m.quantity,
+           m.line_total
+         FROM sale_item_map m
+         JOIN ims.sales s ON s.sale_id = m.sale_id
+        WHERE s.branch_id = $1
+          AND s.status <> 'void'
+          AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
+          AND s.sale_date::date BETWEEN $2::date AND $3::date
+          ${salesFilter}
+       )
+       SELECT
+         i.item_id,
+         i.name AS item_name,
+         COALESCE(SUM(sc.quantity), 0)::double precision AS quantity_sold,
+         COALESCE(SUM(sc.line_total), 0)::double precision AS sales_amount,
+         COALESCE(SUM(sc.quantity * COALESCE(i.cost_price, 0)), 0)::double precision AS cost_amount,
+         (COALESCE(SUM(sc.line_total), 0) - COALESCE(SUM(sc.quantity * COALESCE(i.cost_price, 0)), 0))::double precision AS gross_profit,
+         CASE
+           WHEN COALESCE(SUM(sc.line_total), 0) > 0
+             THEN ((COALESCE(SUM(sc.line_total), 0) - COALESCE(SUM(sc.quantity * COALESCE(i.cost_price, 0)), 0)) / COALESCE(SUM(sc.line_total), 0) * 100)::double precision
+           ELSE 0::double precision
+         END AS margin_pct
+       FROM scoped_sales sc
+       JOIN ims.items i ON i.item_id = sc.item_id
+      WHERE i.branch_id = $1
+        ${itemFilter}
+      GROUP BY i.item_id, i.name
+      HAVING COALESCE(SUM(sc.quantity), 0) > 0
+      ORDER BY gross_profit DESC, sales_amount DESC, i.name
+      LIMIT 500`,
+      params
+    );
+  },
+
+  async getProfitByCustomer(
+    branchId: number,
+    fromDate: string,
+    toDate: string,
+    customerId?: number,
+    itemId?: number,
+    storeId?: number
+  ): Promise<ProfitByCustomerRow[]> {
+    const params: Array<number | string> = [branchId, fromDate, toDate];
+    let salesFilter = '';
+    let itemFilter = '';
+    if (customerId) {
+      params.push(customerId);
+      salesFilter += ` AND s.customer_id = $${params.length}`;
+    }
+    if (storeId) {
+      const hasStoreId = await resolveColumnExists('sales', 'store_id');
+      if (hasStoreId) {
+        params.push(storeId);
+        salesFilter += ` AND s.store_id = $${params.length}`;
+      }
+    }
+    if (itemId) {
+      params.push(itemId);
+      itemFilter = `AND m.item_id = $${params.length}`;
+    }
+
+    return queryMany<ProfitByCustomerRow>(
+      `WITH sale_item_map AS (
+         SELECT
+           si.sale_id,
+           COALESCE(
+             (to_jsonb(si) ->> 'product_id')::bigint,
+             (to_jsonb(si) ->> 'item_id')::bigint
+           ) AS item_id,
+           COALESCE((to_jsonb(si) ->> 'quantity')::numeric, 0) AS quantity,
+           COALESCE((to_jsonb(si) ->> 'line_total')::numeric, 0) AS line_total
+         FROM ims.sale_items si
+       ),
+       scoped_sales AS (
+         SELECT
+           s.customer_id,
+           COALESCE(c.full_name, 'Walk-in Customer') AS customer_name,
+           m.item_id,
+           m.quantity,
+           m.line_total
+         FROM sale_item_map m
+         JOIN ims.sales s ON s.sale_id = m.sale_id
+         LEFT JOIN ims.customers c ON c.customer_id = s.customer_id
+        WHERE s.branch_id = $1
+          AND s.status <> 'void'
+          AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
+          AND s.sale_date::date BETWEEN $2::date AND $3::date
+          ${salesFilter}
+          ${itemFilter}
+       )
+       SELECT
+         COALESCE(sc.customer_id, 0)::bigint AS customer_id,
+         COALESCE(sc.customer_name, 'Walk-in Customer') AS customer_name,
+         COALESCE(SUM(sc.quantity), 0)::double precision AS quantity_sold,
+         COALESCE(SUM(sc.line_total), 0)::double precision AS sales_amount,
+         COALESCE(SUM(sc.quantity * COALESCE(i.cost_price, 0)), 0)::double precision AS cost_amount,
+         (COALESCE(SUM(sc.line_total), 0) - COALESCE(SUM(sc.quantity * COALESCE(i.cost_price, 0)), 0))::double precision AS gross_profit,
+         CASE
+           WHEN COALESCE(SUM(sc.line_total), 0) > 0
+             THEN ((COALESCE(SUM(sc.line_total), 0) - COALESCE(SUM(sc.quantity * COALESCE(i.cost_price, 0)), 0)) / COALESCE(SUM(sc.line_total), 0) * 100)::double precision
+           ELSE 0::double precision
+         END AS margin_pct
+       FROM scoped_sales sc
+       JOIN ims.items i ON i.item_id = sc.item_id
+      WHERE i.branch_id = $1
+      GROUP BY COALESCE(sc.customer_id, 0), COALESCE(sc.customer_name, 'Walk-in Customer')
+      HAVING COALESCE(SUM(sc.quantity), 0) > 0
+      ORDER BY gross_profit DESC, sales_amount DESC, customer_name
+      LIMIT 500`,
+      params
+    );
+  },
+
+  async getProfitByStore(
+    branchId: number,
+    fromDate: string,
+    toDate: string,
+    customerId?: number,
+    itemId?: number
+  ): Promise<ProfitByStoreRow[]> {
+    const hasStoreId = await resolveColumnExists('sales', 'store_id');
+    if (!hasStoreId) return [];
+
+    const params: Array<number | string> = [branchId, fromDate, toDate];
+    let salesFilter = '';
+    let itemFilter = '';
+    if (customerId) {
+      params.push(customerId);
+      salesFilter += ` AND s.customer_id = $${params.length}`;
+    }
+    if (itemId) {
+      params.push(itemId);
+      itemFilter = `AND m.item_id = $${params.length}`;
+    }
+
+    return queryMany<ProfitByStoreRow>(
+      `WITH sale_item_map AS (
+         SELECT
+           si.sale_id,
+           COALESCE(
+             (to_jsonb(si) ->> 'product_id')::bigint,
+             (to_jsonb(si) ->> 'item_id')::bigint
+           ) AS item_id,
+           COALESCE((to_jsonb(si) ->> 'quantity')::numeric, 0) AS quantity,
+           COALESCE((to_jsonb(si) ->> 'line_total')::numeric, 0) AS line_total
+         FROM ims.sale_items si
+       ),
+       scoped_sales AS (
+         SELECT
+           s.store_id,
+           m.item_id,
+           m.quantity,
+           m.line_total
+         FROM sale_item_map m
+         JOIN ims.sales s ON s.sale_id = m.sale_id
+        WHERE s.branch_id = $1
+          AND s.status <> 'void'
+          AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
+          AND s.sale_date::date BETWEEN $2::date AND $3::date
+          ${salesFilter}
+          ${itemFilter}
+       )
+       SELECT
+         COALESCE(sc.store_id, 0)::bigint AS store_id,
+         COALESCE(st.store_name, 'Unassigned Store') AS store_name,
+         COALESCE(SUM(sc.quantity), 0)::double precision AS quantity_sold,
+         COALESCE(SUM(sc.line_total), 0)::double precision AS sales_amount,
+         COALESCE(SUM(sc.quantity * COALESCE(i.cost_price, 0)), 0)::double precision AS cost_amount,
+         (COALESCE(SUM(sc.line_total), 0) - COALESCE(SUM(sc.quantity * COALESCE(i.cost_price, 0)), 0))::double precision AS gross_profit,
+         CASE
+           WHEN COALESCE(SUM(sc.line_total), 0) > 0
+             THEN ((COALESCE(SUM(sc.line_total), 0) - COALESCE(SUM(sc.quantity * COALESCE(i.cost_price, 0)), 0)) / COALESCE(SUM(sc.line_total), 0) * 100)::double precision
+           ELSE 0::double precision
+         END AS margin_pct
+       FROM scoped_sales sc
+       JOIN ims.items i ON i.item_id = sc.item_id
+       LEFT JOIN ims.stores st ON st.store_id = sc.store_id
+      WHERE i.branch_id = $1
+      GROUP BY COALESCE(sc.store_id, 0), COALESCE(st.store_name, 'Unassigned Store')
+      HAVING COALESCE(SUM(sc.quantity), 0) > 0
+      ORDER BY gross_profit DESC, sales_amount DESC, store_name
+      LIMIT 500`,
       params
     );
   },
