@@ -13,14 +13,12 @@ type SupplierCardId =
   | 'supplier-ledger'
   | 'supplier-payments'
   | 'supplier-outstanding';
-
 const supplierCards: Array<{ id: SupplierCardId; title: string; hint: string }> = [
   { id: 'supplier-list', title: 'Supplier List', hint: 'Dropdown + Show / All' },
   { id: 'supplier-ledger', title: 'Supplier Ledger', hint: 'Dropdown + Show / All' },
   { id: 'supplier-payments', title: 'Supplier Payments', hint: 'Date range + Show / All' },
   { id: 'supplier-outstanding', title: 'Outstanding Purchases', hint: 'Dropdown + Show / All' },
 ];
-
 const supplierListColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'supplier_id', header: 'Supplier #' },
   { key: 'supplier_name', header: 'Supplier' },
@@ -73,7 +71,6 @@ const supplierLedgerColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'running_balance', header: 'Balance', align: 'right', render: (row) => formatCurrency(row.running_balance) },
 ];
 
-
 const supplierPaymentsColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'sup_payment_id', header: 'Payment #' },
   { key: 'pay_date', header: 'Date', render: (row) => formatDateTime(row.pay_date) },
@@ -93,7 +90,6 @@ const supplierOutstandingColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'outstanding', header: 'Outstanding', align: 'right', render: (row) => formatCurrency(row.outstanding) },
   { key: 'status', header: 'Status' },
 ];
-
 
 type Props = {
   onOpenModal: (report: ModalReportState) => void;
@@ -128,19 +124,15 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
     setOptionsLoading(true);
     setOptionsError('');
 
+    purchaseReportsService
+      .getPurchaseOptions()
       .then((response) => {
         if (!alive) return;
         if (!response.success || !response.data) {
           setOptionsError(response.error || response.message || 'Failed to load supplier options');
           return;
         }
-        const rows = (response.data.suppliers || []) as Array<Record<string, unknown>>;
-        setSuppliers(
-          rows.map((row) => ({
-            id: Number(row.supplier_id || row.id || 0),
-            label: String(row.supplier_name || row.name || ('Supplier #' + String(row.supplier_id || row.id || ''))),
-          }))
-        );
+        setSuppliers(response.data.suppliers || []);
       })
       .catch((error: unknown) => {
         if (!alive) return;
@@ -215,6 +207,7 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
     runCardAction('supplier-ledger', async () => {
       const supplierId = mode === 'show' ? Number(selectedLedgerSupplierId || 0) : undefined;
       if (mode === 'show' && !supplierId) throw new Error('Select a supplier first');
+      const response = await purchaseReportsService.getSupplierLedger({ mode, supplierId });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load supplier ledger');
       const rows = toRecordRows(response.data.rows || []);
       const totalDebit = sumByKey(rows, 'debit');
@@ -251,6 +244,7 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
       ensureRangeValid(paymentRange, 'Supplier Payments');
       const supplierId = mode === 'show' ? Number(selectedPaymentSupplierId || 0) : undefined;
       if (mode === 'show' && !supplierId) throw new Error('Select a supplier first');
+      const response = await financialReportsService.getSupplierPayments({
         fromDate: paymentRange.fromDate,
         toDate: paymentRange.toDate,
         mode,
