@@ -105,7 +105,7 @@ export const buildPrintableDocument = (
           .doc-title { font-size:20px; font-weight:800; color:var(--primary); margin-top:8px; }
           .doc-meta { margin-top:8px; display:grid; grid-template-columns: 1fr 1fr; gap:6px; font-size:10px; color:#475569; }
           .doc-meta b { color:#0f172a; }
-          .accent-line { height:2px; background:var(--primary); border-radius:999px; margin:12px 0 6px; opacity:0.9; }
+          .accent-line { height:1px; background:var(--primary); margin:12px 0 6px; opacity:0.35; }
           .pill { display:inline-flex; background:var(--soft); color:#0f172a; padding:4px 10px; border-radius:999px; font-size:9px; letter-spacing:0.12em; text-transform:uppercase; border:1px solid var(--border); }
           .flags { margin-top:10px; display:flex; flex-wrap:wrap; gap:8px; }
           .notice { margin-top:10px; border:1px solid var(--border); background:var(--soft); padding:10px 12px; border-radius:12px; font-size:10px; color:#475569; }
@@ -168,7 +168,7 @@ export const buildPrintableDocument = (
               </div>
             </div>
 
-            <div class="accent-line"></div>
+            ${company.bannerUrl ? '' : `<div class="accent-line"></div>`}
             <div class="flags">
               ${
                 isQuote && quoteValidUntil
@@ -252,17 +252,17 @@ export const buildPrintableDocument = (
 
                         ${
               isQuote || isInvoice
-                ? `<div class="terms">
-                    <h4>Terms & Conditions / Shuruudaha</h4>
-                    <ul>
-                      <li>Lacag bixinta waxaa lagu bixinayaa sida lagu heshiiyey. (Payment is due as agreed.)</li>
-                      <li>Alaabtu waxay ku xiran tahay helitaanka. (Items are subject to availability.)</li>
-                      <li>Qiimuhu waa ansax ilaa taariikhda ku qoran. (Prices are valid until the stated date.)</li>
-                      <li>Celin lama aqbalo kadib xaqiijinta invoice. (No returns after invoice confirmation.)</li>
-                    </ul>
-                  </div>`
-                : ''
-            }
+                 ? `<div class="terms">
+                     <h4>Shuruudaha & Xaaladaha</h4>
+                     <ul>
+                       <li>Lacag bixinta waxaa lagu bixinayaa sida lagu heshiiyey.</li>
+                       <li>Alaabtu waxay ku xiran tahay helitaanka.</li>
+                       <li>Qiimuhu waa ansax ilaa taariikhda ku qoran.</li>
+                       <li>Ka dib marka invoice la xaqiijiyo, celin lama aqbalo.</li>
+                     </ul>
+                   </div>`
+                 : ''
+             }
 <div class="signatures">
               <div>${isQuote ? 'Prepared By' : 'Authorized Sign'}: ____________________</div>
               <div>${isQuote ? 'Customer Acceptance' : 'Client Sign'}: ____________________</div>

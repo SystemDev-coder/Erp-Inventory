@@ -39,7 +39,7 @@ const cleanText = (value: unknown) => {
   text = text
     .replace(/\u00c2/g, "")
     .replace(/\u2026/g, "...")
-    .replace(/[â€¦]/g, "...")
+    .replace(/â€¦/g, "...")
     .replace(/[\u2013\u2014]/g, "\u2014");
 
   return text.trim();
@@ -667,49 +667,55 @@ export function ReportModal<T extends Record<string, any>>({
             </div>
           </div>
           {isIncomeStatement && statementData ? (
-            <div
-              className="px-10 py-9 text-slate-900"
-              style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}
-            >
+            <div className="px-6 pb-6 pt-5 text-slate-900" style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}>
               {!companyInfo?.bannerUrl ? (
-                <div className="space-y-0.5 leading-tight">
-                  <h2 className="text-[14px] font-bold leading-none text-[#1164a1]">Income Statement</h2>
-                  <p className="text-[14px] text-slate-500">{companyInfo?.name || "Business Name"}</p>
-                  <p className="text-[14px] text-slate-500">{periodLabel || subtitle || ""}</p>
+                <div className="mb-4 text-center">
+                  <h2 className="text-[26px] font-semibold leading-tight">Income Statement</h2>
+                  <p className="text-[14px] text-slate-600">{cleanText(periodLabel || subtitle) || `As of ${formatStatementDate(reportDate)}`}</p>
                 </div>
+              ) : periodLabel || subtitle ? (
+                <div className="mb-3 text-right text-[12px] font-semibold text-slate-600">{cleanText(periodLabel || subtitle)}</div>
               ) : null}
 
-              <div className="mx-auto mt-9 max-w-2xl space-y-6 text-[15px]">
-                {statementData.sections.map((section, sectionIndex) => (
-                  <section key={`${section.name}-${sectionIndex}`}>
-                    <div className="mb-2 border-b-2 border-[#2c90c8] pb-1">
-                      <h3 className="text-[14px] font-bold leading-none text-[#1164a1]">{cleanText(section.name)}</h3>
-                    </div>
-                    <div className="space-y-0.5">
-                      {section.detailRows.map((row, index) => (
-                        <div key={`${section.name}-${row.lineItem}-${index}`} className="flex justify-between gap-4 border-b border-slate-200 py-1.5">
-                          <span>{cleanText(row.lineItem)}</span>
-                          <span className="tabular-nums">{formatStatementCurrency(row.amount)}</span>
-                        </div>
-                      ))}
-                    </div>
-                    {section.totalRow && (
-                      <div className="mt-2 flex justify-between border-b border-t border-slate-300 py-1.5 text-[16px] font-semibold">
-                        <span>{section.totalRow.lineItem}</span>
-                        <span className="tabular-nums">{formatStatementCurrency(section.totalRow.amount)}</span>
-                      </div>
-                    )}
-                  </section>
-                ))}
+              <div className="overflow-hidden rounded-md border border-slate-300">
+                <table className="w-full table-fixed border-collapse text-[12px]">
+                  <thead>
+                    <tr className="bg-slate-100 text-slate-900">
+                      <th className="border-b border-slate-300 px-2 py-2 text-left font-semibold">Particulars</th>
+                      <th className="w-44 border-b border-slate-300 px-2 py-2 text-right font-semibold">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {statementData.sections.map((section, sectionIndex) => (
+                      <React.Fragment key={`${section.name}-${sectionIndex}`}>
+                        <tr className="bg-slate-50 font-semibold text-slate-800">
+                          <td className="border-b border-slate-200 px-2 py-2">{cleanText(section.name) || EMPTY_CELL}</td>
+                          <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">{EMPTY_CELL}</td>
+                        </tr>
+                        {section.detailRows.map((row, rowIndex) => (
+                          <tr
+                            key={`${section.name}-${row.lineItem}-${rowIndex}`}
+                            className={rowIndex % 2 === 0 ? "bg-white" : "bg-slate-50"}
+                          >
+                            <td className="border-b border-slate-200 px-2 py-1.5 pl-6">{cleanText(row.lineItem) || EMPTY_CELL}</td>
+                            <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
+                          </tr>
+                        ))}
+                        {section.totalRow ? (
+                          <tr className="font-semibold text-slate-900">
+                            <td className="border-t border-slate-300 px-2 py-2">{cleanText(section.totalRow.lineItem) || "Total"}</td>
+                            <td className="border-t border-slate-300 px-2 py-2 text-right tabular-nums">{formatStatementCurrency(section.totalRow.amount)}</td>
+                          </tr>
+                        ) : null}
+                      </React.Fragment>
+                    ))}
 
-                <section className="pt-2">
-                  <div className="flex justify-between border-t-2 border-slate-900 pt-2 text-[25px] font-semibold leading-tight">
-                    <span>{statementData.netResultRow?.lineItem || "Net Profit / (Loss)"}</span>
-                    <span className="tabular-nums border-b-2 border-slate-900">
-                      {formatStatementCurrency(statementData.netProfit)}
-                    </span>
-                  </div>
-                </section>
+                    <tr className="font-bold text-slate-900">
+                      <td className="border-t-2 border-slate-900 px-2 py-2">{cleanText(statementData.netResultRow?.lineItem) || "Net Income"}</td>
+                      <td className="border-t-2 border-slate-900 px-2 py-2 text-right tabular-nums">{formatStatementCurrency(statementData.netProfit)}</td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             </div>
                     ) : isBalanceSheet && balanceSheetData ? (
