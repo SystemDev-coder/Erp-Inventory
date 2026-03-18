@@ -1,4 +1,4 @@
-﻿import React, { useMemo, useRef } from "react";
+import React, { useMemo, useRef } from "react";
 import { FileSpreadsheet, Printer } from "lucide-react";
 import { Modal } from "../ui/modal/Modal";
 
@@ -441,14 +441,6 @@ export function ReportModal<T extends Record<string, any>>({
     if (!fromDate || !toDate) return subtitle || "";
     return `For the period ended ${formatStatementDate(toDate)}`;
   }, [filters, subtitle]);
-
-  const balanceSheetShortDate = useMemo(() => {
-    const asOf = filters?.["As Of Date"];
-    const source = asOf ? new Date(String(asOf)) : new Date();
-    if (Number.isNaN(source.getTime())) return "";
-    return source.toLocaleDateString(undefined, { month: "numeric", day: "numeric", year: "2-digit" });
-  }, [filters]);
-
   const handlePrint = () => {
     const contentNode = printRef.current;
     if (!contentNode) return;
@@ -614,11 +606,11 @@ export function ReportModal<T extends Record<string, any>>({
                     <div className="text-[16px] font-semibold leading-tight">{companyInfo?.name || "Business Name"}</div>
                     <div className="text-[12px] text-slate-600">
                       {title}
-                      {subtitle ? ` — ${subtitle}` : ""}
+                      {subtitle ? ` ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â ${subtitle}` : ""}
                     </div>
                     {companyInfo?.manager || companyInfo?.phone ? (
                       <div className="text-[11px] text-slate-500">
-                        <span>Manager: {companyInfo.manager || "-"}</span> <span className="mx-1">·</span>
+                        <span>Manager: {companyInfo.manager || "-"}</span> <span className="mx-1">Ãƒâ€šÃ‚Â·</span>
                         <span>Phone: {companyInfo.phone || "-"}</span>
                       </div>
                     ) : null}
@@ -678,141 +670,146 @@ export function ReportModal<T extends Record<string, any>>({
                 </section>
               </div>
             </div>
-          ) : isBalanceSheet && balanceSheetData ? (
-            <div
-              className="px-8 py-8 text-slate-900"
-              style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}
-            >
+                    ) : isBalanceSheet && balanceSheetData ? (
+            <div className="px-6 pb-6 pt-5 text-slate-900" style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}>
               {!companyInfo?.bannerUrl ? (
-                <div className="space-y-0.5 leading-tight">
-                  <h2 className="text-[30px] font-semibold text-[#1976bc]">Balance Sheet</h2>
-                  <p className="text-[15px] text-slate-500">{companyInfo?.name || "Business Name"}</p>
-                  <p className="text-[14px] text-slate-500">{balanceSheetDateLabel || `As of ${reportDate}`}</p>
+                <div className="mb-4 text-center">
+                  <h2 className="text-[26px] font-semibold leading-tight">Balance Sheet</h2>
+                  <p className="text-[14px] text-slate-600">{balanceSheetDateLabel || `As of ${formatStatementDate(reportDate)}`}</p>
                 </div>
-              ) : (
-                <div className="text-right text-[13px] font-semibold text-slate-600">{balanceSheetDateLabel || `As of ${reportDate}`}</div>
-              )}
+              ) : balanceSheetDateLabel ? (
+                <div className="mb-3 text-right text-[12px] font-semibold text-slate-600">{balanceSheetDateLabel}</div>
+              ) : null}
 
-              <div className="mx-auto mt-8 max-w-3xl space-y-7 text-[14px]">
-                <section>
-                  <div className="mb-2 flex items-end justify-between border-b-2 border-[#2c90c8] pb-1 text-black">
-                    <h3 className="text-[24px] font-semibold leading-none text-[#1e4f8f]">Assets</h3>
-                    <span className="text-[13px] font-semibold text-slate-600">{balanceSheetShortDate}</span>
-                  </div>
-                  <div className="mb-1 text-[22px] font-semibold text-slate-700">Current Assets</div>
-                  <div className="space-y-0.5">
+              <div className="overflow-hidden rounded-md border border-slate-300">
+                <table className="w-full table-fixed border-collapse text-[12px]">
+                  <thead>
+                    <tr className="bg-slate-100 text-slate-900">
+                      <th className="border-b border-slate-300 px-2 py-2 text-left font-semibold">Particulars</th>
+                      <th className="w-44 border-b border-slate-300 px-2 py-2 text-right font-semibold">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="bg-white font-semibold text-slate-900">
+                      <td className="border-b border-slate-200 px-2 py-2">Assets</td>
+                      <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â</td>
+                    </tr>
+                    <tr className="bg-slate-50 font-semibold text-slate-800">
+                      <td className="border-b border-slate-200 px-2 py-2">Current Assets</td>
+                      <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â</td>
+                    </tr>
                     {balanceSheetData.currentAssets.map((row, index) => (
-                      <div key={`${row.lineItem}-${index}`} className="flex justify-between gap-4 border-b border-slate-200 py-1.5">
-                        <span>{row.lineItem}</span>
-                        <span className="tabular-nums">{formatStatementCurrency(row.amount)}</span>
-                      </div>
+                      <tr key={`ca-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
+                        <td className="border-b border-slate-200 px-2 py-1.5 pl-6">{row.lineItem}</td>
+                        <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
+                      </tr>
                     ))}
-                  </div>
-                  <div className="mt-2 flex justify-between border-b border-slate-200 py-1.5 text-[16px] font-semibold">
-                    <span>Total Current Assets</span>
-                    <span className="tabular-nums">{formatStatementCurrency(balanceSheetData.currentAssetsTotal)}</span>
-                  </div>
-                  {balanceSheetData.nonCurrentAssets.length > 0 && (
-                    <>
-                      <div className="mb-1 mt-5 text-[22px] font-semibold text-slate-700">Fixed Assets</div>
-                      <div className="space-y-0.5">
+                    <tr className="font-semibold text-slate-900">
+                      <td className="border-t border-slate-300 px-2 py-2">Total Current Assets</td>
+                      <td className="border-t border-slate-300 px-2 py-2 text-right tabular-nums">{formatStatementCurrency(balanceSheetData.currentAssetsTotal)}</td>
+                    </tr>
+
+                    {balanceSheetData.nonCurrentAssets.length > 0 && (
+                      <>
+                        <tr className="bg-slate-50 font-semibold text-slate-800">
+                          <td className="border-b border-slate-200 px-2 py-2">Fixed Assets</td>
+                          <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â</td>
+                        </tr>
                         {balanceSheetData.nonCurrentAssets.map((row, index) => (
-                          <div key={`${row.lineItem}-${index}`} className="flex justify-between gap-4 border-b border-slate-200 py-1.5">
-                            <span>{row.lineItem}</span>
-                            <span className="tabular-nums">{formatStatementCurrency(row.amount)}</span>
-                          </div>
+                          <tr key={`fa-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
+                            <td className="border-b border-slate-200 px-2 py-1.5 pl-6">{row.lineItem}</td>
+                            <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
+                          </tr>
                         ))}
-                      </div>
-                      <div className="mt-2 flex justify-between border-b border-slate-200 py-1.5 text-[16px] font-semibold">
-                        <span>Total Fixed Assets</span>
-                        <span className="tabular-nums">{formatStatementCurrency(balanceSheetData.nonCurrentAssetsTotal)}</span>
-                      </div>
-                    </>
-                  )}
-                  <div className="mt-5 flex justify-between border-t border-slate-300 pt-2 text-[20px] font-semibold">
-                    <span>Total Assets</span>
-                    <span className="tabular-nums">{formatStatementCurrency(balanceSheetData.totalAssets)}</span>
-                  </div>
-                </section>
+                        <tr className="font-semibold text-slate-900">
+                          <td className="border-t border-slate-300 px-2 py-2">Total Fixed Assets</td>
+                          <td className="border-t border-slate-300 px-2 py-2 text-right tabular-nums">{formatStatementCurrency(balanceSheetData.nonCurrentAssetsTotal)}</td>
+                        </tr>
+                      </>
+                    )}
 
-                <section>
-                  <div className="mb-2 flex items-end justify-between border-b-2 border-[#2c90c8] pb-1 text-black">
-                    <h3 className="text-[24px] font-semibold leading-none text-[#1e4f8f]">Liabilities + Equity</h3>
-                    <span className="text-[13px] font-semibold text-slate-600">{balanceSheetShortDate}</span>
-                  </div>
-                  <div className="mb-1 text-[22px] font-semibold text-slate-700">Current Liabilities</div>
-                  <div className="space-y-0.5">
+                    <tr className="font-bold text-slate-900">
+                      <td className="border-t border-slate-900 px-2 py-2">Total Assets</td>
+                      <td className="border-t border-slate-900 px-2 py-2 text-right tabular-nums">{formatStatementCurrency(balanceSheetData.totalAssets)}</td>
+                    </tr>
+
+                    <tr className="bg-white font-semibold text-slate-900">
+                      <td className="border-b border-slate-200 px-2 py-2">Liabilities</td>
+                      <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â</td>
+                    </tr>
+                    <tr className="bg-slate-50 font-semibold text-slate-800">
+                      <td className="border-b border-slate-200 px-2 py-2">Current Liabilities</td>
+                      <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â</td>
+                    </tr>
                     {balanceSheetData.currentLiabilities.map((row, index) => (
-                      <div key={`${row.lineItem}-${index}`} className="flex justify-between gap-4 border-b border-slate-200 py-1.5">
-                        <span>{row.lineItem}</span>
-                        <span className="tabular-nums">{formatStatementCurrency(row.amount)}</span>
-                      </div>
+                      <tr key={`cl-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
+                        <td className="border-b border-slate-200 px-2 py-1.5 pl-6">{row.lineItem}</td>
+                        <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
+                      </tr>
                     ))}
-                  </div>
-                  <div className="mt-2 flex justify-between border-b border-slate-200 py-1.5 text-[16px] font-semibold">
-                    <span>Total Current Liabilities</span>
-                    <span className="tabular-nums">{formatStatementCurrency(balanceSheetData.currentLiabilitiesTotal)}</span>
-                  </div>
-                  {balanceSheetData.nonCurrentLiabilities.length > 0 && (
-                    <>
-                      <div className="mb-1 mt-5 text-[22px] font-semibold text-slate-700">Non-Current Liabilities</div>
-                      <div className="space-y-0.5">
-                        {balanceSheetData.nonCurrentLiabilities.map((row, index) => (
-                          <div key={`${row.lineItem}-${index}`} className="flex justify-between gap-4 border-b border-slate-200 py-1.5">
-                            <span>{row.lineItem}</span>
-                            <span className="tabular-nums">{formatStatementCurrency(row.amount)}</span>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="mt-2 flex justify-between border-b border-slate-200 py-1.5 text-[16px] font-semibold">
-                        <span>Total Non-Current Liabilities</span>
-                        <span className="tabular-nums">{formatStatementCurrency(balanceSheetData.nonCurrentLiabilitiesTotal)}</span>
-                      </div>
-                    </>
-                  )}
-                </section>
+                    <tr className="font-semibold text-slate-900">
+                      <td className="border-t border-slate-300 px-2 py-2">Total Current Liabilities</td>
+                      <td className="border-t border-slate-300 px-2 py-2 text-right tabular-nums">{formatStatementCurrency(balanceSheetData.currentLiabilitiesTotal)}</td>
+                    </tr>
 
-                <section>
-                  <div className="mb-1 text-[22px] font-semibold text-slate-700">Equity</div>
-                  <div className="space-y-0.5">
+                    {balanceSheetData.nonCurrentLiabilities.length > 0 && (
+                      <>
+                        <tr className="bg-slate-50 font-semibold text-slate-800">
+                          <td className="border-b border-slate-200 px-2 py-2">Long-term Liabilities</td>
+                          <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â</td>
+                        </tr>
+                        {balanceSheetData.nonCurrentLiabilities.map((row, index) => (
+                          <tr key={`ncl-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
+                            <td className="border-b border-slate-200 px-2 py-1.5 pl-6">{row.lineItem}</td>
+                            <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
+                          </tr>
+                        ))}
+                        <tr className="font-semibold text-slate-900">
+                          <td className="border-t border-slate-300 px-2 py-2">Total Long-term Liabilities</td>
+                          <td className="border-t border-slate-300 px-2 py-2 text-right tabular-nums">{formatStatementCurrency(balanceSheetData.nonCurrentLiabilitiesTotal)}</td>
+                        </tr>
+                      </>
+                    )}
+
+                    <tr className="font-bold text-slate-900">
+                      <td className="border-t border-slate-900 px-2 py-2">Total Liabilities</td>
+                      <td className="border-t border-slate-900 px-2 py-2 text-right tabular-nums">{formatStatementCurrency(balanceSheetData.totalLiabilities)}</td>
+                    </tr>
+
+                    <tr className="bg-white font-semibold text-slate-900">
+                      <td className="border-b border-slate-200 px-2 py-2">Equity</td>
+                      <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â</td>
+                    </tr>
                     {(balanceSheetData.equity.length
                       ? balanceSheetData.equity
                       : [{ lineItem: "Retained Earnings", amount: balanceSheetData.retainedEarnings }]
                     ).map((row, index) => (
-                      <div key={`${row.lineItem}-${index}`} className="flex justify-between gap-4 border-b border-slate-200 py-1.5">
-                        <span>{row.lineItem}</span>
-                        <span className="tabular-nums">{formatStatementCurrency(row.amount)}</span>
-                      </div>
+                      <tr key={`eq-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
+                        <td className="border-b border-slate-200 px-2 py-1.5 pl-6">{row.lineItem}</td>
+                        <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
+                      </tr>
                     ))}
-                  </div>
-                  <div className="mt-2 flex justify-between border-b border-slate-200 py-1.5 text-[16px] font-semibold">
-                    <span>Total Owners Equity</span>
-                    <span className="tabular-nums">{formatStatementCurrency(balanceSheetData.totalEquity)}</span>
-                  </div>
-                </section>
+                    <tr className="font-bold text-slate-900">
+                      <td className="border-t border-slate-900 px-2 py-2">Total Equity</td>
+                      <td className="border-t border-slate-900 px-2 py-2 text-right tabular-nums">{formatStatementCurrency(balanceSheetData.totalEquity)}</td>
+                    </tr>
 
-                <section className="pt-1">
-                  <div className="flex justify-between py-1.5 text-[16px] font-semibold">
-                    <span>Total Liabilities</span>
-                    <span className="tabular-nums">{formatStatementCurrency(balanceSheetData.totalLiabilities)}</span>
-                  </div>
-                  <div className="flex justify-between border-t border-slate-300 pt-3 text-[20px] font-semibold leading-tight">
-                    <span>Total Liabilities + Owners Equity</span>
-                    <span className="tabular-nums">{formatStatementCurrency(balanceSheetData.totalLiabilitiesEquity)}</span>
-                  </div>
-                  {Math.abs(balanceSheetData.balanceDelta) > 0.005 && (
-                    <div className="mt-2 text-right text-[12px] font-semibold text-red-700">
-                      Difference: {formatStatementCurrency(balanceSheetData.balanceDelta)}
-                    </div>
-                  )}
-                </section>
+                    <tr className="font-extrabold text-slate-900">
+                      <td className="border-t-2 border-slate-900 px-2 py-2">Total Liabilities + Equity</td>
+                      <td className="border-t-2 border-slate-900 px-2 py-2 text-right tabular-nums">{formatStatementCurrency(balanceSheetData.totalLiabilitiesEquity)}</td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
+
+              {Math.abs(balanceSheetData.balanceDelta) > 0.005 && (
+                <div className="mt-2 border border-red-200 px-3 py-2 text-[12px] font-semibold text-red-700">
+                  Balance Sheet does not balance. Difference: {formatStatementCurrency(balanceSheetData.balanceDelta)}
+                </div>
+              )}
             </div>
           ) : isCashFlowStatement && cashFlowData ? (
-            <div
-              className="px-6 pb-6 pt-5 text-slate-900"
-              style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}
-            >
+            <div className="px-6 pb-6 pt-5 text-slate-900" style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}>
               {!companyInfo?.bannerUrl ? (
                 <div className="mb-4 text-center">
                   <h2 className="text-[26px] font-semibold leading-tight">Cash Flow Statement</h2>
@@ -822,55 +819,49 @@ export function ReportModal<T extends Record<string, any>>({
                 <div className="mb-3 text-right text-[12px] font-semibold text-slate-600">{cashFlowPeriodLabel}</div>
               ) : null}
 
-              <div>
-                {cashFlowData.sections.map((section) => (
-                  <section key={section.section} className="border-b border-slate-200">
-                    <div className="px-2 py-2 text-[14px] font-semibold text-slate-900">{section.section}</div>
-                    <table className="w-full border-collapse">
-                      <tbody>
+              <div className="overflow-hidden rounded-md border border-slate-300">
+                <table className="w-full table-fixed border-collapse text-[12px]">
+                  <thead>
+                    <tr className="bg-slate-100 text-slate-900">
+                      <th className="border-b border-slate-300 px-2 py-2 text-left font-semibold">Particulars</th>
+                      <th className="w-44 border-b border-slate-300 px-2 py-2 text-right font-semibold">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cashFlowData.sections.map((section) => (
+                      <React.Fragment key={section.section}>
+                        <tr className="bg-white font-semibold text-slate-900">
+                          <td className="border-b border-slate-200 px-2 py-2">{section.section}</td>
+                          <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â</td>
+                        </tr>
                         {section.rows.map((row, index) => (
-                          <tr key={`${section.section}-${row.lineItem}-${index}`}>
-                            <td
-                              className={`border-b border-slate-100 px-2 py-2 text-[13px] ${
-                                row.rowType === "total" ? "font-semibold" : ""
-                              }`}
-                            >
-                              {row.lineItem}
-                            </td>
-                            <td
-                              className={`w-44 border-b border-slate-100 px-2 py-2 text-right text-[13px] tabular-nums ${
-                                row.rowType === "total" ? "font-semibold" : ""
-                              }`}
-                            >
-                              {formatStatementAmount(row.amount)}
-                            </td>
+                          <tr key={`${section.section}-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
+                            <td className={`border-b border-slate-200 px-2 py-1.5 ${row.rowType === "total" ? "font-semibold" : ""}`}>{row.lineItem}</td>
+                            <td className={`border-b border-slate-200 px-2 py-1.5 text-right tabular-nums ${row.rowType === "total" ? "font-semibold" : ""}`}>{formatStatementAmount(row.amount)}</td>
                           </tr>
                         ))}
-                      </tbody>
-                    </table>
-                  </section>
-                ))}
+                      </React.Fragment>
+                    ))}
 
-                {cashFlowData.summaryRows.length > 0 && (
-                  <div className="space-y-2 px-2 py-4">
-                    {cashFlowData.summaryRows.map((row, index) => {
-                      const isMainTotal = /net increase in cash/i.test(row.lineItem);
-                      return (
-                        <div
-                          key={`summary-${row.lineItem}-${index}`}
-                          className={`flex items-center justify-between px-2 py-2 text-[13px] ${
-                            isMainTotal
-                              ? "border-t border-b border-slate-300 font-semibold text-slate-900"
-                              : "border-b border-slate-200 font-semibold text-slate-900"
-                          }`}
-                        >
-                          <span>{row.lineItem}</span>
-                          <span className="tabular-nums">{formatStatementAmount(row.amount)}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+                    {cashFlowData.summaryRows.length > 0 && (
+                      <>
+                        <tr className="bg-white font-semibold text-slate-900">
+                          <td className="border-b border-slate-200 px-2 py-2">Summary</td>
+                          <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â</td>
+                        </tr>
+                        {cashFlowData.summaryRows.map((row, index) => {
+                          const isMainTotal = /net increase in cash/i.test(row.lineItem);
+                          return (
+                            <tr key={`summary-${row.lineItem}-${index}`} className={isMainTotal ? "bg-slate-50 font-semibold" : index % 2 === 0 ? "bg-white font-semibold" : "bg-slate-50 font-semibold"}>
+                              <td className={`border-b border-slate-200 px-2 py-1.5 ${isMainTotal ? "border-t border-slate-300" : ""}`}>{row.lineItem}</td>
+                              <td className={`border-b border-slate-200 px-2 py-1.5 text-right tabular-nums ${isMainTotal ? "border-t border-slate-300" : ""}`}>{formatStatementAmount(row.amount)}</td>
+                            </tr>
+                          );
+                        })}
+                      </>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
           ) : isTrialBalance && trialBalanceData ? (
@@ -903,12 +894,12 @@ export function ReportModal<T extends Record<string, any>>({
                         <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">
                           {Math.max(Number(row.closingDebit || 0), 0) > 0.000001
                             ? formatTrialAmount(Math.max(Number(row.closingDebit || 0), 0))
-                            : "—"}
+                            : "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â"}
                         </td>
                         <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">
                           {Math.max(Number(row.closingCredit || 0), 0) > 0.000001
                             ? formatTrialAmount(Math.max(Number(row.closingCredit || 0), 0))
-                            : "—"}
+                            : "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â"}
                         </td>
                       </tr>
                     ))}

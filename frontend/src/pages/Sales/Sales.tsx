@@ -144,8 +144,12 @@ export const buildPrintableDocument = (
            tbody td { padding:8px; border-bottom:1px solid #e2e8f0; font-size:10.5px; }
           tbody td.num { text-align:right; }
           tbody tr:nth-child(even) { background:#f8fafc; }
-          .summary { display:flex; justify-content:flex-end; margin-top:12px; }
-          .totals { border:1px solid var(--border); padding:12px 14px; border-radius:12px; background:var(--accent-soft); min-width:210px; }
+
+          .terms { margin-top:12px; border:1px solid var(--border); padding:10px 12px; border-radius:12px; background:#ffffff; }
+          .terms h4 { margin:0 0 6px; font-size:9px; letter-spacing:0.2em; text-transform:uppercase; color:#64748b; }
+          .terms ul { margin:6px 0 0; padding-left:16px; }
+          .terms li { margin:3px 0; font-size:10px; color:#475569; }
+          .notice .muted { display:block; margin-top:6px; color:#64748b; }          .totals { border:1px solid var(--border); padding:12px 14px; border-radius:12px; background:var(--accent-soft); min-width:210px; }
           .totals-row { display:flex; justify-content:space-between; font-size:10.5px; padding:6px 0; color:#475569; }
           .total-highlight { margin-top:10px; background:var(--accent); padding:10px 12px; font-weight:700; display:flex; justify-content:space-between; border-radius:10px; color:#ffffff; }
           .signatures { margin-top:14px; display:flex; justify-content:space-between; font-size:9.5px; color:#64748b; }
@@ -200,7 +204,10 @@ export const buildPrintableDocument = (
 
             ${
               isQuote
-                ? `<div class="notice"><b>Quotation only.</b> This document does not reserve stock or post any sale until converted to an invoice.</div>`
+                ? `<div class="notice">
+  <b>Quotation only.</b> This document does not reserve stock or post any sale until converted to an invoice.
+  <span class="muted"><b>Kaliya Qiimeyn (Quotation).</b> Dukumentigan ma xajiyo kaydka (stock) mana diiwaan geliyo iib ilaa loo beddelo invoice.</span>
+</div>`
                 : ''
             }
 
@@ -266,7 +273,21 @@ export const buildPrintableDocument = (
 
           ${sale.status === 'void' ? '<div class="void">VOIDED DOCUMENT</div>' : ''}
 
-            <div class="signatures">
+                        ${
+              isQuote
+                ? `<div class="terms">
+                    <h4>Shuruudaha & Xaaladaha</h4>
+                    <ul>
+                      <li>Qiimeyntani waa kaliya macluumaad; alaab lama xafidayo (stock lama celinayo) ilaa invoice la sameeyo.</li>
+                      <li>Qiimuhu wuu isbedeli karaa haddii suuqu isbedelo ama tiradu isbedesho.</li>
+                      <li>Qiimeyntani waxay ansax tahay 7 maalmood (haddii aan si kale loo sheegin).</li>
+                      <li>Lacag bixinta: waxaa lagu heshiinayaa marka invoice la sameeyo (caddaan ama deyn).</li>
+                      <li>Fadlan hubi faahfaahinta (item, qty, price) kahor saxiixa aqbalaadda.</li>
+                    </ul>
+                  </div>`
+                : ''
+            }
+<div class="signatures">
               <div>${isQuote ? 'Prepared By' : 'Authorized Sign'}: ____________________</div>
               <div>${isQuote ? 'Customer Acceptance' : 'Client Sign'}: ____________________</div>
             </div>

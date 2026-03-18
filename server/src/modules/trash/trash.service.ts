@@ -34,7 +34,7 @@ const MODULES: TrashModule[] = [
   { key: 'purchases', label: 'Purchases', table: 'purchases' },
   { key: 'suppliers', label: 'Suppliers', table: 'suppliers' },
   { key: 'quotations', label: 'Quotations', table: 'sales', filter: { column: 'doc_type', value: 'quotation' }, auditEntity: 'sales' },
-  { key: 'accounts', label: 'Accounts', table: 'accounts' },
+    { key: 'other_income', label: 'Other Income', table: 'other_incomes' },
   { key: 'customer_receipts', label: 'Customer Receipts', table: 'customer_receipts' },
   { key: 'supplier_receipts', label: 'Supplier Receipts', table: 'supplier_receipts' },
   { key: 'expenses', label: 'Expenses', table: 'expenses' },
