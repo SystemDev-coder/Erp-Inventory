@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router';
 import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
@@ -6,11 +6,8 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { accountService, Account } from '../../services/account.service';
 import { customerService, Customer } from '../../services/customer.service';
 import { inventoryService, InventoryItem } from '../../services/inventory.service';
-import { SaleDocType, SaleItem, SaleStatus, salesService } from '../../services/sales.service';
-import { settingsService } from '../../services/settings.service';
+import { SaleDocType, SaleStatus, salesService } from '../../services/sales.service';
 import { formatAvailableQty, itemLabelWithAvailability } from '../../utils/itemAvailability';
-import { buildPrintableDocument } from './Sales';
-import { env } from '../../config/env';
 
 type FormLine = {
   item_id: number | '';
@@ -284,6 +281,10 @@ const SaleCreate = () => {
       showToast('error', 'Sales', 'Select at least one item with quantity');
       return;
     }
+    if (!saleForm.customer_id) {
+      showToast('error', 'Sales', 'Please select a customer before saving.');
+      return;
+    }
 
     if (effectiveDocType === 'quotation' && !saleForm.quote_valid_until) {
       showToast('error', 'Quotation', 'Quote valid until date is required');
@@ -337,66 +338,32 @@ const SaleCreate = () => {
     if (effectiveDocType === 'quotation') {
       setSubmitting(true);
       try {
-        const [companyRes, customerRes, saleRes] = await Promise.all([
-          settingsService.getCompany(),
-          saleForm.customer_id ? customerService.get(Number(saleForm.customer_id)) : Promise.resolve(null as any),
-          isEditing && editId
-            ? salesService.update(editId, payload)
-            : salesService.create(payload),
-        ]);
+        if (!saleForm.customer_id) {
+          showToast('error', 'Quotation', 'Please select a customer before saving/printing.');
+          return;
+        }
+        if (!validItems.length) {
+          showToast('error', 'Quotation', 'Please add at least one item.');
+          return;
+        }
+
+        const saleRes = isEditing && editId
+          ? await salesService.update(editId, payload)
+          : await salesService.create(payload);
 
         if (!saleRes.success || !saleRes.data?.sale) {
           showToast('error', 'Quotation', saleRes.error || 'Failed to save quotation');
           return;
         }
 
-        const resolveAssetUrl = (value?: string | null) => {
-          const raw = String(value || '').trim();
-          if (!raw) return null;
-          if (/^https?:\/\//i.test(raw) || raw.startsWith('data:')) return raw;
-          if (raw.startsWith('uploads/')) return `${env.API_URL}/${raw}`;
-          if (raw.startsWith('/')) return `${env.API_URL}${raw}`;
-          return raw;
-        };
-
-        const company = {
-          name: companyRes?.data?.company?.company_name || 'My Inventory ERP',
-          phone: companyRes?.data?.company?.phone || null,
-          logoUrl: resolveAssetUrl(companyRes?.data?.company?.logo_img),
-          bannerUrl: resolveAssetUrl(companyRes?.data?.company?.banner_img),
-        };
-
-        const customer = {
-          name: saleForm.customer_id
-            ? customers.find((c) => c.customer_id === Number(saleForm.customer_id))?.full_name || 'Customer'
-            : 'Walking Customer',
-          phone:
-            customerRes && customerRes.success && customerRes.data?.customer?.phone
-              ? customerRes.data.customer.phone
-              : null,
-          address:
-            customerRes && customerRes.success && customerRes.data?.customer?.address
-              ? customerRes.data.customer.address
-              : null,
-        };
-
         const savedSale = saleRes.data.sale;
+        const printRes = await salesService.getPrintHtml(savedSale.sale_id);
+        if (!printRes.success || !printRes.data?.html) {
+          showToast('error', 'Quotation', printRes.error || 'Unable to load print template');
+          return;
+        }
 
-        const printItems: SaleItem[] = validItems.map((line) => {
-          const option = itemOptions.find((item) => item.item_id === Number(line.item_id));
-          const qty = Number(line.quantity || 0);
-          const unitPrice = Number(line.unit_price || option?.unit_price || 0);
-          return {
-            item_id: Number(line.item_id),
-            item_name: option?.item_name || undefined,
-            quantity: qty,
-            unit_price: unitPrice,
-            line_total: qty * unitPrice,
-          };
-        });
-
-        const html = buildPrintableDocument(savedSale, printItems, company, customer);
-        printHtmlDocument(html);
+        printHtmlDocument(printRes.data.html);
         showToast(
           'success',
           'Quotation',
@@ -873,3 +840,5 @@ const SaleCreate = () => {
 };
 
 export default SaleCreate;
+
+

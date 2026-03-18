@@ -1,5 +1,7 @@
 import { API } from '../config/env';
 import { apiClient } from './api';
+import { env } from '../config/env';
+import { getAccessToken } from './authStore';
 
 export type SaleStatus = 'paid' | 'partial' | 'unpaid' | 'void';
 export type SaleDocType = 'sale' | 'invoice' | 'quotation';
@@ -126,5 +128,39 @@ export const salesService = {
 
   async remove(id: number) {
     return apiClient.delete(API.SALES.ITEM(id));
+  },
+
+  async getPrintHtml(id: number) {
+    const token = getAccessToken();
+    const res = await fetch(`${env.API_URL}${API.SALES.LIST}/${id}/print`, {
+      method: 'GET',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      credentials: 'include',
+      cache: 'no-store',
+    });
+
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        return {
+          success: false as const,
+          error: json?.error || json?.message || 'Print failed',
+          message: json?.message || 'Print failed',
+        };
+      }
+      // Shouldn't happen; print returns HTML, but keep safe fallback.
+      return { success: true as const, data: { html: json?.html || '' } };
+    }
+
+    const html = await res.text().catch(() => '');
+    if (!res.ok) {
+      return {
+        success: false as const,
+        error: html || `Print failed (${res.status})`,
+        message: html || `Print failed (${res.status})`,
+      };
+    }
+    return { success: true as const, data: { html } };
   },
 };

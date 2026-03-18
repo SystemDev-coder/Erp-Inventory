@@ -49,6 +49,9 @@ export interface SaleItem {
   sale_id: number;
   product_id: number;
   product_name?: string | null;
+  // Some queries (e.g. listItems) alias the FK/name as item_id/item_name for legacy consistency.
+  item_id?: number;
+  item_name?: string | null;
   quantity: number;
   unit_price: number;
   line_total: number;

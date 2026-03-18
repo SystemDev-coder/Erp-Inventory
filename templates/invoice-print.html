@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Invoice {{docNo}}</title>
+    <style>
+      :root{
+        --primary:#1e40af; /* stronger */
+        --ink:#0f172a;
+        --muted:#64748b;
+        --line:#e2e8f0;
+        --soft:#f1f5f9;
+        --ok:#16a34a;
+        --warn:#b45309;
+        --bad:#b91c1c;
+      }
+      *{ box-sizing:border-box; }
+      body{
+        margin:0;
+        background:#ffffff;
+        color:var(--ink);
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, "Noto Sans", "Liberation Sans", sans-serif;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      @page{ margin: 12mm; }
+      .sheet{ width:100%; }
+      .banner{ width:100%; height:120px; object-fit:cover; object-position:center; display:block; }
+      .header{
+        display:flex;
+        align-items:flex-start;
+        justify-content:space-between;
+        gap:16px;
+        padding:14px 16px 10px;
+      }
+      .brand{
+        display:flex;
+        align-items:center;
+        gap:10px;
+        min-width: 220px;
+      }
+      .logo{
+        width:42px;
+        height:42px;
+        object-fit:contain;
+        border-radius:10px;
+      }
+      .company-name{
+        font-weight:800;
+        font-size:18px;
+        line-height:1.15;
+        letter-spacing:0.02em;
+      }
+      .company-meta{
+        font-size:10.5px;
+        color:var(--muted);
+        margin-top:2px;
+      }
+      .doc-badge{
+        border:1px solid var(--line);
+        border-radius:12px;
+        padding:10px 12px;
+        min-width:200px;
+        background:#ffffff;
+      }
+      .doc-type{
+        display:inline-flex;
+        align-items:center;
+        gap:8px;
+        padding:4px 10px;
+        border-radius:999px;
+        border:1px solid var(--line);
+        background:var(--soft);
+        color:var(--primary);
+        font-size:9px;
+        font-weight:800;
+        letter-spacing:0.18em;
+        text-transform:uppercase;
+      }
+      .doc-no{
+        font-size:20px;
+        font-weight:900;
+        color:var(--primary);
+        margin-top:8px;
+      }
+      .doc-grid{
+        margin-top:8px;
+        display:grid;
+        grid-template-columns: 1fr 1fr;
+        gap:6px;
+        font-size:10.5px;
+        color:var(--muted);
+      }
+      .doc-grid b{ color:var(--ink); }
+      .status{
+        display:inline-flex;
+        align-items:center;
+        padding:4px 10px;
+        border-radius:999px;
+        border:1px solid var(--line);
+        background:#ffffff;
+        font-size:9px;
+        letter-spacing:0.12em;
+        text-transform:uppercase;
+        font-weight:900;
+      }
+      .status.paid{ color:var(--ok); border-color: rgba(22,163,74,0.25); background: rgba(22,163,74,0.08); }
+      .status.partial{ color:var(--warn); border-color: rgba(180,83,9,0.25); background: rgba(180,83,9,0.08); }
+      .status.unpaid{ color:var(--bad); border-color: rgba(185,28,28,0.25); background: rgba(185,28,28,0.08); }
+      .rule{ height:1px; background:var(--line); }
+
+      .row{
+        display:grid;
+        grid-template-columns: 1fr 1fr;
+        gap:12px;
+        padding:12px 16px 0;
+      }
+      .card{
+        border:1px solid var(--line);
+        border-radius:12px;
+        padding:10px 12px;
+        background:#ffffff;
+      }
+      .card h4{
+        margin:0 0 6px;
+        font-size:9px;
+        font-weight:800;
+        letter-spacing:0.2em;
+        text-transform:uppercase;
+        color:var(--muted);
+      }
+      .card p{ margin:2px 0; font-size:10.5px; color:var(--muted); }
+      .card .name{ font-weight:700; color:var(--ink); }
+
+      table{
+        width:100%;
+        border-collapse:collapse;
+        margin-top:12px;
+      }
+      thead th{
+        background:var(--soft);
+        border-bottom:1px solid var(--line);
+        padding:9px 10px;
+        font-size:9px;
+        letter-spacing:0.14em;
+        text-transform:uppercase;
+        color:var(--muted);
+        text-align:left;
+      }
+      thead th.num, tbody td.num{ text-align:right; }
+      tbody td{
+        border-bottom:1px solid var(--line);
+        padding:9px 10px;
+        font-size:10.5px;
+        color:var(--ink);
+      }
+      tbody tr:nth-child(even){ background:#fbfdff; }
+
+      .bottom{
+        display:grid;
+        grid-template-columns: 1.2fr 0.8fr;
+        gap:12px;
+        padding:12px 16px 16px;
+        align-items:start;
+      }
+      .totals{
+        border:1px solid var(--line);
+        border-radius:12px;
+        background:#ffffff;
+        padding:10px 12px;
+      }
+      .tot-row{
+        display:flex;
+        justify-content:space-between;
+        gap:10px;
+        padding:6px 0;
+        font-size:10.5px;
+        color:var(--muted);
+      }
+      .tot-row strong{ color:var(--ink); }
+      .tot-final{
+        border-top:1px solid var(--line);
+        margin-top:8px;
+        padding-top:8px;
+        font-weight:900;
+        color:var(--ink);
+      }
+      .tot-final strong{ color:var(--primary); }
+      .terms{
+        border:1px solid var(--line);
+        border-radius:12px;
+        background:#ffffff;
+        padding:10px 12px;
+      }
+      .terms h4{
+        margin:0 0 6px;
+        font-size:9px;
+        font-weight:800;
+        letter-spacing:0.2em;
+        text-transform:uppercase;
+        color:var(--muted);
+      }
+      .terms ul{ margin:6px 0 0; padding-left:16px; }
+      .terms li{ margin:3px 0; font-size:10.5px; color:var(--muted); }
+      .footer{
+        padding:0 16px 12px;
+        font-size:9px;
+        color:#94a3b8;
+        display:flex;
+        justify-content:space-between;
+        border-top:1px solid var(--line);
+        padding-top:8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="sheet">
+      {{{bannerBlock}}}
+
+      <div class="header">
+        <div class="brand">
+          {{{logoBlock}}}
+          <div>
+            <div class="company-name">{{companyName}}</div>
+            <div class="company-meta">{{companyPhone}}</div>
+          </div>
+        </div>
+
+        <div class="doc-badge">
+          <div class="doc-type">Invoice</div>
+          <div class="doc-no">{{docNo}}</div>
+          <div class="doc-grid">
+            <div>Date</div><div><b>{{docDate}}</b></div>
+                        <div>Due Date</div><div><b>{{dueDate}}</b></div>
+<div>Status</div><div>{{{statusBadge}}}</div>
+          </div>
+        </div>
+      </div>
+      <div class="rule"></div>
+
+      <div class="row">
+        <div class="card">
+          <h4>Bill To</h4>
+          <p class="name">{{customerName}}</p>
+          <p>{{customerAddress}}</p>
+          <p>{{customerPhone}}</p>
+        </div>
+        <div class="card">
+          <h4>Company</h4>
+          <p class="name">{{companyName}}</p>
+          <p>{{companyManager}}</p>
+          <p>{{companyPhone}}</p>
+        </div>
+      </div>
+
+      <div style="padding:0 16px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th class="num" style="width:90px;">QTY</th>
+              <th class="num" style="width:110px;">Price</th>
+              <th class="num" style="width:130px;">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{{itemsRows}}}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="bottom">
+        <div class="terms">
+          <h4>Terms &amp; Conditions</h4>
+          <ul>
+            <li>Payment as agreed.</li>
+            <li>Items subject to availability.</li>
+            <li>Prices valid until expiry date.</li>
+            <li>No returns after confirmation.</li>
+          </ul>
+        </div>
+
+        <div class="totals">
+          <div class="tot-row"><span>Subtotal</span><strong>{{subtotal}}</strong></div>
+          <div class="tot-row"><span>Discount</span><strong>{{discount}}</strong></div>
+          <div class="tot-row"><span>Tax</span><strong>{{tax}}</strong></div>
+          {{{paidBlock}}}
+          {{{balanceBlock}}}
+          <div class="tot-row tot-final"><span>Total</span><strong>{{total}}</strong></div>
+        </div>
+      </div>
+
+      <div class="footer">
+        <div>{{companyName}}</div>
+        <div>Printed: {{printDate}}</div>
+      </div>
+    </div>
+  </body>
+</html>

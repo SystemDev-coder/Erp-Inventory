@@ -677,10 +677,10 @@ export function ReportModal<T extends Record<string, any>>({
                 <div className="mb-3 text-right text-[12px] font-semibold text-slate-600">{cleanText(periodLabel || subtitle)}</div>
               ) : null}
 
-              <div className="overflow-hidden rounded-md border border-slate-300">
+              <div className="overflow-hidden rounded-md">
                 <table className="w-full table-fixed border-collapse text-[12px]">
                   <thead>
-                    <tr className="bg-slate-100 text-slate-900">
+                    <tr className="text-zinc-900">
                       <th className="border-b border-slate-300 px-2 py-2 text-left font-semibold">Particulars</th>
                       <th className="w-44 border-b border-slate-300 px-2 py-2 text-right font-semibold">Amount</th>
                     </tr>
@@ -729,10 +729,10 @@ export function ReportModal<T extends Record<string, any>>({
                 <div className="mb-3 text-right text-[12px] font-semibold text-slate-600">{balanceSheetDateLabel}</div>
               ) : null}
 
-              <div className="overflow-hidden rounded-md border border-slate-300">
+              <div className="overflow-hidden rounded-md">
                 <table className="w-full table-fixed border-collapse text-[12px]">
                   <thead>
-                    <tr className="bg-slate-100 text-slate-900">
+                    <tr className="text-zinc-900">
                       <th className="border-b border-slate-300 px-2 py-2 text-left font-semibold">Particulars</th>
                       <th className="w-44 border-b border-slate-300 px-2 py-2 text-right font-semibold">Amount</th>
                     </tr>
@@ -867,10 +867,10 @@ export function ReportModal<T extends Record<string, any>>({
                 <div className="mb-3 text-right text-[12px] font-semibold text-slate-600">{cashFlowPeriodLabel}</div>
               ) : null}
 
-              <div className="overflow-hidden rounded-md border border-slate-300">
+              <div className="overflow-hidden rounded-md">
                 <table className="w-full table-fixed border-collapse text-[12px]">
                   <thead>
-                    <tr className="bg-slate-100 text-slate-900">
+                    <tr className="text-zinc-900">
                       <th className="border-b border-slate-300 px-2 py-2 text-left font-semibold">Particulars</th>
                       <th className="w-44 border-b border-slate-300 px-2 py-2 text-right font-semibold">Amount</th>
                     </tr>

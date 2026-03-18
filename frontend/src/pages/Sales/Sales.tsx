@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+﻿import { useCallback, useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
 import { Ban, Edit3, FileCheck2, FileText, Printer, ReceiptText, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router';
@@ -8,276 +8,16 @@ import { DataTable } from '../../components/ui/table/DataTable';
 import Badge from '../../components/ui/badge/Badge';
 import { Tabs } from '../../components/ui/tabs/Tabs';
 import { useToast } from '../../components/ui/toast/Toast';
-import { Sale, SaleItem, salesService } from '../../services/sales.service';
-import { settingsService } from '../../services/settings.service';
-import { customerService } from '../../services/customer.service';
+import { Sale, salesService } from '../../services/sales.service';
 import { defaultDateRange } from '../../utils/dateRange';
-import { env } from '../../config/env';
 
 const formatMoney = (value: number) => `$${Number(value || 0).toFixed(2)}`;
-
-const escapeHtml = (value: string) =>
-  value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 
 const getDocRef = (sale: Pick<Sale, 'sale_id' | 'doc_type'>) => {
   const docType = sale.doc_type || 'sale';
   if (docType === 'quotation') return `Q-${sale.sale_id}`;
   if (docType === 'invoice') return `INV-${sale.sale_id}`;
   return `S-${sale.sale_id}`;
-};
-
-type PrintCompany = {
-  name: string;
-  phone?: string | null;
-  logoUrl?: string | null;
-  bannerUrl?: string | null;
-};
-
-type PrintCustomer = {
-  name: string;
-  phone?: string | null;
-  address?: string | null;
-};
-
-export const buildPrintableDocument = (
-  sale: Sale,
-  items: SaleItem[],
-  company: PrintCompany,
-  customer: PrintCustomer
-) => {
-  const docType = sale.doc_type || 'sale';
-  const isQuote = docType === 'quotation';
-  const isInvoice = docType === 'invoice';
-  const docLabel = isQuote ? 'Quotation' : isInvoice ? 'Invoice' : 'Sale';
-  const docNo = isQuote ? `Q-${sale.sale_id}` : isInvoice ? `INV-${sale.sale_id}` : `S-${sale.sale_id}`;
-  const brandSubtitle = isQuote ? 'Price Quotation' : isInvoice ? 'Sales Invoice' : 'Sales Document';
-  const date = new Date(sale.sale_date).toLocaleDateString();
-  const quoteValidUntil = sale.quote_valid_until ? new Date(sale.quote_valid_until).toLocaleDateString() : '';
-  const totalAmount = Number(sale.total || 0);
-  const taxAmount = Number((sale as any).tax_amount || 0);
-  // When status is paid, show full total as paid and 0 balance (fixes display inconsistency)
-  const paidAmount =
-    sale.status === 'paid'
-      ? totalAmount
-      : Math.min(Number(sale.paid_amount || 0), totalAmount);
-  const balance = Math.max(totalAmount - paidAmount, 0);
-  const themeClass = isQuote ? 'quote' : 'invoice';
-  const note = (sale.note || '').trim();
-
-  const formatQty = (value: number) => {
-    const n = Number(value || 0);
-    if (!Number.isFinite(n)) return '0';
-    if (Number.isInteger(n)) return String(n);
-    return n.toFixed(3).replace(/0+$/g, '').replace(/\.$/, '');
-  };
-
-  return `
-    <!doctype html>
-    <html>
-      <head>
-        <meta charset="utf-8" />
-        <title>${docLabel} ${docNo}</title>
-        <style>
-          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-          * { box-sizing: border-box; font-family: 'Inter', 'Manrope', 'Segoe UI', Arial, sans-serif; }
-          @page { margin: 12mm; }
-          body { margin: 0; color: #0f172a; background:#ffffff; -webkit-print-color-adjust: exact; print-color-adjust: exact; font-size: 11px; line-height: 1.55; }
-          body.invoice, body.quote { --primary:#1e40af; --soft:#f8fafc; --border:#e2e8f0; --muted:#64748b; --gold:#d4a017; }
-          body.quote { --primary:#3730a3; }
-          .page { padding: 0; }
-          .sheet { position:relative; padding:0; background:#ffffff; }
-          .content { padding: 16px 18px 14px; }
-          .letterhead { width:100%; overflow:hidden; background:#ffffff; }
-          .letterhead-banner { display:block; width:100%; max-height:120px; object-fit:cover; object-position:center; }
-          .letterhead-rule { height:2px; background: var(--primary); }
-          .hero { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; }
-          .brand { display:flex; align-items:center; gap:12px; }
-          .logo { width:42px; height:42px; object-fit:contain; border-radius:10px; }
-          .brand-name { font-size:15px; font-weight:700; color:#0f172a; }
-          .brand-sub { font-size:9px; color:#64748b; letter-spacing:0.2em; text-transform:uppercase; }
-          .doc-card { border:1px solid var(--border); border-radius:12px; padding:10px 12px; min-width:180px; background:#ffffff; box-shadow: 0 2px 10px rgba(15,23,42,0.06); }
-          .doc-label { display:inline-flex; align-items:center; padding:4px 10px; border-radius:999px; border:1px solid var(--border); background:var(--soft); font-size:9px; letter-spacing:0.14em; text-transform:uppercase; color:var(--primary); }
-          .doc-title { font-size:20px; font-weight:800; color:var(--primary); margin-top:8px; }
-          .doc-meta { margin-top:8px; display:grid; grid-template-columns: 1fr 1fr; gap:6px; font-size:10px; color:#475569; }
-          .doc-meta b { color:#0f172a; }
-          .accent-line { height:1px; background:var(--primary); margin:12px 0 6px; opacity:0.35; }
-          .pill { display:inline-flex; background:var(--soft); color:#0f172a; padding:4px 10px; border-radius:999px; font-size:9px; letter-spacing:0.12em; text-transform:uppercase; border:1px solid var(--border); }
-          .flags { margin-top:10px; display:flex; flex-wrap:wrap; gap:8px; }
-          .notice { margin-top:10px; border:1px solid var(--border); background:var(--soft); padding:10px 12px; border-radius:12px; font-size:10px; color:#475569; }
-          .notice b { color:#0f172a; }
-          .note-box { margin-top:10px; border:1px solid var(--border); background:#ffffff; padding:10px 12px; border-radius:12px; font-size:10.5px; color:#475569; }
-          .note-box b { color:#0f172a; }
-          .info-grid { display:grid; grid-template-columns: 1.1fr 1fr; gap:12px; margin-top:10px; }
-          .box { border:1px solid var(--border); padding:10px 12px; border-radius:12px; background:#ffffff; box-shadow: 0 1px 8px rgba(15,23,42,0.04); }
-          .box h4 { margin:0 0 6px; font-size:9px; letter-spacing:0.2em; text-transform:uppercase; color:#64748b; }
-          .box p { margin:2px 0; font-size:10.5px; color:#475569; }
-          .box .name { font-weight:600; color:#0f172a; }
-          table { width:100%; border-collapse: collapse; margin-top:14px; }
-          thead th { background:var(--soft); color:#0f172a; font-size:9.5px; padding:8px; text-align:left; border-bottom:1px solid var(--border); letter-spacing:0.08em; text-transform:uppercase; }
-          thead th.num { text-align:right; }
-          tbody td { padding:8px; border-bottom:1px solid var(--border); font-size:10.5px; }
-          tbody td.num { text-align:right; }
-          tbody tr:nth-child(even) { background:#fbfdff; }
-
-          .terms { margin-top:12px; border:1px solid var(--border); padding:10px 12px; border-radius:12px; background:#ffffff; }
-          .terms h4 { margin:0 0 6px; font-size:9px; letter-spacing:0.2em; text-transform:uppercase; color:#64748b; }
-          .terms ul { margin:6px 0 0; padding-left:16px; }
-          .terms li { margin:3px 0; font-size:10px; color:#475569; }
-          .notice .muted { display:block; margin-top:6px; color:#64748b; }
-          .summary { display:flex; justify-content:flex-end; margin-top:12px; }
-          .totals { border:1px solid var(--border); padding:12px 14px; border-radius:12px; background:#ffffff; min-width:220px; box-shadow: 0 2px 10px rgba(15,23,42,0.06); }
-          .totals-row { display:flex; justify-content:space-between; font-size:10.5px; padding:6px 0; color:#475569; }
-          .total-highlight { margin-top:8px; padding-top:8px; border-top:1px solid var(--border); font-weight:800; display:flex; justify-content:space-between; color:#0f172a; }
-          .signatures { margin-top:14px; display:flex; justify-content:space-between; font-size:9.5px; color:#64748b; }
-          .footer { margin-top:12px; border-top:1px solid var(--border); padding-top:6px; font-size:9px; color:#94a3b8; display:flex; justify-content:space-between; }
-          .void { color:#b91c1c; font-weight:700; margin-top:8px; font-size:11px; letter-spacing:0.08em; }
-          body.quote .doc-title { color:var(--primary); }
-          body.invoice .doc-title { color:var(--primary); }
-        </style>
-      </head>
-      <body class="${themeClass}">
-        <div class="page">
-          <div class="sheet">
-            ${company.bannerUrl ? `
-              <div class="letterhead">
-                <img class="letterhead-banner" src="${escapeHtml(company.bannerUrl)}" alt="Banner" />
-                <div class="letterhead-rule"></div>
-              </div>
-            ` : ''}
-             <div class="content">
-             <div class="hero">
-              <div class="brand">
-                ${company.logoUrl ? `<img class="logo" src="${escapeHtml(company.logoUrl)}" alt="Logo" />` : ''}
-                <div>
-                  <div class="brand-name">${escapeHtml(company.name || 'My Inventory ERP')}</div>
-                  <div class="brand-sub">${escapeHtml(brandSubtitle)}</div>
-                </div>
-              </div>
-              <div class="doc-card">
-                <div class="doc-label">${docLabel}</div>
-                <div class="doc-title">${docNo}</div>
-                <div class="doc-meta">
-                  <div>Date</div><div><b>${escapeHtml(date)}</b></div>
-                  ${!isQuote ? `<div>Status</div><div><b>${escapeHtml(String(sale.status))}</b></div>` : ''}
-                </div>
-              </div>
-            </div>
-
-            ${company.bannerUrl ? '' : `<div class="accent-line"></div>`}
-            <div class="flags">
-              ${
-                isQuote && quoteValidUntil
-                  ? `<div class="pill">Valid until ${escapeHtml(quoteValidUntil)}</div>`
-                  : ''
-              }
-              ${!isQuote && balance > 0 ? `<div class="pill">Balance due ${escapeHtml(formatMoney(balance))}</div>` : ''}
-              ${!isQuote && balance === 0 && sale.status === 'paid' ? `<div class="pill">Paid in full</div>` : ''}
-            </div>
-
-            ${
-              isQuote
-                ? `<div class="notice">
-  <b>Quotation only.</b> This document does not reserve stock or post any sale until converted to an invoice.
-  <span class="muted"><b>Kaliya Qiimeyn (Quotation).</b> Dukumentigan ma xajiyo kaydka (stock) mana diiwaan geliyo iib ilaa loo beddelo invoice.</span>
-</div>`
-                : ''
-            }
-
-            ${
-              note
-                ? `<div class="note-box"><b>Note:</b> ${escapeHtml(note)}</div>`
-                : ''
-            }
-
-            <div class="info-grid">
-              <div class="box">
-                <h4>${escapeHtml(docLabel)} to</h4>
-                <p class="name">${escapeHtml(customer.name || 'Walking Customer')}</p>
-                ${customer.address ? `<p>${escapeHtml(String(customer.address))}</p>` : ''}
-                ${customer.phone ? `<p>Phone: ${escapeHtml(String(customer.phone))}</p>` : ''}
-              </div>
-              <div class="box">
-                <h4>Company</h4>
-                <p class="name">${escapeHtml(company.name || 'My Inventory ERP')}</p>
-                ${company.phone ? `<p>Phone: ${escapeHtml(String(company.phone))}</p>` : ''}
-              </div>
-            </div>
-
-          <table>
-            <thead>
-              <tr>
-                <th>Item</th>
-                <th class="num" style="width:90px;">Qty</th>
-                <th class="num" style="width:110px;">Price</th>
-                <th class="num" style="width:130px;">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${items.length ? items.map((line) => {
-                const qty = Number(line.quantity || 0);
-                const unitPrice = Number(line.unit_price || 0);
-                const lineTotal = Number(line.line_total || qty * unitPrice);
-                const itemId = Number(line.item_id || 0);
-                const itemName = line.item_name || '';
-                const itemLabel = itemName ? escapeHtml(itemName) : `Item ${itemId}`;
-                 return `
-                   <tr>
-                     <td>${itemLabel}</td>
-                     <td class="num">${formatQty(qty)}</td>
-                     <td class="num">$${unitPrice.toFixed(2)}</td>
-                     <td class="num">$${lineTotal.toFixed(2)}</td>
-                   </tr>
-                 `;
-              }).join('') : '<tr><td colspan=\"4\" style=\"padding: 12px; color:#6b7280;\">No items</td></tr>'}
-            </tbody>
-          </table>
-
-            <div class="summary">
-              <div class="totals">
-                <div class="totals-row"><span>Sub Total</span><span>${formatMoney(sale.subtotal)}</span></div>
-                <div class="totals-row"><span>Discount</span><span>${formatMoney(sale.discount)}</span></div>
-                <div class="totals-row"><span>Tax</span><span>${formatMoney(taxAmount)}</span></div>
-                ${isQuote ? '' : `<div class="totals-row"><span>Paid</span><span>${formatMoney(paidAmount)}</span></div>`}
-                ${isQuote ? '' : `<div class="totals-row"><span>Balance</span><span>${formatMoney(balance)}</span></div>`}
-                <div class="total-highlight"><span>Total</span><span>${formatMoney(sale.total)}</span></div>
-              </div>
-            </div>
-
-          ${sale.status === 'void' ? '<div class="void">VOIDED DOCUMENT</div>' : ''}
-
-                        ${
-              isQuote || isInvoice
-                 ? `<div class="terms">
-                     <h4>Shuruudaha & Xaaladaha</h4>
-                     <ul>
-                       <li>Lacag bixinta waxaa lagu bixinayaa sida lagu heshiiyey.</li>
-                       <li>Alaabtu waxay ku xiran tahay helitaanka.</li>
-                       <li>Qiimuhu waa ansax ilaa taariikhda ku qoran.</li>
-                       <li>Ka dib marka invoice la xaqiijiyo, celin lama aqbalo.</li>
-                     </ul>
-                   </div>`
-                 : ''
-             }
-<div class="signatures">
-              <div>${isQuote ? 'Prepared By' : 'Authorized Sign'}: ____________________</div>
-              <div>${isQuote ? 'Customer Acceptance' : 'Client Sign'}: ____________________</div>
-            </div>
-
-            <div class="footer">
-              <div>${escapeHtml(company.name || 'My Inventory ERP')}</div>
-              <div>${company.phone ? escapeHtml(String(company.phone)) : ''}</div>
-            </div>
-            </div>
-          </div>
-        </div>
-      </body>
-    </html>
-  `;
 };
 
 const Sales = () => {
@@ -309,46 +49,19 @@ const Sales = () => {
   const printSaleInvoice = useCallback(
     async (sale: Sale) => {
       try {
-        // Load sale details first
-        const res = await salesService.get(sale.sale_id);
-        if (!res.success || !res.data?.sale) {
-          showToast('error', 'Sales', res.error || 'Failed to load sale details');
+        if (!sale.customer_id) {
+          showToast('error', 'Print Failed', 'Please select a customer before printing.');
           return;
         }
 
-        const saleRow = res.data.sale;
-        const items = res.data.items || [];
+        const printRes = await salesService.getPrintHtml(sale.sale_id);
+        if (!printRes.success || !printRes.data?.html) {
+          showToast('error', 'Print Failed', printRes.error || 'Unable to load print template');
+          return;
+        }
 
-        const [companyRes, customerRes] = await Promise.all([
-          settingsService.getCompany(),
-          saleRow.customer_id ? customerService.get(Number(saleRow.customer_id)) : Promise.resolve(null as any),
-        ]);
-
-        const resolveAssetUrl = (value?: string | null) => {
-          const raw = String(value || '').trim();
-          if (!raw) return null;
-          if (/^https?:\/\//i.test(raw) || raw.startsWith('data:')) return raw;
-          if (raw.startsWith('uploads/')) return `${env.API_URL}/${raw}`;
-          if (raw.startsWith('/')) return `${env.API_URL}${raw}`;
-          return raw;
-        };
-
-        const company = {
-          name: companyRes?.data?.company?.company_name || 'My Inventory ERP',
-          phone: companyRes?.data?.company?.phone || null,
-          logoUrl: resolveAssetUrl(companyRes?.data?.company?.logo_img),
-          bannerUrl: resolveAssetUrl(companyRes?.data?.company?.banner_img),
-        };
-
-        const customer = {
-          name: saleRow.customer_name || 'Walking Customer',
-          phone: (customerRes && customerRes.success && customerRes.data?.customer?.phone) ? customerRes.data.customer.phone : null,
-          address: (customerRes && customerRes.success && customerRes.data?.customer?.address) ? customerRes.data.customer.address : null,
-        };
-
-        // Build the HTML content
-        const html = buildPrintableDocument(saleRow, items, company, customer);
-        
+        const html = printRes.data.html;
+         
         // Print in a hidden iframe so no new tab/window appears.
         const printFrame = document.createElement('iframe');
         printFrame.style.position = 'fixed';
@@ -389,7 +102,7 @@ const Sales = () => {
         
       } catch (error) {
         console.error('Invoice print error:', error);
-        showToast('error', 'Print Failed', 'Unable to generate invoice');
+        showToast('error', 'Print Failed', 'Unable to generate document');
       }
     },
     [showToast]
@@ -751,3 +464,4 @@ const Sales = () => {
 };
 
 export default Sales;
+

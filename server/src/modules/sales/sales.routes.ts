@@ -10,6 +10,7 @@ import {
   voidSale,
   convertQuotation,
   deleteSale,
+  printSale,
 } from './sales.controller';
 
 const router = Router();
@@ -24,6 +25,9 @@ router.get('/:id', requirePerm('sales.view'), getSale);
 
 // List items for a sale (explicit endpoint if needed)
 router.get('/:id/items', requirePerm('sales.view'), listSaleItems);
+
+// Print (HTML) - server renders correct template based on document type
+router.get('/:id/print', requirePerm('sales.view'), printSale);
 
 // Create sale
 router.post('/', requirePerm('sales.create'), createSale);

@@ -12,6 +12,7 @@ import {
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { assertBranchAccess, pickBranchForWrite, resolveBranchScope } from '../../utils/branchScope';
 import { logAudit } from '../../utils/audit';
+import { salesPrintService } from './salesPrint.service';
 
 export const listSales = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
@@ -124,3 +125,12 @@ export const deleteSale = asyncHandler(async (req: AuthRequest, res: Response) =
   return ApiResponse.success(res, null, 'Sale deleted');
 });
 
+export const printSale = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const id = Number(req.params.id);
+  if (!id) throw ApiError.badRequest('Invalid sale id');
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  const html = await salesPrintService.renderSaleDocumentHtml(id, scope, baseUrl);
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.status(200).send(html);
+});
