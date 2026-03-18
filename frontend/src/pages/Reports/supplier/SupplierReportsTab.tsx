@@ -11,18 +11,14 @@ import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultRe
 type SupplierCardId =
   | 'supplier-list'
   | 'supplier-ledger'
-  | 'supplier-wise'
   | 'supplier-payments'
-  | 'supplier-outstanding'
-  | 'best-suppliers';
+  | 'supplier-outstanding';
 
 const supplierCards: Array<{ id: SupplierCardId; title: string; hint: string }> = [
   { id: 'supplier-list', title: 'Supplier List', hint: 'Dropdown + Show / All' },
   { id: 'supplier-ledger', title: 'Supplier Ledger', hint: 'Dropdown + Show / All' },
-  { id: 'supplier-wise', title: 'Supplier Wise Purchases', hint: 'Dropdown + Show / All' },
   { id: 'supplier-payments', title: 'Supplier Payments', hint: 'Date range + Show / All' },
   { id: 'supplier-outstanding', title: 'Outstanding Purchases', hint: 'Dropdown + Show / All' },
-  { id: 'best-suppliers', title: 'Best Suppliers', hint: 'Between two dates' },
 ];
 
 const supplierListColumns: ReportColumn<Record<string, unknown>>[] = [
@@ -77,17 +73,6 @@ const supplierLedgerColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'running_balance', header: 'Balance', align: 'right', render: (row) => formatCurrency(row.running_balance) },
 ];
 
-const supplierWiseColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'purchase_id', header: 'Purchase #' },
-  { key: 'purchase_date', header: 'Date', render: (row) => formatDateTime(row.purchase_date) },
-  { key: 'supplier_name', header: 'Supplier' },
-  { key: 'buyer_name', header: 'Buyer' },
-  { key: 'store_name', header: 'Store' },
-  { key: 'subtotal', header: 'Subtotal', align: 'right', render: (row) => formatCurrency(row.subtotal) },
-  { key: 'discount', header: 'Discount', align: 'right', render: (row) => formatCurrency(row.discount) },
-  { key: 'total', header: 'Total', align: 'right', render: (row) => formatCurrency(row.total) },
-  { key: 'status', header: 'Status' },
-];
 
 const supplierPaymentsColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'sup_payment_id', header: 'Payment #' },
@@ -109,14 +94,6 @@ const supplierOutstandingColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'status', header: 'Status' },
 ];
 
-const bestSuppliersColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'supplier_name', header: 'Supplier' },
-  { key: 'purchases_count', header: 'Purchases', align: 'right' },
-  { key: 'total_amount', header: 'Total Amount', align: 'right', render: (row) => formatCurrency(row.total_amount) },
-  { key: 'total_paid', header: 'Total Paid', align: 'right', render: (row) => formatCurrency(row.total_paid) },
-  { key: 'outstanding_amount', header: 'Outstanding', align: 'right', render: (row) => formatCurrency(row.outstanding_amount) },
-  { key: 'avg_purchase_value', header: 'Avg Purchase', align: 'right', render: (row) => formatCurrency(row.avg_purchase_value) },
-];
 
 type Props = {
   onOpenModal: (report: ModalReportState) => void;
@@ -141,27 +118,29 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
 
   const [selectedListSupplierId, setSelectedListSupplierId] = useState('');
   const [selectedLedgerSupplierId, setSelectedLedgerSupplierId] = useState('');
-  const [selectedWiseSupplierId, setSelectedWiseSupplierId] = useState('');
   const [selectedPaymentSupplierId, setSelectedPaymentSupplierId] = useState('');
   const [selectedOutstandingSupplierId, setSelectedOutstandingSupplierId] = useState('');
 
   const [paymentRange, setPaymentRange] = useState<DateRange>(defaultReportRange());
-  const [bestSuppliersRange, setBestSuppliersRange] = useState<DateRange>(defaultReportRange());
 
   useEffect(() => {
     let alive = true;
     setOptionsLoading(true);
     setOptionsError('');
 
-    purchaseReportsService
-      .getPurchaseOptions()
       .then((response) => {
         if (!alive) return;
         if (!response.success || !response.data) {
           setOptionsError(response.error || response.message || 'Failed to load supplier options');
           return;
         }
-        setSuppliers(response.data.suppliers || []);
+        const rows = (response.data.suppliers || []) as Array<Record<string, unknown>>;
+        setSuppliers(
+          rows.map((row) => ({
+            id: Number(row.supplier_id || row.id || 0),
+            label: String(row.supplier_name || row.name || ('Supplier #' + String(row.supplier_id || row.id || ''))),
+          }))
+        );
       })
       .catch((error: unknown) => {
         if (!alive) return;
@@ -236,7 +215,6 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
     runCardAction('supplier-ledger', async () => {
       const supplierId = mode === 'show' ? Number(selectedLedgerSupplierId || 0) : undefined;
       if (mode === 'show' && !supplierId) throw new Error('Select a supplier first');
-      const response = await purchaseReportsService.getSupplierLedger({ mode, supplierId });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load supplier ledger');
       const rows = toRecordRows(response.data.rows || []);
       const totalDebit = sumByKey(rows, 'debit');
@@ -268,40 +246,11 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
       });
     });
 
-  const handleSupplierWisePurchases = (mode: 'show' | 'all') =>
-    runCardAction('supplier-wise', async () => {
-      const supplierId = mode === 'show' ? Number(selectedWiseSupplierId || 0) : undefined;
-      if (mode === 'show' && !supplierId) throw new Error('Select a supplier first');
-      const response = await purchaseReportsService.getSupplierWisePurchases({ mode, supplierId });
-      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load supplier purchases');
-      const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
-        title: 'Supplier Wise Purchases',
-        subtitle: mode === 'show' ? supplierNameById.get(selectedWiseSupplierId) || 'Selected Supplier' : 'All Suppliers',
-        fileName: 'supplier-wise-purchases',
-        data: rows,
-        columns: supplierWiseColumns,
-        filters: {
-          Mode: mode === 'show' ? 'Show' : 'All',
-          Supplier: mode === 'show' ? supplierNameById.get(selectedWiseSupplierId) || 'Selected Supplier' : 'All Suppliers',
-        },
-        tableTotals: {
-          label: 'Total',
-          values: {
-            subtotal: formatCurrency(sumByKey(rows, 'subtotal')),
-            discount: formatCurrency(sumByKey(rows, 'discount')),
-            total: formatCurrency(sumByKey(rows, 'total')),
-          },
-        },
-      });
-    });
-
   const handleSupplierPayments = (mode: 'show' | 'all') =>
     runCardAction('supplier-payments', async () => {
       ensureRangeValid(paymentRange, 'Supplier Payments');
       const supplierId = mode === 'show' ? Number(selectedPaymentSupplierId || 0) : undefined;
       if (mode === 'show' && !supplierId) throw new Error('Select a supplier first');
-      const response = await financialReportsService.getSupplierPayments({
         fromDate: paymentRange.fromDate,
         toDate: paymentRange.toDate,
         mode,
@@ -356,34 +305,6 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
           },
         },
         totals: [moneyTotal('Outstanding', totalOutstanding)],
-      });
-    });
-
-  const handleBestSuppliers = () =>
-    runCardAction('best-suppliers', async () => {
-      ensureRangeValid(bestSuppliersRange, 'Best Suppliers');
-      const response = await purchaseReportsService.getBestSuppliers(bestSuppliersRange);
-      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load best suppliers');
-      const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
-        title: 'Best Suppliers',
-        subtitle: `${formatDateOnly(bestSuppliersRange.fromDate)} - ${formatDateOnly(bestSuppliersRange.toDate)}`,
-        fileName: 'best-suppliers',
-        data: rows,
-        columns: bestSuppliersColumns,
-        filters: {
-          'From Date': bestSuppliersRange.fromDate,
-          'To Date': bestSuppliersRange.toDate,
-        },
-        tableTotals: {
-          label: 'Total',
-          values: {
-            purchases_count: sumByKey(rows, 'purchases_count').toLocaleString(),
-            total_amount: formatCurrency(sumByKey(rows, 'total_amount')),
-            total_paid: formatCurrency(sumByKey(rows, 'total_paid')),
-            outstanding_amount: formatCurrency(sumByKey(rows, 'outstanding_amount')),
-          },
-        },
       });
     });
 
@@ -463,15 +384,6 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
       );
     }
 
-    if (cardId === 'supplier-wise') {
-      return (
-        <div className="space-y-3">
-          {renderSupplierSelector(selectedWiseSupplierId, setSelectedWiseSupplierId)}
-          {renderShowAllButtons(() => handleSupplierWisePurchases('show'), () => handleSupplierWisePurchases('all'), cardId)}
-        </div>
-      );
-    }
-
     if (cardId === 'supplier-payments') {
       return (
         <div className="space-y-3">
@@ -491,18 +403,7 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
       );
     }
 
-    return (
-      <div className="space-y-3">
-        {renderDateRange(bestSuppliersRange, setBestSuppliersRange)}
-        <button
-          onClick={handleBestSuppliers}
-          disabled={loadingCardId === cardId}
-          className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70"
-        >
-          Show
-        </button>
-      </div>
-    );
+    return null;
   };
 
   const renderCard = (card: { id: SupplierCardId; title: string; hint: string }) => {
