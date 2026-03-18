@@ -59,12 +59,40 @@ const formatQty = (value: unknown) => {
   return n.toFixed(3).replace(/0+$/g, '').replace(/\.$/, '');
 };
 
-const templatePath = (fileName: string) => path.join(process.cwd(), 'templates', fileName);
+let cachedTemplatesDir: string | null = null;
+
+const resolveTemplatesDir = async () => {
+  if (cachedTemplatesDir) return cachedTemplatesDir;
+
+  const candidates = [
+    process.env.PRINT_TEMPLATES_DIR,
+    path.join(process.cwd(), 'templates'),
+    // When the server runs with cwd = /app/server
+    path.join(process.cwd(), '..', 'templates'),
+    // Works for built output: dist/modules/sales -> repoRoot/templates
+    path.resolve(__dirname, '..', '..', '..', '..', 'templates'),
+  ].filter(Boolean) as string[];
+
+  for (const dir of candidates) {
+    try {
+      await fs.access(path.join(dir, 'quotation-print.html'));
+      cachedTemplatesDir = dir;
+      return dir;
+    } catch {
+      // try next candidate
+    }
+  }
+
+  // Final fallback: will still throw a clean error when reading.
+  cachedTemplatesDir = path.join(process.cwd(), 'templates');
+  return cachedTemplatesDir;
+};
 
 const readTemplate = async (fileName: string) => {
+  const dir = await resolveTemplatesDir();
   try {
-    return await fs.readFile(templatePath(fileName), 'utf8');
-  } catch (error) {
+    return await fs.readFile(path.join(dir, fileName), 'utf8');
+  } catch {
     throw ApiError.internal(`Print template missing: ${fileName}`);
   }
 };
