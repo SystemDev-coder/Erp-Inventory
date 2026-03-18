@@ -281,8 +281,14 @@ const SaleCreate = () => {
       showToast('error', 'Sales', 'Select at least one item with quantity');
       return;
     }
-    if (!saleForm.customer_id) {
-      showToast('error', 'Sales', 'Please select a customer before saving.');
+
+    // Customer is optional for cash documents (walking customer).
+    // Require a customer only when we are creating a receivable (credit / unpaid / partial),
+    // excluding quotations (which do not post accounts/stock).
+    const requiresCustomer =
+      effectiveDocType !== 'quotation' && effectiveStatus !== 'paid' && effectiveStatus !== 'void';
+    if (requiresCustomer && !saleForm.customer_id) {
+      showToast('error', 'Sales', 'Please select a customer for unpaid/partial documents.');
       return;
     }
 
@@ -338,10 +344,6 @@ const SaleCreate = () => {
     if (effectiveDocType === 'quotation') {
       setSubmitting(true);
       try {
-        if (!saleForm.customer_id) {
-          showToast('error', 'Quotation', 'Please select a customer before saving/printing.');
-          return;
-        }
         if (!validItems.length) {
           showToast('error', 'Quotation', 'Please add at least one item.');
           return;

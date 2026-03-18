@@ -3,17 +3,18 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Invoice {{docNo}}</title>
+    <title>Quotation {{docNo}}</title>
     <style>
       :root{
-        --primary:#1e40af; /* stronger */
+        --navy:#1f3a8a;
+        --navy-2:#0f2b66;
+        --accent:#f59e0b;
+        --bg:#f3f4f6;
+        --paper:#ffffff;
         --ink:#0f172a;
         --muted:#64748b;
-        --line:#e2e8f0;
-        --soft:#f1f5f9;
-        --ok:#16a34a;
-        --warn:#b45309;
-        --bad:#b91c1c;
+        --line:#dbe5ff;
+        --soft:#eef2ff;
       }
       *{ box-sizing:border-box; }
       body{
@@ -26,43 +27,50 @@
       }
       @page{ margin: 12mm; }
       .sheet{ width:100%; }
-      .banner{ width:100%; height:120px; object-fit:cover; object-position:center; display:block; }
-      .header{
+      .banner{ width:100%; height:110px; object-fit:cover; object-position:center; display:block; }
+
+      .top{
         display:flex;
         align-items:flex-start;
         justify-content:space-between;
         gap:16px;
         padding:14px 16px 10px;
+        background: var(--bg);
       }
       .brand{
         display:flex;
         align-items:center;
-        gap:10px;
-        min-width: 220px;
+        gap:12px;
+        min-width: 260px;
       }
       .logo{
-        width:42px;
-        height:42px;
+        width:58px;
+        height:58px;
         object-fit:contain;
-        border-radius:10px;
+        border-radius:12px;
+        background: var(--paper);
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        padding:6px;
       }
-      .company-name{
-        font-weight:800;
-        font-size:18px;
-        line-height:1.15;
-        letter-spacing:0.02em;
+      .brand-name{
+        font-weight:900;
+        font-size:22px;
+        line-height:1.05;
+        letter-spacing:0.18em;
+        text-transform:uppercase;
+        color: var(--navy);
       }
-      .company-meta{
+      .brand-meta{
         font-size:10.5px;
         color:var(--muted);
         margin-top:2px;
       }
-      .doc-badge{
-        border:1px solid var(--line);
-        border-radius:12px;
-        padding:10px 12px;
-        min-width:200px;
-        background:#ffffff;
+      .doc-card{
+        border:1px solid rgba(31, 58, 138, 0.18);
+        border-radius:14px;
+        padding:12px 12px;
+        min-width:220px;
+        background: #e8eeff;
       }
       .doc-type{
         display:inline-flex;
@@ -70,9 +78,9 @@
         gap:8px;
         padding:4px 10px;
         border-radius:999px;
-        border:1px solid var(--line);
-        background:var(--soft);
-        color:var(--primary);
+        border:1px solid rgba(31, 58, 138, 0.22);
+        background: rgba(255,255,255,0.65);
+        color:var(--navy);
         font-size:9px;
         font-weight:800;
         letter-spacing:0.18em;
@@ -81,7 +89,7 @@
       .doc-no{
         font-size:20px;
         font-weight:900;
-        color:var(--primary);
+        color:var(--navy);
         margin-top:8px;
       }
       .doc-grid{
@@ -93,22 +101,10 @@
         color:var(--muted);
       }
       .doc-grid b{ color:var(--ink); }
-      .status{
-        display:inline-flex;
-        align-items:center;
-        padding:4px 10px;
-        border-radius:999px;
-        border:1px solid var(--line);
-        background:#ffffff;
-        font-size:9px;
-        letter-spacing:0.12em;
-        text-transform:uppercase;
-        font-weight:900;
+      .rule{
+        height:3px;
+        background: linear-gradient(90deg, var(--navy), var(--accent));
       }
-      .status.paid{ color:var(--ok); border-color: rgba(22,163,74,0.25); background: rgba(22,163,74,0.08); }
-      .status.partial{ color:var(--warn); border-color: rgba(180,83,9,0.25); background: rgba(180,83,9,0.08); }
-      .status.unpaid{ color:var(--bad); border-color: rgba(185,28,28,0.25); background: rgba(185,28,28,0.08); }
-      .rule{ height:1px; background:var(--line); }
 
       .row{
         display:grid;
@@ -117,8 +113,8 @@
         padding:12px 16px 0;
       }
       .card{
-        border:1px solid var(--line);
-        border-radius:12px;
+        border:1px solid rgba(31, 58, 138, 0.18);
+        border-radius:14px;
         padding:10px 12px;
         background:#ffffff;
       }
@@ -139,23 +135,23 @@
         margin-top:12px;
       }
       thead th{
-        background:var(--soft);
-        border-bottom:1px solid var(--line);
+        background:var(--navy);
+        border-bottom:1px solid rgba(31, 58, 138, 0.35);
         padding:9px 10px;
         font-size:9px;
         letter-spacing:0.14em;
         text-transform:uppercase;
-        color:var(--muted);
+        color:#ffffff;
         text-align:left;
       }
       thead th.num, tbody td.num{ text-align:right; }
       tbody td{
-        border-bottom:1px solid var(--line);
+        border-bottom:1px solid rgba(31, 58, 138, 0.12);
         padding:9px 10px;
         font-size:10.5px;
         color:var(--ink);
       }
-      tbody tr:nth-child(even){ background:#fbfdff; }
+      tbody tr:nth-child(even){ background:#f7f9ff; }
 
       .bottom{
         display:grid;
@@ -165,9 +161,9 @@
         align-items:start;
       }
       .totals{
-        border:1px solid var(--line);
-        border-radius:12px;
-        background:#ffffff;
+        border:1px solid rgba(31, 58, 138, 0.18);
+        border-radius:14px;
+        background:#eef2ff;
         padding:10px 12px;
       }
       .tot-row{
@@ -180,36 +176,56 @@
       }
       .tot-row strong{ color:var(--ink); }
       .tot-final{
-        border-top:1px solid var(--line);
+        border-top:1px solid rgba(31, 58, 138, 0.22);
         margin-top:8px;
         padding-top:8px;
         font-weight:900;
         color:var(--ink);
       }
-      .tot-final strong{ color:var(--primary); }
-      .terms{
-        border:1px solid var(--line);
-        border-radius:12px;
-        background:#ffffff;
+      .tot-final strong{ color:var(--navy); }
+
+      .note{
+        margin:10px 16px 0;
+        border:1px solid rgba(31, 58, 138, 0.18);
+        background:#f7f9ff;
+        border-radius:14px;
         padding:10px 12px;
-      }
-      .terms h4{
-        margin:0 0 6px;
-        font-size:9px;
-        font-weight:800;
-        letter-spacing:0.2em;
-        text-transform:uppercase;
+        font-size:10.5px;
         color:var(--muted);
       }
-      .terms ul{ margin:6px 0 0; padding-left:16px; }
-      .terms li{ margin:3px 0; font-size:10.5px; color:var(--muted); }
+      .note b{ color:var(--ink); }
+
+      .sig{
+        border:1px solid rgba(31, 58, 138, 0.18);
+        border-radius:14px;
+        background:#ffffff;
+        padding:10px 12px;
+        min-height: 130px;
+        display:flex;
+        flex-direction:column;
+        justify-content:flex-end;
+        gap:10px;
+      }
+      .sig-row{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:10px;
+        font-size:10px;
+        color: var(--muted);
+      }
+      .sig-line{
+        flex: 1;
+        border-bottom: 1px solid rgba(31, 58, 138, 0.35);
+        height: 0;
+      }
       .footer{
         padding:0 16px 12px;
         font-size:9px;
         color:#94a3b8;
         display:flex;
         justify-content:space-between;
-        border-top:1px solid var(--line);
+        border-top:1px solid rgba(31, 58, 138, 0.22);
         padding-top:8px;
       }
     </style>
@@ -218,30 +234,33 @@
     <div class="sheet">
       {{{bannerBlock}}}
 
-      <div class="header">
+      <div class="top">
         <div class="brand">
           {{{logoBlock}}}
           <div>
-            <div class="company-name">{{companyName}}</div>
-            <div class="company-meta">{{companyPhone}}</div>
+            <div class="brand-name">{{companyName}}</div>
+            <div class="brand-meta">{{companyPhone}}</div>
           </div>
         </div>
 
-        <div class="doc-badge">
-          <div class="doc-type">Invoice</div>
+        <div class="doc-card">
+          <div class="doc-type">QUOTATION</div>
           <div class="doc-no">{{docNo}}</div>
           <div class="doc-grid">
             <div>Date</div><div><b>{{docDate}}</b></div>
-                        <div>Due Date</div><div><b>{{dueDate}}</b></div>
-<div>Status</div><div>{{{statusBadge}}}</div>
+            {{{validUntilRow}}}
           </div>
         </div>
       </div>
       <div class="rule"></div>
 
+      <div class="note">
+        <b>Quotation only.</b> This document does not reserve stock or post any sale until converted to an invoice.
+      </div>
+
       <div class="row">
         <div class="card">
-          <h4>Bill To</h4>
+          <h4>Quotation To</h4>
           <p class="name">{{customerName}}</p>
           <p>{{customerAddress}}</p>
           <p>{{customerPhone}}</p>
@@ -271,22 +290,15 @@
       </div>
 
       <div class="bottom">
-        <div class="terms">
-          <h4>Terms &amp; Conditions</h4>
-          <ul>
-            <li>Payment as agreed.</li>
-            <li>Items subject to availability.</li>
-            <li>Prices valid until expiry date.</li>
-            <li>No returns after confirmation.</li>
-          </ul>
+        <div class="sig">
+          <div class="sig-row"><span>Authorized Sign:</span><span class="sig-line"></span></div>
+          <div class="sig-row"><span>Client Sign:</span><span class="sig-line"></span></div>
         </div>
 
         <div class="totals">
           <div class="tot-row"><span>Subtotal</span><strong>{{subtotal}}</strong></div>
           <div class="tot-row"><span>Discount</span><strong>{{discount}}</strong></div>
           <div class="tot-row"><span>Tax</span><strong>{{tax}}</strong></div>
-          {{{paidBlock}}}
-          {{{balanceBlock}}}
           <div class="tot-row tot-final"><span>Total</span><strong>{{total}}</strong></div>
         </div>
       </div>

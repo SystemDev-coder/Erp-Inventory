@@ -49,11 +49,6 @@ const Sales = () => {
   const printSaleInvoice = useCallback(
     async (sale: Sale) => {
       try {
-        if (!sale.customer_id) {
-          showToast('error', 'Print Failed', 'Please select a customer before printing.');
-          return;
-        }
-
         const printRes = await salesService.getPrintHtml(sale.sale_id);
         if (!printRes.success || !printRes.data?.html) {
           showToast('error', 'Print Failed', printRes.error || 'Unable to load print template');

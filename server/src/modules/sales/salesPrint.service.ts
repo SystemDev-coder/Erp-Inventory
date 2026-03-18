@@ -106,10 +106,7 @@ export const salesPrintService = {
     const isQuotation = docType === 'quotation';
     const isInvoice = docType === 'invoice' || docType === 'sale';
 
-    // Validation (printing should be blocked if the doc is incomplete).
-    if (!sale.customer_id) {
-      throw ApiError.badRequest('Please select a customer before printing.');
-    }
+    // Customer can be null for walk-in documents; printing should still work.
 
     const items = await salesService.listItems(id);
     if (!items.length) throw ApiError.badRequest('Cannot print: no items found for this document.');
@@ -133,13 +130,15 @@ export const salesPrintService = {
         LIMIT 1`
     );
 
-    const customer = await queryOne<CustomerRow>(
-      `SELECT full_name, phone, address
-         FROM ims.customers
-        WHERE customer_id = $1
-        LIMIT 1`,
-      [sale.customer_id]
-    );
+    const customer = sale.customer_id
+      ? await queryOne<CustomerRow>(
+          `SELECT full_name, phone, address
+             FROM ims.customers
+            WHERE customer_id = $1
+            LIMIT 1`,
+          [sale.customer_id]
+        )
+      : null;
 
     const companyName = company?.company_name || 'My Inventory ERP';
     const companyPhone = company?.phone ? `Phone: ${company.phone}` : '';
@@ -189,7 +188,7 @@ export const salesPrintService = {
       companyName,
       companyPhone,
       companyManager,
-      customerName: customer?.full_name || sale.customer_name || 'Customer',
+      customerName: customer?.full_name || sale.customer_name || 'Walk-in Customer',
       customerPhone: customer?.phone ? `Phone: ${customer.phone}` : '',
       customerAddress: customer?.address ? `Address: ${customer.address}` : '',
       docNo,

@@ -6,8 +6,6 @@ services:
     restart: unless-stopped
     env_file:
       - server/.env.docker
-    environment:
-      PGPASSWORD: 123
     ports:
       - "5433:5432"
     volumes:
