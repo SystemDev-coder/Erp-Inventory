@@ -1,9 +1,49 @@
-import React, { useMemo, useRef } from "react";
+﻿import React, { useMemo, useRef } from "react";
 import { FileSpreadsheet, Printer } from "lucide-react";
 import { Modal } from "../ui/modal/Modal";
 
-const BORDER_COLOR = "#0f172a";
 const REPORT_SCREEN_MAX_WIDTH = "1120px";
+const EMPTY_CELL = "\u2014";
+
+// Fix common mojibake sequences that appear when UTF-8 text was decoded as Latin-1 (or double-decoded).
+const cleanText = (value: unknown) => {
+  const raw = String(value ?? "");
+  if (!raw) return "";
+
+  const tryDecodeLatin1 = (input: string) => {
+    // Heuristic: common mojibake contains "Ã" or "Â" sequences.
+    if (!/[ÃÂ]/.test(input)) return input;
+    let out = input;
+    for (let i = 0; i < 2; i++) {
+      try {
+        const bytes = Uint8Array.from(out, (ch) => ch.charCodeAt(0));
+        const decoded = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+        const before = (out.match(/[ÃÂ]/g) || []).length;
+        const after = (decoded.match(/[ÃÂ]/g) || []).length;
+        if (after < before && !decoded.includes("\uFFFD")) {
+          out = decoded;
+          continue;
+        }
+      } catch {
+        // ignore decode failures
+      }
+      break;
+    }
+    return out;
+  };
+
+  // Normalize after decoding.
+  let text = tryDecodeLatin1(raw);
+
+  // Strip stray Latin-1 artifacts and normalize punctuation for reports.
+  text = text
+    .replace(/\u00c2/g, "")
+    .replace(/\u2026/g, "...")
+    .replace(/[â€¦]/g, "...")
+    .replace(/[\u2013\u2014]/g, "\u2014");
+
+  return text.trim();
+};
 
 // Column and props definitions
 export type ReportColumn<T> = {
@@ -55,8 +95,10 @@ type ReportModalProps<T> = {
   onAutoActionComplete?: () => void;
 };
 
-const escapeHtml = (value: string) =>
-  value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const escapeHtml = (value: string) => {
+  const safe = cleanText(value);
+  return safe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+};
 
 const getRawValue = <T,>(row: T, col: ReportColumn<T>, index: number) => {
   if (col.render) {
@@ -64,7 +106,7 @@ const getRawValue = <T,>(row: T, col: ReportColumn<T>, index: number) => {
     if (typeof rendered === "string" || typeof rendered === "number") return String(rendered);
   }
   const val = (row as Record<string, unknown>)[col.key as string];
-  return val == null ? "" : String(val);
+  return val == null ? "" : cleanText(String(val));
 };
 
 const formatStatementDate = (value: string | number | undefined) => {
@@ -591,7 +633,7 @@ export function ReportModal<T extends Record<string, any>>({
                 <div
                   aria-hidden="true"
                   className="h-[2px]"
-                  style={{ background: "linear-gradient(90deg, #0f172a 0%, #f59e0b 50%, #0f172a 100%)" }}
+                  style={{ background: "#1e40af" }}
                 />
               </div>
             ) : null}
@@ -603,15 +645,15 @@ export function ReportModal<T extends Record<string, any>>({
                     <img src={companyInfo.logoUrl} alt="Logo" className="h-10 w-10 object-contain" />
                   ) : null}
                   <div className="space-y-0.5">
-                    <div className="text-[16px] font-semibold leading-tight">{companyInfo?.name || "Business Name"}</div>
+                    <div className="text-[16px] font-semibold leading-tight">{cleanText(companyInfo?.name) || "Business Name"}</div>
                     <div className="text-[12px] text-slate-600">
-                      {title}
-                      {subtitle ? ` ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â ${subtitle}` : ""}
+                      {cleanText(title)}
+                      {subtitle ? ` - ${cleanText(subtitle)}` : ""}
                     </div>
                     {companyInfo?.manager || companyInfo?.phone ? (
                       <div className="text-[11px] text-slate-500">
-                        <span>Manager: {companyInfo.manager || "-"}</span> <span className="mx-1">Ãƒâ€šÃ‚Â·</span>
-                        <span>Phone: {companyInfo.phone || "-"}</span>
+                        <span>Manager: {cleanText(companyInfo.manager) || "-"}</span> <span className="mx-1">{"\u00b7"}</span>
+                        <span>Phone: {cleanText(companyInfo.phone) || "-"}</span>
                       </div>
                     ) : null}
                   </div>
@@ -641,12 +683,12 @@ export function ReportModal<T extends Record<string, any>>({
                 {statementData.sections.map((section, sectionIndex) => (
                   <section key={`${section.name}-${sectionIndex}`}>
                     <div className="mb-2 border-b-2 border-[#2c90c8] pb-1">
-                      <h3 className="text-[14px] font-bold leading-none text-[#1164a1]">{section.name}</h3>
+                      <h3 className="text-[14px] font-bold leading-none text-[#1164a1]">{cleanText(section.name)}</h3>
                     </div>
                     <div className="space-y-0.5">
                       {section.detailRows.map((row, index) => (
                         <div key={`${section.name}-${row.lineItem}-${index}`} className="flex justify-between gap-4 border-b border-slate-200 py-1.5">
-                          <span>{row.lineItem}</span>
+                          <span>{cleanText(row.lineItem)}</span>
                           <span className="tabular-nums">{formatStatementCurrency(row.amount)}</span>
                         </div>
                       ))}
@@ -692,15 +734,15 @@ export function ReportModal<T extends Record<string, any>>({
                   <tbody>
                     <tr className="bg-white font-semibold text-slate-900">
                       <td className="border-b border-slate-200 px-2 py-2">Assets</td>
-                      <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â</td>
+                      <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">{EMPTY_CELL}</td>
                     </tr>
                     <tr className="bg-slate-50 font-semibold text-slate-800">
                       <td className="border-b border-slate-200 px-2 py-2">Current Assets</td>
-                      <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â</td>
+                      <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">{EMPTY_CELL}</td>
                     </tr>
                     {balanceSheetData.currentAssets.map((row, index) => (
                       <tr key={`ca-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
-                        <td className="border-b border-slate-200 px-2 py-1.5 pl-6">{row.lineItem}</td>
+                        <td className="border-b border-slate-200 px-2 py-1.5 pl-6">{cleanText(row.lineItem)}</td>
                         <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
                       </tr>
                     ))}
@@ -713,11 +755,11 @@ export function ReportModal<T extends Record<string, any>>({
                       <>
                         <tr className="bg-slate-50 font-semibold text-slate-800">
                           <td className="border-b border-slate-200 px-2 py-2">Fixed Assets</td>
-                          <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â</td>
+                          <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">{EMPTY_CELL}</td>
                         </tr>
                         {balanceSheetData.nonCurrentAssets.map((row, index) => (
                           <tr key={`fa-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
-                            <td className="border-b border-slate-200 px-2 py-1.5 pl-6">{row.lineItem}</td>
+                            <td className="border-b border-slate-200 px-2 py-1.5 pl-6">{cleanText(row.lineItem)}</td>
                             <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
                           </tr>
                         ))}
@@ -735,15 +777,15 @@ export function ReportModal<T extends Record<string, any>>({
 
                     <tr className="bg-white font-semibold text-slate-900">
                       <td className="border-b border-slate-200 px-2 py-2">Liabilities</td>
-                      <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â</td>
+                      <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">{EMPTY_CELL}</td>
                     </tr>
                     <tr className="bg-slate-50 font-semibold text-slate-800">
                       <td className="border-b border-slate-200 px-2 py-2">Current Liabilities</td>
-                      <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â</td>
+                      <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">{EMPTY_CELL}</td>
                     </tr>
                     {balanceSheetData.currentLiabilities.map((row, index) => (
                       <tr key={`cl-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
-                        <td className="border-b border-slate-200 px-2 py-1.5 pl-6">{row.lineItem}</td>
+                        <td className="border-b border-slate-200 px-2 py-1.5 pl-6">{cleanText(row.lineItem)}</td>
                         <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
                       </tr>
                     ))}
@@ -756,11 +798,11 @@ export function ReportModal<T extends Record<string, any>>({
                       <>
                         <tr className="bg-slate-50 font-semibold text-slate-800">
                           <td className="border-b border-slate-200 px-2 py-2">Long-term Liabilities</td>
-                          <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â</td>
+                          <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">{EMPTY_CELL}</td>
                         </tr>
                         {balanceSheetData.nonCurrentLiabilities.map((row, index) => (
                           <tr key={`ncl-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
-                            <td className="border-b border-slate-200 px-2 py-1.5 pl-6">{row.lineItem}</td>
+                            <td className="border-b border-slate-200 px-2 py-1.5 pl-6">{cleanText(row.lineItem)}</td>
                             <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
                           </tr>
                         ))}
@@ -778,14 +820,14 @@ export function ReportModal<T extends Record<string, any>>({
 
                     <tr className="bg-white font-semibold text-slate-900">
                       <td className="border-b border-slate-200 px-2 py-2">Equity</td>
-                      <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â</td>
+                      <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">{EMPTY_CELL}</td>
                     </tr>
                     {(balanceSheetData.equity.length
                       ? balanceSheetData.equity
                       : [{ lineItem: "Retained Earnings", amount: balanceSheetData.retainedEarnings }]
                     ).map((row, index) => (
                       <tr key={`eq-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
-                        <td className="border-b border-slate-200 px-2 py-1.5 pl-6">{row.lineItem}</td>
+                        <td className="border-b border-slate-200 px-2 py-1.5 pl-6">{cleanText(row.lineItem)}</td>
                         <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
                       </tr>
                     ))}
@@ -831,12 +873,12 @@ export function ReportModal<T extends Record<string, any>>({
                     {cashFlowData.sections.map((section) => (
                       <React.Fragment key={section.section}>
                         <tr className="bg-white font-semibold text-slate-900">
-                          <td className="border-b border-slate-200 px-2 py-2">{section.section}</td>
-                          <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â</td>
+                          <td className="border-b border-slate-200 px-2 py-2">{cleanText(section.section)}</td>
+                          <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">{EMPTY_CELL}</td>
                         </tr>
                         {section.rows.map((row, index) => (
                           <tr key={`${section.section}-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
-                            <td className={`border-b border-slate-200 px-2 py-1.5 ${row.rowType === "total" ? "font-semibold" : ""}`}>{row.lineItem}</td>
+                            <td className={`border-b border-slate-200 px-2 py-1.5 ${row.rowType === "total" ? "font-semibold" : ""}`}>{cleanText(row.lineItem)}</td>
                             <td className={`border-b border-slate-200 px-2 py-1.5 text-right tabular-nums ${row.rowType === "total" ? "font-semibold" : ""}`}>{formatStatementAmount(row.amount)}</td>
                           </tr>
                         ))}
@@ -847,13 +889,13 @@ export function ReportModal<T extends Record<string, any>>({
                       <>
                         <tr className="bg-white font-semibold text-slate-900">
                           <td className="border-b border-slate-200 px-2 py-2">Summary</td>
-                          <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â</td>
+                          <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">{EMPTY_CELL}</td>
                         </tr>
                         {cashFlowData.summaryRows.map((row, index) => {
                           const isMainTotal = /net increase in cash/i.test(row.lineItem);
                           return (
                             <tr key={`summary-${row.lineItem}-${index}`} className={isMainTotal ? "bg-slate-50 font-semibold" : index % 2 === 0 ? "bg-white font-semibold" : "bg-slate-50 font-semibold"}>
-                              <td className={`border-b border-slate-200 px-2 py-1.5 ${isMainTotal ? "border-t border-slate-300" : ""}`}>{row.lineItem}</td>
+                              <td className={`border-b border-slate-200 px-2 py-1.5 ${isMainTotal ? "border-t border-slate-300" : ""}`}>{cleanText(row.lineItem)}</td>
                               <td className={`border-b border-slate-200 px-2 py-1.5 text-right tabular-nums ${isMainTotal ? "border-t border-slate-300" : ""}`}>{formatStatementAmount(row.amount)}</td>
                             </tr>
                           );
@@ -894,12 +936,12 @@ export function ReportModal<T extends Record<string, any>>({
                         <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">
                           {Math.max(Number(row.closingDebit || 0), 0) > 0.000001
                             ? formatTrialAmount(Math.max(Number(row.closingDebit || 0), 0))
-                            : "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â"}
+                            : EMPTY_CELL}
                         </td>
                         <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">
                           {Math.max(Number(row.closingCredit || 0), 0) > 0.000001
                             ? formatTrialAmount(Math.max(Number(row.closingCredit || 0), 0))
-                            : "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â"}
+                            : EMPTY_CELL}
                         </td>
                       </tr>
                     ))}
@@ -925,93 +967,67 @@ export function ReportModal<T extends Record<string, any>>({
             <>
               <div className="px-6 pb-6 pt-6">
                 <div className="overflow-x-auto">
-                  <table
-                    className="w-full text-sm"
-                    style={{ borderCollapse: "collapse", width: "100%" }}
-                  >
+                  <table className="w-full table-fixed border-collapse text-[12px]">
                     <thead>
-                      <tr>
+                      <tr className="bg-slate-100 text-slate-900">
                         {columns.map((col) => (
                           <th
                             key={col.header}
-                            style={{
-                              borderBottom: `1px solid ${BORDER_COLOR}`,
-                              padding: "12px 10px",
-                              textAlign: col.align ?? "left",
-                              background: "#f8fafc",
-                              color: "#0f172a",
-                              fontWeight: 700,
-                              fontSize: "13px",
-                              width: col.width,
-                            }}
+                            className={`border-b border-slate-300 px-2 py-2 font-semibold ${
+                              col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left"
+                            }`}
+                            style={{ width: col.width }}
                           >
-                            {col.header}
+                            {cleanText(col.header)}
                           </th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {tableRows.map((row, i) => (
-                        <tr key={i} style={{ background: i % 2 === 0 ? "#ffffff" : "#f8fafc" }}>
-                          {columns.map((col) => (
-                            <td
-                              key={col.header}
-                              style={{
-                                borderBottom: "1px solid #d4d4d8",
-                                padding: "10px 8px",
-                                textAlign: col.align ?? "left",
-                                fontSize: "13px",
-                                lineHeight: 1.5,
-                              }}
-                            >
-                              {(() => {
-                                const cell = col.render ? col.render(row, i) : getRawValue(row, col, i);
-                                const href = col.getHref?.(row, i);
-                                if (href) {
-                                  return (
-                                    <a href={href} style={{ color: "#0f4f76", textDecoration: "underline" }}>
-                                      {cell}
-                                    </a>
-                                  );
-                                }
-                                if (col.onClick) {
-                                  return (
-                                    <button
-                                      type="button"
-                                      onClick={() => col.onClick?.(row, i)}
-                                      style={{ color: "#0f4f76", textDecoration: "underline" }}
-                                    >
-                                      {cell}
-                                    </button>
-                                  );
-                                }
-                                return cell;
-                              })()}
-                            </td>
-                          ))}
+                        <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-slate-50"}>
+                          {columns.map((col) => {
+                            const alignClass =
+                              col.align === "right" ? "text-right tabular-nums" : col.align === "center" ? "text-center" : "text-left";
+                            const rawCell = col.render ? col.render(row, i) : getRawValue(row, col, i);
+                            const cell =
+                              rawCell === null || rawCell === undefined || rawCell === "" ? (
+                                EMPTY_CELL
+                              ) : (
+                                rawCell
+                              );
+                            const href = col.getHref?.(row, i);
+                            const clickable = col.onClick;
+                            return (
+                              <td key={col.header} className={`border-b border-slate-200 px-2 py-1.5 ${alignClass}`}>
+                                {href ? (
+                                  <a href={href} className="text-blue-700 underline">
+                                    {cell}
+                                  </a>
+                                ) : clickable ? (
+                                  <button type="button" onClick={() => col.onClick?.(row, i)} className="text-blue-700 underline">
+                                    {cell}
+                                  </button>
+                                ) : (
+                                  cell
+                                )}
+                              </td>
+                            );
+                          })}
                         </tr>
                       ))}
                       {tableTotals && (
-                        <tr>
+                        <tr className="bg-slate-100 font-bold text-slate-900">
                           {columns.map((col, index) => {
                             const columnKey = String(col.key);
                             const isFirstColumn = index === 0;
-                            const value = isFirstColumn ? tableTotals.label || "Total" : tableTotals.values[columnKey] ?? "";
+                            const rawValue = isFirstColumn ? tableTotals.label || "Total" : tableTotals.values[columnKey] ?? "";
+                            const value = rawValue === "" || rawValue === null || rawValue === undefined ? EMPTY_CELL : String(rawValue);
+                            const alignClass =
+                              isFirstColumn ? "text-left" : col.align === "right" ? "text-right tabular-nums" : col.align === "center" ? "text-center" : "text-left";
                             return (
-                              <td
-                                key={`total-${col.header}`}
-                                style={{
-                                  borderTop: `1px solid ${BORDER_COLOR}`,
-                                  padding: "9px 6px",
-                                  textAlign: isFirstColumn ? "left" : col.align ?? "left",
-                                  fontSize: "12px",
-                                  lineHeight: 1.4,
-                                  background: "#f4f4f5",
-                                  color: "#0f172a",
-                                  fontWeight: 700,
-                                }}
-                              >
-                                {String(value)}
+                              <td key={`total-${col.header}`} className={`border-t border-slate-300 px-2 py-2 ${alignClass}`}>
+                                {cleanText(value)}
                               </td>
                             );
                           })}
@@ -1019,10 +1035,7 @@ export function ReportModal<T extends Record<string, any>>({
                       )}
                       {tableRows.length === 0 && !tableTotals && (
                         <tr>
-                          <td
-                            colSpan={columns.length}
-                            style={{ borderBottom: `1px solid ${BORDER_COLOR}`, padding: "16px", textAlign: "center", color: "#94a3b8" }}
-                          >
+                          <td colSpan={columns.length} className="border-b border-slate-200 px-4 py-8 text-center text-slate-500">
                             No records to show.
                           </td>
                         </tr>
@@ -1040,3 +1053,4 @@ export function ReportModal<T extends Record<string, any>>({
     </Modal>
   );
 }
+

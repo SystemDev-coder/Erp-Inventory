@@ -3,24 +3,24 @@ import { ChevronDown, Loader2 } from 'lucide-react';
 import type { ReportColumn } from '../../../components/reports/ReportModal';
 import { purchaseReportsService } from '../../../services/reports/purchaseReports.service';
 import type { DateRange, ModalReportState } from '../types';
-import { formatCurrency, formatDateOnly, formatDateTime, formatQuantity, toRecordRows, defaultReportRange } from '../reportUtils';
+import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange } from '../reportUtils';
 
 type PurchaseCardId =
   | 'orders-summary'
   | 'purchase-returns'
   | 'payment-status'
+  | 'supplier-ledger'
   | 'supplier-wise'
   | 'best-suppliers'
-  | 'by-date-range'
   | 'price-variance';
 
 const purchaseCards: Array<{ id: PurchaseCardId; title: string; hint: string }> = [
   { id: 'orders-summary', title: 'Purchase Orders Summary', hint: 'Between two dates' },
   { id: 'purchase-returns', title: 'Purchase Returns', hint: 'Between two dates' },
   { id: 'payment-status', title: 'Purchase Payment Status', hint: 'Between two dates' },
+  { id: 'supplier-ledger', title: 'Supplier Ledger', hint: 'Dropdown + Show / All' },
   { id: 'supplier-wise', title: 'Supplier Wise Purchases', hint: 'Dropdown + Show / All' },
   { id: 'best-suppliers', title: 'Best Suppliers', hint: 'Between two dates' },
-  { id: 'by-date-range', title: 'Purchase by Date Range', hint: 'Between two dates' },
   { id: 'price-variance', title: 'Purchase Price Variance', hint: 'Date range + product selection' },
 ];
 
@@ -60,17 +60,37 @@ const paymentStatusColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'status', header: 'Status' },
 ];
 
+const formatSupplierLedgerType = (value: unknown) => {
+  const key = String(value || '').toLowerCase();
+  if (key === 'opening') return 'Opening Balance';
+  if (key === 'purchase') return 'Purchase';
+  if (key === 'payment' || key === 'receipt') return 'Payment';
+  if (key === 'return') return 'Return';
+  if (key === 'adjustment') return 'Adjustment';
+  return key ? key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : '-';
+};
 
-const byDateRangeColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'purchase_id', header: 'Purchase #' },
-  { key: 'purchase_date', header: 'Date', render: (row) => formatDateTime(row.purchase_date) },
+const formatSupplierLedgerRef = (row: Record<string, unknown>) => {
+  const table = String(row.ref_table || '').toLowerCase();
+  const id = row.ref_id ? `#${row.ref_id}` : '';
+  if (table === 'suppliers') return 'Opening Balance';
+  if (table === 'purchases') return `Purchase ${id}`.trim();
+  if (table === 'supplier_receipts' || table === 'supplier_payments') return `Payment ${id}`.trim();
+  if (table === 'purchase_returns') return `Return ${id}`.trim();
+  if (!table && !id) return '-';
+  return `${table.replace(/_/g, ' ')} ${id}`.trim();
+};
+
+const supplierLedgerColumns: ReportColumn<Record<string, unknown>>[] = [
+  { key: 'sup_ledger_id', header: 'Entry #' },
+  { key: 'entry_date', header: 'Date', render: (row) => formatDateTime(row.entry_date) },
   { key: 'supplier_name', header: 'Supplier' },
-  { key: 'item_lines', header: 'Lines', align: 'right' },
-  { key: 'total_quantity', header: 'Qty', align: 'right', render: (row) => formatQuantity(row.total_quantity) },
-  { key: 'subtotal', header: 'Subtotal', align: 'right', render: (row) => formatCurrency(row.subtotal) },
-  { key: 'discount', header: 'Discount', align: 'right', render: (row) => formatCurrency(row.discount) },
-  { key: 'total', header: 'Total', align: 'right', render: (row) => formatCurrency(row.total) },
-  { key: 'status', header: 'Status' },
+  { key: 'entry_type', header: 'Type', render: (row) => formatSupplierLedgerType(row.entry_type) },
+  { key: 'reference', header: 'Reference', render: (row) => formatSupplierLedgerRef(row) },
+  { key: 'note', header: 'Note' },
+  { key: 'debit', header: 'Debit', align: 'right', render: (row) => formatCurrency(row.debit) },
+  { key: 'credit', header: 'Credit', align: 'right', render: (row) => formatCurrency(row.credit) },
+  { key: 'running_balance', header: 'Balance', align: 'right', render: (row) => formatCurrency(row.running_balance) },
 ];
 
 const supplierWiseColumns: ReportColumn<Record<string, unknown>>[] = [
@@ -117,12 +137,13 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
 
   const [selectedVarianceProductId, setSelectedVarianceProductId] = useState('');
   const [selectedWiseSupplierId, setSelectedWiseSupplierId] = useState('');
+  const [selectedLedgerSupplierId, setSelectedLedgerSupplierId] = useState('');
 
   const [ordersRange, setOrdersRange] = useState<DateRange>(defaultReportRange());
   const [returnsRange, setReturnsRange] = useState<DateRange>(defaultReportRange());
   const [paymentRange, setPaymentRange] = useState<DateRange>(defaultReportRange());
+  const [ledgerRange, setLedgerRange] = useState<DateRange>(defaultReportRange());
   const [bestSuppliersRange, setBestSuppliersRange] = useState<DateRange>(defaultReportRange());
-  const [byDateRange, setByDateRange] = useState<DateRange>(defaultReportRange());
   const [priceVarianceRange, setPriceVarianceRange] = useState<DateRange>(defaultReportRange());
 
   const [optionsLoading, setOptionsLoading] = useState(false);
@@ -167,6 +188,11 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
   const selectedWiseSupplierLabel = useMemo(
     () => suppliers.find((option) => String(option.id) === selectedWiseSupplierId)?.label || '',
     [suppliers, selectedWiseSupplierId]
+  );
+
+  const selectedLedgerSupplierLabel = useMemo(
+    () => suppliers.find((option) => String(option.id) === selectedLedgerSupplierId)?.label || '',
+    [suppliers, selectedLedgerSupplierId]
   );
 
   const runCardAction = async (cardId: PurchaseCardId, action: () => Promise<void>) => {
@@ -261,6 +287,29 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
       });
     });
 
+  const handleSupplierLedger = (mode: 'show' | 'all') =>
+    runCardAction('supplier-ledger', async () => {
+      ensureRangeValid(ledgerRange, 'Supplier Ledger');
+      const supplierId = mode === 'show' ? Number(selectedLedgerSupplierId || 0) : undefined;
+      if (mode === 'show' && !supplierId) throw new Error('Select a supplier first');
+      const response = await purchaseReportsService.getSupplierLedger({ mode, supplierId });
+      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load supplier ledger');
+      const rows = toRecordRows(response.data.rows || []);
+      onOpenModal({
+        title: 'Supplier Ledger',
+        subtitle: mode === 'show' ? selectedLedgerSupplierLabel || 'Selected Supplier' : 'All Suppliers',
+        fileName: 'supplier-ledger',
+        data: rows,
+        columns: supplierLedgerColumns,
+        filters: {
+          'From Date': ledgerRange.fromDate,
+          'To Date': ledgerRange.toDate,
+          Mode: mode === 'show' ? 'Show' : 'All',
+          Supplier: mode === 'show' ? selectedLedgerSupplierLabel || 'Selected Supplier' : 'All Suppliers',
+        },
+      });
+    });
+
   const handleSupplierWisePurchases = (mode: 'show' | 'all') =>
     runCardAction('supplier-wise', async () => {
       const supplierId = mode === 'show' ? Number(selectedWiseSupplierId || 0) : undefined;
@@ -313,34 +362,6 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
         },
       });
     });
-
-
-  const handlePurchaseByDateRange = () =>
-    runCardAction('by-date-range', async () => {
-      ensureRangeValid(byDateRange, 'Purchase by Date Range');
-      const response = await purchaseReportsService.getPurchaseByDateRange(byDateRange);
-      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load purchases by date');
-      const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
-        title: 'Purchase by Date Range',
-        subtitle: `${formatDateOnly(byDateRange.fromDate)} - ${formatDateOnly(byDateRange.toDate)}`,
-        fileName: 'purchase-by-date-range',
-        data: rows,
-        columns: byDateRangeColumns,
-        filters: { 'From Date': byDateRange.fromDate, 'To Date': byDateRange.toDate },
-        tableTotals: {
-          label: 'Total',
-          values: {
-            item_lines: sumNumericField(rows, 'item_lines').toLocaleString(),
-            total_quantity: formatQuantity(sumNumericField(rows, 'total_quantity')),
-            subtotal: formatCurrency(sumNumericField(rows, 'subtotal')),
-            discount: formatCurrency(sumNumericField(rows, 'discount')),
-            total: formatCurrency(sumNumericField(rows, 'total')),
-          },
-        },
-      });
-    });
-
 
   const handlePriceVariance = (mode: 'show' | 'all') =>
     runCardAction('price-variance', async () => {
@@ -429,9 +450,9 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
     if (cardId === 'orders-summary') return <div className="space-y-3">{renderDateRange(ordersRange, setOrdersRange)}<button onClick={handleOrdersSummary} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
     if (cardId === 'purchase-returns') return <div className="space-y-3">{renderDateRange(returnsRange, setReturnsRange)}<button onClick={handlePurchaseReturns} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
     if (cardId === 'payment-status') return <div className="space-y-3">{renderDateRange(paymentRange, setPaymentRange)}<button onClick={handlePaymentStatus} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
+    if (cardId === 'supplier-ledger') return <div className="space-y-3">{renderDateRange(ledgerRange, setLedgerRange)}{renderSupplierSelector(selectedLedgerSupplierId, setSelectedLedgerSupplierId)}{renderShowAllButtons(() => handleSupplierLedger('show'), () => handleSupplierLedger('all'), cardId)}</div>;
     if (cardId === 'supplier-wise') return <div className="space-y-3">{renderSupplierSelector(selectedWiseSupplierId, setSelectedWiseSupplierId)}{renderShowAllButtons(() => handleSupplierWisePurchases('show'), () => handleSupplierWisePurchases('all'), cardId)}</div>;
     if (cardId === 'best-suppliers') return <div className="space-y-3">{renderDateRange(bestSuppliersRange, setBestSuppliersRange)}<button onClick={handleBestSuppliers} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
-    if (cardId === 'by-date-range') return <div className="space-y-3">{renderDateRange(byDateRange, setByDateRange)}<button onClick={handlePurchaseByDateRange} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
 
     return <div className="space-y-3">{renderDateRange(priceVarianceRange, setPriceVarianceRange)}<select value={selectedVarianceProductId} onChange={(event) => setSelectedVarianceProductId(event.target.value)} className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2.5 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none"><option value="">Select Product</option>{products.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select><div className="grid grid-cols-2 gap-3"><button onClick={() => handlePriceVariance('show')} disabled={loadingCardId === cardId} className="inline-flex items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show</button><button onClick={() => handlePriceVariance('all')} disabled={loadingCardId === cardId} className="rounded-md border border-[#9ec5df] bg-white px-4 py-2.5 text-sm font-semibold text-[#0f4f76] hover:bg-[#edf5fb] disabled:cursor-not-allowed disabled:opacity-70">All</button></div></div>;
   };
