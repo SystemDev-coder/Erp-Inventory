@@ -660,7 +660,9 @@ export const purchasesService = {
     const params: any[] = [];
     const addClause = (sql: string, val: any) => {
       params.push(val);
-      clauses.push(sql.replace(/\$(\d+)/, `$${params.length}`));
+      const placeholder = `$${params.length}`;
+      // Use functional replacement so `$1` isn't treated as a capture group reference.
+      clauses.push(sql.replace(/\$(\d+)/, () => placeholder));
     };
 
     if (filters.branchId) {
@@ -675,8 +677,8 @@ export const purchasesService = {
     }
     if (filters.supplierId) addClause(`p.supplier_id = $1`, filters.supplierId);
     if (filters.productId) addClause(`pi.item_id = $1`, filters.productId);
-    if (filters.from) addClause(`p.purchase_date::date >= $1`, filters.from);
-    if (filters.to) addClause(`p.purchase_date::date <= $1`, filters.to);
+    if (filters.from) addClause(`p.purchase_date::date >= $1::date`, filters.from);
+    if (filters.to) addClause(`p.purchase_date::date <= $1::date`, filters.to);
 
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 

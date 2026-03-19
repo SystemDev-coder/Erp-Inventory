@@ -5,8 +5,9 @@ export const accountSchema = z.object({
   name: z.string().min(1),
   institution: z.string().optional().or(z.literal('')),
   currencyCode: z.string().length(3).default('USD'),
-  balance: z.coerce.number().nonnegative().default(0),
+  balance: z.coerce.number().default(0),
   isActive: z.boolean().default(true),
+  accountType: z.enum(['asset', 'equity']).optional(),
 });
 
 export const accountUpdateSchema = accountSchema.partial();

@@ -60,7 +60,8 @@ const adjustEntityBalance = async (
   delta: number
 ) => {
   if (!id) return;
-  const column = await detectColumn(table, 'remaining_balance', ['open_balance', 'remaining_balance']);
+  // Prefer `remaining_balance` as the live outstanding; keep `open_balance` as opening balance when both exist.
+  const column = await detectColumn(table, 'remaining_balance', ['remaining_balance', 'open_balance']);
   await queryOne(
     `UPDATE ims.${table}
         SET ${column} = ${column} + $3
@@ -901,7 +902,7 @@ export const financeService = {
     params.push(customerId);
     const customerParam = `$${params.length}`;
 
-    const balanceColumn = await detectColumn('customers', 'remaining_balance', ['open_balance', 'remaining_balance']);
+    const balanceColumn = await detectColumn('customers', 'remaining_balance', ['remaining_balance', 'open_balance']);
     const hasSalesDocType = await hasColumn('sales', 'doc_type');
     const salesDocTypeFilter = hasSalesDocType
       ? `AND COALESCE(s.doc_type::text, 'sale') <> 'quotation'`
@@ -1003,7 +1004,7 @@ export const financeService = {
     }
 
     // If month provided, use ledger movements for that month; else use customers balance column if available.
-    const balanceColumn = await detectColumn('customers', 'remaining_balance', ['open_balance', 'remaining_balance']);
+    const balanceColumn = await detectColumn('customers', 'remaining_balance', ['remaining_balance', 'open_balance']);
     if (!month) {
       const hasSalesDocType = await hasColumn('sales', 'doc_type');
       const salesDocTypeFilter = hasSalesDocType
@@ -1133,7 +1134,7 @@ export const financeService = {
     const supplierParam = `$${params.length}`;
 
     const supplierNameColumn = await detectColumn('suppliers', 'name', ['name', 'supplier_name']);
-    const supplierBalanceColumn = await detectColumn('suppliers', 'remaining_balance', ['open_balance', 'remaining_balance']);
+    const supplierBalanceColumn = await detectColumn('suppliers', 'remaining_balance', ['remaining_balance', 'open_balance']);
 
     const row = await queryOne<{
       supplier_id: number;
@@ -1243,7 +1244,7 @@ export const financeService = {
     }
 
     const supplierNameColumn = await detectColumn('suppliers', 'name', ['name', 'supplier_name']);
-    const supplierBalanceColumn = await detectColumn('suppliers', 'remaining_balance', ['open_balance', 'remaining_balance']);
+    const supplierBalanceColumn = await detectColumn('suppliers', 'remaining_balance', ['remaining_balance', 'open_balance']);
 
     if (!month) {
       return queryMany(

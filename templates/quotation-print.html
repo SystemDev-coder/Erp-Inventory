@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Quotation {{docNo}}</title>
+    <style>
+      :root{
+        --bg:#0b1220;
+        --paper:#ffffff;
+        --ink:#0f172a;
+        --muted:#475569;
+        --line:#e2e8f0;
+        --soft:#f8fafc;
+        --accent:#0f766e;
+        --accent2:#22c55e;
+        --chip:#ecfeff;
+      }
+      *{box-sizing:border-box}
+      html,body{height:100%}
+      body{
+        margin:0;
+        background:#eef2f7;
+        color:var(--ink);
+        font: 12px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      }
+
+      .page{
+        width: 210mm;
+        min-height: 297mm;
+        margin: 18px auto;
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        overflow: hidden;
+        box-shadow: 0 14px 35px rgba(15, 23, 42, .12);
+        position: relative;
+      }
+
+      .banner{
+        display:block;
+        width:100%;
+        height: 70px;
+        object-fit: cover;
+      }
+
+      .side-band{
+        position:absolute;
+        left:0;
+        top:0;
+        bottom:0;
+        width: 10px;
+        background: linear-gradient(180deg, var(--accent), var(--accent2));
+      }
+
+      .content{padding: 22px 24px 18px 26px}
+
+      .top{
+        display:flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items:flex-start;
+      }
+
+      .brand{
+        display:flex;
+        gap: 12px;
+        align-items:flex-start;
+      }
+      .logo{
+        width: 42px;
+        height: 42px;
+        object-fit: contain;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: var(--paper);
+      }
+      .brand h1{
+        margin:0;
+        font-size: 16px;
+        font-weight: 900;
+        letter-spacing: .02em;
+      }
+      .brand .meta{
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .brand .meta div{margin:2px 0}
+
+      .quote-box{
+        width: 300px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 14px;
+        background: linear-gradient(180deg, #ffffff, #f0fdfa);
+      }
+      .quote-title{
+        display:flex;
+        align-items:center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 8px;
+      }
+      .chip{
+        display:inline-flex;
+        align-items:center;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(15,118,110,.22);
+        background: rgba(15,118,110,.10);
+        color: var(--accent);
+        font-weight: 800;
+        letter-spacing: .14em;
+        text-transform: uppercase;
+        font-size: 10px;
+      }
+      .doc-no{
+        font-size: 18px;
+        font-weight: 900;
+        margin: 2px 0 8px;
+      }
+      .grid{
+        display:grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px 10px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .grid b{color: var(--ink)}
+
+      .status{
+        display:inline-flex;
+        align-items:center;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: .12em;
+        border: 1px solid transparent;
+      }
+      .status.paid{background: rgba(22,163,74,.12); color: #16a34a; border-color: rgba(22,163,74,.25)}
+      .status.partial{background: rgba(245,158,11,.12); color: #f59e0b; border-color: rgba(245,158,11,.25)}
+      .status.unpaid{background: rgba(100,116,139,.12); color: #334155; border-color: rgba(100,116,139,.20)}
+
+      .cards{
+        margin-top: 16px;
+        display:grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .card{
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 14px;
+        background: var(--paper);
+      }
+      .card h3{
+        margin:0 0 8px;
+        font-size: 10px;
+        letter-spacing: .14em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .card .name{font-weight: 800; margin-bottom: 4px}
+      .card .small{color: var(--muted); font-size: 11px}
+      .card .small div{margin:2px 0}
+
+      .table-wrap{
+        margin-top: 14px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        overflow:hidden;
+      }
+      table{
+        width:100%;
+        border-collapse: collapse;
+        font-size: 11px;
+      }
+      thead th{
+        text-align:left;
+        padding: 10px 12px;
+        background: #0f172a;
+        color: #fff;
+        font-size: 10px;
+        letter-spacing: .14em;
+        text-transform: uppercase;
+      }
+      tbody td{
+        padding: 10px 12px;
+        border-top: 1px solid var(--line);
+        vertical-align: top;
+      }
+      tbody tr:nth-child(even) td{background: var(--soft)}
+      .num{text-align:right; white-space: nowrap}
+
+      .bottom{
+        margin-top: 14px;
+        display:grid;
+        grid-template-columns: 1.2fr .8fr;
+        gap: 12px;
+        align-items:start;
+      }
+
+      .terms{
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 14px;
+        background: #fbfffe;
+      }
+      .terms h4{
+        margin:0 0 8px;
+        font-size: 10px;
+        letter-spacing: .14em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .terms ul{margin: 0; padding-left: 18px; color: var(--muted); font-size: 11px}
+      .terms li{margin: 6px 0}
+
+      .totals{
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #f8fafc;
+        padding: 12px;
+      }
+      .tot-row{
+        display:flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 6px 0;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .tot-row strong{color: var(--ink)}
+      .tot-row.total{
+        margin-top: 6px;
+        padding-top: 10px;
+        border-top: 1px solid var(--line);
+        font-size: 12px;
+        font-weight: 900;
+        color: var(--ink);
+      }
+
+      .accept{
+        margin-top: 12px;
+        padding-top: 6px;
+        display:grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .sig{
+        padding-top: 18px;
+      }
+      .sig .line{
+        border-top: 1px solid #94a3b8;
+        height: 1px;
+      }
+      .sig .label{
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 10px;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+      }
+
+      .footer{
+        display:flex;
+        justify-content: space-between;
+        align-items:center;
+        gap: 10px;
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      @media print{
+        body{background:#fff}
+        .page{
+          margin:0;
+          border:none;
+          border-radius:0;
+          box-shadow:none;
+          width:auto;
+          min-height:auto;
+        }
+        thead{display: table-header-group}
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <div class="side-band"></div>
+      {{{bannerBlock}}}
+
+      <div class="content">
+        <div class="top">
+          <div class="brand">
+            {{{logoBlock}}}
+            <div>
+              <h1>{{companyName}}</h1>
+              <div class="meta">
+                <div>{{companyPhone}}</div>
+                <div>{{companyManager}}</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="quote-box">
+            <div class="quote-title">
+              <span class="chip">Quotation</span>
+              {{{statusBadge}}}
+            </div>
+            <div class="doc-no">{{docNo}}</div>
+            <div class="grid">
+              <div>Date</div><div><b>{{docDate}}</b></div>
+              {{{validUntilRow}}}
+            </div>
+          </div>
+        </div>
+
+        <div class="cards">
+          <div class="card">
+            <h3>Prepared For</h3>
+            <div class="name">{{customerName}}</div>
+            <div class="small">
+              <div>{{customerAddress}}</div>
+              <div>{{customerPhone}}</div>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Prepared By</h3>
+            <div class="name">{{companyName}}</div>
+            <div class="small">
+              <div>{{companyManager}}</div>
+              <div>{{companyPhone}}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:55%">Item</th>
+                <th class="num" style="width:15%">Qty</th>
+                <th class="num" style="width:15%">Unit</th>
+                <th class="num" style="width:15%">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{{itemsRows}}}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="bottom">
+          <div>
+            <div class="terms">
+              <h4>Terms</h4>
+              <ul>
+                <li>Prices are based on availability and may change without notice.</li>
+                <li>This quotation is not a tax invoice and becomes valid after acceptance.</li>
+                <li>Please sign below to confirm acceptance.</li>
+              </ul>
+            </div>
+
+            <div class="accept">
+              <div class="sig">
+                <div class="line"></div>
+                <div class="label">Customer Name & Signature</div>
+              </div>
+              <div class="sig">
+                <div class="line"></div>
+                <div class="label">Company Authorized Signature</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="totals">
+            <div class="tot-row"><span>Subtotal</span><strong>{{subtotal}}</strong></div>
+            <div class="tot-row"><span>Discount</span><strong>{{discount}}</strong></div>
+            <div class="tot-row"><span>Tax</span><strong>{{tax}}</strong></div>
+            <div class="tot-row total"><span>Total</span><strong>{{total}}</strong></div>
+          </div>
+        </div>
+
+        <div class="footer">
+          <div>{{companyName}}</div>
+          <div>Printed: {{printDate}}</div>
+        </div>
+      </div>
+    </div>
+  </body>
+  </html>

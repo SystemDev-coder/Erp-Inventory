@@ -357,3 +357,15 @@ export const reconcileBalances = asyncHandler(async (req: AuthRequest, res: Resp
   const result = await systemService.reconcileBalances(branchId);
   return ApiResponse.success(res, result, 'Balances reconciled');
 });
+
+export const migrateOpeningBalances = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const branchIdRaw = req.body?.branchId ?? req.query.branchId;
+  const branchId = branchIdRaw !== undefined && branchIdRaw !== null && String(branchIdRaw).trim() !== ''
+    ? Number(branchIdRaw)
+    : undefined;
+  if (branchId !== undefined && (!Number.isInteger(branchId) || branchId <= 0)) {
+    throw ApiError.badRequest('branchId is invalid');
+  }
+  const result = await systemService.migrateOpeningBalances(branchId);
+  return ApiResponse.success(res, result, 'Opening balances migrated');
+});

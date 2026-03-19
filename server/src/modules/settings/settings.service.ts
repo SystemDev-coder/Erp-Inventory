@@ -3,6 +3,7 @@ import { adminQueryMany } from '../../db/adminQuery';
 import { ApiError } from '../../utils/ApiError';
 import { BranchScope, assertBranchAccess, pickBranchForWrite } from '../../utils/branchScope';
 import { getUploadedImageUrl } from '../../config/cloudinary';
+import { systemService } from '../system/system.service';
 
 export interface Branch {
   branch_id: number;
@@ -139,6 +140,7 @@ type AuditLogColumns = {
 let auditLogColumnsCache: AuditLogColumns | null = null;
 let companySchemaReady = false;
 let capitalSchemaReady = false;
+let assetAccountsSchemaReady = false;
 
 const ensureCompanySchema = async (): Promise<void> => {
   if (companySchemaReady) return;
@@ -147,6 +149,21 @@ const ensureCompanySchema = async (): Promise<void> => {
       ADD COLUMN IF NOT EXISTS capital_amount NUMERIC(14,2) NOT NULL DEFAULT 0
   `);
   companySchemaReady = true;
+};
+
+const ensureAssetAccountsSchema = async (): Promise<void> => {
+  if (assetAccountsSchemaReady) return;
+  await adminQueryMany(`
+    ALTER TABLE ims.accounts
+      ADD COLUMN IF NOT EXISTS account_type VARCHAR(20) NOT NULL DEFAULT 'asset'
+  `);
+  await adminQueryMany(`
+    UPDATE ims.accounts
+       SET account_type = 'asset'
+     WHERE account_type IS NULL
+        OR account_type NOT IN ('asset', 'equity')
+  `);
+  assetAccountsSchemaReady = true;
 };
 
 const ensureCapitalSchema = async (): Promise<void> => {
@@ -584,6 +601,7 @@ export const settingsService = {
   },
 
   async prepareAssetAccounts(scope: BranchScope, branchId?: number): Promise<{ created: number }> {
+    await ensureAssetAccountsSchema();
     const targetBranchId = pickBranchForWrite(scope, branchId);
     let created = 0;
     for (const name of REQUIRED_CURRENT_ASSET_ACCOUNTS) {
@@ -616,10 +634,14 @@ export const settingsService = {
       [targetBranchId]
     );
 
+    // Keep ledger-based reports consistent with balances, especially when opening balances were entered directly.
+    await systemService.reconcileBalances(targetBranchId);
+
     return { created };
   },
 
   async getAssetOverview(scope: BranchScope): Promise<AssetOverviewSummary> {
+    await ensureAssetAccountsSchema();
     const where: string[] = ['a.is_active = TRUE'];
     const params: Array<string | number | number[] | string[]> = [];
 
@@ -628,37 +650,34 @@ export const settingsService = {
       where.push(`a.branch_id = ANY($${params.length})`);
     }
 
-    params.push(REQUIRED_CURRENT_ASSET_ACCOUNTS.map((name) => name.toLowerCase()));
-    where.push(`LOWER(a.name) = ANY($${params.length}::text[])`);
+    where.push(`a.account_type = 'asset'`);
+    where.push(`
+      NOT (
+        LOWER(a.name) LIKE 'accounts payable%'
+        OR LOWER(a.name) LIKE 'accounts receivable%'
+        OR LOWER(a.name) LIKE 'fixed asset%'
+        OR LOWER(a.name) LIKE '%capital%'
+        OR LOWER(a.name) LIKE 'office furniture%'
+        OR LOWER(a.name) LIKE 'computer%'
+        OR LOWER(a.name) LIKE 'equipment%'
+        OR LOWER(a.name) LIKE 'vehicle%'
+        OR LOWER(a.name) LIKE 'mukeef%'
+      )
+    `);
 
     const currentRows = await queryMany<{
       account_name: string;
       institution: string | null;
       balance: string | number;
     }>(
-      `WITH account_balances AS (
-         SELECT
-           a.acc_id,
-           a.name AS account_name,
-           NULLIF(BTRIM(a.institution), '') AS institution,
-           CASE
-             WHEN COUNT(at.txn_id) > 0 THEN COALESCE(SUM(COALESCE(at.credit, 0) - COALESCE(at.debit, 0)), 0)
-             ELSE COALESCE(a.balance, 0)
-           END::double precision AS dynamic_balance
-         FROM ims.accounts a
-         LEFT JOIN ims.account_transactions at
-           ON at.branch_id = a.branch_id
-          AND at.acc_id = a.acc_id
-         WHERE ${where.join(' AND ')}
-         GROUP BY a.acc_id, a.name, a.institution, a.balance
-       )
-       SELECT
-         account_name,
-         institution,
-         COALESCE(SUM(dynamic_balance), 0)::text AS balance
-       FROM account_balances
-       GROUP BY account_name, institution
-       ORDER BY account_name`,
+      `SELECT
+         a.name AS account_name,
+         NULLIF(BTRIM(a.institution), '') AS institution,
+         COALESCE(SUM(COALESCE(a.balance, 0)), 0)::text AS balance
+       FROM ims.accounts a
+       WHERE ${where.join(' AND ')}
+       GROUP BY a.name, NULLIF(BTRIM(a.institution), '')
+       ORDER BY a.name`,
       params
     );
 
@@ -716,6 +735,7 @@ export const settingsService = {
         },
       ])
     );
+    const requiredLower = new Set(REQUIRED_CURRENT_ASSET_ACCOUNTS.map((name) => name.toLowerCase()));
     const current_assets = REQUIRED_CURRENT_ASSET_ACCOUNTS.map((name) => {
       const found = byName.get(name.toLowerCase());
       return (
@@ -726,6 +746,14 @@ export const settingsService = {
         }
       );
     });
+    const extraCurrentAssets = currentRows
+      .filter((row) => !requiredLower.has(row.account_name.trim().toLowerCase()))
+      .map((row) => ({
+        account_name: row.account_name,
+        institution: row.institution,
+        balance: Number(row.balance || 0),
+      }))
+      .sort((a, b) => a.account_name.localeCompare(b.account_name));
 
     const fixed_assets = fixedRows.map((row) => ({
       asset_id: Number(row.asset_id),
@@ -735,10 +763,11 @@ export const settingsService = {
       status: row.status,
     }));
 
+    const currentAssetsAll = [...current_assets, ...extraCurrentAssets];
     return {
-      current_assets,
+      current_assets: currentAssetsAll,
       fixed_assets,
-      current_assets_total: current_assets.reduce((sum, row) => sum + Number(row.balance || 0), 0),
+      current_assets_total: currentAssetsAll.reduce((sum, row) => sum + Number(row.balance || 0), 0),
       fixed_assets_total: fixed_assets.reduce((sum, row) => sum + Number(row.cost || 0), 0),
     };
   },

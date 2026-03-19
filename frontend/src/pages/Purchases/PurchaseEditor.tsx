@@ -70,6 +70,7 @@ const PurchaseEditor = () => {
     note: '',
   });
   const [lineItems, setLineItems] = useState<LineItem[]>([emptyLine]);
+  const [discountMode, setDiscountMode] = useState<'per_item' | 'all_items'>('all_items');
   const [productPickerOpen, setProductPickerOpen] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [productSearch, setProductSearch] = useState('');
@@ -79,7 +80,7 @@ const PurchaseEditor = () => {
     if (res.success && res.data?.products) setProducts(res.data.products);
   };
 
-  const recalcTotals = (items: LineItem[], headerDiscount: number) => {
+  const calculateTotals = (items: LineItem[], headerDiscount: number) => {
     const subtotal = items.reduce((sum, item) => {
       const line = Math.max(
         0,
@@ -89,11 +90,20 @@ const PurchaseEditor = () => {
       return sum + line;
     }, 0);
     const total = Math.max(0, subtotal - Number(headerDiscount || 0));
-    setForm((prev) => ({
-      ...prev,
+    return {
       subtotal: Number(subtotal.toFixed(2)),
       total: Number(total.toFixed(2)),
+    };
+  };
+
+  const recalcTotals = (items: LineItem[], headerDiscount: number) => {
+    const totals = calculateTotals(items, headerDiscount);
+    setForm((prev) => ({
+      ...prev,
+      subtotal: totals.subtotal,
+      total: totals.total,
     }));
+    return totals;
   };
 
   const setLineItemValue = (index: number, field: keyof LineItem, value: any) => {
@@ -151,6 +161,11 @@ const PurchaseEditor = () => {
         ),
       })) as LineItem[];
       setLineItems(fetchedItems.length ? fetchedItems : [emptyLine]);
+      const headerDiscount = Number(p.discount || 0);
+      const perItemDiscount = fetchedItems.reduce((sum, li) => sum + (Number(li.discount) || 0), 0);
+      const mode: 'per_item' | 'all_items' =
+        headerDiscount > 0 && perItemDiscount === 0 ? 'all_items' : perItemDiscount > 0 ? 'per_item' : 'all_items';
+      setDiscountMode(mode);
     } else {
       showToast('error', 'Load failed', res.error || 'Could not load purchase');
     }
@@ -166,20 +181,51 @@ const PurchaseEditor = () => {
     if (productPickerOpen) loadProducts(productSearch);
   }, [productPickerOpen, productSearch]);
 
+  const lineDiscountTotal = lineItems.reduce((sum, item) => sum + (Number(item.discount) || 0), 0);
+  const effectiveHeaderDiscount = Number(form.discount || 0);
+  const discountSummary = lineDiscountTotal + effectiveHeaderDiscount;
+  const itemsTableColSpan = discountMode === 'per_item' ? 8 : 7;
+
   const effectivePurchaseType: 'cash' | 'credit' = form.purchase_type;
   const effectiveStatus: 'received' | 'partial' | 'unpaid' | 'void' =
     effectivePurchaseType === 'credit' && form.status !== 'void' ? 'unpaid' : form.status;
   const shouldShowPaymentAccount = effectiveStatus !== 'void' && effectiveStatus !== 'unpaid' && effectivePurchaseType !== 'credit';
 
+  const applyDiscountMode = (mode: 'per_item' | 'all_items') => {
+    setDiscountMode(mode);
+    if (mode === 'all_items') {
+      const nextItems = lineItems.map((li) => ({
+        ...li,
+        discount: 0,
+        line_total: Math.max(0, (Number(li.quantity) || 0) * (Number(li.unit_cost) || 0)),
+      }));
+      setLineItems(nextItems);
+      recalcTotals(nextItems, Number(form.discount || 0));
+      return;
+    }
+
+    setForm((prev) => ({ ...prev, discount: 0 }));
+    recalcTotals(lineItems, 0);
+  };
+
   const handleSelectProduct = (p: Product) => {
     const existingIdx = lineItems.findIndex((li) => Number(li.product_id) === p.product_id);
     const filtered = lineItems.filter((li) => li.quantity > 0 || (li.name && li.name.trim()));
     if (existingIdx >= 0) {
-      const updated = lineItems.map((li, i) =>
-        i === existingIdx ? { ...li, quantity: (li.quantity || 1) + 1 } : li
-      );
+      const updated = lineItems.map((li, i) => {
+        if (i !== existingIdx) return li;
+        const nextQty = (Number(li.quantity) || 1) + 1;
+        return {
+          ...li,
+          quantity: nextQty,
+          line_total: Math.max(
+            0,
+            nextQty * (Number(li.unit_cost) || 0) - (Number(li.discount) || 0)
+          ),
+        };
+      });
       setLineItems(updated);
-      recalcTotals(updated, form.discount);
+      recalcTotals(updated, effectiveHeaderDiscount);
     } else {
       const newItem: LineItem = {
         product_id: p.product_id,
@@ -193,7 +239,7 @@ const PurchaseEditor = () => {
       };
       const next = [...filtered, newItem];
       setLineItems(next);
-      recalcTotals(next, form.discount);
+      recalcTotals(next, effectiveHeaderDiscount);
     }
     setProductPickerOpen(false);
   };
@@ -254,7 +300,9 @@ const PurchaseEditor = () => {
       showToast('error', 'Paid amount required', 'Enter partial amount paid');
       return;
     }
-    recalcTotals(lineItems, form.discount);
+
+    const totals = calculateTotals(lineItems, effectiveHeaderDiscount);
+    setForm((prev) => ({ ...prev, subtotal: totals.subtotal, total: totals.total }));
     setLoading(true);
     const paidAmount =
       effectiveStatus === 'void'
@@ -263,14 +311,14 @@ const PurchaseEditor = () => {
         ? 0
         : effectiveStatus === 'partial'
         ? Number(form.paid_amount || 0)
-        : Number(form.total || 0);
+        : totals.total;
     const payload = {
       supplierId: supplierId ? Number(supplierId) : null,
       purchaseDate: form.purchase_date,
       purchaseType: effectivePurchaseType,
-      subtotal: Number(form.subtotal),
-      discount: Number(form.discount),
-      total: Number(form.total),
+      subtotal: totals.subtotal,
+      discount: effectiveHeaderDiscount,
+      total: totals.total,
       status: effectiveStatus,
       note: form.note,
       items: preparedItems,
@@ -536,7 +584,37 @@ const PurchaseEditor = () => {
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <span className="font-semibold text-slate-800 dark:text-slate-200">Items</span>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2 justify-end">
+            <select
+              className="rounded-lg border px-3 py-1.5 text-sm transition-colors bg-white border-slate-200 text-slate-900 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/40 focus:outline-none"
+              value={discountMode}
+              onChange={(e) => applyDiscountMode(e.target.value as 'per_item' | 'all_items')}
+              disabled={loading}
+              title="Choose how discount is applied"
+            >
+              <option value="all_items">All items discount</option>
+              <option value="per_item">Per item discount</option>
+            </select>
+
+            {discountMode === 'all_items' && (
+              <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+                Discount
+                <input
+                  type="number"
+                  className="w-28 text-right rounded border px-2 py-1.5 text-sm transition-colors bg-white border-slate-200 text-slate-900 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 focus:border-primary-500 focus:ring-1 focus:ring-primary-500/40 focus:outline-none"
+                  value={form.discount}
+                  min={0}
+                  step="0.01"
+                  onChange={(e) => {
+                    const v = Number(e.target.value || 0);
+                    setForm((prev) => ({ ...prev, discount: v }));
+                    recalcTotals(lineItems, v);
+                  }}
+                  disabled={loading}
+                />
+              </label>
+            )}
+
             <button
               type="button"
               onClick={() => setProductPickerOpen(true)}
@@ -620,7 +698,7 @@ const PurchaseEditor = () => {
                 <th className="px-2 py-2 text-center">Qty</th>
                 <th className="px-2 py-2 text-center">Unit Cost</th>
                 <th className="px-2 py-2 text-center">Sale Price</th>
-                <th className="px-2 py-2 text-center">Discount</th>
+                {discountMode === 'per_item' && <th className="px-2 py-2 text-center">Discount</th>}
                 <th className="px-2 py-2 text-right">Line Total</th>
                 <th className="px-2 py-2 text-center">Action</th>
               </tr>
@@ -661,7 +739,7 @@ const PurchaseEditor = () => {
                         setLineItemValue(idx, 'quantity', v);
                         recalcTotals(
                           lineItems.map((li, i) => (i === idx ? { ...li, quantity: v } : li)),
-                          form.discount
+                          effectiveHeaderDiscount
                         );
                       }}
                     />
@@ -678,7 +756,7 @@ const PurchaseEditor = () => {
                         setLineItemValue(idx, 'unit_cost', v);
                         recalcTotals(
                           lineItems.map((li, i) => (i === idx ? { ...li, unit_cost: v } : li)),
-                          form.discount
+                          effectiveHeaderDiscount
                         );
                       }}
                     />
@@ -696,23 +774,25 @@ const PurchaseEditor = () => {
                       }}
                     />
                   </td>
-                  <td className="px-2 py-1">
-                    <input
-                      type="number"
-                      className={compactNumberCls}
-                      value={item.discount}
-                      min={0}
-                      step="1"
-                      onChange={(e) => {
-                        const v = Number(e.target.value || 0);
-                        setLineItemValue(idx, 'discount', v);
-                        recalcTotals(
-                          lineItems.map((li, i) => (i === idx ? { ...li, discount: v } : li)),
-                          form.discount
-                        );
-                      }}
-                    />
-                  </td>
+                  {discountMode === 'per_item' && (
+                    <td className="px-2 py-1">
+                      <input
+                        type="number"
+                        className={compactNumberCls}
+                        value={item.discount}
+                        min={0}
+                        step="1"
+                        onChange={(e) => {
+                          const v = Number(e.target.value || 0);
+                          setLineItemValue(idx, 'discount', v);
+                          recalcTotals(
+                            lineItems.map((li, i) => (i === idx ? { ...li, discount: v } : li)),
+                            effectiveHeaderDiscount
+                          );
+                        }}
+                      />
+                    </td>
+                  )}
                   <td className="px-2 py-1 text-right font-semibold">
                     ${item.line_total.toFixed(2)}
                   </td>
@@ -722,7 +802,7 @@ const PurchaseEditor = () => {
                       onClick={() => {
                         setLineItems((prev) => prev.filter((_, i) => i !== idx));
                         const next = lineItems.filter((_, i) => i !== idx);
-                        recalcTotals(next.length ? next : [emptyLine], form.discount);
+                        recalcTotals(next.length ? next : [emptyLine], effectiveHeaderDiscount);
                       }}
                       className="p-2 text-red-500 hover:text-red-600"
                       aria-label="Remove line"
@@ -734,7 +814,7 @@ const PurchaseEditor = () => {
               ))}
               {lineItems.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="text-center text-slate-500 py-3">
+                  <td colSpan={itemsTableColSpan} className="text-center text-slate-500 py-3">
                     No items. Add a line to begin.
                   </td>
                 </tr>
@@ -750,7 +830,7 @@ const PurchaseEditor = () => {
           </div>
           <div className="flex flex-col items-end">
             <span className="text-slate-500">Discount</span>
-            <span className="font-semibold">${Number(form.discount || 0).toFixed(2)}</span>
+            <span className="font-semibold">${Number(discountSummary || 0).toFixed(2)}</span>
           </div>
           <div className="flex flex-col items-end">
             <span className="text-slate-500">Total</span>

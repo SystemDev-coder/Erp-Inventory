@@ -77,14 +77,15 @@ export interface ReturnItemInput {
 }
 
 export interface ReturnItemOption {
-    item_id: number;
-    name: string;
-    barcode: string | null;
-    cost_price: number;
-    sell_price: number;
-    sold_qty?: number;
-    returned_qty?: number;
-    available_qty?: number;
+  item_id: number;
+  name: string;
+  barcode: string | null;
+  cost_price: number;
+  sell_price: number;
+  sold_qty?: number;
+  returned_qty?: number;
+  on_hand_qty?: number;
+  available_qty?: number;
 }
 
 export interface CreateSalesReturnInput {
@@ -172,6 +173,66 @@ let cachedCustomerBalanceColumns: BalanceColumns | null = null;
 let cachedSupplierBalanceColumns: BalanceColumns | null = null;
 let cachedSalesReturnBalanceColumn: boolean | null = null;
 let cachedPurchaseReturnBalanceColumn: boolean | null = null;
+
+type LedgerEntryEnumMeta = { schema: string; name: string };
+let cachedLedgerEntryEnumMeta: LedgerEntryEnumMeta | null = null;
+let cachedLedgerEntryEnumLabels: Set<string> | null = null;
+
+const getLedgerEntryEnumMeta = async (client: PoolClient): Promise<LedgerEntryEnumMeta | null> => {
+    if (cachedLedgerEntryEnumMeta) return cachedLedgerEntryEnumMeta;
+
+    const fromCustomer = await client.query<{ udt_schema: string; udt_name: string }>(
+        `SELECT udt_schema, udt_name
+           FROM information_schema.columns
+          WHERE table_schema = 'ims'
+            AND table_name = 'customer_ledger'
+            AND column_name = 'entry_type'
+          LIMIT 1`
+    );
+    const row = fromCustomer.rows[0];
+    if (!row?.udt_name) return null;
+
+    cachedLedgerEntryEnumMeta = { schema: row.udt_schema || 'ims', name: row.udt_name };
+    return cachedLedgerEntryEnumMeta;
+};
+
+const getLedgerEntryEnumLabels = async (client: PoolClient): Promise<Set<string>> => {
+    if (cachedLedgerEntryEnumLabels) return cachedLedgerEntryEnumLabels;
+
+    const meta = await getLedgerEntryEnumMeta(client);
+    if (!meta) {
+        cachedLedgerEntryEnumLabels = new Set();
+        return cachedLedgerEntryEnumLabels;
+    }
+
+    const res = await client.query<{ enumlabel: string }>(
+        `SELECT e.enumlabel
+           FROM pg_enum e
+           JOIN pg_type t ON t.oid = e.enumtypid
+           JOIN pg_namespace n ON n.oid = t.typnamespace
+          WHERE n.nspname = $1
+            AND t.typname = $2
+          ORDER BY e.enumsortorder`,
+        [meta.schema, meta.name]
+    );
+    cachedLedgerEntryEnumLabels = new Set(res.rows.map((r) => r.enumlabel));
+    return cachedLedgerEntryEnumLabels;
+};
+
+const pickLedgerEntryType = async (client: PoolClient, preferred: string[]): Promise<string> => {
+    const labels = await getLedgerEntryEnumLabels(client);
+    if (!labels.size) return preferred[0];
+
+    for (const candidate of preferred) {
+        if (labels.has(candidate)) return candidate;
+    }
+
+    for (const fallback of ['adjustment', 'payment', 'sale', 'purchase']) {
+        if (labels.has(fallback)) return fallback;
+    }
+
+    throw ApiError.internal('Ledger entry enum is missing expected values');
+};
 
 const hasSalesReturnBalanceAdjustment = async (client: PoolClient): Promise<boolean> => {
     if (cachedSalesReturnBalanceColumn !== null) return cachedSalesReturnBalanceColumn;
@@ -400,6 +461,19 @@ const resolveStoreForItem = async (
         if (scopedStore.rows[0]) return Number(scopedStore.rows[0].store_id);
     }
 
+    // Prefer a store where the item currently exists (highest quantity) to avoid false "insufficient stock".
+    const storeWithStock = await client.query<{ store_id: number }>(
+        `SELECT si.store_id
+           FROM ims.store_items si
+           JOIN ims.stores st ON st.store_id = si.store_id
+          WHERE st.branch_id = $1
+            AND si.product_id = $2
+          ORDER BY si.quantity DESC, si.store_id ASC
+          LIMIT 1`,
+        [branchId, itemId]
+    );
+    if (storeWithStock.rows[0]) return Number(storeWithStock.rows[0].store_id);
+
     const fallbackStore = await client.query<{ store_id: number }>(
         `SELECT store_id
            FROM ims.stores
@@ -491,25 +565,43 @@ const applyStoreItemDelta = async (
         `SELECT quantity::text AS quantity
            FROM ims.store_items
           WHERE store_id = $1
-            AND product_id = $2
+             AND product_id = $2
           FOR UPDATE`,
         [storeId, itemId]
     );
     let currentQty = Number(current.rows[0]?.quantity || 0);
     if (!current.rows[0]) {
-        const item = await client.query<{ opening_balance: string }>(
-            `SELECT COALESCE(opening_balance, 0)::text AS opening_balance
-               FROM ims.items
-              WHERE item_id = $1
-                AND branch_id = $2
-              LIMIT 1`,
-            [itemId, branchId]
+        const existingAny = await client.query<{ qty: string; cnt: string }>(
+            `SELECT COALESCE(SUM(si.quantity), 0)::text AS qty,
+                    COUNT(*)::text AS cnt
+               FROM ims.store_items si
+               JOIN ims.stores st ON st.store_id = si.store_id
+              WHERE st.branch_id = $1
+                AND si.product_id = $2`,
+            [branchId, itemId]
         );
-        currentQty = Number(item.rows[0]?.opening_balance || 0);
+        const anyCount = Number(existingAny.rows[0]?.cnt || 0);
+        if (anyCount > 0) {
+            currentQty = 0;
+        } else {
+            const item = await client.query<{ balance: string }>(
+                `SELECT COALESCE(
+                    NULLIF(to_jsonb(i)->>'quantity','')::numeric,
+                    NULLIF(to_jsonb(i)->>'opening_balance','')::numeric,
+                    0
+                  )::text AS balance
+                FROM ims.items i
+               WHERE i.item_id = $1
+                 AND i.branch_id = $2
+               LIMIT 1`,
+                [itemId, branchId]
+            );
+            currentQty = Number(item.rows[0]?.balance || 0);
+        }
     }
     const nextQty = currentQty + roundedDelta;
-    if (nextQty < 0) {
-        throw ApiError.badRequest(`Insufficient quantity for item ${itemId}`);
+    if (!isNegativeStockAllowed() && nextQty < 0) {
+        throw ApiError.badRequest(`Insufficient stock for item ${itemId}. Available: ${Math.max(currentQty, 0)}`);
     }
     await client.query(
         `INSERT INTO ims.store_items (store_id, product_id, quantity)
@@ -520,7 +612,35 @@ const applyStoreItemDelta = async (
                    updated_at = NOW()`,
         [storeId, itemId, nextQty]
     );
-    await applyItemQuantityDelta(client, { branchId, itemId, deltaQty: roundedDelta });
+
+    // Keep master item quantity in sync with store quantities.
+    const storeSum = await client.query<{ qty: string }>(
+        `SELECT COALESCE(SUM(si.quantity), 0)::text AS qty
+           FROM ims.store_items si
+           JOIN ims.stores st ON st.store_id = si.store_id
+          WHERE st.branch_id = $1
+            AND si.product_id = $2`,
+        [branchId, itemId]
+    );
+    const totalQty = Number(storeSum.rows[0]?.qty || 0);
+    const hasQtyColumn = await hasItemsQuantityColumn(client);
+    if (hasQtyColumn) {
+        await client.query(
+            `UPDATE ims.items
+                SET quantity = $3
+              WHERE item_id = $1
+                AND branch_id = $2`,
+            [itemId, branchId, totalQty]
+        );
+    } else {
+        await client.query(
+            `UPDATE ims.items
+                SET opening_balance = $3
+              WHERE item_id = $1
+                AND branch_id = $2`,
+            [itemId, branchId, Math.max(0, totalQty)]
+        );
+    }
 };
 
 const buildItemDelta = (
@@ -913,9 +1033,9 @@ export const returnsService = {
                   ${returnedBranchClause}
                  GROUP BY pri.item_id
              ),
-             price AS (
-                SELECT
-                    pi.item_id,
+              price AS (
+                 SELECT
+                     pi.item_id,
                     MAX(
                         COALESCE(
                           NULLIF(pi.unit_cost, 0),
@@ -930,21 +1050,60 @@ export const returnsService = {
                   JOIN ims.purchase_items pi ON pi.purchase_id = p.purchase_id
                  ${where}
                  GROUP BY pi.item_id
-             )
-             SELECT
-                i.item_id,
-                i.name,
-                i.barcode,
-                COALESCE(price.unit_cost, i.cost_price, 0)::numeric(14,2) AS cost_price,
-                COALESCE(i.sell_price, 0)::numeric(14,2) AS sell_price,
-                COALESCE(purchased.purchased_qty, 0)::int AS sold_qty,
-                COALESCE(returned.returned_qty, 0)::int AS returned_qty,
-                GREATEST(COALESCE(purchased.purchased_qty, 0) - COALESCE(returned.returned_qty, 0), 0)::int AS available_qty
-             FROM purchased
-             JOIN ims.items i ON i.item_id = purchased.item_id
-             LEFT JOIN returned ON returned.item_id = purchased.item_id
-             LEFT JOIN price ON price.item_id = purchased.item_id
-             ORDER BY i.name`,
+              )
+              SELECT
+                 i.item_id,
+                 i.name,
+                 i.barcode,
+                 COALESCE(price.unit_cost, i.cost_price, 0)::numeric(14,2) AS cost_price,
+                 COALESCE(i.sell_price, 0)::numeric(14,2) AS sell_price,
+                 COALESCE(purchased.purchased_qty, 0)::int AS sold_qty,
+                 COALESCE(returned.returned_qty, 0)::int AS returned_qty,
+                 GREATEST(
+                   COALESCE(
+                     CASE
+                       WHEN COALESCE(stock.cnt, 0) > 0 THEN stock.qty
+                       ELSE COALESCE(
+                         NULLIF(to_jsonb(i)->>'quantity','')::numeric,
+                         NULLIF(to_jsonb(i)->>'opening_balance','')::numeric,
+                         0
+                       )
+                     END,
+                     0
+                   ),
+                   0
+                 )::int AS on_hand_qty,
+                 LEAST(
+                   GREATEST(COALESCE(purchased.purchased_qty, 0) - COALESCE(returned.returned_qty, 0), 0),
+                   GREATEST(
+                     COALESCE(
+                       CASE
+                         WHEN COALESCE(stock.cnt, 0) > 0 THEN stock.qty
+                         ELSE COALESCE(
+                           NULLIF(to_jsonb(i)->>'quantity','')::numeric,
+                           NULLIF(to_jsonb(i)->>'opening_balance','')::numeric,
+                           0
+                         )
+                       END,
+                       0
+                     ),
+                     0
+                   )
+                 )::int AS available_qty
+              FROM purchased
+              JOIN ims.items i ON i.item_id = purchased.item_id
+              LEFT JOIN LATERAL (
+                 SELECT
+                   COALESCE(SUM(si.quantity), 0)::numeric AS qty,
+                   COUNT(*)::int AS cnt
+                 FROM ims.store_items si
+                 JOIN ims.stores st ON st.store_id = si.store_id
+                 WHERE st.branch_id = i.branch_id
+                   AND si.product_id = i.item_id
+              ) stock ON TRUE
+              LEFT JOIN returned ON returned.item_id = purchased.item_id
+              LEFT JOIN price ON price.item_id = purchased.item_id
+              ORDER BY i.name`,
             params
         );
     },
@@ -1158,6 +1317,9 @@ export const returnsService = {
             });
             const hasBalanceColumn = await hasSalesReturnBalanceAdjustment(client);
 
+            const returnEntryType = await pickLedgerEntryType(client, ['return', 'adjustment', 'payment']);
+            const refundEntryType = await pickLedgerEntryType(client, ['refund', 'adjustment', 'payment']);
+
             const insertColumns = [
                 'branch_id',
                 'sale_id',
@@ -1246,16 +1408,16 @@ export const returnsService = {
                 await client.query(
                     `INSERT INTO ims.customer_ledger
                        (branch_id, customer_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
-                     VALUES ($1, $2, 'return', 'sales_returns', $3, NULL, 0, $4, $5)`,
-                    [context.branchId, input.customerId, sr.sr_id, ledgerCredit, input.note || null]
+                     VALUES ($1, $2, $3, 'sales_returns', $4, NULL, 0, $5, $6)`,
+                    [context.branchId, input.customerId, returnEntryType, sr.sr_id, ledgerCredit, input.note || null]
                 );
             }
             if (refundAmount > 0 && input.customerId) {
                 await client.query(
                     `INSERT INTO ims.customer_ledger
                        (branch_id, customer_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
-                     VALUES ($1, $2, 'refund', 'sales_returns', $3, $4, $5, 0, $6)`,
-                    [context.branchId, input.customerId, sr.sr_id, refundAccId, refundAmount, 'Customer refund']
+                     VALUES ($1, $2, $3, 'sales_returns', $4, $5, $6, 0, $7)`,
+                    [context.branchId, input.customerId, refundEntryType, sr.sr_id, refundAccId, refundAmount, 'Customer refund']
                 );
             }
             if (balanceAdjustment > 0) {
@@ -1496,27 +1658,28 @@ export const returnsService = {
             await client.query(
                 `DELETE FROM ims.customer_ledger
                   WHERE branch_id = $1
-                    AND entry_type IN ('return','refund')
                     AND ref_table = 'sales_returns'
                     AND ref_id = $2`,
                 [current.branch_id, id]
             );
             const ledgerCredit = Number(total);
             if (input.customerId && ledgerCredit > 0) {
+                const returnEntryType = await pickLedgerEntryType(client, ['return', 'adjustment', 'payment']);
                 await client.query(
                     `INSERT INTO ims.customer_ledger
                        (branch_id, customer_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
-                     VALUES ($1, $2, 'return', 'sales_returns', $3, NULL, 0, $4, $5)`,
-                    [current.branch_id, input.customerId, id, ledgerCredit, input.note || null]
+                     VALUES ($1, $2, $3, 'sales_returns', $4, NULL, 0, $5, $6)`,
+                    [current.branch_id, input.customerId, returnEntryType, id, ledgerCredit, input.note || null]
                 );
             }
             if (refundAmount > 0 && input.customerId) {
                 const refundAccId = refundUpdateRequested ? Number(input.refundAccId || 0) : null;
+                const refundEntryType = await pickLedgerEntryType(client, ['refund', 'adjustment', 'payment']);
                 await client.query(
                     `INSERT INTO ims.customer_ledger
                        (branch_id, customer_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
-                     VALUES ($1, $2, 'refund', 'sales_returns', $3, $4, $5, 0, $6)`,
-                    [current.branch_id, input.customerId, id, refundAccId, refundAmount, 'Customer refund']
+                     VALUES ($1, $2, $3, 'sales_returns', $4, $5, $6, 0, $7)`,
+                    [current.branch_id, input.customerId, refundEntryType, id, refundAccId, refundAmount, 'Customer refund']
                 );
             }
             if (newBalanceAdjustment > 0 && newCustomerId) {
@@ -1580,7 +1743,6 @@ export const returnsService = {
             await client.query(
                 `DELETE FROM ims.customer_ledger
                   WHERE branch_id = $1
-                    AND entry_type IN ('return','refund')
                     AND ref_table = 'sales_returns'
                     AND ref_id = $2`,
                 [current.branch_id, id]
@@ -1902,19 +2064,21 @@ export const returnsService = {
             }
             const ledgerDebit = Number(total);
             if (ledgerDebit > 0) {
+                const returnEntryType = await pickLedgerEntryType(client, ['return', 'adjustment', 'payment']);
                 await client.query(
                     `INSERT INTO ims.supplier_ledger
                        (branch_id, supplier_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
-                     VALUES ($1, $2, 'return', 'purchase_returns', $3, NULL, $4, 0, $5)`,
-                    [context.branchId, input.supplierId, pr.pr_id, ledgerDebit, input.note || null]
+                     VALUES ($1, $2, $3, 'purchase_returns', $4, NULL, $5, 0, $6)`,
+                    [context.branchId, input.supplierId, returnEntryType, pr.pr_id, ledgerDebit, input.note || null]
                 );
             }
             if (refundAmount > 0) {
+                const refundEntryType = await pickLedgerEntryType(client, ['refund', 'adjustment', 'payment']);
                 await client.query(
                     `INSERT INTO ims.supplier_ledger
                        (branch_id, supplier_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
-                     VALUES ($1, $2, 'refund', 'purchase_returns', $3, $4, 0, $5, $6)`,
-                    [context.branchId, input.supplierId, pr.pr_id, refundAccId, refundAmount, 'Supplier refund']
+                     VALUES ($1, $2, $3, 'purchase_returns', $4, $5, 0, $6, $7)`,
+                    [context.branchId, input.supplierId, refundEntryType, pr.pr_id, refundAccId, refundAmount, 'Supplier refund']
                 );
             }
             if (balanceAdjustment > 0) {
@@ -2143,27 +2307,28 @@ export const returnsService = {
             await client.query(
                 `DELETE FROM ims.supplier_ledger
                   WHERE branch_id = $1
-                    AND entry_type IN ('return','refund')
                     AND ref_table = 'purchase_returns'
                     AND ref_id = $2`,
                 [current.branch_id, id]
             );
             const ledgerDebit = Number(total);
             if (ledgerDebit > 0) {
+                const returnEntryType = await pickLedgerEntryType(client, ['return', 'adjustment', 'payment']);
                 await client.query(
                     `INSERT INTO ims.supplier_ledger
                        (branch_id, supplier_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
-                     VALUES ($1, $2, 'return', 'purchase_returns', $3, NULL, $4, 0, $5)`,
-                    [current.branch_id, input.supplierId, id, ledgerDebit, input.note || null]
+                     VALUES ($1, $2, $3, 'purchase_returns', $4, NULL, $5, 0, $6)`,
+                    [current.branch_id, input.supplierId, returnEntryType, id, ledgerDebit, input.note || null]
                 );
             }
             if (refundAmount > 0) {
                 const refundAccId = refundUpdateRequested ? Number(input.refundAccId || 0) : null;
+                const refundEntryType = await pickLedgerEntryType(client, ['refund', 'adjustment', 'payment']);
                 await client.query(
                     `INSERT INTO ims.supplier_ledger
                        (branch_id, supplier_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
-                     VALUES ($1, $2, 'refund', 'purchase_returns', $3, $4, 0, $5, $6)`,
-                    [current.branch_id, input.supplierId, id, refundAccId, refundAmount, 'Supplier refund']
+                     VALUES ($1, $2, $3, 'purchase_returns', $4, $5, 0, $6, $7)`,
+                    [current.branch_id, input.supplierId, refundEntryType, id, refundAccId, refundAmount, 'Supplier refund']
                 );
             }
             if (newBalanceAdjustment > 0 && newSupplierId) {
@@ -2227,7 +2392,6 @@ export const returnsService = {
             await client.query(
                 `DELETE FROM ims.supplier_ledger
                   WHERE branch_id = $1
-                    AND entry_type IN ('return','refund')
                     AND ref_table = 'purchase_returns'
                     AND ref_id = $2`,
                 [current.branch_id, id]

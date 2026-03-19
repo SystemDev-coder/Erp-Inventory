@@ -17,6 +17,36 @@ const loadSheetJs = () => {
   }
 };
 
+const normalizeDateParam = (value: unknown, label: string): string | undefined => {
+  if (value === undefined || value === null) return undefined;
+  const raw = String(value).trim();
+  if (!raw) return undefined;
+
+  // ISO yyyy-mm-dd (preferred)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+  // Common UI format mm/dd/yyyy
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(raw)) {
+    const [mm, dd, yyyy] = raw.split('/');
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  // Epoch seconds/millis
+  if (/^\d+$/.test(raw)) {
+    const num = Number(raw);
+    if (!Number.isFinite(num)) throw ApiError.badRequest(`${label} is invalid date`);
+    const ms = raw.length <= 10 ? num * 1000 : num;
+    const d = new Date(ms);
+    if (Number.isNaN(d.getTime())) throw ApiError.badRequest(`${label} is invalid date`);
+    return d.toISOString().slice(0, 10);
+  }
+
+  // Last resort parsing
+  const d = new Date(raw);
+  if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  throw ApiError.badRequest(`${label} is invalid date`);
+};
+
 export const listPurchaseItems = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const search = (req.query.search as string) || undefined;
@@ -26,8 +56,14 @@ export const listPurchaseItems = asyncHandler(async (req: AuthRequest, res: Resp
   }
   const supplierId = req.query.supplierId ? Number(req.query.supplierId) : undefined;
   const productId = req.query.productId ? Number(req.query.productId) : undefined;
-  const from = (req.query.from as string) || undefined;
-  const to = (req.query.to as string) || undefined;
+  const from = normalizeDateParam(req.query.from, 'from');
+  const to = normalizeDateParam(req.query.to, 'to');
+  if ((from && !to) || (!from && to)) {
+    throw ApiError.badRequest('Both from and to are required together');
+  }
+  if (from && to && from > to) {
+    throw ApiError.badRequest('from cannot be after to');
+  }
   const items = await purchasesService.listAllItems(scope, { search, supplierId, productId, branchId, from, to });
   return ApiResponse.success(res, { items });
 });
@@ -36,8 +72,8 @@ export const listPurchases = asyncHandler(async (req: AuthRequest, res: Response
   const scope = await resolveBranchScope(req);
   const search = (req.query.search as string) || undefined;
   const status = (req.query.status as string) || undefined;
-  const fromDate = (req.query.fromDate as string) || undefined;
-  const toDate = (req.query.toDate as string) || undefined;
+  const fromDate = normalizeDateParam(req.query.fromDate, 'fromDate');
+  const toDate = normalizeDateParam(req.query.toDate, 'toDate');
   if ((fromDate && !toDate) || (!fromDate && toDate)) {
     throw ApiError.badRequest('Both fromDate and toDate are required together');
   }

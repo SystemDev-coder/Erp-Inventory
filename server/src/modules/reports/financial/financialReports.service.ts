@@ -830,11 +830,14 @@ const buildBalanceSheetFromLedger = async (branchId: number, asOfDate: string): 
   let usedOwnerEquityBreakdown = false;
 
   for (const row of accountRows) {
-    // Account balances in this system are stored and reconciled using (credit - debit).
-    // Reports must therefore use the same convention to avoid "zeroing out" balances.
-    const signedBalance = (Number(row.txn_count || 0) > 0)
-      ? Number(row.txn_balance || 0)
-      : Number(row.base_balance || 0);
+    // Prefer the stored account balance because it's the system's source of truth and includes
+    // opening balances + all modules' adjustments. Some legacy deployments have incomplete
+    // `account_transactions` history, which would understate balances if we used ledger rollups.
+    // If the stored balance is effectively zero but we do have ledger entries, fall back to ledger.
+    const baseBalance = Number(row.base_balance || 0);
+    const signedBalance = !isApproxZero(baseBalance)
+      ? baseBalance
+      : (Number(row.txn_count || 0) > 0 ? Number(row.txn_balance || 0) : 0);
     const naturalAmount = signedBalance;
     const accountName = row.account_name;
     const accountType = normalizeAccountName(row.account_type);
@@ -1091,7 +1094,24 @@ const buildBalanceSheetFromLedger = async (branchId: number, asOfDate: string): 
     }
   }
 
-  // Single retained earnings line (Opening retained + Net income YTD).
+  // Show the breakdown so users can trace the number:
+  // Retained Earnings = Opening Retained + Net Income (YTD).
+  if (!isApproxZero(openingRetained)) {
+    equityRows.push({
+      section: 'Equity',
+      line_item: openingRetained >= 0 ? 'Opening Retained Earnings' : 'Opening Accumulated Loss',
+      amount: openingRetained,
+      row_type: 'detail',
+    });
+  }
+  if (!isApproxZero(netIncomeYtd)) {
+    equityRows.push({
+      section: 'Equity',
+      line_item: netIncomeYtd >= 0 ? 'Net Income (YTD)' : 'Net Loss (YTD)',
+      amount: netIncomeYtd,
+      row_type: 'detail',
+    });
+  }
   equityRows.push({
     section: 'Equity',
     line_item: retainedEarnings >= 0 ? 'Retained Earnings' : 'Accumulated Loss',
@@ -1121,7 +1141,7 @@ const buildBalanceSheetFromLedger = async (branchId: number, asOfDate: string): 
   ];
   return rows.filter((row) => {
     if (row.row_type === 'total') return true;
-    if (/(retained earnings|accumulated loss)/i.test(row.line_item)) return true;
+    if (/(retained earnings|accumulated loss|opening retained|opening accumulated|net income \\(ytd\\)|net loss \\(ytd\\))/i.test(row.line_item)) return true;
     return !isApproxZero(row.amount);
   });
 };
@@ -2660,15 +2680,17 @@ export const financialReportsService = {
     toDate: string,
     includeZero = false
   ): Promise<TrialBalanceRow[]> {
-    const params: Array<number | string> = [branchId, fromDate, toDate];
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const useBaseClosing = String(toDate) >= todayIso;
+    const params: Array<number | string | boolean> = [branchId, fromDate, toDate, useBaseClosing];
     const nonZeroSql = includeZero
       ? ''
       : `
        WHERE ABS(opening_debit) > 0.000001
-          OR ABS(opening_credit) > 0.000001
-          OR ABS(period_debit) > 0.000001
-          OR ABS(period_credit) > 0.000001
-          OR ABS(closing_net) > 0.000001`;
+           OR ABS(opening_credit) > 0.000001
+           OR ABS(period_debit) > 0.000001
+           OR ABS(period_credit) > 0.000001
+           OR ABS(closing_net) > 0.000001`;
     const rows = await queryMany<TrialBalanceRow>(
       `${normalizedAccountTransactionsCte},
       account_master AS (
@@ -2708,13 +2730,11 @@ export const financialReportsService = {
        opening_txn AS (
          SELECT
            at.acc_id,
-           COALESCE(SUM(at.debit), 0)::double precision AS opening_debit_txn,
-           COALESCE(SUM(at.credit), 0)::double precision AS opening_credit_txn,
-           COALESCE(SUM(at.credit - at.debit), 0)::double precision AS opening_net
-         FROM normalized_txn at
-         WHERE at.txn_date::date < $2::date
-         GROUP BY at.acc_id
-       ),
+            COALESCE(SUM(at.credit - at.debit), 0)::double precision AS opening_net
+          FROM normalized_txn at
+          WHERE at.txn_date::date < $2::date
+          GROUP BY at.acc_id
+        ),
        period_txn AS (
          SELECT
            at.acc_id,
@@ -2730,44 +2750,63 @@ export const financialReportsService = {
            c.acc_id AS account_id,
            c.account_name,
            c.natural_side,
-           COALESCE(o.opening_debit_txn, 0)::double precision AS opening_debit,
-           COALESCE(o.opening_credit_txn, 0)::double precision AS opening_credit,
-           COALESCE(p.period_debit, 0)::double precision AS period_debit,
-           COALESCE(p.period_credit, 0)::double precision AS period_credit
-         FROM classified c
-         LEFT JOIN opening_txn o ON o.acc_id = c.acc_id
-         LEFT JOIN period_txn p ON p.acc_id = c.acc_id
-       ),
-       calc AS (
-         SELECT
-           account_id,
-           account_name,
-           natural_side,
-           opening_debit,
-           opening_credit,
-           period_debit,
-           period_credit,
-           (opening_credit + period_credit) - (opening_debit + period_debit) AS closing_net
-         FROM merged
-       )
-       SELECT
-         account_id,
-         account_name,
-         opening_debit,
-         opening_credit,
-         period_debit,
-         period_credit,
-         CASE
-           WHEN natural_side = 'credit' THEN CASE WHEN closing_net < 0 THEN ABS(closing_net) ELSE 0 END
-           ELSE CASE WHEN closing_net >= 0 THEN closing_net ELSE 0 END
-         END::double precision AS closing_debit,
-         CASE
-           WHEN natural_side = 'credit' THEN CASE WHEN closing_net >= 0 THEN closing_net ELSE 0 END
-           ELSE CASE WHEN closing_net < 0 THEN ABS(closing_net) ELSE 0 END
-         END::double precision AS closing_credit
-        FROM calc
-       ${nonZeroSql}
-       ORDER BY account_id ASC`,
+            COALESCE(o.opening_net, 0)::double precision AS opening_net_ledger,
+            COALESCE(p.period_debit, 0)::double precision AS period_debit,
+            COALESCE(p.period_credit, 0)::double precision AS period_credit,
+            COALESCE(p.period_net, 0)::double precision AS period_net,
+            COALESCE(c.base_balance, 0)::double precision AS base_balance
+          FROM classified c
+          LEFT JOIN opening_txn o ON o.acc_id = c.acc_id
+          LEFT JOIN period_txn p ON p.acc_id = c.acc_id
+        ),
+        calc AS (
+          SELECT
+            account_id,
+            account_name,
+            natural_side,
+            period_debit,
+            period_credit,
+            -- Trial balance should match the Accounts page for "today" reports.
+            -- If the end date is today-or-later, use ims.accounts.balance as the closing net.
+            -- Otherwise use ledger rollups as-of the report end date.
+            CASE
+              WHEN $4::boolean THEN (base_balance - period_net)
+              ELSE opening_net_ledger
+            END::double precision AS opening_net,
+            CASE
+              WHEN $4::boolean THEN base_balance
+              ELSE (opening_net_ledger + period_net)
+            END::double precision AS closing_net,
+            CASE
+              WHEN natural_side = 'credit' THEN CASE WHEN (CASE WHEN $4::boolean THEN (base_balance - period_net) ELSE opening_net_ledger END) < 0 THEN ABS((CASE WHEN $4::boolean THEN (base_balance - period_net) ELSE opening_net_ledger END)) ELSE 0 END
+              ELSE CASE WHEN (CASE WHEN $4::boolean THEN (base_balance - period_net) ELSE opening_net_ledger END) >= 0 THEN (CASE WHEN $4::boolean THEN (base_balance - period_net) ELSE opening_net_ledger END) ELSE 0 END
+            END::double precision AS opening_debit,
+            CASE
+              WHEN natural_side = 'credit' THEN CASE WHEN (CASE WHEN $4::boolean THEN (base_balance - period_net) ELSE opening_net_ledger END) >= 0 THEN (CASE WHEN $4::boolean THEN (base_balance - period_net) ELSE opening_net_ledger END) ELSE 0 END
+              ELSE CASE WHEN (CASE WHEN $4::boolean THEN (base_balance - period_net) ELSE opening_net_ledger END) < 0 THEN ABS((CASE WHEN $4::boolean THEN (base_balance - period_net) ELSE opening_net_ledger END)) ELSE 0 END
+            END::double precision AS opening_credit,
+            CASE
+              WHEN natural_side = 'credit' THEN CASE WHEN (CASE WHEN $4::boolean THEN base_balance ELSE (opening_net_ledger + period_net) END) < 0 THEN ABS((CASE WHEN $4::boolean THEN base_balance ELSE (opening_net_ledger + period_net) END)) ELSE 0 END
+              ELSE CASE WHEN (CASE WHEN $4::boolean THEN base_balance ELSE (opening_net_ledger + period_net) END) >= 0 THEN (CASE WHEN $4::boolean THEN base_balance ELSE (opening_net_ledger + period_net) END) ELSE 0 END
+            END::double precision AS closing_debit,
+            CASE
+              WHEN natural_side = 'credit' THEN CASE WHEN (CASE WHEN $4::boolean THEN base_balance ELSE (opening_net_ledger + period_net) END) >= 0 THEN (CASE WHEN $4::boolean THEN base_balance ELSE (opening_net_ledger + period_net) END) ELSE 0 END
+              ELSE CASE WHEN (CASE WHEN $4::boolean THEN base_balance ELSE (opening_net_ledger + period_net) END) < 0 THEN ABS((CASE WHEN $4::boolean THEN base_balance ELSE (opening_net_ledger + period_net) END)) ELSE 0 END
+            END::double precision AS closing_credit
+          FROM merged
+        )
+        SELECT
+          account_id,
+          account_name,
+          opening_debit,
+          opening_credit,
+          period_debit,
+          period_credit,
+          closing_debit,
+          closing_credit
+         FROM calc
+        ${nonZeroSql}
+        ORDER BY account_id ASC`,
       params
     );
 
@@ -2820,6 +2859,14 @@ export const financialReportsService = {
       const section = normalizeAccountName(row.section);
       const name = String(row.line_item || '').trim();
       if (!name || existing.has(normalizeAccountName(name))) continue;
+      // Trial Balance already includes P&L accounts (revenue/expenses). Do not double-count retained earnings
+      // or net income lines that are computed as residuals for the Balance Sheet.
+      if (
+        section === 'equity' &&
+        /(retained earnings|accumulated loss|opening retained|opening accumulated|net income|net loss)/i.test(name)
+      ) {
+        continue;
+      }
       const amount = Number(row.amount || 0);
       if (isApproxZero(amount)) continue;
 
@@ -2857,7 +2904,7 @@ export const financialReportsService = {
       const creditAdj = diff > 0 ? diff : 0;
       reportRows.push({
         account_id: syntheticId--,
-        account_name: 'Retained Earnings (Adjustment)',
+        account_name: 'Suspense (Auto Balance)',
         opening_debit: debitAdj,
         opening_credit: creditAdj,
         period_debit: 0,

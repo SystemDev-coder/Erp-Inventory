@@ -165,10 +165,9 @@ const PurchaseReturns = () => {
       const merged = { ...next[index], ...patch };
       if (Object.prototype.hasOwnProperty.call(patch, 'quantity')) {
         const selected = items.find((item) => Number(item.item_id) === Number(merged.itemId));
-        const maxQty = selected?.available_qty ? Number(selected.available_qty) : 0;
+        const maxQty = selected?.available_qty !== undefined ? Number(selected.available_qty || 0) : null;
         const rawQty = Math.round(Number((merged as any).quantity || 0));
-        const clamped = maxQty > 0 ? Math.min(Math.max(rawQty, 1), maxQty) : Math.max(rawQty, 1);
-        merged.quantity = clamped;
+        merged.quantity = maxQty === null ? Math.max(rawQty, 1) : Math.max(Math.min(rawQty, maxQty), 0);
       }
       next[index] = merged;
       return next;
@@ -181,7 +180,7 @@ const PurchaseReturns = () => {
     setLineValue(index, {
       itemId,
       unitCost: selected ? Number(selected.cost_price || 0) : 0,
-      quantity: 1,
+      quantity: selected && Number(selected.available_qty || 0) > 0 ? 1 : 0,
     });
   };
 
@@ -215,6 +214,17 @@ const PurchaseReturns = () => {
       }));
     if (!normalized.length || normalized.some((line) => line.quantity <= 0)) {
       showToast('error', 'Purchase Return', 'Select at least one item with quantity');
+      return;
+    }
+    const unavailable = normalized.find((line) => {
+      const selected = items.find((it) => Number(it.item_id) === Number(line.itemId));
+      const maxQty = selected?.available_qty !== undefined ? Number(selected.available_qty || 0) : null;
+      return maxQty !== null && line.quantity > maxQty;
+    });
+    if (unavailable) {
+      const selected = items.find((it) => Number(it.item_id) === Number(unavailable.itemId));
+      const maxQty = selected?.available_qty !== undefined ? Number(selected.available_qty || 0) : 0;
+      showToast('error', 'Purchase Return', `Return qty exceeds available stock (${maxQty}) for ${selected?.name || `item ${unavailable.itemId}`}`);
       return;
     }
     const refundAmount = Number(form.refundAmount || 0);
@@ -348,13 +358,13 @@ const PurchaseReturns = () => {
                         {line.itemId ? (() => {
                           const it = items.find((x) => Number(x.item_id) === Number(line.itemId));
                           if (!it) return null;
-                          return (
-                            <div className="text-[11px] text-slate-500">
-                              Purchased: {Number(it.sold_qty || 0)} | Returned: {Number(it.returned_qty || 0)} | Available: {Number(it.available_qty || 0)}
-                            </div>
-                          );
-                        })() : null}
-                      </div>
+                           return (
+                             <div className="text-[11px] text-slate-500">
+                              Purchased: {Number(it.sold_qty || 0)} | Returned: {Number(it.returned_qty || 0)} | On hand: {Number(it.on_hand_qty || 0)} | Available: {Number(it.available_qty || 0)}
+                              </div>
+                           );
+                         })() : null}
+                       </div>
                     </td>
                     <td className={`${tableCellCls} text-right`}>
                       <input

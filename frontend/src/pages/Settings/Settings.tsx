@@ -28,6 +28,7 @@ import { Modal } from '../../components/ui/modal/Modal';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { useAuth } from '../../context/AuthContext';
 import { assetsService } from '../../services/assets.service';
+import { accountService } from '../../services/account.service';
 import { ImageUpload } from '../../components/common/ImageUpload';
 import { imageService } from '../../services/image.service';
 import { env } from '../../config/env';
@@ -288,6 +289,13 @@ const Settings = () => {
     purchaseDate: today(),
     cost: '',
     status: 'active',
+  });
+  const [currentAssetModalOpen, setCurrentAssetModalOpen] = useState(false);
+  const [currentAssetSaving, setCurrentAssetSaving] = useState(false);
+  const [currentAssetForm, setCurrentAssetForm] = useState({
+    name: '',
+    institution: '',
+    openingBalance: '',
   });
 
   const [logs, setLogs] = useState<SystemAuditLog[]>([]);
@@ -829,6 +837,49 @@ const Settings = () => {
     }
   };
 
+  const resetCurrentAssetModal = () => {
+    setCurrentAssetForm({
+      name: '',
+      institution: '',
+      openingBalance: '',
+    });
+  };
+
+  const openCreateCurrentAssetModal = () => {
+    resetCurrentAssetModal();
+    setCurrentAssetModalOpen(true);
+  };
+
+  const saveCurrentAsset = async () => {
+    if (!currentAssetForm.name.trim()) {
+      showToast('error', 'Assets', 'Account name is required');
+      return;
+    }
+    const opening = currentAssetForm.openingBalance.trim() === '' ? 0 : Number(currentAssetForm.openingBalance);
+    if (!Number.isFinite(opening)) {
+      showToast('error', 'Assets', 'Opening balance is invalid');
+      return;
+    }
+
+    setCurrentAssetSaving(true);
+    const res = await accountService.create({
+      name: currentAssetForm.name.trim(),
+      institution: currentAssetForm.institution.trim() || undefined,
+      balance: opening,
+    });
+    setCurrentAssetSaving(false);
+
+    if (!res.success || !res.data?.account) {
+      showToast('error', 'Assets', res.error || 'Failed to create current asset account');
+      return;
+    }
+
+    showToast('success', 'Assets', 'Current asset account created');
+    setCurrentAssetModalOpen(false);
+    resetCurrentAssetModal();
+    await loadAssetAccounts();
+  };
+
   const resetFixedAssetModal = () => {
     setEditingFixedAssetId(null);
     setFixedAssetForm({
@@ -1181,6 +1232,12 @@ const Settings = () => {
               {assetAccountsCreating ? 'Creating...' : 'Prepare Accounts'}
             </button>
             <button
+              onClick={openCreateCurrentAssetModal}
+              className="px-3 py-2 rounded border border-black bg-black text-white text-sm"
+            >
+              New Current Asset
+            </button>
+            <button
               onClick={openCreateFixedAssetModal}
               className="px-3 py-2 rounded border border-black bg-black text-white text-sm"
             >
@@ -1288,6 +1345,64 @@ const Settings = () => {
           </div>
         )}
       </div>
+
+      <Modal
+        isOpen={currentAssetModalOpen}
+        onClose={() => {
+          setCurrentAssetModalOpen(false);
+          resetCurrentAssetModal();
+        }}
+        title="New Current Asset"
+        size="lg"
+      >
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <label className="text-sm font-medium flex flex-col gap-1 md:col-span-2">
+            Account Name *
+            <input
+              className="rounded border border-black px-3 py-2"
+              value={currentAssetForm.name}
+              onChange={(e) => setCurrentAssetForm((prev) => ({ ...prev, name: e.target.value }))}
+            />
+          </label>
+          <label className="text-sm font-medium flex flex-col gap-1">
+            Institution
+            <input
+              className="rounded border border-black px-3 py-2"
+              value={currentAssetForm.institution}
+              onChange={(e) => setCurrentAssetForm((prev) => ({ ...prev, institution: e.target.value }))}
+            />
+          </label>
+          <label className="text-sm font-medium flex flex-col gap-1">
+            Opening Balance
+            <input
+              type="number"
+              step="0.01"
+              className="rounded border border-black px-3 py-2"
+              value={currentAssetForm.openingBalance}
+              onChange={(e) => setCurrentAssetForm((prev) => ({ ...prev, openingBalance: e.target.value }))}
+            />
+          </label>
+        </div>
+        <div className="flex justify-end gap-2 pt-4">
+          <button
+            className="px-4 py-2 rounded border border-black"
+            onClick={() => {
+              setCurrentAssetModalOpen(false);
+              resetCurrentAssetModal();
+            }}
+            disabled={currentAssetSaving}
+          >
+            Cancel
+          </button>
+          <button
+            className="px-4 py-2 rounded border border-black bg-black text-white"
+            onClick={() => void saveCurrentAsset()}
+            disabled={currentAssetSaving}
+          >
+            {currentAssetSaving ? 'Saving...' : 'Create'}
+          </button>
+        </div>
+      </Modal>
 
       <Modal
         isOpen={fixedAssetModalOpen}

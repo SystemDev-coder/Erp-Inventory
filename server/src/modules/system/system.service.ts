@@ -208,6 +208,170 @@ const ensureUniqueRoleCode = async (
 };
 
 export const systemService = {
+  async migrateOpeningBalances(branchId?: number): Promise<{
+    updated: { customers: number; suppliers: number; customerLedger: number; supplierLedger: number };
+  }> {
+    const updated = { customers: 0, suppliers: 0, customerLedger: 0, supplierLedger: 0 };
+
+    // Ensure columns exist so the app can always use `remaining_balance` as the live outstanding.
+    await adminQueryMany(`
+      ALTER TABLE ims.customers
+        ADD COLUMN IF NOT EXISTS remaining_balance NUMERIC(14,2) NOT NULL DEFAULT 0
+    `);
+    await adminQueryMany(`
+      ALTER TABLE ims.suppliers
+        ADD COLUMN IF NOT EXISTS remaining_balance NUMERIC(14,2) NOT NULL DEFAULT 0
+    `);
+
+    await withTransaction(async (client) => {
+      const customerColsRes = await client.query<{ column_name: string }>(
+        `SELECT column_name
+           FROM information_schema.columns
+          WHERE table_schema = 'ims'
+            AND table_name = 'customers'`
+      );
+      const customerCols = new Set(customerColsRes.rows.map((r) => r.column_name));
+      const supplierColsRes = await client.query<{ column_name: string }>(
+        `SELECT column_name
+           FROM information_schema.columns
+          WHERE table_schema = 'ims'
+            AND table_name = 'suppliers'`
+      );
+      const supplierCols = new Set(supplierColsRes.rows.map((r) => r.column_name));
+
+      const customerLedgerExists = Boolean(
+        (
+          await client.query<{ exists: boolean }>(
+            `SELECT EXISTS (
+               SELECT 1
+                 FROM information_schema.tables
+                WHERE table_schema = 'ims'
+                  AND table_name = 'customer_ledger'
+             ) AS exists`
+          )
+        ).rows[0]?.exists
+      );
+      const supplierLedgerExists = Boolean(
+        (
+          await client.query<{ exists: boolean }>(
+            `SELECT EXISTS (
+               SELECT 1
+                 FROM information_schema.tables
+                WHERE table_schema = 'ims'
+                  AND table_name = 'supplier_ledger'
+             ) AS exists`
+          )
+        ).rows[0]?.exists
+      );
+
+      const branches = await client.query<{ branch_id: number }>(
+        branchId
+          ? `SELECT branch_id FROM ims.branches WHERE branch_id = $1`
+          : `SELECT branch_id FROM ims.branches WHERE is_active = TRUE`,
+        branchId ? [branchId] : []
+      );
+
+      for (const b of branches.rows) {
+        const bid = Number(b.branch_id);
+
+        if (customerCols.has('open_balance') && customerCols.has('remaining_balance')) {
+          if (customerLedgerExists) {
+            const ins = await client.query(
+              `INSERT INTO ims.customer_ledger
+                 (branch_id, customer_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
+               SELECT
+                 c.branch_id,
+                 c.customer_id,
+                 'adjustment',
+                 'customers',
+                 c.customer_id,
+                 NULL,
+                 ABS(COALESCE(c.open_balance, 0))::numeric(14,2),
+                 0,
+                 '[OPENING BALANCE] Migrated from open_balance'
+               FROM ims.customers c
+               WHERE c.branch_id = $1
+                 AND COALESCE(c.open_balance, 0) <> 0
+                 AND NOT EXISTS (
+                   SELECT 1
+                     FROM ims.customer_ledger cl
+                    WHERE cl.branch_id = c.branch_id
+                      AND cl.customer_id = c.customer_id
+                      AND cl.ref_table = 'customers'
+                      AND cl.ref_id = c.customer_id
+                      AND cl.entry_type = 'adjustment'
+                      AND cl.note ILIKE '[OPENING BALANCE]%'
+                 )`,
+              [bid]
+            );
+            updated.customerLedger += ins.rowCount ?? 0;
+          }
+
+          const up = await client.query(
+            `UPDATE ims.customers
+                SET remaining_balance = COALESCE(remaining_balance, 0)
+                                      + ABS(COALESCE(open_balance, 0))::numeric(14,2),
+                    open_balance = 0
+              WHERE branch_id = $1
+                AND COALESCE(open_balance, 0) <> 0`,
+            [bid]
+          );
+          updated.customers += up.rowCount ?? 0;
+        }
+
+        if (supplierCols.has('open_balance') && supplierCols.has('remaining_balance')) {
+          if (supplierLedgerExists) {
+            const ins = await client.query(
+              `INSERT INTO ims.supplier_ledger
+                 (branch_id, supplier_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
+               SELECT
+                 s.branch_id,
+                 s.supplier_id,
+                 'adjustment',
+                 'suppliers',
+                 s.supplier_id,
+                 NULL,
+                 0,
+                 ABS(COALESCE(s.open_balance, 0))::numeric(14,2),
+                 '[OPENING BALANCE] Migrated from open_balance'
+               FROM ims.suppliers s
+               WHERE s.branch_id = $1
+                 AND COALESCE(s.open_balance, 0) <> 0
+                 AND NOT EXISTS (
+                   SELECT 1
+                     FROM ims.supplier_ledger sl
+                    WHERE sl.branch_id = s.branch_id
+                      AND sl.supplier_id = s.supplier_id
+                      AND sl.ref_table = 'suppliers'
+                      AND sl.ref_id = s.supplier_id
+                      AND sl.entry_type = 'adjustment'
+                      AND sl.note ILIKE '[OPENING BALANCE]%'
+                 )`,
+              [bid]
+            );
+            updated.supplierLedger += ins.rowCount ?? 0;
+          }
+
+          const up = await client.query(
+            `UPDATE ims.suppliers
+                SET remaining_balance = COALESCE(remaining_balance, 0)
+                                      + ABS(COALESCE(open_balance, 0))::numeric(14,2),
+                    open_balance = 0
+              WHERE branch_id = $1
+                AND COALESCE(open_balance, 0) <> 0`,
+            [bid]
+          );
+          updated.suppliers += up.rowCount ?? 0;
+        }
+
+        // Keep AR/AP system accounts consistent (computed from ledgers).
+        await syncSystemAccountBalancesWithClient(client, bid);
+      }
+    });
+
+    return { updated };
+  },
+
   async getSystemInfo(): Promise<SystemInfo | null> {
     const table = await detectSystemInfoTable();
     if (!table) return null;

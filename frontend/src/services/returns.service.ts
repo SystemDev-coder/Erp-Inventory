@@ -73,6 +73,7 @@ export interface ReturnItemOption {
     sell_price: number;
     sold_qty?: number;
     returned_qty?: number;
+    on_hand_qty?: number;
     available_qty?: number;
 }
 

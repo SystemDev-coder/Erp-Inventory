@@ -190,6 +190,7 @@ export const accountsService = {
       throw ApiError.conflict('Account with this name already exists.');
     }
 
+    const accountType = (input as AccountInput & { accountType?: string }).accountType || 'asset';
     const row = await queryOne<{
       acc_id: number;
       branch_id: number;
@@ -200,16 +201,44 @@ export const accountsService = {
       account_type: string;
       created_at?: string;
     }>(
-      `INSERT INTO ims.accounts (branch_id, name, institution, balance, is_active, account_type)
-       VALUES ($1, $2, $3, $4, $5, COALESCE($6, 'asset'))
-       RETURNING acc_id, branch_id, name, institution, balance::text, is_active, account_type, created_at::text`,
+      `WITH inserted AS (
+         INSERT INTO ims.accounts (branch_id, name, institution, balance, is_active, account_type)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING acc_id, branch_id, name, institution, balance, is_active, account_type, created_at
+       ),
+       opening AS (
+         INSERT INTO ims.account_transactions
+           (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, note)
+         SELECT
+           i.branch_id,
+           i.acc_id,
+           'opening',
+           'accounts',
+           i.acc_id,
+           CASE WHEN COALESCE(i.balance, 0) < 0 THEN ABS(i.balance) ELSE 0 END,
+           CASE WHEN COALESCE(i.balance, 0) > 0 THEN i.balance ELSE 0 END,
+           '[OPENING BALANCE] From account creation'
+         FROM inserted i
+         WHERE COALESCE(i.balance, 0) <> 0
+         RETURNING 1
+       )
+       SELECT
+         acc_id,
+         branch_id,
+         name,
+         institution,
+         balance::text,
+         is_active,
+         account_type,
+         created_at::text AS created_at
+       FROM inserted`,
       [
         ctx.branchId,
         input.name,
         input.institution || null,
         input.balance ?? 0,
         input.isActive ?? true,
-        (input as AccountInput & { accountType?: string }).accountType || 'asset',
+        accountType,
       ]
     ).catch((error: any) => {
       if (String(error?.code || '') === '23505') {
@@ -270,6 +299,7 @@ export const accountsService = {
       values.push(input.institution || null);
     }
     if (input.balance !== undefined) {
+      // When updating balance we also write an adjustment txn so ledgers/reports stay consistent.
       updates.push(`balance = $${parameter++}`);
       values.push(input.balance);
     }
@@ -321,6 +351,7 @@ export const accountsService = {
       whereSql += ` AND branch_id = ANY($${parameter++})`;
     }
 
+    const hasBalanceUpdate = input.balance !== undefined;
     const row = await queryOne<{
       acc_id: number;
       branch_id: number;
@@ -331,10 +362,79 @@ export const accountsService = {
       account_type: string;
       created_at?: string;
     }>(
-      `UPDATE ims.accounts
-          SET ${updates.join(', ')}
-        WHERE ${whereSql}
-        RETURNING acc_id, branch_id, name, institution, balance::text, is_active, account_type, created_at::text`,
+      hasBalanceUpdate
+        ? `WITH target AS (
+             SELECT
+               acc_id,
+               branch_id,
+               balance::numeric AS old_balance,
+               (
+                 SELECT COUNT(*)::int
+                   FROM ims.account_transactions at
+                 WHERE at.branch_id = a.branch_id
+                   AND at.acc_id = a.acc_id
+               ) AS txn_count
+             FROM ims.accounts a
+             WHERE ${whereSql}
+             FOR UPDATE
+           ),
+           updated AS (
+             UPDATE ims.accounts a
+                SET ${updates.join(', ')}
+               FROM target t
+              WHERE a.acc_id = t.acc_id
+                AND a.branch_id = t.branch_id
+              RETURNING
+                a.acc_id,
+                a.branch_id,
+                a.name,
+                a.institution,
+                a.balance::text AS balance,
+                a.is_active,
+                a.account_type,
+                a.created_at::text AS created_at,
+                t.old_balance::numeric AS old_balance,
+                t.txn_count::int AS txn_count
+           ),
+           adjustment AS (
+             INSERT INTO ims.account_transactions
+               (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, note)
+             SELECT
+               u.branch_id,
+               u.acc_id,
+               CASE WHEN u.txn_count = 0 THEN 'opening' ELSE 'other' END,
+               'accounts',
+               u.acc_id,
+               CASE
+                 WHEN (u.balance::numeric - u.old_balance) < 0 THEN ABS(u.balance::numeric - u.old_balance)
+                 ELSE 0
+               END,
+               CASE
+                 WHEN (u.balance::numeric - u.old_balance) > 0 THEN (u.balance::numeric - u.old_balance)
+                 ELSE 0
+               END,
+               CASE
+                 WHEN u.txn_count = 0 THEN '[OPENING BALANCE] From account update'
+                 ELSE '[BALANCE ADJUST] From account update'
+               END
+             FROM updated u
+             WHERE ABS(u.balance::numeric - u.old_balance) > 0.000001
+             RETURNING 1
+           )
+           SELECT
+             acc_id,
+             branch_id,
+             name,
+             institution,
+             balance,
+             is_active,
+             account_type,
+             created_at
+           FROM updated`
+        : `UPDATE ims.accounts
+              SET ${updates.join(', ')}
+            WHERE ${whereSql}
+            RETURNING acc_id, branch_id, name, institution, balance::text, is_active, account_type, created_at::text`,
       values
     ).catch((error: any) => {
       if (String(error?.code || '') === '23505') {

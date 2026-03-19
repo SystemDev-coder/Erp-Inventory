@@ -29,6 +29,7 @@ import {
   deleteBanner,
   auditBalances,
   reconcileBalances,
+  migrateOpeningBalances,
 } from './system.controller';
 
 const router = Router();
@@ -85,5 +86,6 @@ router.delete('/logs', requireAnyPerm(['system.audit.view', 'audit_logs.delete',
 
 router.get('/audit-balances', requireAnyPerm(['system.settings', 'system.company.manage']), auditBalances);
 router.post('/reconcile-balances', requireAnyPerm(['system.settings', 'system.company.manage']), reconcileBalances);
+router.post('/migrate-opening-balances', requireAnyPerm(['system.settings', 'system.company.manage']), migrateOpeningBalances);
 
 export default router;

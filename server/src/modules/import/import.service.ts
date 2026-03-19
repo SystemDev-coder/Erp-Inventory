@@ -75,6 +75,8 @@ type ItemImportRow = {
 };
 
 type CustomerShape = {
+  hasOpenBalance: boolean;
+  hasRemainingBalance: boolean;
   balanceColumn: 'open_balance' | 'remaining_balance';
   hasGenderColumn: boolean;
   hasTypeColumn: boolean;
@@ -82,6 +84,8 @@ type CustomerShape = {
 
 type SupplierShape = {
   nameColumn: 'name' | 'supplier_name';
+  hasOpenBalance: boolean;
+  hasRemainingBalance: boolean;
   balanceColumn: 'open_balance' | 'remaining_balance';
   locationColumn: 'country' | 'location' | 'company_name';
 };
@@ -193,8 +197,13 @@ const detectCustomerShape = async (): Promise<CustomerShape> => {
         AND table_name = 'customers'`
   );
   const names = new Set(columns.map((row) => row.column_name));
+  const hasOpenBalance = names.has('open_balance');
+  const hasRemainingBalance = names.has('remaining_balance');
   customerShapeCache = {
-    balanceColumn: names.has('open_balance') ? 'open_balance' : 'remaining_balance',
+    hasOpenBalance,
+    hasRemainingBalance,
+    // Prefer `remaining_balance` as the live outstanding; keep `open_balance` as opening balance.
+    balanceColumn: hasRemainingBalance ? 'remaining_balance' : 'open_balance',
     hasGenderColumn: names.has('gender'),
     hasTypeColumn: names.has('customer_type'),
   };
@@ -210,9 +219,14 @@ const detectSupplierShape = async (): Promise<SupplierShape> => {
         AND table_name = 'suppliers'`
   );
   const names = new Set(columns.map((row) => row.column_name));
+  const hasOpenBalance = names.has('open_balance');
+  const hasRemainingBalance = names.has('remaining_balance');
   supplierShapeCache = {
     nameColumn: names.has('name') ? 'name' : 'supplier_name',
-    balanceColumn: names.has('open_balance') ? 'open_balance' : 'remaining_balance',
+    hasOpenBalance,
+    hasRemainingBalance,
+    // Prefer `remaining_balance` as the live outstanding; keep `open_balance` as opening balance.
+    balanceColumn: hasRemainingBalance ? 'remaining_balance' : 'open_balance',
     locationColumn: names.has('country')
       ? 'country'
       : names.has('location')
@@ -692,10 +706,24 @@ const insertCustomer = async (
     values.push(row.customer_type);
   }
 
-  columns.push('address', shape.balanceColumn, 'is_active');
-  placeholders.push(`$${values.length + 1}`, `$${values.length + 2}`, `$${values.length + 3}`);
+  columns.push('address');
+  placeholders.push(`$${values.length + 1}`);
+  values.push(row.address);
+
+  if (shape.hasRemainingBalance) {
+    columns.push('remaining_balance');
+    placeholders.push(`$${values.length + 1}`);
+    values.push(row.remaining_balance);
+  } else {
+    columns.push(shape.balanceColumn);
+    placeholders.push(`$${values.length + 1}`);
+    values.push(row.remaining_balance);
+  }
+
+  columns.push('is_active');
+  placeholders.push(`$${values.length + 1}`);
   // Customer imports always default to active status.
-  values.push(row.address, row.remaining_balance, true);
+  values.push(true);
 
   await client.query(
     `INSERT INTO ims.customers (${columns.join(', ')})
@@ -715,23 +743,33 @@ const insertSupplier = async (
       ? row.company_name ?? row.location ?? null
       : row.location ?? row.company_name ?? null;
 
+  const columns: string[] = [
+    'branch_id',
+    shape.nameColumn,
+    shape.locationColumn,
+    'phone',
+  ];
+  const placeholders: string[] = ['$1', '$2', '$3', '$4'];
+  const values: unknown[] = [branchId, row.supplier_name, locationValue, row.phone];
+
+  if (shape.hasRemainingBalance) {
+    columns.push('remaining_balance');
+    placeholders.push(`$${values.length + 1}`);
+    values.push(row.remaining_balance);
+  } else {
+    columns.push(shape.balanceColumn);
+    placeholders.push(`$${values.length + 1}`);
+    values.push(row.remaining_balance);
+  }
+
+  columns.push('is_active');
+  placeholders.push(`$${values.length + 1}`);
+  values.push(row.is_active);
+
   await client.query(
-    `INSERT INTO ims.suppliers (
-      branch_id,
-      ${shape.nameColumn},
-      ${shape.locationColumn},
-      phone,
-      ${shape.balanceColumn},
-      is_active
-    ) VALUES ($1, $2, $3, $4, $5, $6)`,
-    [
-      branchId,
-      row.supplier_name,
-      locationValue,
-      row.phone,
-      row.remaining_balance,
-      row.is_active,
-    ]
+    `INSERT INTO ims.suppliers (${columns.join(', ')})
+     VALUES (${placeholders.join(', ')})`,
+    values
   );
 };
 
