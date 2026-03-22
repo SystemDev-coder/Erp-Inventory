@@ -5,6 +5,8 @@ import { ApiError } from '../../utils/ApiError';
 import { BranchScope } from '../../utils/branchScope';
 import { syncLowStockNotifications } from '../../utils/stockAlerts';
 import { adjustSystemAccountBalance } from '../../utils/systemAccounts';
+import { postGl } from '../../utils/glPosting';
+import { ensureCoaAccounts } from '../../utils/coaDefaults';
 import { financeClosingService } from '../finance/financeClosing.service';
 import {
   QuotationConvertInput,
@@ -512,8 +514,7 @@ const clearSaleFinancialEntries = async (
     `DELETE FROM ims.account_transactions
       WHERE branch_id = $1
         AND ref_table = 'sales'
-        AND ref_id = $2
-        AND txn_type = 'sale_payment'`,
+        AND ref_id = $2`,
     [params.branchId, params.saleId]
   );
   await client.query(
@@ -530,6 +531,126 @@ const clearSaleFinancialEntries = async (
         AND sale_id = $2`,
     [params.branchId, params.saleId]
   );
+};
+
+const roundMoney = (value: unknown) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+
+const rewriteSaleGl = async (
+  client: PoolClient,
+  params: { branchId: number; saleId: number }
+) => {
+  const saleRes = await client.query<{
+    sale_id: number;
+    branch_id: number;
+    sale_date: string;
+    status: string;
+    doc_type: string | null;
+    total: string;
+    tax_amount: string | null;
+    pay_acc_id: number | null;
+    paid_amount: string | null;
+  }>(
+    `SELECT
+        s.sale_id,
+        s.branch_id,
+        s.sale_date::text AS sale_date,
+        COALESCE(s.status::text, 'paid') AS status,
+        COALESCE(s.doc_type::text, 'sale') AS doc_type,
+        COALESCE(s.total, 0)::text AS total,
+        COALESCE(s.tax_amount, 0)::text AS tax_amount,
+        NULLIF(to_jsonb(s) ->> 'pay_acc_id', '')::bigint AS pay_acc_id,
+        NULLIF(to_jsonb(s) ->> 'paid_amount', '')::numeric(14,2)::text AS paid_amount
+      FROM ims.sales s
+     WHERE s.branch_id = $1
+       AND s.sale_id = $2
+     LIMIT 1`,
+    [params.branchId, params.saleId]
+  );
+  const sale = saleRes.rows[0];
+  if (!sale) return;
+
+  // Remove legacy single-sided rows + any prior GL rewrite for this sale.
+  await client.query(
+    `DELETE FROM ims.account_transactions
+      WHERE branch_id = $1
+        AND ref_table = 'sales'
+        AND ref_id = $2`,
+    [params.branchId, params.saleId]
+  );
+
+  const status = String(sale.status || '').toLowerCase();
+  const docType = String(sale.doc_type || 'sale').toLowerCase();
+  if (status === 'void' || docType === 'quotation') return;
+
+  const total = roundMoney(sale.total);
+  const taxAmount = roundMoney(sale.tax_amount);
+  const revenue = roundMoney(total - taxAmount);
+  const paidAmount = roundMoney(sale.paid_amount);
+  const payAccId = sale.pay_acc_id ? Number(sale.pay_acc_id) : null;
+
+  const cashDebit = paidAmount > 0 ? paidAmount : 0;
+  const arDebit = roundMoney(Math.max(total - Math.min(paidAmount, total), 0));
+  const advanceCredit = roundMoney(Math.max(paidAmount - total, 0));
+
+  const coa = await ensureCoaAccounts(client, params.branchId, [
+    'accountsReceivable',
+    'salesRevenue',
+    'salesTaxPayable',
+    'customerAdvances',
+    'inventory',
+    'cogs',
+  ]);
+
+  const invoiceLines: Array<{ accId: number; debit?: number; credit?: number; note?: string | null }> = [];
+  if (cashDebit > 0) {
+    if (!payAccId) throw ApiError.badRequest('Payment account is required to post this sale');
+    invoiceLines.push({ accId: payAccId, debit: cashDebit, credit: 0, note: 'Cash/bank received' });
+  }
+  if (arDebit > 0) {
+    invoiceLines.push({ accId: coa.accountsReceivable, debit: arDebit, credit: 0, note: 'Customer receivable' });
+  }
+  if (revenue > 0) {
+    invoiceLines.push({ accId: coa.salesRevenue, debit: 0, credit: revenue, note: 'Sales revenue' });
+  }
+  if (taxAmount > 0) {
+    invoiceLines.push({ accId: coa.salesTaxPayable, debit: 0, credit: taxAmount, note: 'Sales tax payable' });
+  }
+  if (advanceCredit > 0) {
+    invoiceLines.push({ accId: coa.customerAdvances, debit: 0, credit: advanceCredit, note: 'Customer advance' });
+  }
+
+  await postGl(client, {
+    branchId: params.branchId,
+    txnDate: sale.sale_date || null,
+    refTable: 'sales',
+    refId: params.saleId,
+    note: `Sale #${params.saleId}`,
+    lines: invoiceLines,
+  });
+
+  const costRes = await client.query<{ amount: string }>(
+    `SELECT COALESCE(SUM(COALESCE(qty_out, 0) * COALESCE(unit_cost, 0)), 0)::text AS amount
+       FROM ims.inventory_movements
+      WHERE branch_id = $1
+        AND move_type = 'sale'
+        AND ref_table = 'sales'
+        AND ref_id = $2`,
+    [params.branchId, params.saleId]
+  );
+  const costTotal = roundMoney(costRes.rows[0]?.amount || 0);
+  if (costTotal > 0) {
+    await postGl(client, {
+      branchId: params.branchId,
+      txnDate: sale.sale_date || null,
+      refTable: 'sales',
+      refId: params.saleId,
+      note: `Sale #${params.saleId} (COGS)`,
+      lines: [
+        { accId: coa.cogs, debit: costTotal, credit: 0, note: 'Cost of goods sold' },
+        { accId: coa.inventory, debit: 0, credit: costTotal, note: 'Inventory issued' },
+      ],
+    });
+  }
 };
 
 const insertSaleFinancialEntries = async (
@@ -557,10 +678,10 @@ const insertSaleFinancialEntries = async (
   }
 
   if (params.payAccId && params.paidAmount > 0) {
-    await client.query(
-      `INSERT INTO ims.sale_payments
-         (branch_id, sale_id, user_id, acc_id, pay_date, amount_paid, reference_no, note)
-       VALUES ($1, $2, $3, $4, COALESCE($5::timestamptz, NOW()), $6, NULL, $7)`,
+     await client.query(
+       `INSERT INTO ims.sale_payments
+          (branch_id, sale_id, user_id, acc_id, pay_date, amount_paid, reference_no, note)
+        VALUES ($1, $2, $3, $4, COALESCE($5::timestamptz, NOW()), $6, NULL, $7)`,
       [
         params.branchId,
         params.saleId,
@@ -570,18 +691,11 @@ const insertSaleFinancialEntries = async (
         params.paidAmount,
         note,
       ]
-    );
+      );
 
-    await client.query(
-      `INSERT INTO ims.account_transactions
-         (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, note)
-       VALUES ($1, $2, 'sale_payment', 'sales', $3, 0, $4, $5)`,
-      [params.branchId, params.payAccId, params.saleId, params.paidAmount, note]
-    );
-
-    if (params.customerId) {
-      await client.query(
-        `INSERT INTO ims.customer_ledger
+      if (params.customerId) {
+        await client.query(
+          `INSERT INTO ims.customer_ledger
            (branch_id, customer_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
          VALUES ($1, $2, 'payment', 'sales', $3, $4, 0, $5, $6)`,
         [
@@ -861,6 +975,7 @@ export const salesService = {
             mode: 'add',
           });
         }
+        await rewriteSaleGl(client, { branchId: context.branchId, saleId: sale.sale_id });
       }
 
       await syncLowStockNotifications(client, {
@@ -1125,6 +1240,8 @@ export const salesService = {
           RETURNING *`,
         values
       );
+
+      await rewriteSaleGl(client, { branchId: current.branch_id, saleId: current.sale_id });
 
       await syncLowStockNotifications(client, {
         branchId: current.branch_id,

@@ -1,7 +1,12 @@
 import { queryMany, queryOne } from '../../db/query';
+import { pool } from '../../db/pool';
+import { withTransaction } from '../../db/withTx';
+import { queryMany, queryOne } from '../../db/query';
 import { ApiError } from '../../utils/ApiError';
 import { BranchScope, pickBranchForWrite, assertBranchAccess } from '../../utils/branchScope';
 import { adjustSystemAccountBalance } from '../../utils/systemAccounts';
+import { postGl } from '../../utils/glPosting';
+import { ensureCoaAccounts } from '../../utils/coaDefaults';
 import {
   AccountTransferInput,
   accountTransferUpdateSchema,
@@ -17,6 +22,7 @@ import {
   PayrollPayInput,
   PayrollDeleteInput,
 } from './finance.schemas';
+import { PoolClient } from 'pg';
 
 const detectColumn = async (
   table: 'customers' | 'suppliers',
@@ -78,26 +84,28 @@ const adjustEntityBalance = async (
 
 const roundMoney = (value: number) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 
-const lockAccountBalance = async (branchId: number, accId: number) => {
-  const row = await queryOne<{ acc_id: number; balance: string }>(
-    `SELECT acc_id, balance::text AS balance
-       FROM ims.accounts
-      WHERE branch_id = $1
-        AND acc_id = $2
-      FOR UPDATE`,
-    [branchId, accId]
-  );
+const lockAccountBalance = async (client: PoolClient, branchId: number, accId: number) => {
+  const row = (
+    await client.query<{ acc_id: number; balance: string }>(
+      `SELECT acc_id, balance::text AS balance
+         FROM ims.accounts
+        WHERE branch_id = $1
+          AND acc_id = $2
+        FOR UPDATE`,
+      [branchId, accId]
+    )
+  ).rows[0];
   if (!row) throw ApiError.badRequest('Account not found in selected branch');
   return { accId: Number(row.acc_id), balance: Number(row.balance || 0) };
 };
 
-const debitAccount = async (branchId: number, accId: number, amount: number) => {
+const debitAccount = async (client: PoolClient, branchId: number, accId: number, amount: number) => {
   const amt = roundMoney(amount);
-  const current = await lockAccountBalance(branchId, accId);
+  const current = await lockAccountBalance(client, branchId, accId);
   if (current.balance + 1e-9 < amt) {
     throw ApiError.badRequest('Insufficient funds in selected account');
   }
-  await queryOne(
+  await client.query(
     `UPDATE ims.accounts
         SET balance = balance - $3
       WHERE branch_id = $1
@@ -106,16 +114,75 @@ const debitAccount = async (branchId: number, accId: number, amount: number) => 
   );
 };
 
-const creditAccount = async (branchId: number, accId: number, amount: number) => {
+const creditAccount = async (client: PoolClient, branchId: number, accId: number, amount: number) => {
   const amt = roundMoney(amount);
-  await lockAccountBalance(branchId, accId);
-  await queryOne(
+  await lockAccountBalance(client, branchId, accId);
+  await client.query(
     `UPDATE ims.accounts
         SET balance = balance + $3
       WHERE branch_id = $1
         AND acc_id = $2`,
     [branchId, accId, amt]
   );
+};
+
+const rewriteExpenseChargeGl = async (
+  client: PoolClient,
+  params: { branchId: number; chargeId: number }
+) => {
+  const charge = (
+    await client.query<{
+      charge_id: number;
+      branch_id: number;
+      charge_date: string | null;
+      amount: string;
+      note: string | null;
+      is_opening_paid: boolean;
+    }>(
+      `SELECT
+          c.charge_id,
+          c.branch_id,
+          c.charge_date::text AS charge_date,
+          COALESCE(c.amount, 0)::text AS amount,
+          c.note,
+          COALESCE(
+            NULLIF(to_jsonb(c) ->> 'is_opening_paid', '')::boolean,
+            COALESCE(c.note, '') ILIKE '${OPENING_EXPENSE_NOTE_PREFIX}%'
+          ) AS is_opening_paid
+       FROM ims.expense_charges c
+      WHERE c.branch_id = $1
+        AND c.charge_id = $2
+      LIMIT 1`,
+      [params.branchId, params.chargeId]
+    )
+  ).rows[0];
+  if (!charge) return;
+
+  await client.query(
+    `DELETE FROM ims.account_transactions
+      WHERE branch_id = $1
+        AND ref_table = 'expense_charges'
+        AND ref_id = $2`,
+    [params.branchId, params.chargeId]
+  );
+
+  if (charge.is_opening_paid) return;
+  const amount = roundMoney(Number(charge.amount || 0));
+  if (amount <= 0) return;
+
+  const coa = await ensureCoaAccounts(client, params.branchId, ['operatingExpense', 'expensePayable']);
+  await postGl(client, {
+    branchId: params.branchId,
+    txnDate: charge.charge_date || null,
+    txnType: 'other',
+    refTable: 'expense_charges',
+    refId: params.chargeId,
+    note: `Expense charge #${params.chargeId}${charge.note ? ` â€” ${charge.note}` : ''}`,
+    lines: [
+      { accId: coa.operatingExpense, debit: amount, credit: 0, note: 'Operating expense' },
+      { accId: coa.expensePayable, debit: 0, credit: amount, note: 'Expense payable' },
+    ],
+  });
 };
 
 export const financeService = {
@@ -161,26 +228,42 @@ export const financeService = {
     const ref = input.referenceNo || null;
     const note = input.note || null;
 
-    await queryOne('BEGIN');
-    try {
-      const row = await queryOne<{ acc_transfer_id: number }>(
+    return withTransaction(async (client) => {
+      const row = (await client.query<{ acc_transfer_id: number }>(
         `INSERT INTO ims.account_transfers
            (branch_id, from_acc_id, to_acc_id, amount, transfer_date, user_id, status, reference_no, note)
          VALUES ($1, $2, $3, $4, COALESCE($5, NOW()), $6, 'posted', $7, $8)
          RETURNING acc_transfer_id`,
         [branchId, input.fromAccId, input.toAccId, input.amount, transferDate, userId, ref, note]
-      );
+      )).rows[0];
       if (!row) throw ApiError.internal('Failed to create transfer');
 
-      await debitAccount(branchId, input.fromAccId, input.amount);
-      await creditAccount(branchId, input.toAccId, input.amount);
+      await debitAccount(client, branchId, input.fromAccId, input.amount);
+      await creditAccount(client, branchId, input.toAccId, input.amount);
 
-      await queryOne('COMMIT');
-      return queryOne(`SELECT * FROM ims.account_transfers WHERE acc_transfer_id = $1`, [row.acc_transfer_id]);
-    } catch (err) {
-      await queryOne('ROLLBACK');
-      throw err;
-    }
+      await client.query(
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'account_transfers'
+            AND ref_id = $2`,
+        [branchId, row.acc_transfer_id]
+      );
+      await postGl(client, {
+        branchId,
+        txnDate: transferDate,
+        txnType: 'other',
+        refTable: 'account_transfers',
+        refId: Number(row.acc_transfer_id),
+        note: `Account transfer #${row.acc_transfer_id}${note ? ` â€” ${note}` : ''}`,
+        lines: [
+          { accId: input.toAccId, debit: roundMoney(input.amount), credit: 0, note: 'Transfer in' },
+          { accId: input.fromAccId, debit: 0, credit: roundMoney(input.amount), note: 'Transfer out' },
+        ],
+      });
+
+      return (await client.query(`SELECT * FROM ims.account_transfers WHERE acc_transfer_id = $1`, [row.acc_transfer_id]))
+        .rows[0];
+    });
   },
 
   async updateTransfer(id: number, body: unknown, scope: BranchScope) {
@@ -199,11 +282,19 @@ export const financeService = {
     const newNote = input.note;
 
     // transactional rebuild: reverse old posting if posted, update row, reapply new posting if posted
-    await queryOne('BEGIN');
-    try {
-      if (existing.status === 'posted') {
-        await creditAccount(existing.branch_id, existing.from_acc_id, existing.amount);
-        await debitAccount(existing.branch_id, existing.to_acc_id, existing.amount);
+    return withTransaction(async (client) => {
+      const locked = (await client.query<{ branch_id: number; status: string; from_acc_id: number; to_acc_id: number; amount: number; transfer_date: string | null }>(
+        `SELECT branch_id, status::text AS status, from_acc_id, to_acc_id, amount, transfer_date::text AS transfer_date
+           FROM ims.account_transfers
+          WHERE acc_transfer_id = $1
+          FOR UPDATE`,
+        [id]
+      )).rows[0];
+      if (!locked) throw ApiError.notFound('Transfer not found');
+
+      if (locked.status === 'posted') {
+        await creditAccount(client, locked.branch_id, locked.from_acc_id, Number(locked.amount));
+        await debitAccount(client, locked.branch_id, locked.to_acc_id, Number(locked.amount));
       }
 
       const updates: string[] = [];
@@ -217,23 +308,38 @@ export const financeService = {
       if (newNote !== undefined) { updates.push(`note = $${p++}`); values.push(newNote); }
       values.push(id);
 
-      await queryOne(
-        `UPDATE ims.account_transfers SET ${updates.join(', ')} WHERE acc_transfer_id = $${p}`,
+      const updated = (await client.query(
+        `UPDATE ims.account_transfers SET ${updates.join(', ')} WHERE acc_transfer_id = $${p} RETURNING *`,
         values
-      );
+      )).rows[0];
 
-      if (existing.status === 'posted') {
-        await debitAccount(existing.branch_id, newFrom, newAmount);
-        await creditAccount(existing.branch_id, newTo, newAmount);
+      if (locked.status === 'posted') {
+        await debitAccount(client, locked.branch_id, newFrom, newAmount);
+        await creditAccount(client, locked.branch_id, newTo, newAmount);
+
+        await client.query(
+          `DELETE FROM ims.account_transactions
+            WHERE branch_id = $1
+              AND ref_table = 'account_transfers'
+              AND ref_id = $2`,
+          [locked.branch_id, id]
+        );
+        await postGl(client, {
+          branchId: locked.branch_id,
+          txnDate: (newDate ?? locked.transfer_date) || null,
+          txnType: 'other',
+          refTable: 'account_transfers',
+          refId: id,
+          note: `Account transfer #${id}${newNote ? ` â€” ${newNote}` : ''}`,
+          lines: [
+            { accId: newTo, debit: roundMoney(newAmount), credit: 0, note: 'Transfer in' },
+            { accId: newFrom, debit: 0, credit: roundMoney(newAmount), note: 'Transfer out' },
+          ],
+        });
       }
 
-      await queryOne('COMMIT');
-    } catch (err) {
-      await queryOne('ROLLBACK');
-      throw err;
-    }
-
-    return queryOne(`SELECT * FROM ims.account_transfers WHERE acc_transfer_id = $1`, [id]);
+      return updated;
+    });
   },
 
   /* Receipts */
@@ -273,29 +379,40 @@ export const financeService = {
       throw ApiError.badRequest('Customer is required for customer receipt');
     }
 
-    await queryOne('BEGIN');
+    const client = await pool.connect();
     try {
-      const customerExists = await queryOne<{ customer_id: number }>(
-        `SELECT customer_id
+      await client.query('BEGIN');
+
+      const customerBalanceColumn = await detectColumn('customers', 'remaining_balance', ['remaining_balance', 'open_balance']);
+      const customerRow = await client.query<{ customer_id: number; balance: string }>(
+        `SELECT customer_id, COALESCE(${customerBalanceColumn}, 0)::text AS balance
            FROM ims.customers
           WHERE customer_id = $1
-            AND branch_id = $2`,
+            AND branch_id = $2
+          FOR UPDATE`,
         [input.customerId, branchId]
       );
-      if (!customerExists) {
+      if (!customerRow.rows[0]) {
         throw ApiError.badRequest('Customer not found in selected branch');
       }
 
-      const accountExists = await queryOne<{ acc_id: number }>(
+      const accountExists = await client.query<{ acc_id: number }>(
         `SELECT acc_id
            FROM ims.accounts
           WHERE acc_id = $1
-            AND branch_id = $2`,
+            AND branch_id = $2
+          LIMIT 1`,
         [input.accId, branchId]
       );
-      if (!accountExists) {
+      if (!accountExists.rows[0]) {
         throw ApiError.badRequest('Account not found in selected branch');
       }
+
+      const outstandingBefore = Math.max(Number(customerRow.rows[0].balance || 0), 0);
+      const amount = roundMoney(Number(input.amount || 0));
+      if (amount <= 0) throw ApiError.badRequest('Amount must be greater than zero');
+      const applyToAr = roundMoney(Math.min(amount, outstandingBefore));
+      const advance = roundMoney(amount - applyToAr);
 
       const hasSaleIdColumn = await hasColumn('customer_receipts', 'sale_id');
       const insertColumns = ['branch_id', 'customer_id', 'acc_id', 'receipt_date', 'amount', 'payment_method', 'reference_no', 'note'];
@@ -304,7 +421,7 @@ export const financeService = {
         input.customerId,
         input.accId,
         input.receiptDate || null,
-        input.amount,
+        amount,
         input.paymentMethod || null,
         input.referenceNo || null,
         input.note || null,
@@ -319,54 +436,79 @@ export const financeService = {
         insertColumns[idx] === 'receipt_date' ? `COALESCE($${idx + 1}::timestamptz, NOW())` : `$${idx + 1}`
       );
 
-      const receipt = await queryOne<any>(
+      const receiptRes = await client.query<any>(
         `INSERT INTO ims.customer_receipts (${insertColumns.join(', ')})
          VALUES (${placeholders.join(', ')})
-         RETURNING *`,
+         RETURNING receipt_id, receipt_date::text AS receipt_date`,
         insertValues as any[]
       );
-      if (!receipt) throw ApiError.internal('Failed to create customer receipt');
+      const receipt = receiptRes.rows[0];
+      if (!receipt?.receipt_id) throw ApiError.internal('Failed to create customer receipt');
 
-      await adjustEntityBalance('customers', Number(input.customerId), branchId, -input.amount);
+      await client.query(
+        `UPDATE ims.customers
+            SET ${customerBalanceColumn} = ${customerBalanceColumn} - $3
+          WHERE customer_id = $1
+            AND branch_id = $2`,
+        [input.customerId, branchId, amount]
+      );
+      await adjustSystemAccountBalance(client, { branchId, kind: 'receivable', delta: -amount });
 
       const hasTotalPaid = await hasColumn('customers', 'total_paid');
       if (hasTotalPaid) {
-        await queryOne(
+        await client.query(
           `UPDATE ims.customers
               SET total_paid = COALESCE(total_paid, 0) + $3
             WHERE customer_id = $1
               AND branch_id = $2`,
-          [input.customerId, branchId, input.amount]
+          [input.customerId, branchId, amount]
         );
       }
 
-      await queryOne(
+      await client.query(
         `UPDATE ims.accounts
             SET balance = balance + $3
           WHERE branch_id = $1
             AND acc_id = $2`,
-        [branchId, input.accId, input.amount]
+        [branchId, input.accId, amount]
       );
 
-      await queryOne(
+      await client.query(
         `INSERT INTO ims.customer_ledger
            (branch_id, customer_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
          VALUES ($1, $2, 'payment', 'customer_receipts', $3, $4, 0, $5, $6)`,
-        [branchId, input.customerId, receipt.receipt_id, input.accId, input.amount, input.note || null]
+        [branchId, input.customerId, receipt.receipt_id, input.accId, amount, input.note || null]
       );
 
-      await queryOne(
-        `INSERT INTO ims.account_transactions
-           (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, note)
-         VALUES ($1, $2, 'sale_payment', 'customer_receipts', $3, 0, $4, $5)`,
-        [branchId, input.accId, receipt.receipt_id, input.amount, input.note || null]
+      const coa = await ensureCoaAccounts(client, branchId, ['accountsReceivable', 'customerAdvances']);
+      await client.query(
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'customer_receipts'
+            AND ref_id = $2`,
+        [branchId, receipt.receipt_id]
       );
+      await postGl(client, {
+        branchId,
+        txnDate: receipt.receipt_date || input.receiptDate || null,
+        txnType: 'sale_payment',
+        refTable: 'customer_receipts',
+        refId: Number(receipt.receipt_id),
+        note: `Customer receipt #${receipt.receipt_id}`,
+        lines: [
+          { accId: input.accId, debit: amount, credit: 0, note: 'Cash/bank received' },
+          ...(applyToAr > 0 ? [{ accId: coa.accountsReceivable, debit: 0, credit: applyToAr, note: 'Reduce receivable' }] : []),
+          ...(advance > 0 ? [{ accId: coa.customerAdvances, debit: 0, credit: advance, note: 'Customer advance' }] : []),
+        ],
+      });
 
-      await queryOne('COMMIT');
+      await client.query('COMMIT');
       return receipt;
     } catch (err) {
-      await queryOne('ROLLBACK');
+      await client.query('ROLLBACK');
       throw err;
+    } finally {
+      client.release();
     }
   },
 
@@ -402,13 +544,15 @@ export const financeService = {
 
   async createSupplierReceipt(input: SupplierReceiptInput, scope: BranchScope, _userId: number) {
     const branchId = pickBranchForWrite(scope, input.branchId);
-    await queryOne('BEGIN');
+
+    const client = await pool.connect();
     try {
+      await client.query('BEGIN');
       let resolvedSupplierId = input.supplierId || null;
       const resolvedPurchaseId = input.purchaseId || null;
 
       if (resolvedPurchaseId) {
-        const purchase = await queryOne<{
+        const purchase = await client.query<{
           branch_id: number;
           supplier_id: number | null;
           status: string | null;
@@ -419,15 +563,16 @@ export const financeService = {
             FOR UPDATE`,
           [resolvedPurchaseId]
         );
-        if (!purchase) throw ApiError.badRequest('Selected purchase was not found');
-        if (Number(purchase.branch_id) !== branchId) {
+        const row = purchase.rows[0];
+        if (!row) throw ApiError.badRequest('Selected purchase was not found');
+        if (Number(row.branch_id) !== branchId) {
           throw ApiError.badRequest('Selected purchase belongs to a different branch');
         }
-        if ((purchase.status || '').toLowerCase() === 'void') {
+        if ((row.status || '').toLowerCase() === 'void') {
           throw ApiError.badRequest('Cannot register payment for a void purchase');
         }
 
-        const purchaseSupplierId = purchase.supplier_id ? Number(purchase.supplier_id) : null;
+        const purchaseSupplierId = row.supplier_id ? Number(row.supplier_id) : null;
         if (resolvedSupplierId && purchaseSupplierId && resolvedSupplierId !== purchaseSupplierId) {
           throw ApiError.badRequest('Supplier does not match the selected purchase');
         }
@@ -440,132 +585,615 @@ export const financeService = {
         throw ApiError.badRequest('Supplier is required for supplier payment');
       }
 
-      const receipt = await queryOne<{
+      const supplierBalanceColumn = await detectColumn('suppliers', 'remaining_balance', ['remaining_balance', 'open_balance']);
+      const supplierRow = await client.query<{ supplier_id: number; balance: string }>(
+        `SELECT supplier_id, COALESCE(${supplierBalanceColumn}, 0)::text AS balance
+           FROM ims.suppliers
+          WHERE supplier_id = $1
+            AND branch_id = $2
+          FOR UPDATE`,
+        [resolvedSupplierId, branchId]
+      );
+      if (!supplierRow.rows[0]) {
+        throw ApiError.badRequest('Supplier not found in selected branch');
+      }
+
+      const accountRow = await client.query<{ acc_id: number; balance: string }>(
+        `SELECT acc_id, balance::text AS balance
+           FROM ims.accounts
+          WHERE acc_id = $1
+            AND branch_id = $2
+          FOR UPDATE`,
+        [input.accId, branchId]
+      );
+      if (!accountRow.rows[0]) throw ApiError.badRequest('Account not found in selected branch');
+
+      const amount = roundMoney(Number(input.amount || 0));
+      if (amount <= 0) throw ApiError.badRequest('Amount must be greater than zero');
+
+      const cashBalance = Number(accountRow.rows[0].balance || 0);
+      if (cashBalance + 1e-9 < amount) throw ApiError.badRequest('Insufficient funds in selected account');
+
+      const payableBefore = Math.max(Number(supplierRow.rows[0].balance || 0), 0);
+      const applyToAp = roundMoney(Math.min(amount, payableBefore));
+      const advance = roundMoney(amount - applyToAp);
+
+      const receiptRes = await client.query<{
         receipt_id: number;
-        branch_id: number;
-        acc_id: number;
-        amount: number;
+        receipt_date: string;
       }>(
         `INSERT INTO ims.supplier_receipts
            (branch_id, supplier_id, purchase_id, acc_id, receipt_date, amount, payment_method, reference_no, note)
-         VALUES ($1, $2, $3, $4, COALESCE($5, NOW()), $6, $7, $8, $9)
-         RETURNING *`,
+         VALUES ($1, $2, $3, $4, COALESCE($5::timestamptz, NOW()), $6, $7, $8, $9)
+         RETURNING receipt_id, receipt_date::text AS receipt_date`,
         [
           branchId,
           resolvedSupplierId,
           resolvedPurchaseId,
           input.accId,
           input.receiptDate || null,
-          input.amount,
+          amount,
           input.paymentMethod || null,
           input.referenceNo || null,
           input.note || null,
         ]
       );
-      if (!receipt) throw ApiError.internal('Failed to create supplier receipt');
+      const receipt = receiptRes.rows[0];
+      if (!receipt?.receipt_id) throw ApiError.internal('Failed to create supplier receipt');
 
-      // Decrease paying account balance
-      await debitAccount(branchId, input.accId, input.amount);
+      await client.query(
+        `UPDATE ims.accounts
+            SET balance = balance - $3
+          WHERE branch_id = $1
+            AND acc_id = $2`,
+        [branchId, input.accId, amount]
+      );
 
-      // Reduce supplier balance (payable)
-      await adjustEntityBalance('suppliers', resolvedSupplierId, branchId, -input.amount);
+      await client.query(
+        `UPDATE ims.suppliers
+            SET ${supplierBalanceColumn} = ${supplierBalanceColumn} - $3
+          WHERE supplier_id = $1
+            AND branch_id = $2`,
+        [resolvedSupplierId, branchId, amount]
+      );
+      await adjustSystemAccountBalance(client, { branchId, kind: 'payable', delta: -amount });
 
-      // Supplier ledger entry
-      await queryOne(
+      await client.query(
         `INSERT INTO ims.supplier_ledger
            (branch_id, supplier_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
          VALUES ($1, $2, 'payment', 'supplier_receipts', $3, $4, $5, 0, $6)`,
-        [branchId, resolvedSupplierId, receipt.receipt_id, input.accId, input.amount, input.note || null]
+        [branchId, resolvedSupplierId, receipt.receipt_id, input.accId, amount, input.note || null]
       );
 
-      // Account transaction (cash out)
-      await queryOne(
-        `INSERT INTO ims.account_transactions
-           (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, note)
-         VALUES ($1, $2, 'supplier_payment', 'supplier_receipts', $3, $4, 0, $5)`,
-        [branchId, input.accId, receipt.receipt_id, input.amount, input.note || null]
+      const coa = await ensureCoaAccounts(client, branchId, ['accountsPayable', 'supplierAdvances']);
+      await client.query(
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'supplier_receipts'
+            AND ref_id = $2`,
+        [branchId, receipt.receipt_id]
       );
+      await postGl(client, {
+        branchId,
+        txnDate: receipt.receipt_date || input.receiptDate || null,
+        txnType: 'supplier_payment',
+        refTable: 'supplier_receipts',
+        refId: Number(receipt.receipt_id),
+        note: `Supplier payment #${receipt.receipt_id}`,
+        lines: [
+          ...(applyToAp > 0 ? [{ accId: coa.accountsPayable, debit: applyToAp, credit: 0, note: 'Reduce payable' }] : []),
+          ...(advance > 0 ? [{ accId: coa.supplierAdvances, debit: advance, credit: 0, note: 'Supplier advance' }] : []),
+          { accId: input.accId, debit: 0, credit: amount, note: 'Cash/bank paid' },
+        ],
+      });
 
-      await queryOne('COMMIT');
-      return receipt;
+      await client.query('COMMIT');
+      return { receipt_id: receipt.receipt_id, branch_id: branchId, acc_id: input.accId, amount };
     } catch (err) {
-      await queryOne('ROLLBACK');
+      await client.query('ROLLBACK');
       throw err;
+    } finally {
+      client.release();
     }
   },
 
   async updateCustomerReceipt(id: number, input: Partial<CustomerReceiptInput>, scope: BranchScope) {
-    const existing = await queryOne<{ branch_id: number }>(
-      `SELECT branch_id FROM ims.customer_receipts WHERE receipt_id = $1`,
-      [id]
-    );
-    if (!existing) throw ApiError.notFound('Customer receipt not found');
-    assertBranchAccess(scope, existing.branch_id);
+    return withTransaction(async (client) => {
+      const receipt = (
+        await client.query<{
+          receipt_id: number;
+          branch_id: number;
+          customer_id: number | null;
+          acc_id: number;
+          amount: string;
+          receipt_date: string | null;
+          note: string | null;
+          sale_id: number | null;
+        }>(
+          `SELECT
+             r.receipt_id,
+             r.branch_id,
+             r.customer_id,
+             r.acc_id,
+             r.amount::text AS amount,
+             r.receipt_date::text AS receipt_date,
+             r.note,
+             NULLIF(to_jsonb(r) ->> 'sale_id', '')::bigint AS sale_id
+           FROM ims.customer_receipts r
+          WHERE r.receipt_id = $1
+          FOR UPDATE`,
+          [id]
+        )
+      ).rows[0];
+      if (!receipt) throw ApiError.notFound('Customer receipt not found');
+      assertBranchAccess(scope, receipt.branch_id);
 
-    const updates: string[] = [];
-    const values: any[] = [];
-    let p = 1;
-    if (input.customerId !== undefined) { updates.push(`customer_id = $${p++}`); values.push(input.customerId || null); }
-    if (input.saleId !== undefined) { updates.push(`sale_id = $${p++}`); values.push(input.saleId || null); }
-    if (input.accId !== undefined) { updates.push(`acc_id = $${p++}`); values.push(input.accId); }
-    if (input.amount !== undefined) { updates.push(`amount = $${p++}`); values.push(input.amount); }
-    if (input.paymentMethod !== undefined) { updates.push(`payment_method = $${p++}`); values.push(input.paymentMethod || null); }
-    if (input.referenceNo !== undefined) { updates.push(`reference_no = $${p++}`); values.push(input.referenceNo || null); }
-    if (input.note !== undefined) { updates.push(`note = $${p++}`); values.push(input.note || null); }
-    if (input.receiptDate !== undefined) { updates.push(`receipt_date = $${p++}`); values.push(input.receiptDate || null); }
-    if (updates.length === 0) return queryOne(`SELECT * FROM ims.customer_receipts WHERE receipt_id = $1`, [id]);
-    values.push(id);
-    return queryOne(
-      `UPDATE ims.customer_receipts SET ${updates.join(', ')} WHERE receipt_id = $${p} RETURNING *`,
-      values
-    );
+      const customerBalanceColumn = await detectColumn('customers', 'remaining_balance', ['remaining_balance', 'open_balance']);
+      const oldCustomerId = receipt.customer_id ? Number(receipt.customer_id) : null;
+      if (!oldCustomerId) throw ApiError.badRequest('Receipt has no customer');
+
+      const oldAmount = roundMoney(Number(receipt.amount || 0));
+      const oldAccId = Number(receipt.acc_id);
+
+      const nextCustomerId = input.customerId !== undefined ? (input.customerId || null) : oldCustomerId;
+      if (!nextCustomerId) throw ApiError.badRequest('Customer is required for customer receipt');
+      const nextAccId = input.accId !== undefined ? Number(input.accId) : oldAccId;
+      const nextAmount = input.amount !== undefined ? roundMoney(Number(input.amount || 0)) : oldAmount;
+      if (nextAmount <= 0) throw ApiError.badRequest('Amount must be greater than zero');
+
+      const hasSaleIdColumn = await hasColumn('customer_receipts', 'sale_id');
+      const nextSaleId = hasSaleIdColumn
+        ? (input.saleId !== undefined ? (input.saleId || null) : receipt.sale_id)
+        : null;
+
+      // Reverse old financial effects
+      await client.query(
+        `UPDATE ims.customers
+            SET ${customerBalanceColumn} = ${customerBalanceColumn} + $3
+          WHERE customer_id = $1
+            AND branch_id = $2`,
+        [oldCustomerId, receipt.branch_id, oldAmount]
+      );
+      await adjustSystemAccountBalance(client, { branchId: receipt.branch_id, kind: 'receivable', delta: oldAmount });
+
+      await client.query(
+        `UPDATE ims.accounts
+            SET balance = balance - $3
+          WHERE branch_id = $1
+            AND acc_id = $2`,
+        [receipt.branch_id, oldAccId, oldAmount]
+      );
+
+      await client.query(
+        `DELETE FROM ims.customer_ledger
+          WHERE branch_id = $1
+            AND ref_table = 'customer_receipts'
+            AND ref_id = $2`,
+        [receipt.branch_id, id]
+      );
+      await client.query(
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'customer_receipts'
+            AND ref_id = $2`,
+        [receipt.branch_id, id]
+      );
+
+      // Validate customer + account in branch
+      const customerRow = (
+        await client.query<{ balance: string }>(
+          `SELECT COALESCE(${customerBalanceColumn}, 0)::text AS balance
+             FROM ims.customers
+            WHERE customer_id = $1
+              AND branch_id = $2
+            FOR UPDATE`,
+          [nextCustomerId, receipt.branch_id]
+        )
+      ).rows[0];
+      if (!customerRow) throw ApiError.badRequest('Customer not found in selected branch');
+
+      const accountRow = (
+        await client.query<{ acc_id: number }>(
+          `SELECT acc_id
+             FROM ims.accounts
+            WHERE acc_id = $1
+              AND branch_id = $2
+            FOR UPDATE`,
+          [nextAccId, receipt.branch_id]
+        )
+      ).rows[0];
+      if (!accountRow) throw ApiError.badRequest('Account not found in selected branch');
+
+      // Apply new financial effects
+      await client.query(
+        `UPDATE ims.customers
+            SET ${customerBalanceColumn} = ${customerBalanceColumn} - $3
+          WHERE customer_id = $1
+            AND branch_id = $2`,
+        [nextCustomerId, receipt.branch_id, nextAmount]
+      );
+      await adjustSystemAccountBalance(client, { branchId: receipt.branch_id, kind: 'receivable', delta: -nextAmount });
+
+      await client.query(
+        `UPDATE ims.accounts
+            SET balance = balance + $3
+          WHERE branch_id = $1
+            AND acc_id = $2`,
+        [receipt.branch_id, nextAccId, nextAmount]
+      );
+
+      await client.query(
+        `INSERT INTO ims.customer_ledger
+           (branch_id, customer_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note, entry_date)
+         VALUES ($1, $2, 'payment', 'customer_receipts', $3, $4, 0, $5, $6, COALESCE($7::timestamptz, NOW()))`,
+        [
+          receipt.branch_id,
+          nextCustomerId,
+          id,
+          nextAccId,
+          nextAmount,
+          input.note !== undefined ? input.note || null : receipt.note,
+          input.receiptDate !== undefined ? input.receiptDate || null : receipt.receipt_date,
+        ]
+      );
+
+      const outstandingBefore = Math.max(Number(customerRow.balance || 0), 0);
+      const applyToAr = roundMoney(Math.min(nextAmount, outstandingBefore));
+      const advance = roundMoney(nextAmount - applyToAr);
+
+      const coa = await ensureCoaAccounts(client, receipt.branch_id, ['accountsReceivable', 'customerAdvances']);
+      await postGl(client, {
+        branchId: receipt.branch_id,
+        txnDate: input.receiptDate !== undefined ? input.receiptDate || null : receipt.receipt_date,
+        txnType: 'sale_payment',
+        refTable: 'customer_receipts',
+        refId: id,
+        note: `Customer receipt #${id}`,
+        lines: [
+          { accId: nextAccId, debit: nextAmount, credit: 0, note: 'Cash/bank received' },
+          ...(applyToAr > 0 ? [{ accId: coa.accountsReceivable, debit: 0, credit: applyToAr, note: 'Reduce receivable' }] : []),
+          ...(advance > 0 ? [{ accId: coa.customerAdvances, debit: 0, credit: advance, note: 'Customer advance' }] : []),
+        ],
+      });
+
+      const updates: string[] = [];
+      const values: any[] = [];
+      let p = 1;
+      if (input.customerId !== undefined) { updates.push(`customer_id = $${p++}`); values.push(nextCustomerId); }
+      if (hasSaleIdColumn && input.saleId !== undefined) { updates.push(`sale_id = $${p++}`); values.push(nextSaleId); }
+      if (input.accId !== undefined) { updates.push(`acc_id = $${p++}`); values.push(nextAccId); }
+      if (input.amount !== undefined) { updates.push(`amount = $${p++}`); values.push(nextAmount); }
+      if (input.paymentMethod !== undefined) { updates.push(`payment_method = $${p++}`); values.push(input.paymentMethod || null); }
+      if (input.referenceNo !== undefined) { updates.push(`reference_no = $${p++}`); values.push(input.referenceNo || null); }
+      if (input.note !== undefined) { updates.push(`note = $${p++}`); values.push(input.note || null); }
+      if (input.receiptDate !== undefined) { updates.push(`receipt_date = $${p++}`); values.push(input.receiptDate || null); }
+      if (updates.length) {
+        values.push(id);
+        await client.query(`UPDATE ims.customer_receipts SET ${updates.join(', ')} WHERE receipt_id = $${p}`, values);
+      }
+
+      return (await client.query(`SELECT * FROM ims.customer_receipts WHERE receipt_id = $1`, [id])).rows[0];
+    });
   },
 
   async deleteCustomerReceipt(id: number, scope: BranchScope) {
-    const existing = await queryOne<{ branch_id: number }>(
-      `SELECT branch_id FROM ims.customer_receipts WHERE receipt_id = $1`,
-      [id]
-    );
-    if (!existing) throw ApiError.notFound('Customer receipt not found');
-    assertBranchAccess(scope, existing.branch_id);
-    await queryOne(`DELETE FROM ims.customer_receipts WHERE receipt_id = $1`, [id]);
+    return withTransaction(async (client) => {
+      const receipt = (
+        await client.query<{
+          receipt_id: number;
+          branch_id: number;
+          customer_id: number | null;
+          acc_id: number;
+          amount: string;
+        }>(
+          `SELECT receipt_id, branch_id, customer_id, acc_id, amount::text AS amount
+             FROM ims.customer_receipts
+            WHERE receipt_id = $1
+            FOR UPDATE`,
+          [id]
+        )
+      ).rows[0];
+      if (!receipt) throw ApiError.notFound('Customer receipt not found');
+      assertBranchAccess(scope, receipt.branch_id);
+
+      const customerBalanceColumn = await detectColumn('customers', 'remaining_balance', ['remaining_balance', 'open_balance']);
+      const customerId = receipt.customer_id ? Number(receipt.customer_id) : null;
+      if (!customerId) throw ApiError.badRequest('Receipt has no customer');
+      const amount = roundMoney(Number(receipt.amount || 0));
+
+      await client.query(
+        `UPDATE ims.customers
+            SET ${customerBalanceColumn} = ${customerBalanceColumn} + $3
+          WHERE customer_id = $1
+            AND branch_id = $2`,
+        [customerId, receipt.branch_id, amount]
+      );
+      await adjustSystemAccountBalance(client, { branchId: receipt.branch_id, kind: 'receivable', delta: amount });
+
+      await client.query(
+        `UPDATE ims.accounts
+            SET balance = balance - $3
+          WHERE branch_id = $1
+            AND acc_id = $2`,
+        [receipt.branch_id, receipt.acc_id, amount]
+      );
+
+      await client.query(
+        `DELETE FROM ims.customer_ledger
+          WHERE branch_id = $1
+            AND ref_table = 'customer_receipts'
+            AND ref_id = $2`,
+        [receipt.branch_id, id]
+      );
+      await client.query(
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'customer_receipts'
+            AND ref_id = $2`,
+        [receipt.branch_id, id]
+      );
+
+      await client.query(`DELETE FROM ims.customer_receipts WHERE receipt_id = $1`, [id]);
+      return { deleted: true };
+    });
   },
 
   async updateSupplierReceipt(id: number, input: Partial<SupplierReceiptInput>, scope: BranchScope) {
-    const existing = await queryOne<{ branch_id: number }>(
-      `SELECT branch_id FROM ims.supplier_receipts WHERE receipt_id = $1`,
-      [id]
-    );
-    if (!existing) throw ApiError.notFound('Supplier receipt not found');
-    assertBranchAccess(scope, existing.branch_id);
+    return withTransaction(async (client) => {
+      const receipt = (
+        await client.query<{
+          receipt_id: number;
+          branch_id: number;
+          supplier_id: number | null;
+          purchase_id: number | null;
+          acc_id: number;
+          amount: string;
+          receipt_date: string | null;
+          note: string | null;
+        }>(
+          `SELECT receipt_id,
+                  branch_id,
+                  supplier_id,
+                  purchase_id,
+                  acc_id,
+                  amount::text AS amount,
+                  receipt_date::text AS receipt_date,
+                  note
+             FROM ims.supplier_receipts
+            WHERE receipt_id = $1
+            FOR UPDATE`,
+          [id]
+        )
+      ).rows[0];
+      if (!receipt) throw ApiError.notFound('Supplier receipt not found');
+      assertBranchAccess(scope, receipt.branch_id);
 
-    const updates: string[] = [];
-    const values: any[] = [];
-    let p = 1;
-    if (input.supplierId !== undefined) { updates.push(`supplier_id = $${p++}`); values.push(input.supplierId || null); }
-    if (input.purchaseId !== undefined) { updates.push(`purchase_id = $${p++}`); values.push(input.purchaseId || null); }
-    if (input.accId !== undefined) { updates.push(`acc_id = $${p++}`); values.push(input.accId); }
-    if (input.amount !== undefined) { updates.push(`amount = $${p++}`); values.push(input.amount); }
-    if (input.paymentMethod !== undefined) { updates.push(`payment_method = $${p++}`); values.push(input.paymentMethod || null); }
-    if (input.referenceNo !== undefined) { updates.push(`reference_no = $${p++}`); values.push(input.referenceNo || null); }
-    if (input.note !== undefined) { updates.push(`note = $${p++}`); values.push(input.note || null); }
-    if (input.receiptDate !== undefined) { updates.push(`receipt_date = $${p++}`); values.push(input.receiptDate || null); }
-    if (updates.length === 0) return queryOne(`SELECT * FROM ims.supplier_receipts WHERE receipt_id = $1`, [id]);
-    values.push(id);
-    return queryOne(
-      `UPDATE ims.supplier_receipts SET ${updates.join(', ')} WHERE receipt_id = $${p} RETURNING *`,
-      values
-    );
+      const supplierBalanceColumn = await detectColumn('suppliers', 'remaining_balance', ['remaining_balance', 'open_balance']);
+      const oldSupplierId = receipt.supplier_id ? Number(receipt.supplier_id) : null;
+      if (!oldSupplierId) throw ApiError.badRequest('Receipt has no supplier');
+      const oldAmount = roundMoney(Number(receipt.amount || 0));
+      const oldAccId = Number(receipt.acc_id);
+
+      const nextSupplierId = input.supplierId !== undefined ? (input.supplierId || null) : oldSupplierId;
+      if (!nextSupplierId) throw ApiError.badRequest('Supplier is required for supplier payment');
+      const nextAccId = input.accId !== undefined ? Number(input.accId) : oldAccId;
+      const nextAmount = input.amount !== undefined ? roundMoney(Number(input.amount || 0)) : oldAmount;
+      if (nextAmount <= 0) throw ApiError.badRequest('Amount must be greater than zero');
+      const nextPurchaseId = input.purchaseId !== undefined ? (input.purchaseId || null) : receipt.purchase_id;
+
+      if (nextPurchaseId) {
+        const purchase = (await client.query<{ branch_id: number; supplier_id: number | null; status: string | null }>(
+          `SELECT branch_id, supplier_id, status::text AS status
+             FROM ims.purchases
+            WHERE purchase_id = $1
+            FOR UPDATE`,
+          [nextPurchaseId]
+        )).rows[0];
+        if (!purchase) throw ApiError.badRequest('Selected purchase was not found');
+        if (Number(purchase.branch_id) !== receipt.branch_id) {
+          throw ApiError.badRequest('Selected purchase belongs to a different branch');
+        }
+        if ((purchase.status || '').toLowerCase() === 'void') {
+          throw ApiError.badRequest('Cannot register payment for a void purchase');
+        }
+        const purchaseSupplierId = purchase.supplier_id ? Number(purchase.supplier_id) : null;
+        if (purchaseSupplierId && nextSupplierId !== purchaseSupplierId) {
+          throw ApiError.badRequest('Supplier does not match the selected purchase');
+        }
+      }
+
+      // Reverse old effects
+      await client.query(
+        `UPDATE ims.suppliers
+            SET ${supplierBalanceColumn} = ${supplierBalanceColumn} + $3
+          WHERE supplier_id = $1
+            AND branch_id = $2`,
+        [oldSupplierId, receipt.branch_id, oldAmount]
+      );
+      await adjustSystemAccountBalance(client, { branchId: receipt.branch_id, kind: 'payable', delta: oldAmount });
+
+      await client.query(
+        `UPDATE ims.accounts
+            SET balance = balance + $3
+          WHERE branch_id = $1
+            AND acc_id = $2`,
+        [receipt.branch_id, oldAccId, oldAmount]
+      );
+
+      await client.query(
+        `DELETE FROM ims.supplier_ledger
+          WHERE branch_id = $1
+            AND ref_table = 'supplier_receipts'
+            AND ref_id = $2`,
+        [receipt.branch_id, id]
+      );
+      await client.query(
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'supplier_receipts'
+            AND ref_id = $2`,
+        [receipt.branch_id, id]
+      );
+
+      // Validate supplier + account
+      const supplierRow = (
+        await client.query<{ balance: string }>(
+          `SELECT COALESCE(${supplierBalanceColumn}, 0)::text AS balance
+             FROM ims.suppliers
+            WHERE supplier_id = $1
+              AND branch_id = $2
+            FOR UPDATE`,
+          [nextSupplierId, receipt.branch_id]
+        )
+      ).rows[0];
+      if (!supplierRow) throw ApiError.badRequest('Supplier not found in selected branch');
+
+      const accountRow = (
+        await client.query<{ acc_id: number; balance: string }>(
+          `SELECT acc_id, balance::text AS balance
+             FROM ims.accounts
+            WHERE acc_id = $1
+              AND branch_id = $2
+            FOR UPDATE`,
+          [nextAccId, receipt.branch_id]
+        )
+      ).rows[0];
+      if (!accountRow) throw ApiError.badRequest('Account not found in selected branch');
+      const cashBalance = Number(accountRow.balance || 0);
+      if (cashBalance + 1e-9 < nextAmount) throw ApiError.badRequest('Insufficient funds in selected account');
+
+      const payableBefore = Math.max(Number(supplierRow.balance || 0), 0);
+      const applyToAp = roundMoney(Math.min(nextAmount, payableBefore));
+      const advance = roundMoney(nextAmount - applyToAp);
+
+      // Apply new effects
+      await client.query(
+        `UPDATE ims.accounts
+            SET balance = balance - $3
+          WHERE branch_id = $1
+            AND acc_id = $2`,
+        [receipt.branch_id, nextAccId, nextAmount]
+      );
+
+      await client.query(
+        `UPDATE ims.suppliers
+            SET ${supplierBalanceColumn} = ${supplierBalanceColumn} - $3
+          WHERE supplier_id = $1
+            AND branch_id = $2`,
+        [nextSupplierId, receipt.branch_id, nextAmount]
+      );
+      await adjustSystemAccountBalance(client, { branchId: receipt.branch_id, kind: 'payable', delta: -nextAmount });
+
+      await client.query(
+        `INSERT INTO ims.supplier_ledger
+           (branch_id, supplier_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note, entry_date)
+         VALUES ($1, $2, 'payment', 'supplier_receipts', $3, $4, $5, 0, $6, COALESCE($7::timestamptz, NOW()))`,
+        [
+          receipt.branch_id,
+          nextSupplierId,
+          id,
+          nextAccId,
+          nextAmount,
+          input.note !== undefined ? input.note || null : receipt.note,
+          input.receiptDate !== undefined ? input.receiptDate || null : receipt.receipt_date,
+        ]
+      );
+
+      const coa = await ensureCoaAccounts(client, receipt.branch_id, ['accountsPayable', 'supplierAdvances']);
+      await postGl(client, {
+        branchId: receipt.branch_id,
+        txnDate: input.receiptDate !== undefined ? input.receiptDate || null : receipt.receipt_date,
+        txnType: 'supplier_payment',
+        refTable: 'supplier_receipts',
+        refId: id,
+        note: `Supplier payment #${id}`,
+        lines: [
+          ...(applyToAp > 0 ? [{ accId: coa.accountsPayable, debit: applyToAp, credit: 0, note: 'Reduce payable' }] : []),
+          ...(advance > 0 ? [{ accId: coa.supplierAdvances, debit: advance, credit: 0, note: 'Supplier advance' }] : []),
+          { accId: nextAccId, debit: 0, credit: nextAmount, note: 'Cash/bank paid' },
+        ],
+      });
+
+      const updates: string[] = [];
+      const values: any[] = [];
+      let p = 1;
+      if (input.supplierId !== undefined) { updates.push(`supplier_id = $${p++}`); values.push(nextSupplierId); }
+      if (input.purchaseId !== undefined) { updates.push(`purchase_id = $${p++}`); values.push(nextPurchaseId); }
+      if (input.accId !== undefined) { updates.push(`acc_id = $${p++}`); values.push(nextAccId); }
+      if (input.amount !== undefined) { updates.push(`amount = $${p++}`); values.push(nextAmount); }
+      if (input.paymentMethod !== undefined) { updates.push(`payment_method = $${p++}`); values.push(input.paymentMethod || null); }
+      if (input.referenceNo !== undefined) { updates.push(`reference_no = $${p++}`); values.push(input.referenceNo || null); }
+      if (input.note !== undefined) { updates.push(`note = $${p++}`); values.push(input.note || null); }
+      if (input.receiptDate !== undefined) { updates.push(`receipt_date = $${p++}`); values.push(input.receiptDate || null); }
+      if (updates.length) {
+        values.push(id);
+        await client.query(`UPDATE ims.supplier_receipts SET ${updates.join(', ')} WHERE receipt_id = $${p}`, values);
+      }
+
+      return (await client.query(`SELECT * FROM ims.supplier_receipts WHERE receipt_id = $1`, [id])).rows[0];
+    });
   },
 
   async deleteSupplierReceipt(id: number, scope: BranchScope) {
-    const existing = await queryOne<{ branch_id: number }>(
-      `SELECT branch_id FROM ims.supplier_receipts WHERE receipt_id = $1`,
-      [id]
-    );
-    if (!existing) throw ApiError.notFound('Supplier receipt not found');
-    assertBranchAccess(scope, existing.branch_id);
-    await queryOne(`DELETE FROM ims.supplier_receipts WHERE receipt_id = $1`, [id]);
+    return withTransaction(async (client) => {
+      const receipt = (
+        await client.query<{
+          receipt_id: number;
+          branch_id: number;
+          supplier_id: number | null;
+          acc_id: number;
+          amount: string;
+        }>(
+          `SELECT receipt_id, branch_id, supplier_id, acc_id, amount::text AS amount
+             FROM ims.supplier_receipts
+            WHERE receipt_id = $1
+            FOR UPDATE`,
+          [id]
+        )
+      ).rows[0];
+      if (!receipt) throw ApiError.notFound('Supplier receipt not found');
+      assertBranchAccess(scope, receipt.branch_id);
+
+      const supplierBalanceColumn = await detectColumn('suppliers', 'remaining_balance', ['remaining_balance', 'open_balance']);
+      const supplierId = receipt.supplier_id ? Number(receipt.supplier_id) : null;
+      if (!supplierId) throw ApiError.badRequest('Receipt has no supplier');
+      const amount = roundMoney(Number(receipt.amount || 0));
+
+      await client.query(
+        `UPDATE ims.suppliers
+            SET ${supplierBalanceColumn} = ${supplierBalanceColumn} + $3
+          WHERE supplier_id = $1
+            AND branch_id = $2`,
+        [supplierId, receipt.branch_id, amount]
+      );
+      await adjustSystemAccountBalance(client, { branchId: receipt.branch_id, kind: 'payable', delta: amount });
+
+      await client.query(
+        `UPDATE ims.accounts
+            SET balance = balance + $3
+          WHERE branch_id = $1
+            AND acc_id = $2`,
+        [receipt.branch_id, receipt.acc_id, amount]
+      );
+
+      await client.query(
+        `DELETE FROM ims.supplier_ledger
+          WHERE branch_id = $1
+            AND ref_table = 'supplier_receipts'
+            AND ref_id = $2`,
+        [receipt.branch_id, id]
+      );
+      await client.query(
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'supplier_receipts'
+            AND ref_id = $2`,
+        [receipt.branch_id, id]
+      );
+
+      await client.query(`DELETE FROM ims.supplier_receipts WHERE receipt_id = $1`, [id]);
+      return { deleted: true };
+    });
   },
 
   // Other income (ad-hoc income not tied to sales)
@@ -615,9 +1243,10 @@ export const financeService = {
 
   async createOtherIncome(input: OtherIncomeInput, scope: BranchScope, userId: number) {
     const branchId = pickBranchForWrite(scope, input.branchId);
-    await queryOne('BEGIN');
-    try {
-      const account = await queryOne<{ acc_id: number }>(
+    const amount = roundMoney(Number(input.amount || 0));
+    if (amount <= 0) throw ApiError.badRequest('Amount must be greater than zero');
+    return withTransaction(async (client) => {
+      const account = await client.query<{ acc_id: number }>(
         `SELECT acc_id
            FROM ims.accounts
           WHERE branch_id = $1
@@ -625,10 +1254,10 @@ export const financeService = {
           FOR UPDATE`,
         [branchId, input.accId]
       );
-      if (!account) throw ApiError.badRequest('Selected account was not found');
+      if (!account.rows[0]) throw ApiError.badRequest('Selected account was not found');
 
       const incomeDate = input.incomeDate ? input.incomeDate : null;
-      const row = await queryOne<any>(
+      const rowRes = await client.query<any>(
         `INSERT INTO ims.other_incomes
            (branch_id, income_name, income_date, acc_id, amount, note, created_by)
          VALUES
@@ -639,41 +1268,52 @@ export const financeService = {
           input.incomeName.trim(),
           incomeDate,
           input.accId,
-          roundMoney(input.amount),
+          amount,
           input.note || null,
           userId,
         ]
       );
+      const row = rowRes.rows[0];
       if (!row) throw ApiError.internal('Failed to create other income');
 
-      await queryOne(
+      await client.query(
         `UPDATE ims.accounts
             SET balance = balance + $3
           WHERE branch_id = $1
             AND acc_id = $2`,
-        [branchId, input.accId, roundMoney(input.amount)]
+        [branchId, input.accId, amount]
       );
 
       const note = `${input.incomeName.trim()}${input.note ? ` — ${input.note}` : ''}`;
-      await queryOne(
-        `INSERT INTO ims.account_transactions
-           (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
-         VALUES ($1, $2, 'other', 'other_incomes', $3, 0, $4, COALESCE($5::date, CURRENT_DATE)::timestamptz, $6)`,
-        [branchId, input.accId, row.other_income_id, roundMoney(input.amount), incomeDate, note]
+      await client.query(
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'other_incomes'
+            AND ref_id = $2`,
+        [branchId, row.other_income_id]
       );
 
-      await queryOne('COMMIT');
+      const coa = await ensureCoaAccounts(client, branchId, ['otherIncome']);
+      await postGl(client, {
+        branchId,
+        txnDate: incomeDate,
+        txnType: 'other',
+        refTable: 'other_incomes',
+        refId: Number(row.other_income_id),
+        note,
+        lines: [
+          { accId: input.accId, debit: amount, credit: 0, note: 'Cash/bank received' },
+          { accId: coa.otherIncome, debit: 0, credit: amount, note: 'Other income' },
+        ],
+      });
+
       return row;
-    } catch (err) {
-      await queryOne('ROLLBACK');
-      throw err;
-    }
+    });
   },
 
   async updateOtherIncome(id: number, input: Partial<OtherIncomeInput>, scope: BranchScope) {
-    await queryOne('BEGIN');
-    try {
-      const existing = await queryOne<{
+    return withTransaction(async (client) => {
+      const existing = (await client.query<{
         other_income_id: number;
         branch_id: number;
         acc_id: number;
@@ -687,7 +1327,7 @@ export const financeService = {
           WHERE other_income_id = $1
           FOR UPDATE`,
         [id]
-      );
+      )).rows[0];
       if (!existing) throw ApiError.notFound('Other income not found');
       assertBranchAccess(scope, existing.branch_id);
 
@@ -699,19 +1339,19 @@ export const financeService = {
 
       // Account balance adjustments (reverse old, apply new)
       if (nextAccId !== existing.acc_id || nextAmount !== roundMoney(Number(existing.amount))) {
-        await queryOne(`UPDATE ims.accounts SET balance = balance - $1 WHERE branch_id = $2 AND acc_id = $3`, [
+        await client.query(`UPDATE ims.accounts SET balance = balance - $1 WHERE branch_id = $2 AND acc_id = $3`, [
           roundMoney(Number(existing.amount)),
           existing.branch_id,
           existing.acc_id,
         ]);
-        await queryOne(`UPDATE ims.accounts SET balance = balance + $1 WHERE branch_id = $2 AND acc_id = $3`, [
+        await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE branch_id = $2 AND acc_id = $3`, [
           nextAmount,
           existing.branch_id,
           nextAccId,
         ]);
       }
 
-      const updated = await queryOne<any>(
+      const updated = (await client.query<any>(
         `UPDATE ims.other_incomes
             SET income_name = $2,
                 income_date = COALESCE($3::date, income_date),
@@ -722,101 +1362,69 @@ export const financeService = {
           WHERE other_income_id = $1
           RETURNING *`,
         [id, nextName, nextDate, nextAccId, nextAmount, nextNote]
-      );
+      )).rows[0];
 
       const noteText = `${nextName}${nextNote ? ` — ${nextNote}` : ''}`;
-      const hasTxnSoftDelete = await hasColumn('account_transactions', 'is_deleted');
-      const txnRow = await queryOne<{ txn_id: number }>(
-        `SELECT txn_id
-           FROM ims.account_transactions
+      await client.query(
+        `DELETE FROM ims.account_transactions
           WHERE branch_id = $1
-            AND txn_type = 'other'
             AND ref_table = 'other_incomes'
-            AND ref_id = $2
-          ${hasTxnSoftDelete ? 'AND COALESCE(is_deleted::int, 0) = 0' : ''}
-          LIMIT 1`,
+            AND ref_id = $2`,
         [existing.branch_id, id]
       );
-      if (txnRow) {
-        await queryOne(
-          `UPDATE ims.account_transactions
-              SET acc_id = $3,
-                  credit = $4,
-                  debit = 0,
-                  txn_date = COALESCE($5::date, CURRENT_DATE)::timestamptz,
-                  note = $6
-            WHERE branch_id = $1
-              AND txn_id = $2`,
-          [existing.branch_id, txnRow.txn_id, nextAccId, nextAmount, nextDate, noteText]
-        );
-      } else {
-        await queryOne(
-          `INSERT INTO ims.account_transactions
-             (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
-           VALUES ($1, $2, 'other', 'other_incomes', $3, 0, $4, COALESCE($5::date, CURRENT_DATE)::timestamptz, $6)`,
-          [existing.branch_id, nextAccId, id, nextAmount, nextDate, noteText]
-        );
-      }
 
-      await queryOne('COMMIT');
+      const coa = await ensureCoaAccounts(client, existing.branch_id, ['otherIncome']);
+      await postGl(client, {
+        branchId: existing.branch_id,
+        txnDate: nextDate,
+        txnType: 'other',
+        refTable: 'other_incomes',
+        refId: id,
+        note: noteText,
+        lines: [
+          { accId: nextAccId, debit: nextAmount, credit: 0, note: 'Cash/bank received' },
+          { accId: coa.otherIncome, debit: 0, credit: nextAmount, note: 'Other income' },
+        ],
+      });
+
       return updated;
-    } catch (err) {
-      await queryOne('ROLLBACK');
-      throw err;
-    }
+    });
   },
 
   async deleteOtherIncome(id: number, scope: BranchScope) {
-    await queryOne('BEGIN');
-    try {
-      const existing = await queryOne<{
-        other_income_id: number;
-        branch_id: number;
-        acc_id: number;
-        amount: number;
-      }>(
-        `SELECT other_income_id, branch_id, acc_id, amount
-           FROM ims.other_incomes
-          WHERE other_income_id = $1
-          FOR UPDATE`,
-        [id]
-      );
+    return withTransaction(async (client) => {
+      const existing = (
+        await client.query<{
+          other_income_id: number;
+          branch_id: number;
+          acc_id: number;
+          amount: number;
+        }>(
+          `SELECT other_income_id, branch_id, acc_id, amount
+             FROM ims.other_incomes
+            WHERE other_income_id = $1
+            FOR UPDATE`,
+          [id]
+        )
+      ).rows[0];
       if (!existing) throw ApiError.notFound('Other income not found');
       assertBranchAccess(scope, existing.branch_id);
 
-      await queryOne(`UPDATE ims.accounts SET balance = balance - $1 WHERE branch_id = $2 AND acc_id = $3`, [
+      await client.query(`UPDATE ims.accounts SET balance = balance - $1 WHERE branch_id = $2 AND acc_id = $3`, [
         roundMoney(Number(existing.amount)),
         existing.branch_id,
         existing.acc_id,
       ]);
 
-      const hasTxnSoftDelete = await hasColumn('account_transactions', 'is_deleted');
-      const hasTxnDeletedAt = await hasColumn('account_transactions', 'deleted_at');
-      const txnSet = hasTxnSoftDelete
-        ? `is_deleted = 1${hasTxnDeletedAt ? ', deleted_at = NOW()' : ''}`
-        : '';
-      if (txnSet) {
-        await queryOne(
-          `UPDATE ims.account_transactions
-              SET ${txnSet}
-            WHERE branch_id = $1
-              AND txn_type = 'other'
-              AND ref_table = 'other_incomes'
-              AND ref_id = $2`,
-          [existing.branch_id, id]
-        );
-      } else {
-        await queryOne(
-          `DELETE FROM ims.account_transactions
-            WHERE branch_id = $1
-              AND txn_type = 'other'
-              AND ref_table = 'other_incomes'
-              AND ref_id = $2`,
-          [existing.branch_id, id]
-        );
-      }
+      await client.query(
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'other_incomes'
+            AND ref_id = $2`,
+        [existing.branch_id, id]
+      );
 
-      await queryOne(
+      await client.query(
         `UPDATE ims.other_incomes
             SET is_deleted = 1,
                 deleted_at = NOW(),
@@ -825,11 +1433,8 @@ export const financeService = {
         [id]
       );
 
-      await queryOne('COMMIT');
-    } catch (err) {
-      await queryOne('ROLLBACK');
-      throw err;
-    }
+      return { deleted: true };
+    });
   },
 
   /* Supplier outstanding balances (purchases not fully paid) */
@@ -1511,53 +2116,80 @@ export const financeService = {
     const branchId = pickBranchForWrite(scope, input.branchId);
     const isOpeningPaid =
       input.isOpeningPaid === true || (input.isOpeningPaid === undefined && isOpeningExpenseNote(input.note));
-    const hasOpeningPaidColumn = await hasColumn('expense_charges', 'is_opening_paid');
-    const insertColumns = ['branch_id', 'exp_id', 'charge_date', 'reg_date', 'amount', 'ref_table', 'ref_id', 'note', 'user_id'];
-    const insertValues: any[] = [
-      branchId,
-      input.expId,
-      input.expDate || null,
-      input.regDate || null,
-      input.amount,
-      input.expBudgetId ? 'expense_budgets' : null,
-      input.expBudgetId || null,
-      input.note || null,
-      userId,
-    ];
-    if (hasOpeningPaidColumn) {
-      insertColumns.push('is_opening_paid');
-      insertValues.push(isOpeningPaid);
-    }
-    const chargeDateParam = insertColumns.indexOf('charge_date') + 1;
-    const insertPlaceholders = insertColumns.map((column, idx) => {
-      const param = `$${idx + 1}`;
-      if (column === 'charge_date') return `COALESCE(${param}, NOW())`;
-      if (column === 'reg_date') return `COALESCE(${param}, $${chargeDateParam}, NOW())`;
-      return param;
+
+    return withTransaction(async (client) => {
+      const exp = (
+        await client.query<{ exp_id: number }>(
+          `SELECT exp_id
+             FROM ims.expenses
+            WHERE exp_id = $1
+              AND branch_id = $2
+            FOR UPDATE`,
+          [input.expId, branchId]
+        )
+      ).rows[0];
+      if (!exp) throw ApiError.badRequest('Expense not found in selected branch');
+
+      const hasOpeningPaidColumn = await hasColumn('expense_charges', 'is_opening_paid');
+      const insertColumns = ['branch_id', 'exp_id', 'charge_date', 'reg_date', 'amount', 'ref_table', 'ref_id', 'note', 'user_id'];
+      const insertValues: any[] = [
+        branchId,
+        input.expId,
+        input.expDate || null,
+        input.regDate || null,
+        input.amount,
+        input.expBudgetId ? 'expense_budgets' : null,
+        input.expBudgetId || null,
+        input.note || null,
+        userId,
+      ];
+      if (hasOpeningPaidColumn) {
+        insertColumns.push('is_opening_paid');
+        insertValues.push(isOpeningPaid);
+      }
+      const chargeDateParam = insertColumns.indexOf('charge_date') + 1;
+      const insertPlaceholders = insertColumns.map((column, idx) => {
+        const param = `$${idx + 1}`;
+        if (column === 'charge_date') return `COALESCE(${param}, NOW())`;
+        if (column === 'reg_date') return `COALESCE(${param}, $${chargeDateParam}, NOW())`;
+        return param;
+      });
+
+      const charge = (
+        await client.query<{
+          exp_ch_id: number;
+          exp_date: string;
+          reg_date: string;
+          amount: number;
+          exp_id: number;
+          branch_id: number;
+          note: string | null;
+        }>(
+          `INSERT INTO ims.expense_charges
+             (${insertColumns.join(', ')})
+           VALUES (${insertPlaceholders.join(', ')})
+           RETURNING
+             charge_id AS exp_ch_id,
+             charge_date::text AS exp_date,
+             reg_date::text AS reg_date,
+             amount,
+             exp_id,
+             branch_id,
+             note`,
+          insertValues
+        )
+      ).rows[0];
+      if (!charge) throw ApiError.internal('Failed to create expense charge');
+
+      await rewriteExpenseChargeGl(client, { branchId, chargeId: Number(charge.exp_ch_id) });
+
+      return {
+        ...charge,
+        is_opening_paid: isOpeningPaid,
+        open_balance: isOpeningPaid ? 0 : Number(charge.amount || 0),
+        payment_status: isOpeningPaid ? 'paid' : 'unpaid',
+      };
     });
-
-    const charge = await queryOne(
-      `INSERT INTO ims.expense_charges
-         (${insertColumns.join(', ')})
-       VALUES (${insertPlaceholders.join(', ')})
-       RETURNING
-         charge_id AS exp_ch_id,
-         charge_date AS exp_date,
-         reg_date,
-         amount,
-         exp_id,
-         branch_id,
-         note`,
-      insertValues
-    );
-    if (!charge) throw ApiError.internal('Failed to create expense charge');
-
-    return {
-      ...charge,
-      is_opening_paid: isOpeningPaid,
-      open_balance: isOpeningPaid ? 0 : Number(charge.amount || 0),
-      payment_status: isOpeningPaid ? 'paid' : 'unpaid',
-    };
   },
 
   async updateExpenseCharge(id: number, input: Partial<ExpenseChargeInput>, scope: BranchScope, userId: number) {
@@ -1662,6 +2294,11 @@ export const financeService = {
       [charge.exp_ch_id]
     );
     if (!refreshed) throw ApiError.notFound('Expense charge not found');
+
+    // Rebuild GL for this charge (outside transaction helper is safe since underlying posting is strict).
+    await withTransaction(async (client) => {
+      await rewriteExpenseChargeGl(client, { branchId: refreshed.branch_id, chargeId: Number(refreshed.exp_ch_id) });
+    });
     return refreshed;
   },
 
@@ -1683,121 +2320,179 @@ export const financeService = {
       throw ApiError.badRequest('Cannot delete: this expense has payments recorded.');
     }
 
-    await queryOne(
-      `DELETE FROM ims.expense_charges
-        WHERE charge_id = $1`,
-      [id]
-    );
+    await withTransaction(async (client) => {
+      const locked = (await client.query<{ charge_id: number; branch_id: number }>(
+        `SELECT charge_id, branch_id
+           FROM ims.expense_charges
+          WHERE charge_id = $1
+          FOR UPDATE`,
+        [id]
+      )).rows[0];
+      if (!locked) throw ApiError.notFound('Expense charge not found');
+      assertBranchAccess(scope, locked.branch_id);
+
+      const payment = (await client.query<{ exp_payment_id: number }>(
+        `SELECT exp_payment_id FROM ims.expense_payments WHERE exp_ch_id = $1 LIMIT 1`,
+        [id]
+      )).rows[0];
+      if (payment) {
+        throw ApiError.badRequest('Cannot delete: this expense has payments recorded.');
+      }
+
+      await client.query(
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'expense_charges'
+            AND ref_id = $2`,
+        [locked.branch_id, id]
+      );
+
+      await client.query(`DELETE FROM ims.expense_charges WHERE charge_id = $1`, [id]);
+    });
   },
 
   async deleteExpensePayment(id: number, scope: BranchScope) {
-    const payment = await queryOne<{
-      exp_payment_id: number;
-      branch_id: number;
-      acc_id: number;
-      amount_paid: number;
-      exp_ch_id: number;
-    }>(
-      `SELECT exp_payment_id, branch_id, acc_id, amount_paid, exp_ch_id
-         FROM ims.expense_payments
-         WHERE exp_payment_id = $1`,
-      [id]
-    );
-    if (!payment) throw ApiError.notFound('Expense payment not found');
-    assertBranchAccess(scope, payment.branch_id);
+    return withTransaction(async (client) => {
+      const payment = (
+        await client.query<{
+          exp_payment_id: number;
+          branch_id: number;
+          acc_id: number;
+          amount_paid: string;
+          pay_date: string | null;
+        }>(
+          `SELECT exp_payment_id, branch_id, acc_id, amount_paid::text AS amount_paid, pay_date::text AS pay_date
+             FROM ims.expense_payments
+            WHERE exp_payment_id = $1
+            FOR UPDATE`,
+          [id]
+        )
+      ).rows[0];
+      if (!payment) throw ApiError.notFound('Expense payment not found');
+      assertBranchAccess(scope, payment.branch_id);
 
-    await queryOne(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2`, [
-      payment.amount_paid,
-      payment.acc_id,
-    ]);
+      const amount = roundMoney(Number(payment.amount_paid || 0));
+      await client.query(
+        `UPDATE ims.accounts
+            SET balance = balance + $3
+          WHERE branch_id = $1
+            AND acc_id = $2`,
+        [payment.branch_id, payment.acc_id, amount]
+      );
 
-    await queryOne(
-      `DELETE FROM ims.account_transactions
-        WHERE branch_id = $1
-          AND txn_type = 'expense_payment'
-          AND ref_table = 'expense_payments'
-          AND ref_id = $2`,
-      [payment.branch_id, payment.exp_payment_id]
-    );
+      await client.query(
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'expense_payments'
+            AND ref_id = $2`,
+        [payment.branch_id, id]
+      );
 
-    await queryOne(`DELETE FROM ims.expense_payments WHERE exp_payment_id = $1`, [id]);
+      await client.query(`DELETE FROM ims.expense_payments WHERE exp_payment_id = $1`, [id]);
+      return { deleted: true };
+    });
   },
 
   async createExpensePayment(input: ExpensePaymentInput, scope: BranchScope, userId: number) {
-    const charge = await queryOne<{ branch_id: number; amount: number; exp_id: number; charge_id: number; is_opening_paid: boolean }>(
-      `SELECT
-          c.branch_id,
-          c.amount,
-          c.exp_id,
-          c.charge_id,
-          COALESCE(
-            NULLIF(to_jsonb(c) ->> 'is_opening_paid', '')::boolean,
-            COALESCE(c.note, '') ILIKE '${OPENING_EXPENSE_NOTE_PREFIX}%'
-          ) AS is_opening_paid
-         FROM ims.expense_charges c
-        WHERE c.charge_id = $1`,
-      [input.expChargeId]
-    );
-    if (!charge) throw ApiError.notFound('Expense charge not found');
-    if (charge.is_opening_paid) {
-      throw ApiError.badRequest('Opening balance expense is already paid and cannot be paid again');
-    }
-    assertBranchAccess(scope, charge.branch_id);
-    const branchId = input.branchId && input.branchId !== charge.branch_id ? (() => { throw ApiError.badRequest('Branch mismatch'); })() : charge.branch_id;
-    const paid = await queryOne<{ paid_sum: number }>(
-      `SELECT COALESCE(SUM(amount_paid), 0)::double precision AS paid_sum
-         FROM ims.expense_payments
-        WHERE exp_ch_id = $1`,
-      [charge.charge_id]
-    );
-    const paidSoFar = Number(paid?.paid_sum || 0);
-    const remaining = Math.max(Number(charge.amount || 0) - paidSoFar, 0);
-    if (remaining <= 0) {
-      throw ApiError.badRequest('This expense is already fully paid');
-    }
+    return withTransaction(async (client) => {
+      const charge = (
+        await client.query<{
+          branch_id: number;
+          amount: string;
+          charge_id: number;
+          is_opening_paid: boolean;
+          charge_date: string | null;
+        }>(
+          `SELECT
+              c.branch_id,
+              COALESCE(c.amount, 0)::text AS amount,
+              c.charge_id,
+              COALESCE(
+                NULLIF(to_jsonb(c) ->> 'is_opening_paid', '')::boolean,
+                COALESCE(c.note, '') ILIKE '${OPENING_EXPENSE_NOTE_PREFIX}%'
+              ) AS is_opening_paid,
+              c.charge_date::text AS charge_date
+             FROM ims.expense_charges c
+            WHERE c.charge_id = $1
+            FOR UPDATE`,
+          [input.expChargeId]
+        )
+      ).rows[0];
+      if (!charge) throw ApiError.notFound('Expense charge not found');
+      if (charge.is_opening_paid) {
+        throw ApiError.badRequest('Opening balance expense is already paid and cannot be paid again');
+      }
+      assertBranchAccess(scope, charge.branch_id);
+      const branchId =
+        input.branchId && input.branchId !== charge.branch_id ? (() => { throw ApiError.badRequest('Branch mismatch'); })() : charge.branch_id;
 
-    const amount = input.amount !== undefined ? Number(input.amount) : remaining;
-    if (amount > remaining + 0.000001) {
-      throw ApiError.badRequest(`Amount exceeds open balance (${remaining.toFixed(2)})`);
-    }
-    const payDate = input.payDate || null;
-    const ref = input.referenceNo || null;
-    const note = input.note || null;
+      const paidRow = (
+        await client.query<{ paid_sum: string }>(
+          `SELECT COALESCE(SUM(amount_paid), 0)::text AS paid_sum
+             FROM ims.expense_payments
+            WHERE exp_ch_id = $1`,
+          [charge.charge_id]
+        )
+      ).rows[0];
+      const paidSoFar = roundMoney(Number(paidRow?.paid_sum || 0));
+      const chargeAmount = roundMoney(Number(charge.amount || 0));
+      const remaining = Math.max(chargeAmount - paidSoFar, 0);
+      if (remaining <= 0) {
+        throw ApiError.badRequest('This expense is already fully paid');
+      }
 
-    await queryOne('BEGIN');
-    try {
-      const payment = await queryOne<{ exp_payment_id: number }>(
-        `INSERT INTO ims.expense_payments
-           (branch_id, exp_ch_id, acc_id, pay_date, amount_paid, reference_no, note, user_id)
-         VALUES ($1,$2,$3,COALESCE($4,NOW()),$5,$6,$7,$8)
-         RETURNING exp_payment_id`,
-        [branchId, charge.charge_id, input.accId, payDate, amount, ref, note, userId]
+      const amount = input.amount !== undefined ? roundMoney(Number(input.amount)) : remaining;
+      if (amount <= 0) throw ApiError.badRequest('Amount must be greater than zero');
+      if (amount > remaining + 0.000001) {
+        throw ApiError.badRequest(`Amount exceeds open balance (${remaining.toFixed(2)})`);
+      }
+
+      await lockAccountBalance(client, branchId, input.accId);
+      await debitAccount(client, branchId, input.accId, amount);
+
+      const payment = (
+        await client.query<{ exp_payment_id: number; pay_date: string }>(
+          `INSERT INTO ims.expense_payments
+             (branch_id, exp_ch_id, acc_id, pay_date, amount_paid, reference_no, note, user_id)
+           VALUES ($1,$2,$3,COALESCE($4,NOW()),$5,$6,$7,$8)
+           RETURNING exp_payment_id, pay_date::text AS pay_date`,
+          [
+            branchId,
+            charge.charge_id,
+            input.accId,
+            input.payDate || null,
+            amount,
+            input.referenceNo || null,
+            input.note || null,
+            userId,
+          ]
+        )
+      ).rows[0];
+      if (!payment?.exp_payment_id) throw ApiError.internal('Failed to record expense payment');
+
+      const coa = await ensureCoaAccounts(client, branchId, ['expensePayable']);
+      await client.query(
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'expense_payments'
+            AND ref_id = $2`,
+        [branchId, payment.exp_payment_id]
       );
-      if (!payment) throw ApiError.internal('Failed to record expense payment');
+      await postGl(client, {
+        branchId,
+        txnDate: payment.pay_date || input.payDate || null,
+        txnType: 'expense_payment',
+        refTable: 'expense_payments',
+        refId: Number(payment.exp_payment_id),
+        note: `Expense payment #${payment.exp_payment_id}`,
+        lines: [
+          { accId: coa.expensePayable, debit: amount, credit: 0, note: 'Pay expense payable' },
+          { accId: input.accId, debit: 0, credit: amount, note: 'Cash/bank paid' },
+        ],
+      });
 
-      // Decrement account balance
-      await debitAccount(branchId, input.accId, amount);
-
-      await queryOne(
-        `INSERT INTO ims.account_transactions
-           (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
-         VALUES ($1, $2, 'expense_payment', 'expense_payments', $3, $4, 0, COALESCE($5::timestamptz, NOW()), $6)`,
-        [
-          branchId,
-          input.accId,
-          payment.exp_payment_id,
-          amount,
-          payDate,
-          note ? `[Expense Payment] ${note}` : '[Expense Payment]',
-        ]
-      );
-
-      await queryOne('COMMIT');
       return payment;
-    } catch (err) {
-      await queryOne('ROLLBACK');
-      throw err;
-    }
+    });
   },
 
   async listExpensePayments(scope: BranchScope, chargeId?: number, expenseId?: number) {
@@ -1983,16 +2678,19 @@ export const financeService = {
     );
     if (existing) throw ApiError.badRequest('Budget already charged for this period');
 
-    const inserted = await queryOne<{ exp_ch_id: number }>(
-      `INSERT INTO ims.expense_charges
-         (branch_id, exp_id, acc_id, charge_date, reg_date, amount, ref_table, ref_id, exp_budget, budget_month, budget_year, note, user_id)
-       VALUES
-         ($1,$2,NULL,COALESCE($3, NOW()), COALESCE($3, NOW()), $4, 'expense_budgets', $5, 1, $6, $7, $8, $9)
-       RETURNING charge_id AS exp_ch_id`,
-      [branchId, budget.exp_id, chargeDate, amount, input.budgetId, month, year, note, userId]
-    );
-
-    return inserted;
+    return withTransaction(async (client) => {
+      const inserted = (await client.query<{ exp_ch_id: number }>(
+        `INSERT INTO ims.expense_charges
+           (branch_id, exp_id, acc_id, charge_date, reg_date, amount, ref_table, ref_id, exp_budget, budget_month, budget_year, note, user_id)
+         VALUES
+           ($1,$2,NULL,COALESCE($3, NOW()), COALESCE($3, NOW()), $4, 'expense_budgets', $5, 1, $6, $7, $8, $9)
+         RETURNING charge_id AS exp_ch_id`,
+        [branchId, budget.exp_id, chargeDate, amount, input.budgetId, month, year, note, userId]
+      )).rows[0];
+      if (!inserted?.exp_ch_id) throw ApiError.internal('Failed to charge budget');
+      await rewriteExpenseChargeGl(client, { branchId, chargeId: Number(inserted.exp_ch_id) });
+      return inserted;
+    });
   },
 
   async manageExpenseBudgetCharges(
@@ -2027,11 +2725,32 @@ export const financeService = {
       throw ApiError.badRequest('Budgets already charged for this date');
     }
 
-    await queryOne(
-      `SELECT ims.sp_charge_expense_budget($1, $2, $3, $4)`,
-      [null, input.regDate, op, userId] // p_budget_id null -> function will stage all budgets
-    );
-    return { status: 'ok', oper: op };
+    return withTransaction(async (client) => {
+      await client.query(
+        `SELECT ims.sp_charge_expense_budget($1, $2, $3, $4)`,
+        [null, input.regDate, op, userId] // p_budget_id null -> function will stage all budgets
+      );
+
+      const chargeParams: any[] = [dateStr];
+      let where = `charge_date::date = $1::date AND ref_table = 'expense_budgets'`;
+      if (input.branchId) {
+        chargeParams.push(input.branchId);
+        where += ` AND branch_id = $${chargeParams.length}`;
+      }
+
+      const charges = (await client.query<{ charge_id: number; branch_id: number }>(
+        `SELECT charge_id, branch_id
+           FROM ims.expense_charges
+          WHERE ${where}`,
+        chargeParams
+      )).rows;
+
+      for (const ch of charges) {
+        await rewriteExpenseChargeGl(client, { branchId: Number(ch.branch_id), chargeId: Number(ch.charge_id) });
+      }
+
+      return { status: 'ok', oper: op };
+    });
   },
 
   /* Payroll */
@@ -2039,11 +2758,82 @@ export const financeService = {
     if (!input.periodDate) throw ApiError.badRequest('periodDate required');
     // For now, operate across all branches; permission: at least one branch in scope
     if (!scope.branchIds.length && !scope.isAdmin) throw ApiError.forbidden('No branch access');
-    const res = await queryOne<{ sp_charge_salary: number }>(
-      `SELECT ims.sp_charge_salary($1, $2)`,
-      [input.periodDate, userId]
-    );
-    return { created: res?.sp_charge_salary ?? 0 };
+
+    const parts = String(input.periodDate).trim().split('-');
+    const year = Number(parts[0]);
+    const month = Number(parts[1]);
+    if (!year || !month || month < 1 || month > 12) {
+      throw ApiError.badRequest('periodDate must be in YYYY-MM or YYYY-MM-DD format');
+    }
+    const monthEnd = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+
+    return withTransaction(async (client) => {
+      const res = (await client.query<{ created: number }>(
+        `SELECT ims.sp_charge_salary($1, $2) AS created`,
+        [input.periodDate, userId]
+      )).rows[0];
+
+      const runParams: any[] = [year, month];
+      let runWhere = `pr.period_year = $1 AND pr.period_month = $2`;
+      if (!scope.isAdmin) {
+        runParams.push(scope.branchIds);
+        runWhere += ` AND pr.branch_id = ANY($${runParams.length})`;
+      }
+
+      const runIds = (await client.query<{ payroll_id: number; branch_id: number }>(
+        `SELECT pr.payroll_id, pr.branch_id
+           FROM ims.payroll_runs pr
+          WHERE ${runWhere}`,
+        runParams
+      )).rows.map((r) => Number(r.payroll_id));
+
+      if (runIds.length) {
+        await client.query(
+          `DELETE FROM ims.account_transactions at
+            USING ims.payroll_lines pl
+           WHERE at.branch_id = pl.branch_id
+             AND at.ref_table = 'payroll_lines'
+             AND at.ref_id = pl.payroll_line_id
+             AND pl.payroll_id = ANY($1::bigint[])`,
+          [runIds]
+        );
+
+        const lines = (await client.query<{ branch_id: number; payroll_line_id: number; net_salary: string }>(
+          `SELECT pl.branch_id, pl.payroll_line_id, COALESCE(pl.net_salary, 0)::text AS net_salary
+             FROM ims.payroll_lines pl
+            WHERE pl.payroll_id = ANY($1::bigint[])
+              AND COALESCE(pl.net_salary, 0) > 0`,
+          [runIds]
+        )).rows;
+
+        const coaByBranch = new Map<number, { payrollExpense: number; payrollPayable: number }>();
+        for (const line of lines) {
+          const branchId = Number(line.branch_id);
+          if (!coaByBranch.has(branchId)) {
+            const coa = await ensureCoaAccounts(client, branchId, ['payrollExpense', 'payrollPayable']);
+            coaByBranch.set(branchId, { payrollExpense: coa.payrollExpense, payrollPayable: coa.payrollPayable });
+          }
+          const coa = coaByBranch.get(branchId)!;
+          const amount = roundMoney(Number(line.net_salary || 0));
+          if (amount <= 0) continue;
+
+          await postGl(client, {
+            branchId,
+            txnDate: monthEnd,
+            txnType: 'other',
+            refTable: 'payroll_lines',
+            refId: Number(line.payroll_line_id),
+            note: `Payroll charge ${year}-${String(month).padStart(2, '0')}`,
+            lines: [
+              { accId: coa.payrollExpense, debit: amount, credit: 0, note: 'Payroll expense' },
+              { accId: coa.payrollPayable, debit: 0, credit: amount, note: 'Payroll payable' },
+            ],
+          });
+        }
+      }
+
+      return { created: res?.created ?? 0 };
+    });
   },
 
   async listPayroll(scope: BranchScope, period?: string, range: DateRange = {}) {
@@ -2092,195 +2882,236 @@ export const financeService = {
   },
 
   async paySalary(input: PayrollPayInput, scope: BranchScope, userId: number) {
-    const line = await queryOne<{
-      payroll_line_id: number;
-      payroll_id: number;
-      branch_id: number;
-      emp_id: number;
-      net_salary: number;
-    }>(
-      `SELECT pl.payroll_line_id, pl.payroll_id, pl.branch_id, pl.emp_id, pl.net_salary
-         FROM ims.payroll_lines pl
-         JOIN ims.payroll_runs pr ON pr.payroll_id = pl.payroll_id
-        WHERE pl.payroll_line_id = $1`,
-      [input.payrollLineId]
-    );
-    if (!line) throw ApiError.notFound('Payroll line not found');
-    assertBranchAccess(scope, line.branch_id);
+    return withTransaction(async (client) => {
+      const line = (
+        await client.query<{
+          payroll_line_id: number;
+          payroll_id: number;
+          branch_id: number;
+          emp_id: number;
+          net_salary: string;
+          status: string | null;
+        }>(
+          `SELECT pl.payroll_line_id,
+                  pl.payroll_id,
+                  pl.branch_id,
+                  pl.emp_id,
+                  COALESCE(pl.net_salary, 0)::text AS net_salary,
+                  COALESCE(pr.status::text, 'posted') AS status
+             FROM ims.payroll_lines pl
+             JOIN ims.payroll_runs pr ON pr.payroll_id = pl.payroll_id
+            WHERE pl.payroll_line_id = $1
+            FOR UPDATE`,
+          [input.payrollLineId]
+        )
+      ).rows[0];
+      if (!line) throw ApiError.notFound('Payroll line not found');
+      assertBranchAccess(scope, line.branch_id);
+      if ((line.status || '').toLowerCase() === 'void') {
+        throw ApiError.badRequest('Cannot pay salary for a void payroll run');
+      }
 
-    const paidSumRow = await queryOne<{ paid: number }>(
-      `SELECT COALESCE(SUM(amount_paid),0) AS paid
-         FROM ims.employee_payments WHERE payroll_line_id = $1`,
-      [input.payrollLineId]
-    );
-    const paid = Number(paidSumRow?.paid || 0);
-    const remaining = Math.max(0, Number(line.net_salary || 0) - paid);
-    const amount = input.amount !== undefined ? Number(input.amount) : remaining;
-    if (amount <= 0) throw ApiError.badRequest('Amount must be greater than 0');
-    if (amount > remaining) throw ApiError.badRequest('Amount exceeds remaining salary');
+      const paidSumRow = (
+        await client.query<{ paid: string }>(
+          `SELECT COALESCE(SUM(amount_paid),0)::text AS paid
+             FROM ims.employee_payments
+            WHERE payroll_line_id = $1`,
+          [input.payrollLineId]
+        )
+      ).rows[0];
+      const paid = roundMoney(Number(paidSumRow?.paid || 0));
+      const netSalary = roundMoney(Number(line.net_salary || 0));
+      const remaining = Math.max(0, netSalary - paid);
+      const amount = input.amount !== undefined ? roundMoney(Number(input.amount)) : remaining;
+      if (amount <= 0) throw ApiError.badRequest('Amount must be greater than 0');
+      if (amount > remaining + 0.000001) throw ApiError.badRequest('Amount exceeds remaining salary');
 
-    await queryOne('BEGIN');
-    try {
-      const pay = await queryOne<{ emp_payment_id: number }>(
-        `INSERT INTO ims.employee_payments
-           (branch_id, payroll_id, payroll_line_id, emp_id, paid_by, acc_id, amount_paid, note, pay_date)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9,NOW()))
-         RETURNING emp_payment_id`,
-        [
-          line.branch_id,
-          line.payroll_id,
-          line.payroll_line_id,
-          line.emp_id,
-          userId,
-          input.accId,
-          amount,
-          input.note || null,
-          input.payDate || null,
-        ]
+      await debitAccount(client, line.branch_id, input.accId, amount);
+
+      const pay = (
+        await client.query<{ emp_payment_id: number; pay_date: string }>(
+          `INSERT INTO ims.employee_payments
+             (branch_id, payroll_id, payroll_line_id, emp_id, paid_by, acc_id, amount_paid, note, pay_date)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9,NOW()))
+           RETURNING emp_payment_id, pay_date::text AS pay_date`,
+          [
+            line.branch_id,
+            line.payroll_id,
+            line.payroll_line_id,
+            line.emp_id,
+            userId,
+            input.accId,
+            amount,
+            input.note || null,
+            input.payDate || null,
+          ]
+        )
+      ).rows[0];
+      if (!pay?.emp_payment_id) throw ApiError.internal('Failed to record salary payment');
+
+      await client.query(
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'employee_payments'
+            AND ref_id = $2`,
+        [line.branch_id, pay.emp_payment_id]
       );
-      if (!pay) throw ApiError.internal('Failed to record salary payment');
 
-      await debitAccount(line.branch_id, input.accId, amount);
+      const coa = await ensureCoaAccounts(client, line.branch_id, ['payrollPayable']);
+      await postGl(client, {
+        branchId: line.branch_id,
+        txnDate: pay.pay_date || input.payDate || null,
+        txnType: 'payroll_payment',
+        refTable: 'employee_payments',
+        refId: Number(pay.emp_payment_id),
+        note: `Payroll payment #${pay.emp_payment_id}`,
+        lines: [
+          { accId: coa.payrollPayable, debit: amount, credit: 0, note: 'Reduce payroll payable' },
+          { accId: input.accId, debit: 0, credit: amount, note: 'Cash/bank paid' },
+        ],
+      });
 
-      await queryOne(
-        `INSERT INTO ims.account_transactions
-           (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
-         VALUES ($1, $2, 'payroll_payment', 'employee_payments', $3, $4, 0, COALESCE($5::timestamptz, NOW()), $6)`,
-        [
-          line.branch_id,
-          input.accId,
-          pay.emp_payment_id,
-          amount,
-          input.payDate || null,
-          input.note ? `[Payroll Payment] ${input.note}` : '[Payroll Payment]',
-        ]
-      );
-
-      await queryOne('COMMIT');
       return pay;
-    } catch (e) {
-      await queryOne('ROLLBACK');
-      throw e;
-    }
+    });
   },
 
   async deletePayroll(input: PayrollDeleteInput, scope: BranchScope, _userId: number) {
-    if (input.mode === 'line') {
-      if (!input.payrollLineId) throw ApiError.badRequest('payrollLineId required');
-      const line = await queryOne<{ payroll_line_id: number; payroll_id: number; branch_id: number }>(
-        `SELECT payroll_line_id, payroll_id, branch_id FROM ims.payroll_lines WHERE payroll_line_id = $1`,
-        [input.payrollLineId]
-      );
-      if (!line) throw ApiError.notFound('Payroll line not found');
-      assertBranchAccess(scope, line.branch_id);
+    return withTransaction(async (client) => {
+      if (input.mode === 'line') {
+        if (!input.payrollLineId) throw ApiError.badRequest('payrollLineId required');
+        const line = (await client.query<{ payroll_line_id: number; payroll_id: number; branch_id: number }>(
+          `SELECT payroll_line_id, payroll_id, branch_id
+             FROM ims.payroll_lines
+            WHERE payroll_line_id = $1
+            FOR UPDATE`,
+          [input.payrollLineId]
+        )).rows[0];
+        if (!line) throw ApiError.notFound('Payroll line not found');
+        assertBranchAccess(scope, line.branch_id);
 
-      await queryOne('BEGIN');
-      try {
-        const payments = await queryMany<{ emp_payment_id: number; acc_id: number; amount_paid: number }>(
-          `SELECT emp_payment_id, acc_id, amount_paid
+        const payments = (await client.query<{ emp_payment_id: number; acc_id: number; amount_paid: string }>(
+          `SELECT emp_payment_id, acc_id, amount_paid::text AS amount_paid
              FROM ims.employee_payments
             WHERE payroll_line_id = $1`,
           [line.payroll_line_id]
-        );
+        )).rows;
 
         for (const payment of payments) {
-          await queryOne(`UPDATE ims.accounts SET balance = balance + $1 WHERE branch_id = $2 AND acc_id = $3`, [
-            payment.amount_paid,
-            line.branch_id,
-            payment.acc_id,
-          ]);
-          await queryOne(
+          const amount = roundMoney(Number(payment.amount_paid || 0));
+          await client.query(
+            `UPDATE ims.accounts
+                SET balance = balance + $3
+              WHERE branch_id = $1
+                AND acc_id = $2`,
+            [line.branch_id, payment.acc_id, amount]
+          );
+          await client.query(
             `DELETE FROM ims.account_transactions
               WHERE branch_id = $1
-                AND txn_type = 'payroll_payment'
                 AND ref_table = 'employee_payments'
                 AND ref_id = $2`,
             [line.branch_id, payment.emp_payment_id]
           );
         }
 
-        await queryOne(`DELETE FROM ims.employee_payments WHERE payroll_line_id = $1`, [line.payroll_line_id]);
-        await queryOne(`DELETE FROM ims.payroll_lines WHERE payroll_line_id = $1`, [line.payroll_line_id]);
+        await client.query(`DELETE FROM ims.employee_payments WHERE payroll_line_id = $1`, [line.payroll_line_id]);
 
-        const remaining = await queryOne<{ cnt: number }>(
-          `SELECT COUNT(*) AS cnt FROM ims.payroll_lines WHERE payroll_id = $1`,
-          [line.payroll_id]
+        await client.query(
+          `DELETE FROM ims.account_transactions
+            WHERE branch_id = $1
+              AND ref_table = 'payroll_lines'
+              AND ref_id = $2`,
+          [line.branch_id, line.payroll_line_id]
         );
+
+        await client.query(`DELETE FROM ims.payroll_lines WHERE payroll_line_id = $1`, [line.payroll_line_id]);
+
+        const remaining = (await client.query<{ cnt: string }>(
+          `SELECT COUNT(*)::text AS cnt FROM ims.payroll_lines WHERE payroll_id = $1`,
+          [line.payroll_id]
+        )).rows[0];
         if (!remaining || Number(remaining.cnt) === 0) {
-          await queryOne(`DELETE FROM ims.payroll_runs WHERE payroll_id = $1`, [line.payroll_id]);
+          await client.query(`DELETE FROM ims.payroll_runs WHERE payroll_id = $1`, [line.payroll_id]);
         }
 
-        await queryOne('COMMIT');
         return { deleted: 1 };
-      } catch (e) {
-        await queryOne('ROLLBACK');
-        throw e;
       }
-    }
 
-    // mode === 'period'
-    if (!input.period) throw ApiError.badRequest('period required (YYYY-MM)');
-    const [y, m] = input.period.split('-').map(Number);
-    if (!y || !m) throw ApiError.badRequest('Invalid period');
+      // mode === 'period'
+      if (!input.period) throw ApiError.badRequest('period required (YYYY-MM)');
+      const [y, m] = input.period.split('-').map(Number);
+      if (!y || !m) throw ApiError.badRequest('Invalid period');
 
-    await queryOne('BEGIN');
-    try {
-      // find runs in scope
-      const runs = await queryMany<{ payroll_id: number; branch_id: number }>(
+      const runParams: any[] = [y, m];
+      let runWhere = `period_year = $1 AND period_month = $2`;
+      if (!scope.isAdmin) {
+        runParams.push(scope.branchIds);
+        runWhere += ` AND branch_id = ANY($${runParams.length})`;
+      }
+
+      const runs = (await client.query<{ payroll_id: number; branch_id: number }>(
         `SELECT payroll_id, branch_id
            FROM ims.payroll_runs
-          WHERE period_year = $1 AND period_month = $2`,
-        [y, m]
-      );
+          WHERE ${runWhere}
+          FOR UPDATE`,
+        runParams
+      )).rows;
+
+      if (!runs.length) throw ApiError.notFound('No payroll runs for this period');
       for (const run of runs) {
-        assertBranchAccess(scope, run.branch_id);
+        assertBranchAccess(scope, Number(run.branch_id));
       }
+      const runIds = runs.map((r) => Number(r.payroll_id));
 
-      const runIds = runs.map((r) => r.payroll_id);
-      if (runIds.length === 0) {
-        await queryOne('ROLLBACK');
-        throw ApiError.notFound('No payroll runs for this period');
-      }
-
-      const payments = await queryMany<{ emp_payment_id: number; branch_id: number; acc_id: number; amount_paid: number }>(
-        `SELECT ep.emp_payment_id, ep.branch_id, ep.acc_id, ep.amount_paid
+      const payments = (await client.query<{ emp_payment_id: number; branch_id: number; acc_id: number; amount_paid: string }>(
+        `SELECT ep.emp_payment_id, ep.branch_id, ep.acc_id, ep.amount_paid::text AS amount_paid
            FROM ims.employee_payments ep
           WHERE ep.payroll_line_id IN (
             SELECT payroll_line_id FROM ims.payroll_lines WHERE payroll_id = ANY($1::bigint[])
           )`,
         [runIds]
-      );
+      )).rows;
 
       for (const payment of payments) {
-        await queryOne(`UPDATE ims.accounts SET balance = balance + $1 WHERE branch_id = $2 AND acc_id = $3`, [
-          payment.amount_paid,
-          payment.branch_id,
-          payment.acc_id,
-        ]);
-        await queryOne(
+        const amount = roundMoney(Number(payment.amount_paid || 0));
+        await client.query(
+          `UPDATE ims.accounts
+              SET balance = balance + $3
+            WHERE branch_id = $1
+              AND acc_id = $2`,
+          [payment.branch_id, payment.acc_id, amount]
+        );
+        await client.query(
           `DELETE FROM ims.account_transactions
             WHERE branch_id = $1
-              AND txn_type = 'payroll_payment'
               AND ref_table = 'employee_payments'
               AND ref_id = $2`,
           [payment.branch_id, payment.emp_payment_id]
         );
       }
 
-      await queryOne(
-        `DELETE FROM ims.employee_payments WHERE payroll_line_id IN (
-           SELECT payroll_line_id FROM ims.payroll_lines WHERE payroll_id = ANY($1::bigint[])
-         )`,
+      await client.query(
+        `DELETE FROM ims.employee_payments
+          WHERE payroll_line_id IN (
+            SELECT payroll_line_id FROM ims.payroll_lines WHERE payroll_id = ANY($1::bigint[])
+          )`,
         [runIds]
       );
-      await queryOne(`DELETE FROM ims.payroll_lines WHERE payroll_id = ANY($1::bigint[])`, [runIds]);
-      await queryOne(`DELETE FROM ims.payroll_runs WHERE payroll_id = ANY($1::bigint[])`, [runIds]);
 
-      await queryOne('COMMIT');
+      await client.query(
+        `DELETE FROM ims.account_transactions at
+          USING ims.payroll_lines pl
+         WHERE at.branch_id = pl.branch_id
+           AND at.ref_table = 'payroll_lines'
+           AND at.ref_id = pl.payroll_line_id
+           AND pl.payroll_id = ANY($1::bigint[])`,
+        [runIds]
+      );
+
+      await client.query(`DELETE FROM ims.payroll_lines WHERE payroll_id = ANY($1::bigint[])`, [runIds]);
+      await client.query(`DELETE FROM ims.payroll_runs WHERE payroll_id = ANY($1::bigint[])`, [runIds]);
+
       return { deleted: runIds.length };
-    } catch (e) {
-      await queryOne('ROLLBACK');
-      throw e;
-    }
+    });
   },
 };

@@ -6,6 +6,8 @@ import { syncLowStockNotifications } from '../../utils/stockAlerts';
 import { PurchaseInput, PurchaseItemInput } from './purchases.schemas';
 import { PoolClient } from 'pg';
 import { adjustSystemAccountBalance } from '../../utils/systemAccounts';
+import { postGl } from '../../utils/glPosting';
+import { ensureCoaAccounts } from '../../utils/coaDefaults';
 
 export interface Purchase {
   purchase_id: number;
@@ -49,6 +51,7 @@ export interface PurchaseItemView extends PurchaseItem {
 const normalizeItemName = (value: string) => value.trim().replace(/\s+/g, ' ');
 const AUTO_PURCHASE_NOTE_PREFIX = '[AUTO-PURCHASE]';
 type PurchaseStatus = 'received' | 'partial' | 'unpaid' | 'void';
+const roundMoney = (value: unknown) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 
 interface PreparedPurchaseItem {
   productId: number;
@@ -499,11 +502,62 @@ const insertPurchaseBillLedger = async (
   );
 };
 
+const rewritePurchaseGl = async (client: PoolClient, params: { branchId: number; purchaseId: number }) => {
+  const pRes = await client.query<{
+    purchase_id: number;
+    purchase_date: string;
+    status: string;
+    total: string;
+  }>(
+    `SELECT purchase_id,
+            purchase_date::text AS purchase_date,
+            COALESCE(status::text, 'received') AS status,
+            COALESCE(total, 0)::text AS total
+       FROM ims.purchases
+      WHERE branch_id = $1
+        AND purchase_id = $2
+      LIMIT 1`,
+    [params.branchId, params.purchaseId]
+  );
+  const purchase = pRes.rows[0];
+  if (!purchase) return;
+
+  // Remove legacy single-sided rows + any prior GL rewrite for this purchase.
+  await client.query(
+    `DELETE FROM ims.account_transactions
+      WHERE branch_id = $1
+        AND ref_table = 'purchases'
+        AND ref_id = $2`,
+    [params.branchId, params.purchaseId]
+  );
+
+  const status = String(purchase.status || '').toLowerCase();
+  if (status === 'void') return;
+
+  const total = roundMoney(purchase.total);
+  if (total <= 0) return;
+
+  const coa = await ensureCoaAccounts(client, params.branchId, ['inventory', 'accountsPayable']);
+
+  await postGl(client, {
+    branchId: params.branchId,
+    txnDate: purchase.purchase_date || null,
+    refTable: 'purchases',
+    refId: params.purchaseId,
+    note: `Purchase #${params.purchaseId}`,
+    lines: [
+      { accId: coa.inventory, debit: total, credit: 0, note: 'Inventory received' },
+      { accId: coa.accountsPayable, debit: 0, credit: total, note: 'Supplier payable' },
+    ],
+  });
+};
+
 const applyPurchasePayment = async (
   client: PoolClient,
   params: {
     branchId: number;
     purchaseId: number;
+    purchaseTotal: number;
     userId: number;
     supplierId?: number | null;
     accId: number;
@@ -513,6 +567,25 @@ const applyPurchasePayment = async (
 ) => {
   if (params.amount <= 0) return;
   await ensurePaymentAccount(client, { branchId: params.branchId, accId: params.accId });
+
+  const alreadyPaidRes = await client.query<{ amount: string }>(
+    `SELECT COALESCE(SUM(amount_paid), 0)::text AS amount
+       FROM ims.supplier_payments
+      WHERE branch_id = $1
+        AND purchase_id = $2`,
+    [params.branchId, params.purchaseId]
+  );
+  const alreadyReceiptRes = await client.query<{ amount: string }>(
+    `SELECT COALESCE(SUM(amount), 0)::text AS amount
+       FROM ims.supplier_receipts
+      WHERE branch_id = $1
+        AND purchase_id = $2`,
+    [params.branchId, params.purchaseId]
+  );
+  const alreadyPaid = roundMoney(Number(alreadyPaidRes.rows[0]?.amount || 0) + Number(alreadyReceiptRes.rows[0]?.amount || 0));
+  const remaining = Math.max(roundMoney(params.purchaseTotal) - alreadyPaid, 0);
+  const payableDebit = roundMoney(Math.min(params.amount, remaining));
+  const advanceDebit = roundMoney(params.amount - payableDebit);
 
   const accountResult = await client.query(
     `UPDATE ims.accounts
@@ -525,10 +598,11 @@ const applyPurchasePayment = async (
     throw ApiError.badRequest('Payment account is not allowed for this branch');
   }
 
-  await client.query(
+  const paymentRow = await client.query<{ sup_payment_id: number; pay_date: string }>(
     `INSERT INTO ims.supplier_payments
        (branch_id, purchase_id, user_id, acc_id, pay_date, amount_paid, reference_no, note)
-     VALUES ($1, $2, $3, $4, NOW(), $5, $6, $7)`,
+     VALUES ($1, $2, $3, $4, NOW(), $5, $6, $7)
+     RETURNING sup_payment_id, pay_date::text AS pay_date`,
     [
       params.branchId,
       params.purchaseId,
@@ -540,18 +614,23 @@ const applyPurchasePayment = async (
     ]
   );
 
-  await client.query(
-    `INSERT INTO ims.account_transactions
-       (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, note)
-     VALUES ($1, $2, 'supplier_payment', 'purchases', $3, $4, 0, $5)`,
-    [
-      params.branchId,
-      params.accId,
-      params.purchaseId,
-      params.amount,
-      `${AUTO_PURCHASE_NOTE_PREFIX} Supplier payment`,
-    ]
-  );
+  const supPaymentId = Number(paymentRow.rows[0]?.sup_payment_id || 0);
+  if (!supPaymentId) throw ApiError.internal('Failed to create supplier payment');
+
+  const coa = await ensureCoaAccounts(client, params.branchId, ['accountsPayable', 'supplierAdvances']);
+  await postGl(client, {
+    branchId: params.branchId,
+    txnDate: paymentRow.rows[0]?.pay_date || null,
+    txnType: 'supplier_payment',
+    refTable: 'supplier_payments',
+    refId: supPaymentId,
+    note: `Supplier payment for purchase #${params.purchaseId}`,
+    lines: [
+      ...(payableDebit > 0 ? [{ accId: coa.accountsPayable, debit: payableDebit, credit: 0 }] : []),
+      ...(advanceDebit > 0 ? [{ accId: coa.supplierAdvances, debit: advanceDebit, credit: 0 }] : []),
+      { accId: params.accId, debit: 0, credit: params.amount },
+    ],
+  });
 
   if (params.supplierId) {
     await client.query(
@@ -658,27 +737,27 @@ export const purchasesService = {
   }): Promise<PurchaseItemView[]> {
     const clauses: string[] = [];
     const params: any[] = [];
-    const addClause = (sql: string, val: any) => {
+    const addClause = (sql: (placeholder: string) => string, val: any) => {
       params.push(val);
-      const placeholder = `$${params.length}`;
-      // Use functional replacement so `$1` isn't treated as a capture group reference.
-      clauses.push(sql.replace(/\$(\d+)/, () => placeholder));
+      // Avoid accidental placeholder corruption (e.g. `$1` becoming `1`) in string builders.
+      const placeholder = '$' + String(params.length);
+      clauses.push(sql(placeholder));
     };
 
     if (filters.branchId) {
-      addClause(`p.branch_id = $1`, filters.branchId);
+      addClause((p) => `p.branch_id = ${p}`, filters.branchId);
     } else if (!scope.isAdmin) {
-      addClause(`p.branch_id = ANY($1)`, scope.branchIds);
+      addClause((p) => `p.branch_id = ANY(${p})`, scope.branchIds);
     }
 
     if (filters.search) {
       params.push(`%${filters.search}%`);
       clauses.push(`(COALESCE(pi.description,'') ILIKE $${params.length} OR COALESCE(pr.name,'') ILIKE $${params.length} OR COALESCE(s.name,'') ILIKE $${params.length})`);
     }
-    if (filters.supplierId) addClause(`p.supplier_id = $1`, filters.supplierId);
-    if (filters.productId) addClause(`pi.item_id = $1`, filters.productId);
-    if (filters.from) addClause(`p.purchase_date::date >= $1::date`, filters.from);
-    if (filters.to) addClause(`p.purchase_date::date <= $1::date`, filters.to);
+    if (filters.supplierId) addClause((p) => `p.supplier_id = ${p}`, filters.supplierId);
+    if (filters.productId) addClause((p) => `pi.item_id = ${p}`, filters.productId);
+    if (filters.from) addClause((p) => `p.purchase_date::date >= ${p}::date`, filters.from);
+    if (filters.to) addClause((p) => `p.purchase_date::date <= ${p}::date`, filters.to);
 
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 
@@ -816,20 +895,25 @@ export const purchasesService = {
         });
       }
 
+      if (status !== 'void') {
+        await rewritePurchaseGl(client, { branchId: context.branchId, purchaseId: purchase.purchase_id });
+      }
+
       const paidAmountRaw = Number(input.paidAmount || 0);
       const payFromAccId = input.payFromAccId;
       if (payFromAccId && paidAmountRaw > 0 && status !== 'void' && purchaseType !== 'credit') {
         const paidAmount = Math.min(paidAmountRaw, total);
         if (paidAmount > 0) {
-          await applyPurchasePayment(client, {
-            branchId: context.branchId,
-            purchaseId: purchase.purchase_id,
-            userId: context.userId,
-            supplierId: effectiveSupplierId,
-            accId: payFromAccId,
-            amount: paidAmount,
-            note: input.note || null,
-          });
+           await applyPurchasePayment(client, {
+             branchId: context.branchId,
+             purchaseId: purchase.purchase_id,
+             purchaseTotal: total,
+             userId: context.userId,
+             supplierId: effectiveSupplierId,
+             accId: payFromAccId,
+             amount: paidAmount,
+             note: input.note || null,
+           });
         }
       }
 
@@ -1065,6 +1149,7 @@ export const purchasesService = {
           await applyPurchasePayment(client, {
             branchId: currentBranchId,
             purchaseId: id,
+            purchaseTotal: nextTotal,
             userId: Number(current.user_id || 1),
             supplierId: nextSupplierId,
             accId: input.payFromAccId,
@@ -1117,6 +1202,8 @@ export const purchasesService = {
         productIds: Array.from(affectedProductIds),
         actorUserId: Number(current.user_id || 1),
       });
+
+      await rewritePurchaseGl(client, { branchId: currentBranchId, purchaseId: id });
 
       await client.query('COMMIT');
       return updated.rows[0] || null;
@@ -1185,14 +1272,16 @@ export const purchasesService = {
         });
       }
 
-      const payments = await client.query<{ acc_id: number; amount_paid: string }>(
-        `SELECT acc_id, amount_paid::text AS amount_paid
+      const payments = await client.query<{ sup_payment_id: number; acc_id: number; amount_paid: string }>(
+        `SELECT sup_payment_id, acc_id, amount_paid::text AS amount_paid
            FROM ims.supplier_payments
           WHERE purchase_id = $1
           FOR UPDATE`,
         [id]
       );
+      const paymentIds: number[] = [];
       for (const payment of payments.rows) {
+        paymentIds.push(Number(payment.sup_payment_id));
         const amount = Number(payment.amount_paid || 0);
         if (!amount) continue;
         await client.query(
@@ -1221,10 +1310,18 @@ export const purchasesService = {
         `DELETE FROM ims.account_transactions
           WHERE branch_id = $1
             AND ref_table = 'purchases'
-            AND ref_id = $2
-            AND txn_type = 'supplier_payment'`,
+            AND ref_id = $2`,
         [branchId, id]
       );
+      if (paymentIds.length) {
+        await client.query(
+          `DELETE FROM ims.account_transactions
+            WHERE branch_id = $1
+              AND ref_table = 'supplier_payments'
+              AND ref_id = ANY($2)`,
+          [branchId, paymentIds]
+        );
+      }
       await client.query(
         `DELETE FROM ims.supplier_ledger
           WHERE branch_id = $1

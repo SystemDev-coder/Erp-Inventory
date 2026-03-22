@@ -16,19 +16,11 @@ const hasColumn = async (table: string, column: string): Promise<boolean> => {
 
 const syncCustomerBalances = async (branchId: number) => {
   const hasRemaining = await hasColumn('customers', 'remaining_balance');
-  const setParts = [
-    `open_balance = CASE
-       WHEN COALESCE(c.open_balance, 0) = 0 THEN COALESCE(l.balance, c.open_balance)
-       ELSE c.open_balance
-     END`,
-  ];
+  // `open_balance` is the migrated/opening amount and should not change during normal operations.
+  // `remaining_balance` must always reflect the customer ledger balance (receivable/advance).
+  const setParts = [`open_balance = COALESCE(c.open_balance, 0)`];
   if (hasRemaining) {
-    setParts.push(
-      `remaining_balance = CASE
-         WHEN COALESCE(c.remaining_balance, 0) = 0 THEN COALESCE(l.balance, c.remaining_balance)
-         ELSE c.remaining_balance
-       END`
-    );
+    setParts.push(`remaining_balance = COALESCE(l.balance, 0)`);
   }
   const sql = `
     WITH ledger AS (
@@ -50,19 +42,11 @@ const syncCustomerBalances = async (branchId: number) => {
 
 const syncSupplierBalances = async (branchId: number) => {
   const hasRemaining = await hasColumn('suppliers', 'remaining_balance');
-  const setParts = [
-    `open_balance = CASE
-       WHEN COALESCE(s.open_balance, 0) = 0 THEN COALESCE(l.balance, s.open_balance)
-       ELSE s.open_balance
-     END`,
-  ];
+  // `open_balance` is the migrated/opening amount and should not change during normal operations.
+  // `remaining_balance` must always reflect the supplier ledger balance (payable/advance).
+  const setParts = [`open_balance = COALESCE(s.open_balance, 0)`];
   if (hasRemaining) {
-    setParts.push(
-      `remaining_balance = CASE
-         WHEN COALESCE(s.remaining_balance, 0) = 0 THEN COALESCE(l.balance, s.remaining_balance)
-         ELSE s.remaining_balance
-       END`
-    );
+    setParts.push(`remaining_balance = COALESCE(l.balance, 0)`);
   }
   const sql = `
     WITH ledger AS (

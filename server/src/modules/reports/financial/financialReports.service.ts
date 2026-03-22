@@ -1146,6 +1146,120 @@ const buildBalanceSheetFromLedger = async (branchId: number, asOfDate: string): 
   });
 };
 
+// Professional balance sheet: no auto-plugging of retained earnings.
+// - Assets / Liabilities / Equity come from posted GL (ims.account_transactions)
+// - Net Income is shown as "Unclosed" when closing entries are not posted yet.
+const buildBalanceSheetFromGl = async (branchId: number, asOfDate: string): Promise<BalanceSheetRow[]> => {
+  const accountRows = await queryMany<{
+    acc_id: number;
+    account_name: string;
+    institution: string;
+    account_type: string;
+    net: number;
+  }>(
+    `SELECT
+        a.acc_id,
+        COALESCE(NULLIF(BTRIM(a.name), ''), 'Account #' || a.acc_id::text) AS account_name,
+        COALESCE(a.institution, '') AS institution,
+        COALESCE(a.account_type::text, 'asset') AS account_type,
+        COALESCE(SUM(COALESCE(at.debit, 0) - COALESCE(at.credit, 0)), 0)::double precision AS net
+      FROM ims.accounts a
+      LEFT JOIN ims.account_transactions at
+        ON at.branch_id = a.branch_id
+       AND at.acc_id = a.acc_id
+       AND at.txn_date::date <= $2::date
+     WHERE a.branch_id = $1
+       AND a.is_active = TRUE
+     GROUP BY a.acc_id, a.name, a.institution, a.account_type
+     ORDER BY a.acc_id ASC`,
+    [branchId, asOfDate]
+  );
+
+  const currentAssets: BalanceSheetRow[] = [];
+  const nonCurrentAssets: BalanceSheetRow[] = [];
+  const currentLiabilities: BalanceSheetRow[] = [];
+  const equityRows: BalanceSheetRow[] = [];
+
+  const add = (target: BalanceSheetRow[], section: string, label: string, amount: number) => {
+    if (isApproxZero(amount)) return;
+    target.push({ section, line_item: label, amount, row_type: 'detail' });
+  };
+
+  let revenueTotal = 0;
+  let expenseTotal = 0;
+
+  for (const row of accountRows) {
+    const type = String(row.account_type || 'asset').toLowerCase();
+    const name = String(row.account_name || '').trim() || `Account #${row.acc_id}`;
+    const net = Number(row.net || 0); // debit - credit
+
+    if (type === 'asset') {
+      const amount = net;
+      if (isFixedAssetAccount(name)) add(nonCurrentAssets, 'Non-Current Assets', name, amount);
+      else add(currentAssets, 'Current Assets', name, amount);
+      continue;
+    }
+
+    if (type === 'liability') {
+      add(currentLiabilities, 'Current Liabilities', name, -net);
+      continue;
+    }
+
+    if (type === 'equity') {
+      add(equityRows, 'Equity', name, -net);
+      continue;
+    }
+
+    if (type === 'revenue' || type === 'income') {
+      revenueTotal += -net;
+      continue;
+    }
+
+    if (type === 'expense' || type === 'cost') {
+      expenseTotal += net;
+    }
+  }
+
+  const netIncome = revenueTotal - expenseTotal;
+  if (!isApproxZero(netIncome)) {
+    equityRows.push({
+      section: 'Equity',
+      line_item: netIncome >= 0 ? 'Net Income (Unclosed)' : 'Net Loss (Unclosed)',
+      amount: netIncome,
+      row_type: 'detail',
+    });
+  }
+
+  const totalCurrentAssets = currentAssets.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const totalNonCurrentAssets = nonCurrentAssets.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const totalAssets = totalCurrentAssets + totalNonCurrentAssets;
+
+  const totalCurrentLiabilities = currentLiabilities.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const totalLiabilities = totalCurrentLiabilities;
+  const totalEquity = equityRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const totalLiabilitiesEquity = totalLiabilities + totalEquity;
+  const unbalanced = totalAssets - totalLiabilitiesEquity;
+
+  const rows: BalanceSheetRow[] = [
+    ...currentAssets,
+    { section: 'Current Assets', line_item: 'Total Current Assets', amount: totalCurrentAssets, row_type: 'total' },
+    ...nonCurrentAssets,
+    { section: 'Non-Current Assets', line_item: 'Total Non-Current Assets', amount: totalNonCurrentAssets, row_type: 'total' },
+    { section: 'Assets', line_item: 'Total Assets', amount: totalAssets, row_type: 'total' },
+    ...currentLiabilities,
+    { section: 'Current Liabilities', line_item: 'Total Current Liabilities', amount: totalCurrentLiabilities, row_type: 'total' },
+    ...equityRows,
+    { section: 'Equity', line_item: 'Total Equity', amount: totalEquity, row_type: 'total' },
+    { section: 'Summary', line_item: 'Total Liabilities', amount: totalLiabilities, row_type: 'total' },
+    { section: 'Summary', line_item: 'Total Liabilities + Equity', amount: totalLiabilitiesEquity, row_type: 'total' },
+    ...(isApproxZero(unbalanced)
+      ? []
+      : [{ section: 'Summary', line_item: 'Unbalanced Difference', amount: unbalanced, row_type: 'detail' }]),
+  ];
+
+  return rows.filter((row) => row.row_type === 'total' || !isApproxZero(row.amount));
+};
+
 const buildCashFlowFromLedger = async (
   branchId: number,
   fromDate: string,
@@ -1578,7 +1692,7 @@ export const financialReportsService = {
   },
 
   async getBalanceSheetLegacy(branchId: number, asOfDate: string): Promise<BalanceSheetRow[]> {
-    return buildBalanceSheetFromLedger(branchId, asOfDate);
+    return buildBalanceSheetFromGl(branchId, asOfDate);
 
     const [customerBalanceColumn, supplierBalanceExpr] = await Promise.all([
       resolveBalanceColumn('customers'),
@@ -2616,42 +2730,43 @@ export const financialReportsService = {
     }
 
     return queryMany<AccountStatementRow>(
-      `${normalizedAccountTransactionsCte},
-      opening AS (
+      `WITH opening AS (
          SELECT
            at.acc_id AS account_id,
-           COALESCE(SUM(at.credit - at.debit), 0)::double precision AS opening_balance
-          FROM normalized_txn at
-          WHERE at.txn_date::date < $2::date
+           COALESCE(SUM(COALESCE(at.debit, 0) - COALESCE(at.credit, 0)), 0)::double precision AS opening_balance
+          FROM ims.account_transactions at
+          WHERE at.branch_id = $1
+            AND at.txn_date::date < $2::date
             ${accountFilter}
           GROUP BY at.acc_id
-      ),
+       ),
        filtered AS (
-          SELECT
-            at.txn_id,
-            at.txn_date,
-            at.acc_id AS account_id,
-            COALESCE(a.name, 'N/A') AS account_name,
-            at.txn_type::text AS txn_type,
-            COALESCE(at.ref_table, '') AS ref_table,
-            at.ref_id,
-            COALESCE(at.debit, 0)::double precision AS debit,
-            COALESCE(at.credit, 0)::double precision AS credit,
-            COALESCE(at.note, '') AS note,
-            at.sort_id
-          FROM normalized_txn at
-          LEFT JOIN ims.accounts a ON a.acc_id = at.acc_id
-          WHERE at.txn_date::date BETWEEN $2::date AND $3::date
-            ${accountFilter}
+         SELECT
+           at.txn_id,
+           at.txn_date,
+           at.acc_id AS account_id,
+           COALESCE(a.name, 'N/A') AS account_name,
+           at.txn_type::text AS txn_type,
+           COALESCE(at.ref_table, '') AS ref_table,
+           at.ref_id,
+           COALESCE(at.debit, 0)::double precision AS debit,
+           COALESCE(at.credit, 0)::double precision AS credit,
+           COALESCE(at.note, '') AS note,
+           at.txn_id AS sort_id
+         FROM ims.account_transactions at
+         LEFT JOIN ims.accounts a ON a.acc_id = at.acc_id
+         WHERE at.branch_id = $1
+           AND at.txn_date::date BETWEEN $2::date AND $3::date
+           ${accountFilter}
        ),
        running AS (
          SELECT
            f.*,
-            (
-              COALESCE(o.opening_balance, 0)
-             + SUM(f.credit - f.debit)
-              OVER (PARTITION BY f.account_id ORDER BY f.txn_date, f.sort_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
-            )::double precision AS running_balance
+           (
+             COALESCE(o.opening_balance, 0)
+             + SUM(f.debit - f.credit)
+               OVER (PARTITION BY f.account_id ORDER BY f.txn_date, f.sort_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+           )::double precision AS running_balance
          FROM filtered f
          LEFT JOIN opening o ON o.account_id = f.account_id
        )
@@ -2668,8 +2783,8 @@ export const financialReportsService = {
          running_balance,
          note
        FROM running
-      ORDER BY txn_date ASC, sort_id ASC, txn_id ASC
-      LIMIT 5000`,
+       ORDER BY txn_date ASC, sort_id ASC, txn_id ASC
+       LIMIT 5000`,
       params
     );
   },
@@ -2680,9 +2795,6 @@ export const financialReportsService = {
     toDate: string,
     includeZero = false
   ): Promise<TrialBalanceRow[]> {
-    const todayIso = new Date().toISOString().slice(0, 10);
-    const useBaseClosing = String(toDate) >= todayIso;
-    const params: Array<number | string | boolean> = [branchId, fromDate, toDate, useBaseClosing];
     const nonZeroSql = includeZero
       ? ''
       : `
@@ -2690,234 +2802,75 @@ export const financialReportsService = {
            OR ABS(opening_credit) > 0.000001
            OR ABS(period_debit) > 0.000001
            OR ABS(period_credit) > 0.000001
-           OR ABS(closing_net) > 0.000001`;
+           OR ABS(closing_debit) > 0.000001
+           OR ABS(closing_credit) > 0.000001`;
+
     const rows = await queryMany<TrialBalanceRow>(
-      `${normalizedAccountTransactionsCte},
-      account_master AS (
-        SELECT
-          a.acc_id,
-          COALESCE(NULLIF(BTRIM(a.name), ''), 'Account #' || a.acc_id::text) AS account_name,
-          COALESCE(a.balance, 0)::double precision AS base_balance,
-          LOWER(COALESCE(a.name, '')) AS name_lc,
-          COALESCE(a.account_type::text, 'asset') AS account_type
-        FROM ims.accounts a
-        WHERE a.branch_id = $1
-          AND a.is_active = TRUE
-      ),
-      classified AS (
-        SELECT
-          am.*,
-          CASE
-            WHEN am.name_lc LIKE '%cash%' OR am.name_lc LIKE '%bank%' OR am.name_lc LIKE '%merchant%'
-              OR am.name_lc LIKE '%evc%' OR am.name_lc LIKE '%dahab%' OR am.name_lc LIKE '%salaam%'
-              OR am.name_lc LIKE '%premier%' OR am.name_lc LIKE '%wallet%' THEN 'debit'
-            WHEN am.name_lc LIKE '%receivable%' OR am.name_lc LIKE '%debtor%' OR am.name_lc LIKE '%inventory%'
-              OR am.name_lc LIKE '%prepaid%' OR am.name_lc LIKE '%prepared%' OR am.name_lc LIKE '%fixed asset%'
-              OR am.name_lc LIKE '%furniture%' OR am.name_lc LIKE '%equipment%' OR am.name_lc LIKE '%computer%'
-              OR am.name_lc LIKE '%machinery%' THEN 'debit'
-            WHEN am.name_lc LIKE '%drawing%' OR am.name_lc LIKE '%withdraw%' THEN 'debit'
-            WHEN am.account_type IN ('liability', 'equity', 'revenue', 'income') THEN 'credit'
-            WHEN am.account_type IN ('asset', 'expense') THEN 'debit'
-            WHEN am.name_lc LIKE '%payable%' OR am.name_lc LIKE '%creditor%' THEN 'credit'
-            WHEN am.name_lc LIKE '%revenue%' OR am.name_lc LIKE '%income%' OR am.name_lc LIKE '%sales%' THEN 'credit'
-            WHEN am.name_lc LIKE '%capital%' OR am.name_lc LIKE '%equity%' OR am.name_lc LIKE '%retained%' THEN 'credit'
-            WHEN am.name_lc LIKE '%loan%' AND am.name_lc NOT LIKE '%receivable%' THEN 'credit'
-            WHEN am.name_lc LIKE '%expense%' OR am.name_lc LIKE '%salary%' OR am.name_lc LIKE '%wage%' THEN 'debit'
-            ELSE 'debit'
-          END AS natural_side
-        FROM account_master am
-      ),
-       opening_txn AS (
+      `WITH account_master AS (
          SELECT
-           at.acc_id,
-            COALESCE(SUM(at.credit - at.debit), 0)::double precision AS opening_net
-          FROM normalized_txn at
-          WHERE at.txn_date::date < $2::date
-          GROUP BY at.acc_id
-        ),
-       period_txn AS (
+           a.acc_id AS account_id,
+           COALESCE(NULLIF(BTRIM(a.name), ''), 'Account #' || a.acc_id::text) AS account_name
+         FROM ims.accounts a
+         WHERE a.branch_id = $1
+           AND a.is_active = TRUE
+       ),
+       opening AS (
          SELECT
-           at.acc_id,
-           COALESCE(SUM(at.debit), 0)::double precision AS period_debit,
-           COALESCE(SUM(at.credit), 0)::double precision AS period_credit,
-           COALESCE(SUM(at.credit - at.debit), 0)::double precision AS period_net
-         FROM normalized_txn at
-         WHERE at.txn_date::date BETWEEN $2::date AND $3::date
+           at.acc_id AS account_id,
+           COALESCE(SUM(COALESCE(at.debit, 0) - COALESCE(at.credit, 0)), 0)::double precision AS opening_balance
+         FROM ims.account_transactions at
+         WHERE at.branch_id = $1
+           AND at.txn_date::date < $2::date
+         GROUP BY at.acc_id
+       ),
+       period AS (
+         SELECT
+           at.acc_id AS account_id,
+           COALESCE(SUM(COALESCE(at.debit, 0)), 0)::double precision AS period_debit,
+           COALESCE(SUM(COALESCE(at.credit, 0)), 0)::double precision AS period_credit
+         FROM ims.account_transactions at
+         WHERE at.branch_id = $1
+           AND at.txn_date::date BETWEEN $2::date AND $3::date
          GROUP BY at.acc_id
        ),
        merged AS (
          SELECT
-           c.acc_id AS account_id,
-           c.account_name,
-           c.natural_side,
-            COALESCE(o.opening_net, 0)::double precision AS opening_net_ledger,
-            COALESCE(p.period_debit, 0)::double precision AS period_debit,
-            COALESCE(p.period_credit, 0)::double precision AS period_credit,
-            COALESCE(p.period_net, 0)::double precision AS period_net,
-            COALESCE(c.base_balance, 0)::double precision AS base_balance
-          FROM classified c
-          LEFT JOIN opening_txn o ON o.acc_id = c.acc_id
-          LEFT JOIN period_txn p ON p.acc_id = c.acc_id
-        ),
-        calc AS (
-          SELECT
-            account_id,
-            account_name,
-            natural_side,
-            period_debit,
-            period_credit,
-            -- Trial balance should match the Accounts page for "today" reports.
-            -- If the end date is today-or-later, use ims.accounts.balance as the closing net.
-            -- Otherwise use ledger rollups as-of the report end date.
-            CASE
-              WHEN $4::boolean THEN (base_balance - period_net)
-              ELSE opening_net_ledger
-            END::double precision AS opening_net,
-            CASE
-              WHEN $4::boolean THEN base_balance
-              ELSE (opening_net_ledger + period_net)
-            END::double precision AS closing_net,
-            CASE
-              WHEN natural_side = 'credit' THEN CASE WHEN (CASE WHEN $4::boolean THEN (base_balance - period_net) ELSE opening_net_ledger END) < 0 THEN ABS((CASE WHEN $4::boolean THEN (base_balance - period_net) ELSE opening_net_ledger END)) ELSE 0 END
-              ELSE CASE WHEN (CASE WHEN $4::boolean THEN (base_balance - period_net) ELSE opening_net_ledger END) >= 0 THEN (CASE WHEN $4::boolean THEN (base_balance - period_net) ELSE opening_net_ledger END) ELSE 0 END
-            END::double precision AS opening_debit,
-            CASE
-              WHEN natural_side = 'credit' THEN CASE WHEN (CASE WHEN $4::boolean THEN (base_balance - period_net) ELSE opening_net_ledger END) >= 0 THEN (CASE WHEN $4::boolean THEN (base_balance - period_net) ELSE opening_net_ledger END) ELSE 0 END
-              ELSE CASE WHEN (CASE WHEN $4::boolean THEN (base_balance - period_net) ELSE opening_net_ledger END) < 0 THEN ABS((CASE WHEN $4::boolean THEN (base_balance - period_net) ELSE opening_net_ledger END)) ELSE 0 END
-            END::double precision AS opening_credit,
-            CASE
-              WHEN natural_side = 'credit' THEN CASE WHEN (CASE WHEN $4::boolean THEN base_balance ELSE (opening_net_ledger + period_net) END) < 0 THEN ABS((CASE WHEN $4::boolean THEN base_balance ELSE (opening_net_ledger + period_net) END)) ELSE 0 END
-              ELSE CASE WHEN (CASE WHEN $4::boolean THEN base_balance ELSE (opening_net_ledger + period_net) END) >= 0 THEN (CASE WHEN $4::boolean THEN base_balance ELSE (opening_net_ledger + period_net) END) ELSE 0 END
-            END::double precision AS closing_debit,
-            CASE
-              WHEN natural_side = 'credit' THEN CASE WHEN (CASE WHEN $4::boolean THEN base_balance ELSE (opening_net_ledger + period_net) END) >= 0 THEN (CASE WHEN $4::boolean THEN base_balance ELSE (opening_net_ledger + period_net) END) ELSE 0 END
-              ELSE CASE WHEN (CASE WHEN $4::boolean THEN base_balance ELSE (opening_net_ledger + period_net) END) < 0 THEN ABS((CASE WHEN $4::boolean THEN base_balance ELSE (opening_net_ledger + period_net) END)) ELSE 0 END
-            END::double precision AS closing_credit
-          FROM merged
-        )
-        SELECT
-          account_id,
-          account_name,
-          opening_debit,
-          opening_credit,
-          period_debit,
-          period_credit,
-          closing_debit,
-          closing_credit
-         FROM calc
-        ${nonZeroSql}
-        ORDER BY account_id ASC`,
-      params
+           am.account_id,
+           am.account_name,
+           COALESCE(o.opening_balance, 0)::double precision AS opening_balance,
+           COALESCE(p.period_debit, 0)::double precision AS period_debit,
+           COALESCE(p.period_credit, 0)::double precision AS period_credit
+         FROM account_master am
+         LEFT JOIN opening o ON o.account_id = am.account_id
+         LEFT JOIN period p ON p.account_id = am.account_id
+       ),
+       calc AS (
+         SELECT
+           account_id,
+           account_name,
+           CASE WHEN opening_balance >= 0 THEN opening_balance ELSE 0 END::double precision AS opening_debit,
+           CASE WHEN opening_balance < 0 THEN ABS(opening_balance) ELSE 0 END::double precision AS opening_credit,
+           period_debit,
+           period_credit,
+           (opening_balance + (period_debit - period_credit))::double precision AS closing_balance
+         FROM merged
+       )
+       SELECT
+         account_id,
+         account_name,
+         opening_debit,
+         opening_credit,
+         period_debit,
+         period_credit,
+         CASE WHEN closing_balance >= 0 THEN closing_balance ELSE 0 END::double precision AS closing_debit,
+         CASE WHEN closing_balance < 0 THEN ABS(closing_balance) ELSE 0 END::double precision AS closing_credit
+       FROM calc
+       ${nonZeroSql}
+       ORDER BY account_name ASC, account_id ASC`,
+      [branchId, fromDate, toDate]
     );
 
-    const reportRows = includeZero ? rows : rows.filter((row) => !isZeroTrialBalanceRow(row));
-    const existing = new Set(reportRows.map((row) => normalizeAccountName(row.account_name)));
-    let syntheticId = -910000;
-
-    // Backfill P&L rows so Trial Balance visibly includes sales/revenue/expense accounts.
-    const incomeRows = await financialReportsService.getIncomeStatement(branchId, fromDate, toDate);
-    for (const row of incomeRows) {
-      if (row.row_type !== 'detail') continue;
-      const section = normalizeAccountName(row.section);
-      const name = String(row.line_item || '').trim();
-      if (!name || existing.has(normalizeAccountName(name))) continue;
-
-      const amount = Number(row.amount || 0);
-      if (isApproxZero(amount)) continue;
-
-      // Revenue section: positive = credit, negative (returns) = debit.
-      // Expense/COGS section: shown as debit by absolute amount.
-      let periodDebit = 0;
-      let periodCredit = 0;
-      if (section.includes('revenue')) {
-        if (amount >= 0) periodCredit = amount;
-        else periodDebit = Math.abs(amount);
-      } else {
-        periodDebit = Math.abs(amount);
-      }
-      if (isApproxZero(periodDebit) && isApproxZero(periodCredit)) continue;
-
-      reportRows.push({
-        account_id: syntheticId--,
-        account_name: name,
-        opening_debit: 0,
-        opening_credit: 0,
-        period_debit: periodDebit,
-        period_credit: periodCredit,
-        closing_debit: periodDebit,
-        closing_credit: periodCredit,
-      });
-      existing.add(normalizeAccountName(name));
-    }
-
-    // Backfill missing statement accounts (AR/Inventory/Fixed Assets/AP/Equity) so Trial Balance
-    // stays aligned with Balance Sheet when those ledgers are maintained outside chart accounts.
-    const bsRows = await buildBalanceSheetFromLedger(branchId, toDate);
-
-    for (const row of bsRows) {
-      if (row.row_type !== 'detail') continue;
-      const section = normalizeAccountName(row.section);
-      const name = String(row.line_item || '').trim();
-      if (!name || existing.has(normalizeAccountName(name))) continue;
-      // Trial Balance already includes P&L accounts (revenue/expenses). Do not double-count retained earnings
-      // or net income lines that are computed as residuals for the Balance Sheet.
-      if (
-        section === 'equity' &&
-        /(retained earnings|accumulated loss|opening retained|opening accumulated|net income|net loss)/i.test(name)
-      ) {
-        continue;
-      }
-      const amount = Number(row.amount || 0);
-      if (isApproxZero(amount)) continue;
-
-      let closingDebit = 0;
-      let closingCredit = 0;
-      if (section.includes('asset')) {
-        closingDebit = Math.abs(amount);
-      } else if (section.includes('liabilit')) {
-        closingCredit = Math.abs(amount);
-      } else if (section === 'equity') {
-        if (amount >= 0) closingCredit = amount;
-        else closingDebit = Math.abs(amount);
-      } else {
-        continue;
-      }
-
-      reportRows.push({
-        account_id: syntheticId--,
-        account_name: name,
-        opening_debit: closingDebit,
-        opening_credit: closingCredit,
-        period_debit: 0,
-        period_credit: 0,
-        closing_debit: closingDebit,
-        closing_credit: closingCredit,
-      });
-      existing.add(normalizeAccountName(name));
-    }
-
-    const patchedDr = reportRows.reduce((sum, row) => sum + Number(row.closing_debit || 0), 0);
-    const patchedCr = reportRows.reduce((sum, row) => sum + Number(row.closing_credit || 0), 0);
-    const diff = patchedDr - patchedCr;
-    if (Math.abs(diff) > 0.005) {
-      const debitAdj = diff < 0 ? Math.abs(diff) : 0;
-      const creditAdj = diff > 0 ? diff : 0;
-      reportRows.push({
-        account_id: syntheticId--,
-        account_name: 'Suspense (Auto Balance)',
-        opening_debit: debitAdj,
-        opening_credit: creditAdj,
-        period_debit: 0,
-        period_credit: 0,
-        closing_debit: debitAdj,
-        closing_credit: creditAdj,
-      });
-    }
-
-    const withoutOtherIncome = reportRows.filter(
-      (row) => !normalizeAccountName(row.account_name).includes('other income')
-    );
-    return withoutOtherIncome.sort((a, b) => String(a.account_name).localeCompare(String(b.account_name)));
+    return includeZero ? rows : rows.filter((row) => !isZeroTrialBalanceRow(row));
   },
 
   async getAccountBalances(branchId: number, accountId?: number): Promise<AccountBalanceRow[]> {
@@ -2929,15 +2882,15 @@ export const financialReportsService = {
     }
 
     return queryMany<AccountBalanceRow>(
-      `${normalizedAccountTransactionsCte},
-       txn AS (
+      `WITH txn AS (
          SELECT
            at.acc_id,
            COUNT(*)::int AS txn_count,
-           COALESCE(SUM(at.credit - at.debit), 0)::double precision AS txn_balance,
+           COALESCE(SUM(COALESCE(at.debit, 0) - COALESCE(at.credit, 0)), 0)::double precision AS txn_balance,
            MAX(at.txn_date)::text AS last_transaction_date
-         FROM normalized_txn at
-         WHERE at.txn_date::date <= CURRENT_DATE
+         FROM ims.account_transactions at
+         WHERE at.branch_id = $1
+           AND at.txn_date::date <= CURRENT_DATE
          GROUP BY at.acc_id
        )
        SELECT

@@ -3,6 +3,8 @@ import { adminQueryMany } from '../../db/adminQuery';
 import { withTransaction } from '../../db/withTx';
 import { ApiError } from '../../utils/ApiError';
 import { syncSystemAccountBalancesWithClient } from '../../utils/systemAccounts';
+import { postGl } from '../../utils/glPosting';
+import { ensureCoaAccounts } from '../../utils/coaDefaults';
 import { usersService, UserRow } from '../users/users.service';
 import { getUploadedImageUrl } from '../../config/cloudinary';
 import {
@@ -209,9 +211,9 @@ const ensureUniqueRoleCode = async (
 
 export const systemService = {
   async migrateOpeningBalances(branchId?: number): Promise<{
-    updated: { customers: number; suppliers: number; customerLedger: number; supplierLedger: number };
+    updated: { customers: number; suppliers: number; customerLedger: number; supplierLedger: number; accounts: number; accountTransactions: number };
   }> {
-    const updated = { customers: 0, suppliers: 0, customerLedger: 0, supplierLedger: 0 };
+    const updated = { customers: 0, suppliers: 0, customerLedger: 0, supplierLedger: 0, accounts: 0, accountTransactions: 0 };
 
     // Ensure columns exist so the app can always use `remaining_balance` as the live outstanding.
     await adminQueryMany(`
@@ -362,6 +364,71 @@ export const systemService = {
             [bid]
           );
           updated.suppliers += up.rowCount ?? 0;
+        }
+
+        // Migrate legacy `accounts.balance` values into proper opening-balance GL lines when there is no GL history.
+        const coa = await ensureCoaAccounts(client, bid, ['openingBalanceEquity']);
+        const accountsToPost = await client.query<{
+          acc_id: number;
+          name: string;
+          balance: string;
+          account_type: string;
+          created_at: string | null;
+        }>(
+          `SELECT
+              a.acc_id,
+              a.name,
+              a.balance::text AS balance,
+              COALESCE(a.account_type::text, 'asset') AS account_type,
+              a.created_at::text AS created_at
+           FROM ims.accounts a
+           WHERE a.branch_id = $1
+             AND a.is_active = TRUE
+             AND ABS(COALESCE(a.balance, 0)) > 0.000001
+             AND NOT EXISTS (
+               SELECT 1
+                 FROM ims.account_transactions at
+                WHERE at.branch_id = a.branch_id
+                  AND at.acc_id = a.acc_id
+             )
+             AND NOT EXISTS (
+               SELECT 1
+                 FROM ims.account_transactions at2
+                WHERE at2.branch_id = a.branch_id
+                  AND at2.ref_table = 'accounts'
+                  AND at2.ref_id = a.acc_id
+                  AND at2.txn_type::text = 'opening'
+             )
+           ORDER BY a.acc_id ASC`,
+          [bid]
+        );
+
+        for (const acc of accountsToPost.rows) {
+          const balance = Math.round(Number(acc.balance || 0) * 100) / 100;
+          if (Math.abs(balance) <= 0.000001) continue;
+
+          const accountType = String(acc.account_type || 'asset').toLowerCase();
+          const debitNormal = ['asset', 'expense', 'cost'].includes(accountType);
+          const debit = debitNormal ? Math.max(balance, 0) : Math.max(-balance, 0);
+          const credit = debitNormal ? Math.max(-balance, 0) : Math.max(balance, 0);
+          const equityDebit = credit;
+          const equityCredit = debit;
+
+          await postGl(client, {
+            branchId: bid,
+            txnDate: acc.created_at || null,
+            txnType: 'opening',
+            refTable: 'accounts',
+            refId: Number(acc.acc_id),
+            note: `Opening balance migrated: ${acc.name}`,
+            lines: [
+              { accId: Number(acc.acc_id), debit, credit, note: 'Opening balance' },
+              { accId: coa.openingBalanceEquity, debit: equityDebit, credit: equityCredit, note: 'Offset (Opening Balance Equity)' },
+            ],
+          });
+
+          updated.accounts += 1;
+          updated.accountTransactions += 2;
         }
 
         // Keep AR/AP system accounts consistent (computed from ledgers).
@@ -1388,44 +1455,65 @@ export const systemService = {
            [bid]
          );
 
-         // Backfill missing ledger rows for capital/drawings/fixed-assets so Cash Flow and account balances are correct.
-         // These modules historically stored rows without posting into ims.account_transactions.
-         const capitalTable = await client.query<{ exists: boolean }>(
-           `SELECT EXISTS (
-              SELECT 1
-                FROM information_schema.tables
+          // Rebuild core GL postings for legacy rows (capital/drawings/fixed-assets).
+          // Do NOT "auto-balance" using single-sided entries.
+          const capitalTable = await client.query<{ exists: boolean }>(
+            `SELECT EXISTS (
+               SELECT 1
+                 FROM information_schema.tables
                WHERE table_schema = 'ims'
                  AND table_name = 'capital_contributions'
             ) AS exists`
-         );
-         if (capitalTable.rows[0]?.exists) {
-           await client.query(
-             `INSERT INTO ims.account_transactions
-                (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
-              SELECT
-                cc.branch_id,
-                cc.acc_id,
-                'other',
-                'capital_contributions',
-                cc.capital_id,
-                0,
-                cc.amount,
-                cc.contribution_date::timestamptz,
-                '[CAPITAL] Auto backfill'
-              FROM ims.capital_contributions cc
-              WHERE cc.branch_id = $1
-                AND cc.amount > 0
-                AND cc.acc_id IS NOT NULL
-                AND NOT EXISTS (
-                  SELECT 1
-                   FROM ims.account_transactions at
-                   WHERE at.branch_id = cc.branch_id
-                     AND at.ref_table = 'capital_contributions'
-                     AND at.ref_id = cc.capital_id
-                )`,
-             [bid]
-           );
-         }
+          );
+          if (capitalTable.rows[0]?.exists) {
+            const rows = await client.query<{
+              capital_id: number;
+              acc_id: number;
+              equity_acc_id: number;
+              amount: string;
+              contribution_date: string;
+              owner_name: string;
+              note: string | null;
+            }>(
+              `SELECT capital_id,
+                      acc_id,
+                      equity_acc_id,
+                      amount::text AS amount,
+                      contribution_date::text AS contribution_date,
+                      owner_name,
+                      note
+                 FROM ims.capital_contributions
+                WHERE branch_id = $1
+                  AND amount > 0
+                  AND acc_id IS NOT NULL
+                  AND equity_acc_id IS NOT NULL`,
+              [bid]
+            );
+            for (const cc of rows.rows) {
+              const amount = Math.round(Number(cc.amount || 0) * 100) / 100;
+              if (amount <= 0) continue;
+              await client.query(
+                `DELETE FROM ims.account_transactions
+                  WHERE branch_id = $1
+                    AND ref_table = 'capital_contributions'
+                    AND ref_id = $2`,
+                [bid, cc.capital_id]
+              );
+              const memo = `[CAPITAL] ${cc.owner_name}${cc.note ? ` - ${cc.note}` : ''}`;
+              await postGl(client, {
+                branchId: bid,
+                txnDate: cc.contribution_date || null,
+                txnType: 'capital_contribution',
+                refTable: 'capital_contributions',
+                refId: Number(cc.capital_id),
+                note: memo,
+                lines: [
+                  { accId: Number(cc.acc_id), debit: amount, credit: 0, note: 'Cash/bank received' },
+                  { accId: Number(cc.equity_acc_id), debit: 0, credit: amount, note: 'Owner capital' },
+                ],
+              });
+            }
+          }
 
          const drawingTable = await client.query<{ exists: boolean }>(
            `SELECT EXISTS (
@@ -1434,35 +1522,54 @@ export const systemService = {
                WHERE table_schema = 'ims'
                  AND table_name = 'owner_drawings'
             ) AS exists`
-         );
-         if (drawingTable.rows[0]?.exists) {
-           await client.query(
-             `INSERT INTO ims.account_transactions
-                (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
-              SELECT
-                od.branch_id,
-                od.acc_id,
-                'other',
-                'owner_drawings',
-                od.draw_id,
-                od.amount,
-                0,
-                od.draw_date::timestamptz,
-                '[DRAWING] Auto backfill'
-              FROM ims.owner_drawings od
-              WHERE od.branch_id = $1
-                AND od.amount > 0
-                AND od.acc_id IS NOT NULL
-                AND NOT EXISTS (
-                  SELECT 1
-                   FROM ims.account_transactions at
-                   WHERE at.branch_id = od.branch_id
-                     AND at.ref_table = 'owner_drawings'
-                     AND at.ref_id = od.draw_id
-                )`,
-             [bid]
-           );
-         }
+          );
+          if (drawingTable.rows[0]?.exists) {
+            const coa = await ensureCoaAccounts(client, bid, ['ownerDrawings']);
+            const rows = await client.query<{
+              draw_id: number;
+              acc_id: number;
+              amount: string;
+              draw_date: string;
+              owner_name: string;
+              note: string | null;
+            }>(
+              `SELECT draw_id,
+                      acc_id,
+                      amount::text AS amount,
+                      draw_date::text AS draw_date,
+                      owner_name,
+                      note
+                 FROM ims.owner_drawings
+                WHERE branch_id = $1
+                  AND amount > 0
+                  AND acc_id IS NOT NULL`,
+              [bid]
+            );
+            for (const od of rows.rows) {
+              const amount = Math.round(Number(od.amount || 0) * 100) / 100;
+              if (amount <= 0) continue;
+              await client.query(
+                `DELETE FROM ims.account_transactions
+                  WHERE branch_id = $1
+                    AND ref_table = 'owner_drawings'
+                    AND ref_id = $2`,
+                [bid, od.draw_id]
+              );
+              const memo = `[DRAWING] ${od.owner_name}${od.note ? ` - ${od.note}` : ''}`;
+              await postGl(client, {
+                branchId: bid,
+                txnDate: od.draw_date || null,
+                txnType: 'owner_drawing',
+                refTable: 'owner_drawings',
+                refId: Number(od.draw_id),
+                note: memo,
+                lines: [
+                  { accId: coa.ownerDrawings, debit: amount, credit: 0, note: 'Owner drawings' },
+                  { accId: Number(od.acc_id), debit: 0, credit: amount, note: 'Cash/bank paid out' },
+                ],
+              });
+            }
+          }
 
          const fixedAssetsTable = await client.query<{ exists: boolean }>(
            `SELECT EXISTS (
@@ -1501,100 +1608,57 @@ export const systemService = {
              [bid]
            );
 
-           await client.query(
-             `INSERT INTO ims.account_transactions
-                (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
-              SELECT
-                fa.branch_id,
-                fa.acc_id,
-                'other',
-                'fixed_assets',
-                fa.asset_id,
-                fa.cost,
-                0,
-                fa.purchase_date::timestamptz,
-                '[FIXED ASSET] Auto backfill'
-              FROM ims.fixed_assets fa
-              WHERE fa.branch_id = $1
-                AND fa.cost > 0
-                AND fa.acc_id IS NOT NULL
-                AND NOT EXISTS (
-                  SELECT 1
-                    FROM ims.account_transactions at
-                   WHERE at.branch_id = fa.branch_id
-                     AND at.ref_table = 'fixed_assets'
-                     AND at.ref_id = fa.asset_id
-                )`,
-             [bid]
-           );
-         }
+            const coa = await ensureCoaAccounts(client, bid, ['fixedAssets']);
+            const rows = await client.query<{
+              asset_id: number;
+              acc_id: number;
+              asset_name: string;
+              purchase_date: string;
+              cost: string;
+            }>(
+              `SELECT asset_id,
+                      acc_id,
+                      asset_name,
+                      purchase_date::text AS purchase_date,
+                      cost::text AS cost
+                 FROM ims.fixed_assets
+                WHERE branch_id = $1
+                  AND cost > 0
+                  AND acc_id IS NOT NULL`,
+              [bid]
+            );
+            for (const fa of rows.rows) {
+              const cost = Math.round(Number(fa.cost || 0) * 100) / 100;
+              if (cost <= 0) continue;
+              await client.query(
+                `DELETE FROM ims.account_transactions
+                  WHERE branch_id = $1
+                    AND ref_table = 'fixed_assets'
+                    AND ref_id = $2`,
+                [bid, fa.asset_id]
+              );
+              await postGl(client, {
+                branchId: bid,
+                txnDate: fa.purchase_date || null,
+                txnType: 'other',
+                refTable: 'fixed_assets',
+                refId: Number(fa.asset_id),
+                note: `[FIXED ASSET] ${fa.asset_name}`,
+                lines: [
+                  { accId: coa.fixedAssets, debit: cost, credit: 0, note: 'Fixed asset acquired' },
+                  { accId: Number(fa.acc_id), debit: 0, credit: cost, note: 'Cash/bank paid' },
+                ],
+              });
+            }
+          }
 
-         // Reconcile account balances based on account transactions.
-         // Important: many deployments store initial balances directly in `ims.accounts.balance`
-         // without a matching ledger row, which would make reports show negative/missing balances.
-         // We therefore backfill an "opening" (or adjustment) txn so the ledger and balance match.
-         const accountSnapshot = await client.query<{
-           acc_id: number;
-           balance: string;
-           created_at: string;
-           txn_amount: string;
-           txn_count: number;
-           first_txn_at: string | null;
-         }>(
-           `WITH computed AS (
-              SELECT
-                acc_id,
-                COALESCE(SUM(COALESCE(credit,0) - COALESCE(debit,0)), 0)::numeric(14,2) AS amount,
-                COUNT(*)::int AS cnt,
-                MIN(txn_date)::timestamptz AS first_txn_at
-              FROM ims.account_transactions
-              WHERE branch_id = $1
-              GROUP BY acc_id
-            )
-            SELECT
-              a.acc_id,
-              a.balance::text AS balance,
-              a.created_at::text AS created_at,
-              COALESCE(c.amount, 0)::text AS txn_amount,
-              COALESCE(c.cnt, 0)::int AS txn_count,
-              c.first_txn_at::text AS first_txn_at
-            FROM ims.accounts a
-            LEFT JOIN computed c ON c.acc_id = a.acc_id
-            WHERE a.branch_id = $1
-              AND a.is_active = TRUE
-            ORDER BY a.acc_id ASC`,
-           [bid]
-         );
-
-         for (const row of accountSnapshot.rows) {
-           const accId = Number(row.acc_id);
-           const currentBalance = Math.round(Number(row.balance || 0) * 100) / 100;
-           const ledgerBalance = Math.round(Number(row.txn_amount || 0) * 100) / 100;
-           const diff = Math.round((currentBalance - ledgerBalance) * 100) / 100;
-           if (Math.abs(diff) < 0.01) continue;
-
-           const debit = diff < 0 ? Math.abs(diff) : 0;
-           const credit = diff > 0 ? diff : 0;
-           const txnType = row.txn_count === 0 ? 'opening' : 'other';
-           const note = row.txn_count === 0
-             ? '[OPENING BALANCE] Auto reconcile'
-             : '[BALANCE ADJUST] Auto reconcile';
-
-           const txnDateCandidate = row.first_txn_at || row.created_at || null;
-           await client.query(
-             `INSERT INTO ims.account_transactions
-                (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
-              VALUES ($1, $2, $3, 'accounts', $2, $4, $5, COALESCE($6::timestamptz, NOW()) - INTERVAL '1 second', $7)`,
-             [bid, accId, txnType, debit, credit, txnDateCandidate, note]
-           );
-         }
-
+          // Recompute account balances from GL (no forced single-sided adjustments).
           const accountsRes = await client.query(
             `WITH computed AS (
-               SELECT branch_id, acc_id, COALESCE(SUM(COALESCE(credit,0) - COALESCE(debit,0)), 0) AS amount
+               SELECT branch_id, acc_id, COALESCE(SUM(COALESCE(debit,0) - COALESCE(credit,0)), 0) AS amount
                  FROM ims.account_transactions
-               WHERE branch_id = $1
-               GROUP BY branch_id, acc_id
+                WHERE branch_id = $1
+                GROUP BY branch_id, acc_id
             )
             UPDATE ims.accounts a
                SET balance = COALESCE(c.amount, 0)
@@ -1604,6 +1668,35 @@ export const systemService = {
             [bid]
           );
           updated.accounts += accountsRes.rowCount ?? 0;
+
+          // Remove legacy suspense/auto-balance postings. Suspense must always be ZERO in a proper double-entry system.
+          const suspenseRes = await client.query<{ acc_id: number }>(
+            `SELECT acc_id
+               FROM ims.accounts
+              WHERE branch_id = $1
+                AND COALESCE(is_active, TRUE) = TRUE
+                AND (
+                  LOWER(COALESCE(name, '')) LIKE '%suspense%'
+                  OR LOWER(COALESCE(name, '')) LIKE '%auto balance%'
+                )`,
+            [bid]
+          );
+          const suspenseIds = suspenseRes.rows.map((r) => Number(r.acc_id)).filter((x) => Number.isFinite(x) && x > 0);
+          if (suspenseIds.length) {
+            await client.query(
+              `DELETE FROM ims.account_transactions
+                WHERE branch_id = $1
+                  AND acc_id = ANY($2::bigint[])`,
+              [bid, suspenseIds]
+            );
+            await client.query(
+              `UPDATE ims.accounts
+                  SET balance = 0
+                WHERE branch_id = $1
+                  AND acc_id = ANY($2::bigint[])`,
+              [bid, suspenseIds]
+            );
+          }
 
          // Remove previously inserted auto-reconcile entries so customer/supplier balances are driven by real ledgers.
          await client.query(

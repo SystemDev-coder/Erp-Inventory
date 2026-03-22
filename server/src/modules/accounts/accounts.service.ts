@@ -1,8 +1,11 @@
 import { queryMany, queryOne } from '../../db/query';
 import { adminQueryMany } from '../../db/adminQuery';
+import { withTransaction } from '../../db/withTx';
 import { BranchScope } from '../../utils/branchScope';
 import { ApiError } from '../../utils/ApiError';
 import { AccountInput } from './accounts.schemas';
+import { postGl } from '../../utils/glPosting';
+import { ensureCoaAccounts } from '../../utils/coaDefaults';
 
 export interface Account {
   acc_id: number;
@@ -52,7 +55,54 @@ const ensureAccountsSchema = async () => {
     UPDATE ims.accounts
        SET account_type = 'asset'
      WHERE account_type IS NULL
-        OR account_type NOT IN ('asset', 'equity')
+        OR BTRIM(account_type) = ''
+  `);
+
+  // Expand account_type values so GL can support full double-entry accounting.
+  await adminQueryMany(`
+    DO $$
+    DECLARE
+      r record;
+    BEGIN
+      FOR r IN
+        SELECT c.conname
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+         WHERE n.nspname = 'ims'
+           AND t.relname = 'accounts'
+           AND c.contype = 'c'
+      LOOP
+        IF r.conname ILIKE '%account_type%' THEN
+          EXECUTE format('ALTER TABLE ims.accounts DROP CONSTRAINT %I', r.conname);
+        END IF;
+      END LOOP;
+
+      IF NOT EXISTS (
+        SELECT 1
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+         WHERE n.nspname = 'ims'
+           AND t.relname = 'accounts'
+           AND c.conname = 'chk_accounts_account_type'
+      ) THEN
+        ALTER TABLE ims.accounts
+          ADD CONSTRAINT chk_accounts_account_type
+          CHECK (
+            account_type IN (
+              'asset',
+              'liability',
+              'equity',
+              'revenue',
+              'income',
+              'expense',
+              'cost'
+            )
+          );
+      END IF;
+    END
+    $$;
   `);
   accountsSchemaReady = true;
 };
@@ -190,67 +240,58 @@ export const accountsService = {
       throw ApiError.conflict('Account with this name already exists.');
     }
 
-    const accountType = (input as AccountInput & { accountType?: string }).accountType || 'asset';
-    const row = await queryOne<{
-      acc_id: number;
-      branch_id: number;
-      name: string;
-      institution: string | null;
-      balance: string;
-      is_active: boolean;
-      account_type: string;
-      created_at?: string;
-    }>(
-      `WITH inserted AS (
-         INSERT INTO ims.accounts (branch_id, name, institution, balance, is_active, account_type)
+    const accountType = ((input as AccountInput & { accountType?: string }).accountType || 'asset').trim();
+    const openingBalance = Number(input.balance ?? 0);
+
+    return withTransaction(async (client) => {
+      const rowRes = await client.query<{
+        acc_id: number;
+        branch_id: number;
+        name: string;
+        institution: string | null;
+        balance: string;
+        is_active: boolean;
+        account_type: string;
+        created_at?: string;
+      }>(
+        `INSERT INTO ims.accounts (branch_id, name, institution, balance, is_active, account_type)
          VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING acc_id, branch_id, name, institution, balance, is_active, account_type, created_at
-       ),
-       opening AS (
-         INSERT INTO ims.account_transactions
-           (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, note)
-         SELECT
-           i.branch_id,
-           i.acc_id,
-           'opening',
-           'accounts',
-           i.acc_id,
-           CASE WHEN COALESCE(i.balance, 0) < 0 THEN ABS(i.balance) ELSE 0 END,
-           CASE WHEN COALESCE(i.balance, 0) > 0 THEN i.balance ELSE 0 END,
-           '[OPENING BALANCE] From account creation'
-         FROM inserted i
-         WHERE COALESCE(i.balance, 0) <> 0
-         RETURNING 1
-       )
-       SELECT
-         acc_id,
-         branch_id,
-         name,
-         institution,
-         balance::text,
-         is_active,
-         account_type,
-         created_at::text AS created_at
-       FROM inserted`,
-      [
-        ctx.branchId,
-        input.name,
-        input.institution || null,
-        input.balance ?? 0,
-        input.isActive ?? true,
-        accountType,
-      ]
-    ).catch((error: any) => {
+         RETURNING acc_id, branch_id, name, institution, balance::text, is_active, account_type, created_at::text AS created_at`,
+        [ctx.branchId, input.name, input.institution || null, openingBalance, input.isActive ?? true, accountType]
+      );
+      const row = rowRes.rows[0];
+      if (!row) throw new Error('Failed to create account');
+
+      if (Math.abs(openingBalance) > 0.000001) {
+        const coa = await ensureCoaAccounts(client, ctx.branchId, ['openingBalanceEquity']);
+        const debitNormal = ['asset', 'expense', 'cost'].includes(accountType);
+
+        const debit = debitNormal ? Math.abs(openingBalance) : 0;
+        const credit = debitNormal ? 0 : Math.abs(openingBalance);
+        const equityDebit = credit;
+        const equityCredit = debit;
+
+        await postGl(client, {
+          branchId: ctx.branchId,
+          txnDate: (row.created_at as string) || null,
+          txnType: 'opening',
+          refTable: 'accounts',
+          refId: Number(row.acc_id),
+          note: `Opening balance: ${row.name}`,
+          lines: [
+            { accId: Number(row.acc_id), debit, credit, note: 'Opening balance' },
+            { accId: coa.openingBalanceEquity, debit: equityDebit, credit: equityCredit, note: 'Offset (Opening Balance Equity)' },
+          ],
+        });
+      }
+
+      return mapAccount(row);
+    }).catch((error: any) => {
       if (String(error?.code || '') === '23505') {
         throw ApiError.conflict('Account with this name already exists.');
       }
       throw error;
     });
-
-    if (!row) {
-      throw new Error('Failed to create account');
-    }
-    return mapAccount(row);
   },
 
   async update(
@@ -259,191 +300,134 @@ export const accountsService = {
     scope: BranchScope
   ): Promise<Account | null> {
     await ensureAccountsSchema();
-    const existing = scope.isAdmin
-      ? await queryOne<{ branch_id: number }>(
-          `SELECT branch_id
-             FROM ims.accounts
-            WHERE acc_id = $1`,
-          [id]
-        )
-      : await queryOne<{ branch_id: number }>(
-          `SELECT branch_id
-             FROM ims.accounts
-            WHERE acc_id = $1
-              AND branch_id = ANY($2)`,
-          [id, scope.branchIds]
-        );
-    if (!existing) return null;
 
-    if (input.name !== undefined) {
-      const duplicate = await this.findDuplicateInBranch(
-        Number(existing.branch_id),
-        input.name,
-        id
-      );
-      if (duplicate) {
-        throw ApiError.conflict('Account with this name already exists.');
-      }
-    }
-
-    const updates: string[] = [];
-    const values: unknown[] = [];
-    let parameter = 1;
-
-    if (input.name !== undefined) {
-      updates.push(`name = $${parameter++}`);
-      values.push(input.name);
-    }
-    if (input.institution !== undefined) {
-      updates.push(`institution = $${parameter++}`);
-      values.push(input.institution || null);
-    }
-    if (input.balance !== undefined) {
-      // When updating balance we also write an adjustment txn so ledgers/reports stay consistent.
-      updates.push(`balance = $${parameter++}`);
-      values.push(input.balance);
-    }
-    if (input.isActive !== undefined) {
-      updates.push(`is_active = $${parameter++}`);
-      values.push(input.isActive);
-    }
-
-    if (!updates.length) {
-      const row = scope.isAdmin
-        ? await queryOne<{
-            acc_id: number;
-            branch_id: number;
-            name: string;
-            institution: string | null;
-            balance: string;
-            is_active: boolean;
-            account_type: string;
-            created_at?: string;
-          }>(
-            `SELECT acc_id, branch_id, name, institution, balance::text, is_active, account_type, created_at::text
-               FROM ims.accounts
-              WHERE acc_id = $1`,
-            [id]
-          )
-        : await queryOne<{
-            acc_id: number;
-            branch_id: number;
-            name: string;
-            institution: string | null;
-            balance: string;
-            is_active: boolean;
-            account_type: string;
-            created_at?: string;
-          }>(
-            `SELECT acc_id, branch_id, name, institution, balance::text, is_active, account_type, created_at::text
+    return withTransaction(async (client) => {
+      const existingRes = await client.query<{
+        acc_id: number;
+        branch_id: number;
+        name: string;
+        institution: string | null;
+        balance: string;
+        is_active: boolean;
+        account_type: string;
+        created_at?: string;
+      }>(
+        scope.isAdmin
+          ? `SELECT acc_id, branch_id, name, institution, balance::text AS balance, is_active, account_type, created_at::text AS created_at
                FROM ims.accounts
               WHERE acc_id = $1
-                AND branch_id = ANY($2)`,
-            [id, scope.branchIds]
-          );
-      return row ? mapAccount(row) : null;
-    }
+              FOR UPDATE`
+          : `SELECT acc_id, branch_id, name, institution, balance::text AS balance, is_active, account_type, created_at::text AS created_at
+               FROM ims.accounts
+              WHERE acc_id = $1
+                AND branch_id = ANY($2)
+              FOR UPDATE`,
+        scope.isAdmin ? [id] : [id, scope.branchIds]
+      );
+      const existing = existingRes.rows[0];
+      if (!existing) return null;
 
-    values.push(id);
-    let whereSql = `acc_id = $${parameter++}`;
-    if (!scope.isAdmin) {
-      values.push(scope.branchIds);
-      whereSql += ` AND branch_id = ANY($${parameter++})`;
-    }
+      if (input.name !== undefined) {
+        const dup = await client.query<{ acc_id: number }>(
+          `SELECT acc_id
+             FROM ims.accounts
+            WHERE branch_id = $1
+              AND LOWER(TRIM(name)) = LOWER(TRIM($2))
+              AND acc_id <> $3
+            LIMIT 1`,
+          [existing.branch_id, input.name, id]
+        );
+        if (dup.rows[0]) throw ApiError.conflict('Account with this name already exists.');
+      }
 
-    const hasBalanceUpdate = input.balance !== undefined;
-    const row = await queryOne<{
-      acc_id: number;
-      branch_id: number;
-      name: string;
-      institution: string | null;
-      balance: string;
-      is_active: boolean;
-      account_type: string;
-      created_at?: string;
-    }>(
-      hasBalanceUpdate
-        ? `WITH target AS (
-             SELECT
-               acc_id,
-               branch_id,
-               balance::numeric AS old_balance,
-               (
-                 SELECT COUNT(*)::int
-                   FROM ims.account_transactions at
-                 WHERE at.branch_id = a.branch_id
-                   AND at.acc_id = a.acc_id
-               ) AS txn_count
-             FROM ims.accounts a
-             WHERE ${whereSql}
-             FOR UPDATE
-           ),
-           updated AS (
-             UPDATE ims.accounts a
-                SET ${updates.join(', ')}
-               FROM target t
-              WHERE a.acc_id = t.acc_id
-                AND a.branch_id = t.branch_id
-              RETURNING
-                a.acc_id,
-                a.branch_id,
-                a.name,
-                a.institution,
-                a.balance::text AS balance,
-                a.is_active,
-                a.account_type,
-                a.created_at::text AS created_at,
-                t.old_balance::numeric AS old_balance,
-                t.txn_count::int AS txn_count
-           ),
-           adjustment AS (
-             INSERT INTO ims.account_transactions
-               (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, note)
-             SELECT
-               u.branch_id,
-               u.acc_id,
-               CASE WHEN u.txn_count = 0 THEN 'opening' ELSE 'other' END,
-               'accounts',
-               u.acc_id,
-               CASE
-                 WHEN (u.balance::numeric - u.old_balance) < 0 THEN ABS(u.balance::numeric - u.old_balance)
-                 ELSE 0
-               END,
-               CASE
-                 WHEN (u.balance::numeric - u.old_balance) > 0 THEN (u.balance::numeric - u.old_balance)
-                 ELSE 0
-               END,
-               CASE
-                 WHEN u.txn_count = 0 THEN '[OPENING BALANCE] From account update'
-                 ELSE '[BALANCE ADJUST] From account update'
-               END
-             FROM updated u
-             WHERE ABS(u.balance::numeric - u.old_balance) > 0.000001
-             RETURNING 1
-           )
-           SELECT
-             acc_id,
-             branch_id,
-             name,
-             institution,
-             balance,
-             is_active,
-             account_type,
-             created_at
-           FROM updated`
-        : `UPDATE ims.accounts
+      const updates: string[] = [];
+      const values: unknown[] = [];
+      let p = 1;
+
+      if (input.name !== undefined) {
+        updates.push(`name = $${p++}`);
+        values.push(input.name);
+      }
+      if (input.institution !== undefined) {
+        updates.push(`institution = $${p++}`);
+        values.push(input.institution || null);
+      }
+      if (input.isActive !== undefined) {
+        updates.push(`is_active = $${p++}`);
+        values.push(input.isActive);
+      }
+
+      const nextAccountType =
+        (input as Partial<AccountInput> & { accountType?: string }).accountType !== undefined
+          ? String((input as Partial<AccountInput> & { accountType?: string }).accountType || 'asset').trim()
+          : String(existing.account_type || 'asset').trim();
+      if ((input as Partial<AccountInput> & { accountType?: string }).accountType !== undefined) {
+        updates.push(`account_type = $${p++}`);
+        values.push(nextAccountType);
+      }
+
+      const balanceProvided = Object.prototype.hasOwnProperty.call(input, 'balance');
+      const prevBalance = Number(existing.balance || 0);
+      const nextBalance = balanceProvided ? Number((input as Partial<AccountInput>).balance ?? 0) : prevBalance;
+      const balanceDiff = balanceProvided ? nextBalance - prevBalance : 0;
+      if (balanceProvided) {
+        updates.push(`balance = $${p++}`);
+        values.push(nextBalance);
+      }
+
+      let updatedRow = existing;
+      if (updates.length > 0) {
+        values.push(id);
+        let whereSql = `acc_id = $${p++}`;
+        if (!scope.isAdmin) {
+          values.push(scope.branchIds);
+          whereSql += ` AND branch_id = ANY($${p++})`;
+        }
+        const rowRes = await client.query<typeof existing>(
+          `UPDATE ims.accounts
               SET ${updates.join(', ')}
             WHERE ${whereSql}
-            RETURNING acc_id, branch_id, name, institution, balance::text, is_active, account_type, created_at::text`,
-      values
-    ).catch((error: any) => {
+            RETURNING acc_id, branch_id, name, institution, balance::text AS balance, is_active, account_type, created_at::text AS created_at`,
+          values as any[]
+        );
+        if (rowRes.rows[0]) updatedRow = rowRes.rows[0];
+      }
+
+      if (balanceProvided && Math.abs(balanceDiff) > 0.000001) {
+        const coa = await ensureCoaAccounts(client, Number(existing.branch_id), ['openingBalanceEquity']);
+        const debitNormal = ['asset', 'expense', 'cost'].includes(nextAccountType);
+
+        const increase = balanceDiff > 0 ? Math.abs(balanceDiff) : 0;
+        const decrease = balanceDiff < 0 ? Math.abs(balanceDiff) : 0;
+
+        const accountDebit = debitNormal ? increase : decrease;
+        const accountCredit = debitNormal ? decrease : increase;
+
+        await postGl(client, {
+          branchId: Number(existing.branch_id),
+          txnType: 'other',
+          refTable: 'accounts',
+          refId: Number(existing.acc_id),
+          note: `Balance adjustment: ${updatedRow.name}`,
+          lines: [
+            { accId: Number(existing.acc_id), debit: accountDebit, credit: accountCredit, note: '[BALANCE ADJUST]' },
+            {
+              accId: coa.openingBalanceEquity,
+              debit: accountCredit,
+              credit: accountDebit,
+              note: 'Offset (Opening Balance Equity)',
+            },
+          ],
+        });
+      }
+
+      return mapAccount(updatedRow);
+    }).catch((error: any) => {
       if (String(error?.code || '') === '23505') {
         throw ApiError.conflict('Account with this name already exists.');
       }
       throw error;
     });
-
-    return row ? mapAccount(row) : null;
   },
 
   async remove(id: number, scope: BranchScope): Promise<void> {

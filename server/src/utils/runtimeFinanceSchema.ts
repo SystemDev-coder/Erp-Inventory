@@ -69,6 +69,31 @@ export const ensureRuntimeFinanceSchema = async (): Promise<void> => {
     $$;
   `);
 
+  // Some deployments use "refund" as a ledger entry type for returns; keep enum compatible.
+  await adminQueryMany(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+          FROM pg_type t
+          JOIN pg_namespace n ON n.oid = t.typnamespace
+         WHERE n.nspname = 'ims'
+           AND t.typname = 'ledger_entry_enum'
+      ) AND NOT EXISTS (
+        SELECT 1
+          FROM pg_enum e
+          JOIN pg_type t ON t.oid = e.enumtypid
+          JOIN pg_namespace n ON n.oid = t.typnamespace
+         WHERE n.nspname = 'ims'
+           AND t.typname = 'ledger_entry_enum'
+           AND e.enumlabel = 'refund'
+      ) THEN
+        ALTER TYPE ims.ledger_entry_enum ADD VALUE 'refund';
+      END IF;
+    END
+    $$;
+  `);
+
   await adminQueryMany(`
     DO $$
     BEGIN

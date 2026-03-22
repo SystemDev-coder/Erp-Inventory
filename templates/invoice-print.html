@@ -37,6 +37,8 @@
         border-radius: 14px;
         overflow: hidden;
         box-shadow: 0 14px 35px rgba(15, 23, 42, .12);
+        display:flex;
+        flex-direction: column;
       }
 
       .banner{
@@ -51,7 +53,12 @@
         background: linear-gradient(90deg, var(--accent), var(--accent2));
       }
 
-      .content{padding: 22px 24px 18px}
+      .content{
+        padding: 22px 24px 18px;
+        flex: 1 1 auto;
+        display:flex;
+        flex-direction: column;
+      }
 
       .header{
         display:flex;
@@ -208,13 +215,15 @@
         grid-template-columns: 1.25fr .75fr;
         gap: 12px;
         align-items: stretch;
+        padding-top: 12px;
+        border-top: 1px solid var(--line);
       }
 
       .signatures{
-        padding: 8px 2px 0;
+        padding: 0;
         border: none;
         background: transparent;
-        min-height: 168px;
+        min-height: 0;
         display: flex;
         flex-direction: column;
         justify-content: flex-end;
@@ -269,9 +278,7 @@
         justify-content: space-between;
         align-items:center;
         gap: 10px;
-        margin-top: 16px;
-        padding-top: 12px;
-        border-top: 1px solid var(--line);
+        margin-top: auto;
         color: var(--muted);
         font-size: 10px;
       }

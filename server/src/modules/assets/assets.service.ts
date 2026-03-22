@@ -1,7 +1,10 @@
 import { queryMany, queryOne } from '../../db/query';
 import { adminQueryMany } from '../../db/adminQuery';
+import { pool } from '../../db/pool';
 import { ApiError } from '../../utils/ApiError';
 import { BranchScope, pickBranchForWrite } from '../../utils/branchScope';
+import { postGl } from '../../utils/glPosting';
+import { ensureCoaAccounts } from '../../utils/coaDefaults';
 
 export interface FixedAssetRow {
   asset_id: number;
@@ -184,106 +187,121 @@ export const assetsService = {
 
     const branchId = pickBranchForWrite(scope, input.branchId);
 
-    const cashAccount = input.accountId
-      ? await queryOne<{ acc_id: number; account_type: string }>(
-          `SELECT acc_id, account_type
-             FROM ims.accounts
-            WHERE branch_id = $1
-              AND acc_id = $2
-              AND is_active = TRUE`,
-          [branchId, input.accountId]
-        )
-      : await queryOne<{ acc_id: number; account_type: string }>(
-          `SELECT acc_id, account_type
-             FROM ims.accounts
-            WHERE branch_id = $1
-              AND is_active = TRUE
-              AND account_type = 'asset'
-            ORDER BY
-              CASE
-                WHEN name ILIKE '%cash%' THEN 0
-                WHEN name ILIKE '%bank%' THEN 1
-                ELSE 2
-              END,
-              acc_id ASC
-            LIMIT 1`,
-          [branchId]
-        );
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    if (!cashAccount) {
-      throw ApiError.badRequest('No active cash/bank asset account found for this branch');
-    }
-    if ((cashAccount.account_type || 'asset') !== 'asset') {
-      throw ApiError.badRequest('Selected payment account must be an asset (cash/bank) account');
-    }
-    const cashAccountId = Number(cashAccount.acc_id);
+      const cashAccount = input.accountId
+        ? (await client.query<{ acc_id: number; account_type: string }>(
+            `SELECT acc_id, account_type
+               FROM ims.accounts
+              WHERE branch_id = $1
+                AND acc_id = $2
+                AND is_active = TRUE
+              LIMIT 1`,
+            [branchId, input.accountId]
+          )).rows[0]
+        : (await client.query<{ acc_id: number; account_type: string }>(
+            `SELECT acc_id, account_type
+               FROM ims.accounts
+              WHERE branch_id = $1
+                AND is_active = TRUE
+                AND account_type = 'asset'
+              ORDER BY
+                CASE
+                  WHEN name ILIKE '%cash%' THEN 0
+                  WHEN name ILIKE '%bank%' THEN 1
+                  ELSE 2
+                END,
+                acc_id ASC
+              LIMIT 1`,
+            [branchId]
+          )).rows[0];
 
-    const row = await queryOne<{
-      asset_id: number;
-      branch_id: number;
-      asset_name: string;
-      purchase_date: string;
-      cost: string | number;
-      status: string;
-      acc_id: number | null;
-      created_by: number | null;
-      created_at: string;
-    }>(
-      `INSERT INTO ims.fixed_assets
-         (branch_id, asset_name, category, purchase_date, cost, status, acc_id, created_by)
-       VALUES
-         ($1, $2, $3, $4::date, $5, $6, $7, $8)
-       RETURNING
-         asset_id,
-         branch_id,
-         asset_name,
-         purchase_date::text AS purchase_date,
-         cost::text AS cost,
-         status,
-         acc_id,
-         created_by,
-         created_at::text AS created_at`,
-      [
+      if (!cashAccount) {
+        throw ApiError.badRequest('No active cash/bank asset account found for this branch');
+      }
+      if ((cashAccount.account_type || 'asset') !== 'asset') {
+        throw ApiError.badRequest('Selected payment account must be an asset (cash/bank) account');
+      }
+      const cashAccountId = Number(cashAccount.acc_id);
+
+      const rowRes = await client.query<{
+        asset_id: number;
+        branch_id: number;
+        asset_name: string;
+        purchase_date: string;
+        cost: string | number;
+        status: string;
+        acc_id: number | null;
+        created_by: number | null;
+        created_at: string;
+      }>(
+        `INSERT INTO ims.fixed_assets
+           (branch_id, asset_name, category, purchase_date, cost, status, acc_id, created_by)
+         VALUES
+           ($1, $2, $3, $4::date, $5, $6, $7, $8)
+         RETURNING
+           asset_id,
+           branch_id,
+           asset_name,
+           purchase_date::text AS purchase_date,
+           cost::text AS cost,
+           status,
+           acc_id,
+           created_by,
+           created_at::text AS created_at`,
+        [
+          branchId,
+          input.assetName,
+          input.category || 'Fixed Asset',
+          input.purchaseDate,
+          input.cost,
+          input.status || 'active',
+          cashAccountId,
+          userId,
+        ]
+      );
+
+      const row = rowRes.rows[0];
+      if (!row) throw ApiError.internal('Failed to create fixed asset');
+
+      await client.query(
+        `UPDATE ims.accounts
+            SET balance = COALESCE(balance, 0) - $1
+          WHERE branch_id = $2
+            AND acc_id = $3`,
+        [input.cost, branchId, cashAccountId]
+      );
+
+      const coa = await ensureCoaAccounts(client, branchId, ['fixedAssets']);
+      await client.query(
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'fixed_assets'
+            AND ref_id = $2`,
+        [branchId, row.asset_id]
+      );
+      await postGl(client, {
         branchId,
-        input.assetName,
-        input.category || 'Fixed Asset',
-        input.purchaseDate,
-        input.cost,
-        input.status || 'active',
-        cashAccountId,
-        userId,
-      ]
-    );
+        txnDate: input.purchaseDate || null,
+        refTable: 'fixed_assets',
+        refId: row.asset_id,
+        note: `[FIXED ASSET] ${input.assetName}`,
+        lines: [
+          { accId: coa.fixedAssets, debit: Number(input.cost || 0), credit: 0 },
+          { accId: cashAccountId, debit: 0, credit: Number(input.cost || 0) },
+        ],
+      });
 
-    if (!row) {
-      throw new Error('Failed to create fixed asset');
+      await client.query('COMMIT');
+      return mapRow(row);
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
-
-    // Post the cash payment to the cash/bank ledger so Cash Flow matches asset creation.
-    await queryOne(
-      `INSERT INTO ims.account_transactions
-         (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
-       VALUES
-         ($1, $2, 'other', 'fixed_assets', $3, $4, 0, $5::timestamptz, $6)`,
-      [
-        branchId,
-        cashAccountId,
-        row.asset_id,
-        input.cost,
-        input.purchaseDate,
-        `[FIXED ASSET] ${input.assetName}`,
-      ]
-    );
-
-    await queryOne(
-      `UPDATE ims.accounts
-          SET balance = COALESCE(balance, 0) - $1
-        WHERE branch_id = $2
-          AND acc_id = $3`,
-      [input.cost, branchId, cashAccountId]
-    );
-
-    return mapRow(row);
   },
 
   async updateFixedAsset(
@@ -449,29 +467,7 @@ export const assetsService = {
         );
       }
 
-      await queryOne(
-        `DELETE FROM ims.account_transactions
-          WHERE branch_id = $1
-            AND ref_table = 'fixed_assets'
-            AND ref_id = $2`,
-        [branchId, assetId]
-      );
-
       if (nextAccId && nextCost > 0) {
-        await queryOne(
-          `INSERT INTO ims.account_transactions
-             (branch_id, acc_id, txn_type, ref_table, ref_id, debit, credit, txn_date, note)
-           VALUES
-             ($1, $2, 'other', 'fixed_assets', $3, $4, 0, $5::timestamptz, $6)`,
-          [
-            branchId,
-            nextAccId,
-            assetId,
-            nextCost,
-            nextDate,
-            `[FIXED ASSET] ${(input.assetName ?? existing.asset_name) || existing.asset_name}`,
-          ]
-        );
         await queryOne(
           `UPDATE ims.accounts
               SET balance = COALESCE(balance, 0) - $1
@@ -479,6 +475,39 @@ export const assetsService = {
               AND acc_id = $3`,
           [nextCost, branchId, nextAccId]
         );
+      }
+
+      const glClient = await pool.connect();
+      try {
+        await glClient.query('BEGIN');
+        const coa = await ensureCoaAccounts(glClient, branchId, ['fixedAssets']);
+        await glClient.query(
+          `DELETE FROM ims.account_transactions
+            WHERE branch_id = $1
+              AND ref_table = 'fixed_assets'
+              AND ref_id = $2`,
+          [branchId, assetId]
+        );
+
+        if (nextAccId && nextCost > 0) {
+          await postGl(glClient, {
+            branchId,
+            txnDate: nextDate || null,
+            refTable: 'fixed_assets',
+            refId: assetId,
+            note: `[FIXED ASSET] ${(input.assetName ?? existing.asset_name) || existing.asset_name}`,
+            lines: [
+              { accId: coa.fixedAssets, debit: nextCost, credit: 0 },
+              { accId: nextAccId, debit: 0, credit: nextCost },
+            ],
+          });
+        }
+        await glClient.query('COMMIT');
+      } catch (error) {
+        await glClient.query('ROLLBACK');
+        throw error;
+      } finally {
+        glClient.release();
       }
     }
 
