@@ -366,6 +366,82 @@ export const systemService = {
           updated.suppliers += up.rowCount ?? 0;
         }
 
+        // Post a proper opening-balance GL entry for migrated AR/AP so Trial Balance & Balance Sheet reconcile to ledgers.
+        // This avoids any need for a Suspense/Auto-balance account.
+        const alreadyOpeningArAp = (
+          await client.query<{ exists: boolean }>(
+            `SELECT EXISTS (
+               SELECT 1
+                 FROM ims.account_transactions at
+                WHERE at.branch_id = $1
+                  AND at.ref_table = 'opening_balances'
+                  AND at.ref_id = $2
+                  AND at.txn_type::text = 'opening'
+             ) AS exists`,
+            [bid, bid]
+          )
+        ).rows[0]?.exists;
+
+        if (!alreadyOpeningArAp) {
+          const [customerOpening, supplierOpening] = await Promise.all([
+            customerLedgerExists
+              ? client
+                  .query<{ amount: string }>(
+                    `SELECT COALESCE(SUM(COALESCE(debit, 0) - COALESCE(credit, 0)), 0)::text AS amount
+                       FROM ims.customer_ledger
+                      WHERE branch_id = $1
+                        AND ref_table = 'customers'
+                        AND COALESCE(note, '') ILIKE '[OPENING BALANCE]%'`,
+                    [bid]
+                  )
+                  .then((r) => Number(r.rows[0]?.amount || 0))
+              : 0,
+            supplierLedgerExists
+              ? client
+                  .query<{ amount: string }>(
+                    `SELECT COALESCE(SUM(COALESCE(credit, 0) - COALESCE(debit, 0)), 0)::text AS amount
+                       FROM ims.supplier_ledger
+                      WHERE branch_id = $1
+                        AND ref_table = 'suppliers'
+                        AND COALESCE(note, '') ILIKE '[OPENING BALANCE]%'`,
+                    [bid]
+                  )
+                  .then((r) => Number(r.rows[0]?.amount || 0))
+              : 0,
+          ]);
+
+          const openAr = Math.round(Math.max(customerOpening, 0) * 100) / 100;
+          const openAp = Math.round(Math.max(supplierOpening, 0) * 100) / 100;
+          if (openAr > 0 || openAp > 0) {
+            const coa = await ensureCoaAccounts(client, bid, ['accountsReceivable', 'accountsPayable', 'openingBalanceEquity']);
+            const lines = [
+              ...(openAr > 0
+                ? [
+                    { accId: coa.accountsReceivable, debit: openAr, credit: 0, note: 'Opening AR (customers)' },
+                    { accId: coa.openingBalanceEquity, debit: 0, credit: openAr, note: 'Offset (Opening Balance Equity)' },
+                  ]
+                : []),
+              ...(openAp > 0
+                ? [
+                    { accId: coa.openingBalanceEquity, debit: openAp, credit: 0, note: 'Offset (Opening Balance Equity)' },
+                    { accId: coa.accountsPayable, debit: 0, credit: openAp, note: 'Opening AP (suppliers)' },
+                  ]
+                : []),
+            ];
+
+            await postGl(client, {
+              branchId: bid,
+              txnType: 'opening',
+              refTable: 'opening_balances',
+              refId: bid,
+              note: 'Opening AR/AP migrated from customer/supplier opening balances',
+              lines,
+            });
+
+            updated.accountTransactions += lines.length;
+          }
+        }
+
         // Migrate legacy `accounts.balance` values into proper opening-balance GL lines when there is no GL history.
         const coa = await ensureCoaAccounts(client, bid, ['openingBalanceEquity']);
         const accountsToPost = await client.query<{

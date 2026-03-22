@@ -958,7 +958,8 @@ const postClosingEntries = async (
       ]
     );
 
-    const balanceDelta = roundMoney(line.credit - line.debit);
+    // Keep `ims.accounts.balance` consistent with GL net (debit - credit).
+    const balanceDelta = roundMoney(line.debit - line.credit);
     if (Math.abs(balanceDelta) > 0) {
       await client.query(
         `UPDATE ims.accounts
@@ -1036,7 +1037,8 @@ const reverseClosingEntries = async (
       ]
     );
 
-    const balanceDelta = roundMoney(credit - debit);
+    // Keep `ims.accounts.balance` consistent with GL net (debit - credit).
+    const balanceDelta = roundMoney(debit - credit);
     if (Math.abs(balanceDelta) > 0) {
       await client.query(
         `UPDATE ims.accounts
@@ -1467,7 +1469,7 @@ const postProfitShareJournal = async (
 
   await client.query(
     `UPDATE ims.accounts
-        SET balance = balance - $3
+        SET balance = balance + $3
       WHERE branch_id = $1
         AND acc_id = $2`,
     [closingPeriod.branch_id, rule.sourceAccId, transferTotal]
@@ -1501,7 +1503,7 @@ const postProfitShareJournal = async (
 
     await client.query(
       `UPDATE ims.accounts
-          SET balance = balance + $3
+          SET balance = balance - $3
         WHERE branch_id = $1
           AND acc_id = $2`,
       [closingPeriod.branch_id, allocation.accId, allocation.amount]

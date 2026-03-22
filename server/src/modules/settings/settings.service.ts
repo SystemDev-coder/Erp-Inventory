@@ -607,6 +607,10 @@ export const settingsService = {
     await ensureAssetAccountsSchema();
     const targetBranchId = pickBranchForWrite(scope, branchId);
     let created = 0;
+
+    // One-click "Prepare Accounts" should also migrate legacy opening balances into the new remaining balance + GL model.
+    await systemService.migrateOpeningBalances(targetBranchId);
+
     for (const name of REQUIRED_CURRENT_ASSET_ACCOUNTS) {
       const row = await queryOne<{ acc_id: number }>(
         `INSERT INTO ims.accounts (branch_id, name, institution, balance, account_type, is_active)

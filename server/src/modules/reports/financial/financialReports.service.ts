@@ -1162,7 +1162,18 @@ const buildBalanceSheetFromGl = async (branchId: number, asOfDate: string): Prom
         COALESCE(NULLIF(BTRIM(a.name), ''), 'Account #' || a.acc_id::text) AS account_name,
         COALESCE(a.institution, '') AS institution,
         COALESCE(a.account_type::text, 'asset') AS account_type,
-        COALESCE(SUM(COALESCE(at.debit, 0) - COALESCE(at.credit, 0)), 0)::double precision AS net
+        (
+          CASE
+            WHEN EXISTS (
+              SELECT 1
+                FROM ims.account_transactions at2
+               WHERE at2.branch_id = a.branch_id
+                 AND at2.acc_id = a.acc_id
+               LIMIT 1
+            ) THEN COALESCE(SUM(COALESCE(at.debit, 0) - COALESCE(at.credit, 0)), 0)
+            ELSE COALESCE(a.balance, 0)
+          END
+        )::double precision AS net
       FROM ims.accounts a
       LEFT JOIN ims.account_transactions at
         ON at.branch_id = a.branch_id
@@ -1170,7 +1181,7 @@ const buildBalanceSheetFromGl = async (branchId: number, asOfDate: string): Prom
        AND at.txn_date::date <= $2::date
      WHERE a.branch_id = $1
        AND a.is_active = TRUE
-     GROUP BY a.acc_id, a.name, a.institution, a.account_type
+     GROUP BY a.acc_id, a.name, a.institution, a.account_type, a.balance
      ORDER BY a.acc_id ASC`,
     [branchId, asOfDate]
   );
@@ -2809,7 +2820,15 @@ export const financialReportsService = {
       `WITH account_master AS (
          SELECT
            a.acc_id AS account_id,
-           COALESCE(NULLIF(BTRIM(a.name), ''), 'Account #' || a.acc_id::text) AS account_name
+           COALESCE(NULLIF(BTRIM(a.name), ''), 'Account #' || a.acc_id::text) AS account_name,
+           COALESCE(a.balance, 0)::double precision AS base_balance,
+           EXISTS (
+             SELECT 1
+               FROM ims.account_transactions atx
+              WHERE atx.branch_id = a.branch_id
+                AND atx.acc_id = a.acc_id
+              LIMIT 1
+           ) AS has_any_txn
          FROM ims.accounts a
          WHERE a.branch_id = $1
            AND a.is_active = TRUE
@@ -2837,7 +2856,12 @@ export const financialReportsService = {
          SELECT
            am.account_id,
            am.account_name,
-           COALESCE(o.opening_balance, 0)::double precision AS opening_balance,
+           (
+             CASE
+               WHEN am.has_any_txn THEN COALESCE(o.opening_balance, 0)
+               ELSE COALESCE(am.base_balance, 0)
+             END
+           )::double precision AS opening_balance,
            COALESCE(p.period_debit, 0)::double precision AS period_debit,
            COALESCE(p.period_credit, 0)::double precision AS period_credit
          FROM account_master am

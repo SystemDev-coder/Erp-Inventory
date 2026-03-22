@@ -238,6 +238,48 @@ apply_seed_file() {
   psql_admin -v ON_ERROR_STOP=1 -c "INSERT INTO ${DB_SCHEMA}.schema_migrations (filename, checksum) VALUES ('${file_name}', '${file_checksum}') ON CONFLICT (filename) DO UPDATE SET checksum = EXCLUDED.checksum, applied_at = now()"
 }
 
+apply_migration_file() {
+  file_path="$1"
+  file_name=$(basename "$file_path")
+  file_checksum=$(compute_checksum "$file_path")
+  stored_checksum=$(psql_admin -tAc "SELECT checksum FROM ${DB_SCHEMA}.schema_migrations WHERE filename='${file_name}'" | tr -d '[:space:]')
+
+  if [ -n "$stored_checksum" ] && [ "$stored_checksum" = "$file_checksum" ]; then
+    echo "Skipping ${file_name} (already applied)"
+    return
+  fi
+
+  if [ -n "$stored_checksum" ]; then
+    echo "Reapplying migration ${file_name} (checksum changed)"
+  else
+    echo "Applying migration ${file_name}"
+  fi
+
+  psql_admin -v ON_ERROR_STOP=1 -f "$file_path"
+
+  psql_admin -v ON_ERROR_STOP=1 -c "INSERT INTO ${DB_SCHEMA}.schema_migrations (filename, checksum) VALUES ('${file_name}', '${file_checksum}') ON CONFLICT (filename) DO UPDATE SET checksum = EXCLUDED.checksum, applied_at = now()"
+}
+
+apply_incremental_migrations() {
+  if [ ! -d "$MIGRATIONS_DIR" ]; then
+    return
+  fi
+
+  # Apply all sql files except base schema and demo seed (safe to re-run with checksums).
+  migration_files=$(find "$MIGRATIONS_DIR" -maxdepth 1 -type f -name "*.sql" 2>/dev/null | sort)
+  if [ -z "$migration_files" ]; then
+    return
+  fi
+
+  for file_path in $migration_files; do
+    file_name=$(basename "$file_path")
+    if [ "$file_name" = "$BASE_SCHEMA_FILE" ] || [ "$file_name" = "$DEMO_SEED_FILE" ]; then
+      continue
+    fi
+    apply_migration_file "$file_path"
+  done
+}
+
 run_bootstrap_seed() {
   echo "Running bootstrap seed checks (company, branch, roles, sample users)"
   psql_admin -v ON_ERROR_STOP=1 <<SQL
@@ -385,6 +427,8 @@ else
   echo "ERROR: base schema file not found at ${BASE_SCHEMA_PATH}"
   exit 1
 fi
+
+apply_incremental_migrations
 
 run_bootstrap_seed
 
