@@ -27,7 +27,7 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { Modal } from '../../components/ui/modal/Modal';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { useAuth } from '../../context/AuthContext';
-import { assetsService } from '../../services/assets.service';
+import { assetsService, AssetState } from '../../services/assets.service';
 import { ImageUpload } from '../../components/common/ImageUpload';
 import { imageService } from '../../services/image.service';
 import { env } from '../../config/env';
@@ -42,6 +42,10 @@ const emptyCompanyForm = {
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
+const coerceAssetState = (value?: string | null): AssetState => {
+  if (value === 'active' || value === 'inactive' || value === 'disposed') return value;
+  return 'active';
+};
 const formatDateOnly = (value?: string | null) => {
   if (!value) return '';
   const raw = String(value).trim();
@@ -283,7 +287,12 @@ const Settings = () => {
   const [editingFixedAssetId, setEditingFixedAssetId] = useState<number | null>(null);
   const [fixedAssetDeleteTarget, setFixedAssetDeleteTarget] = useState<{ asset_id: number; asset_name: string } | null>(null);
   const [fixedAssetDeleting, setFixedAssetDeleting] = useState(false);
-  const [fixedAssetForm, setFixedAssetForm] = useState({
+  const [fixedAssetForm, setFixedAssetForm] = useState<{
+    assetName: string;
+    purchasedDate: string;
+    amount: string;
+    state: AssetState;
+  }>({
     assetName: '',
     purchasedDate: today(),
     amount: '',
@@ -291,7 +300,12 @@ const Settings = () => {
   });
   const [currentAssetModalOpen, setCurrentAssetModalOpen] = useState(false);
   const [currentAssetSaving, setCurrentAssetSaving] = useState(false);
-  const [currentAssetForm, setCurrentAssetForm] = useState({
+  const [currentAssetForm, setCurrentAssetForm] = useState<{
+    assetName: string;
+    purchasedDate: string;
+    amount: string;
+    state: AssetState;
+  }>({
     assetName: '',
     purchasedDate: today(),
     amount: '',
@@ -872,7 +886,7 @@ const Settings = () => {
       type: 'current',
       purchasedDate: currentAssetForm.purchasedDate,
       amount,
-      state: currentAssetForm.state as any,
+      state: currentAssetForm.state,
     });
     setCurrentAssetSaving(false);
 
@@ -914,7 +928,7 @@ const Settings = () => {
       assetName: asset.asset_name || '',
       purchasedDate: formatDateOnly(asset.purchased_date) || today(),
       amount: String(Number(asset.amount || 0)),
-      state: asset.state || 'active',
+      state: coerceAssetState(asset.state),
     });
     setFixedAssetModalOpen(true);
   };
@@ -1382,7 +1396,7 @@ const Settings = () => {
             <select
               className={modalInputClass}
               value={currentAssetForm.state}
-              onChange={(e) => setCurrentAssetForm((prev) => ({ ...prev, state: e.target.value }))}
+              onChange={(e) => setCurrentAssetForm((prev) => ({ ...prev, state: coerceAssetState(e.target.value) }))}
             >
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
@@ -1452,7 +1466,7 @@ const Settings = () => {
             <select
               className={modalInputClass}
               value={fixedAssetForm.state}
-              onChange={(e) => setFixedAssetForm((prev) => ({ ...prev, state: e.target.value }))}
+              onChange={(e) => setFixedAssetForm((prev) => ({ ...prev, state: coerceAssetState(e.target.value) }))}
             >
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
