@@ -33,24 +33,24 @@ export default function UserDropdown() {
     <div className="relative">
       <button
         onClick={toggleDropdown}
-        className="dropdown-toggle flex items-center text-[#f4f8ff] hover:opacity-90"
+        className="dropdown-toggle flex items-center text-slate-900 hover:opacity-90 dark:text-white"
         aria-expanded={isOpen}
         aria-haspopup="true"
       >
-        <span className="mr-3 flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#49689b] bg-[#163a72]">
+        <span className="mr-3 flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full border border-slate-200 bg-black text-white dark:border-white/15 dark:bg-white dark:text-black">
           {user?.name ? (
-            <span className="text-sm font-semibold text-[#e8effb]">
+            <span className="text-sm font-semibold">
               {user.name.charAt(0).toUpperCase()}
             </span>
           ) : (
-            <User className="h-5 w-5 text-[#e8effb]" />
+            <User className="h-5 w-5" />
           )}
         </span>
-        <span className="mr-1 block max-w-[120px] truncate text-theme-sm font-medium text-[#f4f8ff]">
+        <span className="mr-1 block max-w-[120px] truncate text-theme-sm font-medium text-slate-900 dark:text-white">
           {displayName.split(" ")[0] || "User"}
         </span>
         <svg
-          className={`shrink-0 text-[#e8effb] transition-transform duration-200 ${
+          className={`shrink-0 text-slate-600 transition-transform duration-200 dark:text-white/80 ${
             isOpen ? "rotate-180" : ""
           }`}
           width="18"

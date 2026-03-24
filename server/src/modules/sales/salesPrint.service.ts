@@ -162,7 +162,40 @@ export const salesPrintService = {
     const statusClass = statusKey === 'paid' ? 'paid' : statusKey === 'partial' ? 'partial' : 'unpaid';
     const statusBadge = `<span class="status ${escapeHtml(statusClass)}">${escapeHtml(statusKey || 'unpaid')}</span>`;
 
-    const paidAmount = Math.min(Number((sale as any).paid_amount || 0), totals.total);
+    // Paid amount can come from multiple sources depending on the flow used:
+    // - legacy: sales.paid_amount column exists
+    // - sale screen: ims.sale_payments rows
+    // - receipt screen: ims.customer_receipts (optionally linked via sale_id)
+    //
+    // We intentionally support all of them so the printed invoice always matches what the user collected.
+    const saleId = Number((sale as any).sale_id || id);
+    const branchId = Number(
+      (sale as any).branch_id ?? (scope.branchIds && scope.branchIds.length ? scope.branchIds[0] : 0)
+    );
+
+    const paidFromSalePaymentsRow = await queryOne<{ paid: string }>(
+      `SELECT COALESCE(SUM(COALESCE(sp.amount_paid, 0)), 0)::text AS paid
+         FROM ims.sale_payments sp
+        WHERE sp.sale_id = $1
+          AND ($2::bigint IS NULL OR sp.branch_id = $2::bigint)`,
+      [saleId, branchId > 0 ? branchId : null]
+    );
+    const paidFromSalePayments = Number(paidFromSalePaymentsRow?.paid || 0);
+
+    // customer_receipts.sale_id may not exist in some DBs. Using to_jsonb avoids referencing a missing column.
+    const paidFromReceiptsRow = await queryOne<{ paid: string }>(
+      `SELECT COALESCE(SUM(COALESCE(r.amount, 0)), 0)::text AS paid
+         FROM ims.customer_receipts r
+        WHERE COALESCE((to_jsonb(r)->>'sale_id')::bigint, 0) = $1
+          AND ($2::bigint IS NULL OR r.branch_id = $2::bigint)
+          AND NOT (COALESCE(to_jsonb(r)->>'is_deleted','0') IN ('1','true','t','TRUE','T'))`,
+      [saleId, branchId > 0 ? branchId : null]
+    );
+    const paidFromReceipts = Number(paidFromReceiptsRow?.paid || 0);
+
+    const paidFromSale = Number((sale as any).paid_amount || 0);
+    const paidAmountRaw = paidFromSalePayments + paidFromReceipts;
+    const paidAmount = Math.min(Math.max(paidAmountRaw > 0 ? paidAmountRaw : paidFromSale, 0), totals.total);
     const balance = Math.max(totals.total - paidAmount, 0);
     const paidBlock = isQuotation ? '' : `<div class="tot-row"><span>Paid</span><strong>${escapeHtml(formatMoney(paidAmount))}</strong></div>`;
     const balanceBlock = isQuotation ? '' : `<div class="tot-row"><span>Balance</span><strong>${escapeHtml(formatMoney(balance))}</strong></div>`;

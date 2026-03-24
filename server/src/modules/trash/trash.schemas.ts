@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const trashListQuerySchema = z.object({
-  table: z.string().trim().min(1),
+  table: z.string().trim().min(1).optional(),
   fromDate: z.string().trim().optional(),
   toDate: z.string().trim().optional(),
   branchId: z.coerce.number().int().positive().optional(),

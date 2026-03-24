@@ -496,6 +496,7 @@ const System = () => {
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
               value={userForm.name}
               onChange={(e) => setUserForm({ ...userForm, name: e.target.value })}
+              placeholder="Full name"
             />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
@@ -504,6 +505,7 @@ const System = () => {
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
               value={userForm.username}
               onChange={(e) => setUserForm({ ...userForm, username: e.target.value })}
+              placeholder="Username"
             />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
@@ -513,6 +515,7 @@ const System = () => {
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
               value={userForm.password}
               onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
+              placeholder={editingUser ? 'Leave blank to keep password' : 'Set password'}
             />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
@@ -545,14 +548,19 @@ const System = () => {
               ))}
             </select>
           </label>
-          <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300 mt-7">
-            <input
-              type="checkbox"
-              checked={userForm.isActive}
-              onChange={(e) => setUserForm({ ...userForm, isActive: e.target.checked })}
-            />
-            Active
-          </label>
+          {editingUser && (
+            <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
+              Status
+              <select
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
+                value={userForm.isActive ? 'active' : 'inactive'}
+                onChange={(e) => setUserForm({ ...userForm, isActive: e.target.value === 'active' })}
+              >
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </label>
+          )}
         </div>
         <div className="flex justify-end gap-3 pt-4">
           <button
@@ -583,6 +591,7 @@ const System = () => {
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
               value={roleForm.roleName}
               onChange={(e) => setRoleForm({ ...roleForm, roleName: e.target.value })}
+              placeholder="Role name"
             />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300 md:col-span-2">
@@ -644,6 +653,7 @@ const System = () => {
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
               value={permissionForm.permName}
               onChange={(e) => setPermissionForm({ ...permissionForm, permName: e.target.value })}
+              placeholder="Permission name"
             />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
@@ -652,6 +662,7 @@ const System = () => {
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
               value={permissionForm.module}
               onChange={(e) => setPermissionForm({ ...permissionForm, module: e.target.value })}
+              placeholder="e.g. users"
             />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">

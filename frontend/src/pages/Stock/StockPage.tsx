@@ -604,11 +604,11 @@ const StockPage = () => {
           <div><label className={labelClass}>Branch *</label><select className={inputClass} value={adjustForm.branchId} onChange={(e) => setAdjustForm({ ...adjustForm, branchId: e.target.value, whId: '', productId: '', unitCost: 0, salePrice: 0 })}><option value="">Select branch</option>{activeBranches.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>)}</select></div>
           <div><label className={labelClass}>Warehouse</label><select className={inputClass} value={adjustForm.whId} onChange={(e) => setAdjustForm({ ...adjustForm, whId: e.target.value })}><option value="">Branch level only</option>{adjustWarehouses.map((w) => <option key={w.wh_id} value={w.wh_id}>{w.wh_name}</option>)}</select></div>
           <div><label className={labelClass}>Purchased Item *</label><select className={inputClass} value={adjustForm.productId} onChange={(e) => handleAdjustItemChange(e.target.value)}><option value="">Select purchased item</option>{adjustItems.map((item) => <option key={item.item_id} value={item.item_id}>{itemLabelWithAvailability(item.item_name, itemAvailableQtyMap[item.item_id])}</option>)}</select><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Current Stock: <span className="font-medium text-slate-700 dark:text-slate-200">{formatAvailableQty(selectedAdjustAvailableQty)} units</span></p></div>
-          <div><label className={labelClass}>Quantity * (use negative for decrease)</label><input type="number" className={inputClass} value={adjustForm.qty} onChange={(e) => setAdjustForm({ ...adjustForm, qty: Number(e.target.value) })} />{isAdjustDecreaseInsufficient && <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">Cannot decrease more than current stock.</p>}</div>
-          <div><label className={labelClass}>Cost Price</label><input type="number" className={inputClass} value={adjustForm.unitCost} onChange={(e) => setAdjustForm({ ...adjustForm, unitCost: Number(e.target.value) })} /></div>
+          <div><label className={labelClass}>Quantity * (use negative for decrease)</label><input type="number" className={inputClass} value={adjustForm.qty} onChange={(e) => setAdjustForm({ ...adjustForm, qty: Number(e.target.value) })} placeholder="0" />{isAdjustDecreaseInsufficient && <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">Cannot decrease more than current stock.</p>}</div>
+          <div><label className={labelClass}>Cost Price</label><input type="number" className={inputClass} value={adjustForm.unitCost} onChange={(e) => setAdjustForm({ ...adjustForm, unitCost: Number(e.target.value) })} placeholder="0.00" /></div>
           <div><label className={labelClass}>Sale Price</label><input type="number" className={inputClass} value={adjustForm.salePrice} readOnly /></div>
           <div><label className={labelClass}>Auto Value (Qty x Cost)</label><input type="number" className={inputClass} value={adjustAutoValue} readOnly /></div>
-          <div><label className={labelClass}>Note</label><input className={inputClass} value={adjustForm.note} onChange={(e) => setAdjustForm({ ...adjustForm, note: e.target.value })} /></div>
+          <div><label className={labelClass}>Note</label><input className={inputClass} value={adjustForm.note} onChange={(e) => setAdjustForm({ ...adjustForm, note: e.target.value })} placeholder="Optional note" /></div>
         </div>
         <div className="mt-4 flex justify-end gap-2 border-t border-slate-200 pt-3 dark:border-slate-700"><button className="rounded-lg border px-4 py-2 text-sm" onClick={() => setShowAdjust(false)}>Cancel</button><button className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60" onClick={handleAdjust} disabled={isAdjustDecreaseInsufficient}>Save</button></div>
       </Modal>
@@ -634,21 +634,33 @@ const StockPage = () => {
             <div><label className={labelClass}>To Warehouse (optional)</label><select className={inputClass} value={transferForm.toWhId} onChange={(e) => setTransferForm({ ...transferForm, toWhId: e.target.value })}><option value="">Use branch stock</option>{transferToWarehouses.map((w) => <option key={w.wh_id} value={w.wh_id}>{w.wh_name}</option>)}</select></div>
           )}
           <div><label className={labelClass}>Purchased Item *</label><select className={inputClass} value={transferForm.productId} onChange={(e) => handleTransferItemChange(e.target.value)}><option value="">Select purchased item</option>{transferItems.map((item) => <option key={item.item_id} value={item.item_id}>{itemLabelWithAvailability(item.item_name, itemAvailableQtyMap[item.item_id])}</option>)}</select></div>
-          <div><label className={labelClass}>Quantity *</label><input type="number" className={inputClass} value={transferForm.qty} onChange={(e) => setTransferForm({ ...transferForm, qty: Number(e.target.value) })} /></div>
-          <div><label className={labelClass}>Cost Price</label><input type="number" className={inputClass} value={transferForm.unitCost} onChange={(e) => setTransferForm({ ...transferForm, unitCost: Number(e.target.value) })} /></div>
+          <div><label className={labelClass}>Quantity *</label><input type="number" className={inputClass} value={transferForm.qty} onChange={(e) => setTransferForm({ ...transferForm, qty: Number(e.target.value) })} placeholder="0" /></div>
+          <div><label className={labelClass}>Cost Price</label><input type="number" className={inputClass} value={transferForm.unitCost} onChange={(e) => setTransferForm({ ...transferForm, unitCost: Number(e.target.value) })} placeholder="0.00" /></div>
           <div><label className={labelClass}>Sale Price</label><input type="number" className={inputClass} value={transferForm.salePrice} readOnly /></div>
           <div><label className={labelClass}>Auto Value (Qty x Cost)</label><input type="number" className={inputClass} value={transferAutoValue} readOnly /></div>
-          <div><label className={labelClass}>Note</label><input className={inputClass} value={transferForm.note} onChange={(e) => setTransferForm({ ...transferForm, note: e.target.value })} /></div>
+          <div><label className={labelClass}>Note</label><input className={inputClass} value={transferForm.note} onChange={(e) => setTransferForm({ ...transferForm, note: e.target.value })} placeholder="Optional note" /></div>
         </div>
         <div className="mt-4 flex justify-end gap-2 border-t border-slate-200 pt-3 dark:border-slate-700"><button className="rounded-lg border px-4 py-2 text-sm" onClick={() => setShowTransfer(false)}>Cancel</button><button className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white" onClick={handleTransfer}>Transfer</button></div>
       </Modal>
 
       <Modal isOpen={showBranchModal} onClose={() => setShowBranchModal(false)} title={editingBranch ? 'Edit Branch' : 'New Branch'} size="md">
         <div className="space-y-3">
-          <div><label className={labelClass}>Branch Name *</label><input className={inputClass} value={branchForm.branchName} onChange={(e) => setBranchForm({ ...branchForm, branchName: e.target.value })} /></div>
-          <div><label className={labelClass}>Location</label><input className={inputClass} value={branchForm.location} onChange={(e) => setBranchForm({ ...branchForm, location: e.target.value })} /></div>
-          <div><label className={labelClass}>Phone</label><input className={inputClass} value={branchForm.phone} onChange={(e) => setBranchForm({ ...branchForm, phone: e.target.value })} /></div>
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={branchForm.isActive} onChange={(e) => setBranchForm({ ...branchForm, isActive: e.target.checked })} />Active</label>
+          <div><label className={labelClass}>Branch Name *</label><input className={inputClass} value={branchForm.branchName} onChange={(e) => setBranchForm({ ...branchForm, branchName: e.target.value })} placeholder="e.g. Main Branch" /></div>
+          <div><label className={labelClass}>Location</label><input className={inputClass} value={branchForm.location} onChange={(e) => setBranchForm({ ...branchForm, location: e.target.value })} placeholder="City / area" /></div>
+          <div><label className={labelClass}>Phone</label><input className={inputClass} value={branchForm.phone} onChange={(e) => setBranchForm({ ...branchForm, phone: e.target.value })} placeholder="+1 555 123 4567" /></div>
+          {editingBranch && (
+            <div>
+              <label className={labelClass}>Status</label>
+              <select
+                className={inputClass}
+                value={branchForm.isActive ? 'active' : 'inactive'}
+                onChange={(e) => setBranchForm({ ...branchForm, isActive: e.target.value === 'active' })}
+              >
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </div>
+          )}
         </div>
         <div className="mt-4 flex justify-end gap-2 border-t border-slate-200 pt-3 dark:border-slate-700"><button className="rounded-lg border px-4 py-2 text-sm" onClick={() => setShowBranchModal(false)}>Cancel</button><button disabled={savingBranch} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50" onClick={saveBranch}>{savingBranch ? 'Saving...' : 'Save Branch'}</button></div>
       </Modal>
@@ -656,9 +668,21 @@ const StockPage = () => {
       <Modal isOpen={showWarehouseModal} onClose={() => setShowWarehouseModal(false)} title={editingWarehouse ? 'Edit Warehouse' : 'New Warehouse'} size="md">
         <div className="space-y-3">
           <div><label className={labelClass}>Branch *</label><select className={inputClass} value={warehouseForm.branchId} onChange={(e) => setWarehouseForm({ ...warehouseForm, branchId: e.target.value })}><option value="">Select branch</option>{activeBranches.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>)}</select></div>
-          <div><label className={labelClass}>Warehouse Name *</label><input className={inputClass} value={warehouseForm.whName} onChange={(e) => setWarehouseForm({ ...warehouseForm, whName: e.target.value })} /></div>
-          <div><label className={labelClass}>Location</label><input className={inputClass} value={warehouseForm.location} onChange={(e) => setWarehouseForm({ ...warehouseForm, location: e.target.value })} /></div>
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={warehouseForm.isActive} onChange={(e) => setWarehouseForm({ ...warehouseForm, isActive: e.target.checked })} />Active</label>
+          <div><label className={labelClass}>Warehouse Name *</label><input className={inputClass} value={warehouseForm.whName} onChange={(e) => setWarehouseForm({ ...warehouseForm, whName: e.target.value })} placeholder="e.g. Main Warehouse" /></div>
+          <div><label className={labelClass}>Location</label><input className={inputClass} value={warehouseForm.location} onChange={(e) => setWarehouseForm({ ...warehouseForm, location: e.target.value })} placeholder="City / area" /></div>
+          {editingWarehouse && (
+            <div>
+              <label className={labelClass}>Status</label>
+              <select
+                className={inputClass}
+                value={warehouseForm.isActive ? 'active' : 'inactive'}
+                onChange={(e) => setWarehouseForm({ ...warehouseForm, isActive: e.target.value === 'active' })}
+              >
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </div>
+          )}
         </div>
         <div className="mt-4 flex justify-end gap-2 border-t border-slate-200 pt-3 dark:border-slate-700"><button className="rounded-lg border px-4 py-2 text-sm" onClick={() => setShowWarehouseModal(false)}>Cancel</button><button disabled={savingWarehouse} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50" onClick={saveWarehouse}>{savingWarehouse ? 'Saving...' : 'Save Warehouse'}</button></div>
       </Modal>

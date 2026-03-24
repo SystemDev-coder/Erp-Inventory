@@ -206,6 +206,94 @@ body {
   }
 }
 
+/* =========================================================
+   Modal UI normalization (all app modals)
+   Goal: make modals look consistent like the Current Asset modal
+   ========================================================= */
+.erp-modal-body label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.erp-modal-body label > span {
+  margin: 0 !important;
+  font-size: 0.75rem !important; /* text-xs */
+  font-weight: 600 !important;
+  color: #2b405d !important; /* slate-700-ish */
+}
+
+.dark .erp-modal-body label > span {
+  color: #dde7f7 !important;
+}
+
+.erp-modal-body input:not([type='checkbox']):not([type='radio']):not([type='file']),
+.erp-modal-body select,
+.erp-modal-body textarea {
+  width: 100% !important;
+  border-radius: 0.375rem !important; /* tailwind rounded-md */
+  border-width: 1px !important;
+  border-style: solid !important;
+  border-color: #9bb3d5 !important;
+  background: #ffffff !important;
+  padding: 0 0.75rem !important;
+  font-size: 0.95rem !important;
+  line-height: 1.25rem !important;
+  color: #10233f !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06) !important;
+  outline: none !important;
+  transition: border-color 150ms ease, box-shadow 150ms ease !important;
+}
+
+.erp-modal-body input:not([type='checkbox']):not([type='radio']):not([type='file']),
+.erp-modal-body select {
+  height: 3rem !important; /* h-12 */
+}
+
+.erp-modal-body input::placeholder,
+.erp-modal-body textarea::placeholder {
+  color: #7a93ad !important;
+  opacity: 1 !important;
+}
+
+.dark .erp-modal-body input::placeholder,
+.dark .erp-modal-body textarea::placeholder {
+  color: rgba(221, 231, 247, 0.7) !important;
+  opacity: 1 !important;
+}
+
+.erp-modal-body textarea {
+  min-height: 90px;
+  padding: 0.625rem 0.75rem !important;
+}
+
+.erp-modal-body input:not([type='checkbox']):not([type='radio']):not([type='file']):focus,
+.erp-modal-body select:focus,
+.erp-modal-body textarea:focus {
+  border-color: #3a6db6 !important;
+  box-shadow: 0 0 0 3px rgba(58, 109, 182, 0.18) !important;
+}
+
+.dark .erp-modal-body input:not([type='checkbox']):not([type='radio']):not([type='file']),
+.dark .erp-modal-body select,
+.dark .erp-modal-body textarea {
+  border-color: #264676 !important;
+  background: #10233f !important;
+  color: #f4f8ff !important;
+  box-shadow: none !important;
+}
+
+.dark .erp-modal-body input:not([type='checkbox']):not([type='radio']):not([type='file']):focus,
+.dark .erp-modal-body select:focus,
+.dark .erp-modal-body textarea:focus {
+  border-color: #6f97d8 !important;
+  box-shadow: 0 0 0 3px rgba(111, 151, 216, 0.18) !important;
+}
+
+.erp-modal-body button {
+  border-radius: 0.125rem !important;
+}
+
 /* Select (native dropdown) styling */
 :root {
   --select-bg: #ffffff;
@@ -241,16 +329,16 @@ body {
   --select-option-hover: #1d4ed8;
   --select-option-selected: #1f3b8b;
 
-  --header-bg: #0f2f62;
-  --header-border: #1f3b63;
-  --header-search-bg: #102b59;
-  --header-search-border: #244570;
+  --header-bg: #000000;
+  --header-border: rgba(255, 255, 255, 0.12);
+  --header-search-bg: rgba(255, 255, 255, 0.06);
+  --header-search-border: rgba(255, 255, 255, 0.18);
   --header-search-text: #f8fafc;
-  --header-search-placeholder: #9fc3da;
-  --header-search-focus: rgba(59, 130, 246, 0.45);
-  --header-kbd-bg: #102b59;
-  --header-kbd-border: #244570;
-  --header-kbd-text: #c7d8f0;
+  --header-search-placeholder: rgba(255, 255, 255, 0.55);
+  --header-search-focus: rgba(255, 255, 255, 0.12);
+  --header-kbd-bg: rgba(255, 255, 255, 0.06);
+  --header-kbd-border: rgba(255, 255, 255, 0.18);
+  --header-kbd-text: rgba(255, 255, 255, 0.75);
 }
 
 select {

@@ -1,35 +1,35 @@
 import { API } from '../config/env';
 import { apiClient } from './api';
 
-export interface FixedAsset {
+export type AssetType = 'current' | 'fixed';
+export type AssetState = 'active' | 'inactive' | 'disposed';
+
+export interface Asset {
   asset_id: number;
   branch_id: number;
   asset_name: string;
-  category?: string;
-  purchase_date: string;
-  cost: number;
-  useful_life_months?: number;
-  depreciation_method?: string;
-  status: string;
-  notes?: string | null;
+  asset_type: AssetType;
+  purchased_date: string;
+  amount: number;
+  state: AssetState;
   created_by: number | null;
   created_at: string;
 }
 
-export interface CreateFixedAssetInput {
+export interface CreateAssetInput {
   assetName: string;
-  purchaseDate: string;
-  cost: number;
-  category?: string;
-  status?: string;
+  type: AssetType;
+  purchasedDate?: string;
+  amount: number;
+  state?: AssetState;
 }
 
-export interface UpdateFixedAssetInput {
+export interface UpdateAssetInput {
   assetName?: string;
-  purchaseDate?: string;
-  cost?: number;
-  status?: string;
-  category?: string;
+  type?: AssetType;
+  purchasedDate?: string;
+  amount?: number;
+  state?: AssetState;
 }
 
 const toQuery = (params: Record<string, string | number | undefined>) => {
@@ -44,26 +44,27 @@ const toQuery = (params: Record<string, string | number | undefined>) => {
 };
 
 export const assetsService = {
-  async list(input?: { search?: string; status?: string; category?: string; fromDate?: string; toDate?: string }) {
+  async list(input?: { search?: string; type?: AssetType; state?: string; fromDate?: string; toDate?: string }) {
     const query = toQuery({
       search: input?.search,
-      status: input?.status,
-      category: input?.category,
+      type: input?.type,
+      state: input?.state,
       fromDate: input?.fromDate,
       toDate: input?.toDate,
     });
-    return apiClient.get<{ assets: FixedAsset[] }>(`${API.ASSETS.LIST}${query}`);
+    return apiClient.get<{ assets: Asset[] }>(`${API.ASSETS.LIST}${query}`);
   },
 
-  async create(input: CreateFixedAssetInput) {
-    return apiClient.post<{ asset: FixedAsset }>(API.ASSETS.LIST, input);
+  async create(input: CreateAssetInput) {
+    return apiClient.post<{ asset: Asset }>(API.ASSETS.LIST, input);
   },
 
-  async update(id: number, input: UpdateFixedAssetInput) {
-    return apiClient.put<{ asset: FixedAsset }>(API.ASSETS.ITEM(id), input);
+  async update(id: number, input: UpdateAssetInput) {
+    return apiClient.put<{ asset: Asset }>(API.ASSETS.ITEM(id), input);
   },
 
   async delete(id: number) {
     return apiClient.delete(API.ASSETS.ITEM(id));
   },
 };
+

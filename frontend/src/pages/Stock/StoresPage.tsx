@@ -193,13 +193,6 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
           actions={
             <div className="flex items-center gap-2">
               <button
-                onClick={() => void loadStores()}
-                disabled={loading}
-                className="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 rounded-xl text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <Eye className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
-              </button>
-              <button
                 onClick={openCreateStore}
                 className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-xl hover:bg-primary-700"
               >
@@ -212,13 +205,6 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
 
       {embedded && (
         <div className="flex items-center justify-end gap-2">
-          <button
-            onClick={() => void loadStores()}
-            disabled={loading}
-            className="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 rounded-xl text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <Eye className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
-          </button>
           <button
             onClick={openCreateStore}
             className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-xl hover:bg-primary-700"

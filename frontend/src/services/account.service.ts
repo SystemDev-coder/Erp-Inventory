@@ -11,14 +11,25 @@ export interface Account {
   can_delete?: boolean;
 }
 
+// Payload uses the API's request casing (camelCase), not the DB response casing (snake_case).
+export type AccountPayload = {
+  branchId?: number;
+  name?: string;
+  institution?: string | null;
+  currencyCode?: string;
+  balance?: number;
+  isActive?: boolean;
+  accountType?: 'asset' | 'equity' | string;
+};
+
 export const accountService = {
   async list() {
     return apiClient.get<{ accounts: Account[] }>('/api/accounts');
   },
-  async create(data: Partial<Account>) {
+  async create(data: AccountPayload) {
     return apiClient.post<{ account: Account }>('/api/accounts', data);
   },
-  async update(id: number, data: Partial<Account>) {
+  async update(id: number, data: AccountPayload) {
     return apiClient.put<{ account: Account }>(`/api/accounts/${id}`, data);
   },
   async remove(id: number) {

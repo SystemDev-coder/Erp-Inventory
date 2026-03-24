@@ -1,4 +1,7 @@
+import { PoolClient } from 'pg';
 import { queryMany, queryOne } from '../../db/query';
+import { withTransaction } from '../../db/withTx';
+import { ApiError } from '../../utils/ApiError';
 import { BranchScope } from '../../utils/branchScope';
 
 export interface Customer {
@@ -124,6 +127,50 @@ const scopedCustomer = async (
   return row ? mapCustomer(row) : null;
 };
 
+const hasCustomerNonOpeningLedger = async (
+  client: PoolClient,
+  branchId: number,
+  customerId: number
+): Promise<boolean> => {
+  const result = await client.query<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM ims.customer_ledger
+        WHERE branch_id = $1
+          AND customer_id = $2
+          AND NOT (entry_type = 'opening' AND ref_table = 'opening_balance')
+     ) AS exists`,
+    [branchId, customerId]
+  );
+  return Boolean(result.rows[0]?.exists);
+};
+
+const upsertCustomerOpeningLedger = async (
+  client: PoolClient,
+  branchId: number,
+  customerId: number,
+  amount: number
+) => {
+  await client.query(
+    `DELETE FROM ims.customer_ledger
+      WHERE branch_id = $1
+        AND customer_id = $2
+        AND entry_type = 'opening'
+        AND ref_table = 'opening_balance'`,
+    [branchId, customerId]
+  );
+
+  if (!amount) return;
+
+  await client.query(
+    `INSERT INTO ims.customer_ledger
+      (branch_id, customer_id, entry_type, ref_table, ref_id, acc_id, debit, credit, entry_date, note)
+     VALUES
+      ($1, $2, 'opening', 'opening_balance', $2, NULL, $3, 0, NOW() - INTERVAL '1 second', $4)`,
+    [branchId, customerId, amount, '[OPENING BALANCE] Set from customer form']
+  );
+};
+
 export const customersService = {
   async listCustomers(
     scope: BranchScope,
@@ -202,56 +249,64 @@ export const customersService = {
     const hasType = Boolean(customerHasTypeColumn);
     const genderValue = input.gender ?? input.sex ?? null;
     const customerType = input.customerType ?? 'regular';
+    const opening = Math.max(0, Number(input.remainingBalance ?? 0));
 
-    let insertColumns = `(branch_id, full_name, phone, sex, `;
-    let insertValues = `($1, $2, $3, $4::ims.sex_enum, `;
-    const values: unknown[] = [
-      context.branchId,
-      input.fullName,
-      input.phone ?? null,
-      (genderValue ?? null) as 'male' | 'female' | null,
-    ];
-    let p = 5;
+    return withTransaction(async (client) => {
+      let insertColumns = `(branch_id, full_name, phone, sex, `;
+      let insertValues = `($1, $2, $3, $4::ims.sex_enum, `;
+      const values: unknown[] = [
+        context.branchId,
+        input.fullName,
+        input.phone ?? null,
+        (genderValue ?? null) as 'male' | 'female' | null,
+      ];
+      let p = 5;
 
-    if (hasGender) {
-      insertColumns += `gender, `;
-      insertValues += `$${p++}, `;
-      values.push(genderValue);
-    }
-    if (hasType) {
-      insertColumns += `customer_type, `;
-      insertValues += `$${p++}, `;
-      values.push(customerType);
-    }
+      if (hasGender) {
+        insertColumns += `gender, `;
+        insertValues += `$${p++}, `;
+        values.push(genderValue);
+      }
+      if (hasType) {
+        insertColumns += `customer_type, `;
+        insertValues += `$${p++}, `;
+        values.push(customerType);
+      }
 
-    insertColumns += `address, ${balanceColumn}, is_active)`;
-    insertValues += `$${p++}, COALESCE($${p++}, 0), COALESCE($${p++}, TRUE))`;
-    values.push(input.address ?? null, input.remainingBalance ?? 0, input.isActive ?? true);
+      insertColumns += `address, ${balanceColumn}, is_active)`;
+      insertValues += `$${p++}, COALESCE($${p++}, 0), COALESCE($${p++}, TRUE))`;
+      values.push(input.address ?? null, opening, input.isActive ?? true);
 
-    const row = await queryOne<{
-      customer_id: number;
-      full_name: string;
-      phone: string | null;
-      address: string | null;
-      sex: string | null;
-      gender: string | null;
-      registered_date: string;
-      is_active: boolean;
-      customer_type: string | null;
-      balance_value: string;
-    }>(
-      `INSERT INTO ims.customers
-         ${insertColumns}
-       VALUES
-         ${insertValues}
-       RETURNING customer_id, full_name, phone, address, sex::text AS sex, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect()}, ${balanceColumn}::text AS balance_value`,
-      values
-    );
+      const rowRes = await client.query<{
+        customer_id: number;
+        full_name: string;
+        phone: string | null;
+        address: string | null;
+        sex: string | null;
+        gender: string | null;
+        registered_date: string;
+        is_active: boolean;
+        customer_type: string | null;
+        balance_value: string;
+      }>(
+        `INSERT INTO ims.customers
+           ${insertColumns}
+         VALUES
+           ${insertValues}
+         RETURNING customer_id, full_name, phone, address, sex::text AS sex, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect()}, ${balanceColumn}::text AS balance_value`,
+        values
+      );
 
-    if (!row) {
-      throw new Error('Failed to create customer');
-    }
-    return mapCustomer(row);
+      const row = rowRes.rows[0];
+      if (!row) {
+        throw new Error('Failed to create customer');
+      }
+
+      // Persist opening balance into ledger so "Prepare Accounts" reconciliation won't reset it.
+      await upsertCustomerOpeningLedger(client, context.branchId, Number(row.customer_id), opening);
+
+      return mapCustomer(row);
+    });
   },
 
   async updateCustomer(
@@ -295,9 +350,10 @@ export const customersService = {
       updates.push(`customer_type = $${parameter++}`);
       values.push(input.customerType);
     }
-    if (input.remainingBalance !== undefined) {
+    const wantsOpeningUpdate = input.remainingBalance !== undefined;
+    if (wantsOpeningUpdate) {
       updates.push(`${balanceColumn} = $${parameter++}`);
-      values.push(input.remainingBalance);
+      values.push(Math.max(0, Number(input.remainingBalance ?? 0)));
     }
 
     if (!updates.length) {
@@ -311,26 +367,50 @@ export const customersService = {
       whereSql += ` AND branch_id = ANY($${parameter++})`;
     }
 
-    const row = await queryOne<{
-      customer_id: number;
-      full_name: string;
-      phone: string | null;
-      address: string | null;
-      sex: string | null;
-      gender: string | null;
-      registered_date: string;
-      is_active: boolean;
-      customer_type: string | null;
-      balance_value: string;
-    }>(
-      `UPDATE ims.customers
-          SET ${updates.join(', ')}
-        WHERE ${whereSql}
-        RETURNING customer_id, full_name, phone, address, sex::text AS sex, ${getGenderSelect()}, registered_date::text, is_active, ${getCustomerTypeSelect()}, ${balanceColumn}::text AS balance_value`,
-      values
-    );
+    return withTransaction(async (client) => {
+      const branchRow = await client.query<{ branch_id: number }>(
+        scope.isAdmin
+          ? `SELECT branch_id FROM ims.customers WHERE customer_id = $1`
+          : `SELECT branch_id FROM ims.customers WHERE customer_id = $1 AND branch_id = ANY($2)`,
+        scope.isAdmin ? [id] : [id, scope.branchIds]
+      );
+      const branchId = Number(branchRow.rows[0]?.branch_id || 0);
+      if (!branchId) return null;
 
-    return row ? mapCustomer(row) : null;
+      if (wantsOpeningUpdate) {
+        if (await hasCustomerNonOpeningLedger(client, branchId, id)) {
+          throw ApiError.badRequest('Customer has transactions; cannot change opening balance');
+        }
+        await upsertCustomerOpeningLedger(
+          client,
+          branchId,
+          id,
+          Math.max(0, Number(input.remainingBalance ?? 0))
+        );
+      }
+
+      const rowRes = await client.query<{
+        customer_id: number;
+        full_name: string;
+        phone: string | null;
+        address: string | null;
+        sex: string | null;
+        gender: string | null;
+        registered_date: string;
+        is_active: boolean;
+        customer_type: string | null;
+        balance_value: string;
+      }>(
+        `UPDATE ims.customers
+            SET ${updates.join(', ')}
+          WHERE ${whereSql}
+          RETURNING customer_id, full_name, phone, address, sex::text AS sex, ${getGenderSelect()}, registered_date::text, is_active, ${getCustomerTypeSelect()}, ${balanceColumn}::text AS balance_value`,
+        values
+      );
+
+      const row = rowRes.rows[0];
+      return row ? mapCustomer(row) : null;
+    });
   },
 
   async deleteCustomer(id: number, scope: BranchScope): Promise<void> {

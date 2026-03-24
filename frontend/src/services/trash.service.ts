@@ -23,7 +23,7 @@ export const trashService = {
   },
 
   async listRows(params: {
-    table: string;
+    table?: string;
     fromDate?: string;
     toDate?: string;
     branchId?: number;
@@ -31,7 +31,7 @@ export const trashService = {
     offset?: number;
   }) {
     const qs = new URLSearchParams();
-    qs.set('table', params.table);
+    if (params.table) qs.set('table', params.table);
     if (params.fromDate) qs.set('fromDate', params.fromDate);
     if (params.toDate) qs.set('toDate', params.toDate);
     if (params.branchId) qs.set('branchId', String(params.branchId));

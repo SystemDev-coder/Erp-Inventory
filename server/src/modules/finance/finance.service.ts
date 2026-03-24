@@ -1,7 +1,6 @@
 import { queryMany, queryOne } from '../../db/query';
 import { pool } from '../../db/pool';
 import { withTransaction } from '../../db/withTx';
-import { queryMany, queryOne } from '../../db/query';
 import { ApiError } from '../../utils/ApiError';
 import { BranchScope, pickBranchForWrite, assertBranchAccess } from '../../utils/branchScope';
 import { adjustSystemAccountBalance } from '../../utils/systemAccounts';
@@ -58,29 +57,6 @@ const OPENING_EXPENSE_NOTE_PREFIX = '[OPENING BALANCE]';
 
 const isOpeningExpenseNote = (note?: string | null): boolean =>
   typeof note === 'string' && note.trimStart().toUpperCase().startsWith(OPENING_EXPENSE_NOTE_PREFIX);
-
-const adjustEntityBalance = async (
-  table: 'customers' | 'suppliers',
-  id: number | null,
-  branchId: number,
-  delta: number
-) => {
-  if (!id) return;
-  // Prefer `remaining_balance` as the live outstanding; keep `open_balance` as opening balance when both exist.
-  const column = await detectColumn(table, 'remaining_balance', ['remaining_balance', 'open_balance']);
-  await queryOne(
-    `UPDATE ims.${table}
-        SET ${column} = ${column} + $3
-      WHERE ${table.slice(0, -1)}_id = $1
-        AND branch_id = $2`,
-    [id, branchId, delta]
-  );
-  await adjustSystemAccountBalance(null, {
-    branchId,
-    kind: table === 'customers' ? 'receivable' : 'payable',
-    delta,
-  });
-};
 
 const roundMoney = (value: number) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 

@@ -145,16 +145,18 @@ export interface OwnerProfitPreview {
 
 export interface SettingsAssetOverview {
   current_assets: Array<{
-    account_name: string;
-    institution: string | null;
-    balance: number;
+    asset_id: number;
+    asset_name: string;
+    purchased_date: string;
+    amount: number;
+    state: string;
   }>;
   fixed_assets: Array<{
     asset_id: number;
     asset_name: string;
-    purchase_date: string;
-    cost: number;
-    status: string;
+    purchased_date: string;
+    amount: number;
+    state: string;
   }>;
   current_assets_total: number;
   fixed_assets_total: number;

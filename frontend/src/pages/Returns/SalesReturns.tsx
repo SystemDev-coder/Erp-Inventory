@@ -6,6 +6,7 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { returnsService, ReturnItemOption } from '../../services/returns.service';
 import { customerService, Customer } from '../../services/customer.service';
 import { accountService, Account } from '../../services/account.service';
+import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
 
 const inputClass =
   'h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
@@ -322,22 +323,17 @@ const SalesReturns = () => {
           </button>
         </div>
         <form onSubmit={submitReturn} className="space-y-4 p-4">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div>
-              <label className={labelClass}>Customer *</label>
-              <select
-                className={inputClass}
-                value={form.customerId}
-                required
-                disabled={loading}
-                onChange={(e) => void handleCustomerChange(e.target.value)}
-              >
-                <option value="">Select customer</option>
-                {customers.map((c) => (
-                  <option key={c.customer_id} value={c.customer_id}>{c.full_name}</option>
-                ))}
-              </select>
-            </div>
+	          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+	            <div>
+	              <label className={labelClass}>Customer *</label>
+	              <SearchableCombobox<number>
+	                value={form.customerId ? Number(form.customerId) : ''}
+	                options={customers.map((c) => ({ value: c.customer_id, label: c.full_name }))}
+	                placeholder="Select customer"
+	                disabled={loading}
+	                onChange={(nextValue) => void handleCustomerChange(nextValue === '' ? '' : String(nextValue))}
+	              />
+	            </div>
             <div>
               <label className={labelClass}>Reference No</label>
               <input
@@ -382,22 +378,21 @@ const SalesReturns = () => {
                     key={`${line.itemId}-${idx}`}
                     className="hover:bg-slate-50/70 dark:hover:bg-slate-900/30"
                   >
-                    <td className={tableCellCls}>
-                      <div className="space-y-1">
-                        <select
-                          className={inputClass}
-                          value={line.itemId}
-                          disabled={!form.customerId}
-                          onChange={(e) => handleSelectItem(idx, e.target.value)}
-                        >
-                          <option value="">Select item</option>
-                          {items.map((item) => (
-                            <option key={item.item_id} value={item.item_id}>{item.name}</option>
-                          ))}
-                        </select>
-                        {line.itemId ? (() => {
-                          const it = items.find((x) => Number(x.item_id) === Number(line.itemId));
-                          if (!it) return null;
+	                    <td className={tableCellCls}>
+	                      <div className="space-y-1">
+	                        <SearchableCombobox<number>
+	                          value={line.itemId}
+	                          options={items.map((item) => ({
+	                            value: Number(item.item_id),
+	                            label: `${item.name} (Available: ${Number(item.available_qty || 0)})`,
+	                          }))}
+	                          placeholder="Select item"
+	                          disabled={!form.customerId}
+	                          onChange={(nextValue) => handleSelectItem(idx, nextValue === '' ? '' : String(nextValue))}
+	                        />
+	                        {line.itemId ? (() => {
+	                          const it = items.find((x) => Number(x.item_id) === Number(line.itemId));
+	                          if (!it) return null;
                           return (
                             <div className="text-[11px] text-slate-500">
                               Sold: {Number(it.sold_qty || 0)} | Returned: {Number(it.returned_qty || 0)} | Available: {Number(it.available_qty || 0)}
@@ -470,20 +465,19 @@ const SalesReturns = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div>
-              <label className={`${labelClass} font-semibold`}>Refund Account</label>
-              <select
-                className={inputClass}
-                value={form.refundAccId}
-                onChange={(e) => setForm((prev) => ({ ...prev, refundAccId: e.target.value }))}
-              >
-                <option value="">{minRefund > 0 ? 'Select refund account' : 'No refund'}</option>
-                {accounts.filter((a) => a.is_active).map((a) => (
-                  <option key={a.acc_id} value={a.acc_id}>{a.name}</option>
-                ))}
-              </select>
-            </div>
+	          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+	            <div>
+	              <label className={`${labelClass} font-semibold`}>Refund Account</label>
+	              <SearchableCombobox<number>
+	                value={form.refundAccId ? Number(form.refundAccId) : ''}
+	                options={accounts.filter((a) => a.is_active).map((a) => ({ value: a.acc_id, label: a.name }))}
+	                placeholder={minRefund > 0 ? 'Select refund account' : 'No refund'}
+	                disabled={loading}
+	                onChange={(nextValue) =>
+	                  setForm((prev) => ({ ...prev, refundAccId: nextValue === '' ? '' : String(nextValue) }))
+	                }
+	              />
+	            </div>
             <div>
               <label className={`${labelClass} font-semibold`}>Refund Amount</label>
               <input

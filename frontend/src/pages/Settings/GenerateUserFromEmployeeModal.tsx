@@ -307,16 +307,7 @@ const GenerateUserFromEmployeeModal = ({ isOpen, onClose, onGenerate, roles }: P
           )}
         </div>
 
-        {/* Active Status */}
-        <label className="flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
-          <input
-            type="checkbox"
-            checked={form.is_active}
-            onChange={(e) => setForm({ ...form, is_active: e.target.checked })}
-            className="h-4 w-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500"
-          />
-          User account active
-        </label>
+        {/* Status defaults to Active on create */}
 
         {/* Action Buttons */}
         <div className="flex justify-end gap-3 pt-4 border-t border-slate-200 dark:border-slate-700">

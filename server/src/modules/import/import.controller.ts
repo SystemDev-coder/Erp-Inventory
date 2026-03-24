@@ -12,6 +12,11 @@ const parseMode = (input?: string): ImportMode => {
   return normalized === 'import' ? 'import' : 'preview';
 };
 
+const parseBoolean = (input?: unknown): boolean => {
+  const normalized = String(input ?? '').trim().toLowerCase();
+  return ['true', '1', 'yes', 'y', 'on'].includes(normalized);
+};
+
 const resolveUploadedFile = (req: AuthRequest) => {
   const file = (req as AuthRequest & { file?: Express.Multer.File }).file;
   if (!file) {
@@ -24,12 +29,16 @@ const handleImport = (type: ImportType) =>
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const scope = await resolveBranchScope(req);
     const mode = parseMode((req.body?.mode as string) || (req.query.mode as string));
+    const updateExistingBalances = parseBoolean(
+      (req.body?.update_existing as string) || (req.query.update_existing as string)
+    );
     const file = resolveUploadedFile(req);
 
     const result = await importService.processImport({
       type,
       mode,
       branchId: scope.primaryBranchId,
+      updateExistingBalances,
       file: {
         buffer: file.buffer,
         originalname: file.originalname,

@@ -26,7 +26,7 @@ interface ReceiptFormState {
     customer_id?: number;
     supplier_id?: number;
     purchase_id?: number;
-    amount?: number;
+    amount?: string;
     payment_method?: string;
     reference_no?: string;
     note?: string;
@@ -69,6 +69,19 @@ const StatCard = ({ label, value, icon: Icon, color }: { label: string; value: s
 );
 
 const PAYMENT_METHODS = ['Cash', 'Bank Transfer', 'Cheque', 'Mobile Money', 'Credit Card', 'Other'];
+
+const toAmountInput = (value: number | null | undefined) => {
+    const n = Number(value ?? 0);
+    if (!Number.isFinite(n) || n <= 0) return '';
+    return n.toFixed(2);
+};
+
+const parseAmountInput = (value: string | null | undefined) => {
+    const raw = String(value ?? '').trim().replace(/,/g, '');
+    if (!raw) return 0;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : 0;
+};
 
 const Receipts = () => {
     const { showToast } = useToast();
@@ -297,7 +310,7 @@ const Receipts = () => {
             setReceiptForm({
                 acc_id: row.acc_id,
                 customer_id: row.customer_id ?? undefined,
-                amount: Number(row.amount),
+                amount: toAmountInput(Number(row.amount)),
                 payment_method: row.payment_method ?? '',
                 reference_no: row.reference_no ?? '',
                 note: row.note ?? '',
@@ -377,7 +390,7 @@ const Receipts = () => {
             setReceiptForm({
                 acc_id: row.acc_id,
                 supplier_id: row.supplier_id ?? undefined,
-                amount: Number(row.amount),
+                amount: toAmountInput(Number(row.amount)),
                 payment_method: row.payment_method ?? '',
                 reference_no: row.reference_no ?? '',
                 note: row.note ?? '',
@@ -396,15 +409,15 @@ const Receipts = () => {
     };
 
     const submitCustReceipt = async () => {
-        if (!receiptForm.acc_id || !receiptForm.amount) return showToast('error', 'Receipts', 'Account and amount are required');
-        if (Number(receiptForm.amount) <= 0) return showToast('error', 'Receipts', 'Amount must be greater than 0');
+        const amount = parseAmountInput(receiptForm.amount);
+        if (!receiptForm.acc_id || amount <= 0) return showToast('error', 'Receipts', 'Account and amount are required');
         setSubmitting(true);
         try {
             const res = editingReceiptId
                 ? await financeService.updateCustomerReceipt(editingReceiptId, {
                     acc_id: receiptForm.acc_id,
                     customer_id: receiptForm.customer_id,
-                    amount: Number(receiptForm.amount),
+                    amount,
                     payment_method: receiptForm.payment_method,
                     reference_no: receiptForm.reference_no,
                     note: receiptForm.note,
@@ -412,7 +425,7 @@ const Receipts = () => {
                 : await financeService.createCustomerReceipt({
                     acc_id: receiptForm.acc_id,
                     customer_id: receiptForm.customer_id,
-                    amount: Number(receiptForm.amount),
+                    amount,
                     payment_method: receiptForm.payment_method,
                     reference_no: receiptForm.reference_no,
                     note: receiptForm.note,
@@ -446,8 +459,8 @@ const Receipts = () => {
         if (!receiptForm.supplier_id && !receiptForm.purchase_id) {
             return showToast('error', 'Receipts', 'Supplier or linked purchase is required');
         }
-        if (!receiptForm.acc_id || !receiptForm.amount) return showToast('error', 'Receipts', 'Account and amount are required');
-        if (Number(receiptForm.amount) <= 0) return showToast('error', 'Receipts', 'Amount must be greater than 0');
+        const amount = parseAmountInput(receiptForm.amount);
+        if (!receiptForm.acc_id || amount <= 0) return showToast('error', 'Receipts', 'Account and amount are required');
         setSubmitting(true);
         try {
             const res = editingReceiptId
@@ -455,7 +468,7 @@ const Receipts = () => {
                     acc_id: receiptForm.acc_id,
                     supplier_id: receiptForm.supplier_id,
                     purchase_id: receiptForm.purchase_id,
-                    amount: Number(receiptForm.amount),
+                    amount,
                     payment_method: receiptForm.payment_method,
                     reference_no: receiptForm.reference_no,
                     note: receiptForm.note,
@@ -464,7 +477,7 @@ const Receipts = () => {
                     acc_id: receiptForm.acc_id,
                     supplier_id: receiptForm.supplier_id,
                     purchase_id: receiptForm.purchase_id,
-                    amount: Number(receiptForm.amount),
+                    amount,
                     payment_method: receiptForm.payment_method,
                     reference_no: receiptForm.reference_no,
                     note: receiptForm.note,
@@ -603,7 +616,7 @@ const Receipts = () => {
                                 searchPlaceholder="Search customers..."
                                 onEdit={(row) => {
                                     const rec = row as UnpaidCustomer;
-                                    setReceiptForm({ customer_id: rec.customer_id, amount: rec.balance });
+                                    setReceiptForm({ customer_id: rec.customer_id, amount: toAmountInput(rec.balance) });
                                     setEditingReceiptId(null);
                                     setIsCustModalOpen(true);
                                     void handleCustomerChange(rec.customer_id);
@@ -716,7 +729,7 @@ const Receipts = () => {
                                     setReceiptForm({
                                         supplier_id: p.supplier_id ?? sup?.supplier_id,
                                         purchase_id: p.purchase_id,
-                                        amount: Number(p.outstanding),
+                                        amount: toAmountInput(Number(p.outstanding)),
                                     });
                                     setEditingReceiptId(null);
                                     setIsSupModalOpen(true);
@@ -738,7 +751,7 @@ const Receipts = () => {
                                         searchPlaceholder="Search suppliers..."
                                         onEdit={(row) => {
                                             const rec = row as UnpaidSupplier;
-                                            setReceiptForm({ supplier_id: rec.supplier_id, amount: rec.balance });
+                                            setReceiptForm({ supplier_id: rec.supplier_id, amount: toAmountInput(rec.balance) });
                                             setEditingReceiptId(null);
                                             setIsSupModalOpen(true);
                                             void handleSupplierChange(rec.supplier_id);
@@ -826,7 +839,7 @@ const Receipts = () => {
                                     <button
                                         type="button"
                                         className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-semibold hover:bg-slate-200"
-                                        onClick={() => setReceiptForm(f => ({ ...f, amount: customerCombinedBalance ?? 0 }))}
+                                        onClick={() => setReceiptForm(f => ({ ...f, amount: toAmountInput(customerCombinedBalance) }))}
                                     >
                                         Use Full Balance
                                     </button>
@@ -855,18 +868,14 @@ const Receipts = () => {
                     {/* Amount */}
                     <label className="block text-sm">
                         <span className="mb-1 block font-medium text-slate-700">Amount <span className="text-red-500">*</span></span>
-                        <div className="relative">
-                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">$</span>
-                            <input
-                                type="number"
-                                min="0.01"
-                                step="0.01"
-                                className="w-full rounded-lg border border-slate-300 pl-7 pr-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                                placeholder="0.00"
-                                value={receiptForm.amount ?? ''}
-                                onChange={(e) => setReceiptForm(f => ({ ...f, amount: e.target.value ? Number(e.target.value) : undefined }))}
-                            />
-                        </div>
+                        <input
+                            type="text"
+                            inputMode="decimal"
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-right focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                            placeholder="0.00"
+                            value={receiptForm.amount ?? ''}
+                            onChange={(e) => setReceiptForm(f => ({ ...f, amount: e.target.value }))}
+                        />
                     </label>
 
                     {/* Payment method */}
@@ -953,7 +962,7 @@ const Receipts = () => {
                                     <button
                                         type="button"
                                         className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-semibold hover:bg-slate-200"
-                                        onClick={() => setReceiptForm(f => ({ ...f, amount: supplierCombinedBalance ?? 0 }))}
+                                        onClick={() => setReceiptForm(f => ({ ...f, amount: toAmountInput(supplierCombinedBalance) }))}
                                     >
                                         Use Full Balance
                                     </button>
@@ -976,7 +985,7 @@ const Receipts = () => {
                                         ...f,
                                         supplier_id: purch?.supplier_id ?? f.supplier_id,
                                         purchase_id: purchId,
-                                        amount: purch ? Number(purch.outstanding) : f.amount,
+                                        amount: purch ? toAmountInput(Number(purch.outstanding)) : f.amount,
                                     }));
                                     if (!purch?.supplier_id) return;
                                     void loadSupplierCombinedBalance(purch.supplier_id);
@@ -1012,18 +1021,14 @@ const Receipts = () => {
                     {/* Amount */}
                     <label className="block text-sm">
                         <span className="mb-1 block font-medium text-slate-700">Amount <span className="text-red-500">*</span></span>
-                        <div className="relative">
-                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">$</span>
-                            <input
-                                type="number"
-                                min="0.01"
-                                step="0.01"
-                                className="w-full rounded-lg border border-slate-300 pl-7 pr-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                placeholder="0.00"
-                                value={receiptForm.amount ?? ''}
-                                onChange={(e) => setReceiptForm(f => ({ ...f, amount: e.target.value ? Number(e.target.value) : undefined }))}
-                            />
-                        </div>
+                        <input
+                            type="text"
+                            inputMode="decimal"
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-right focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            placeholder="0.00"
+                            value={receiptForm.amount ?? ''}
+                            onChange={(e) => setReceiptForm(f => ({ ...f, amount: e.target.value }))}
+                        />
                     </label>
 
                     {/* Payment method */}

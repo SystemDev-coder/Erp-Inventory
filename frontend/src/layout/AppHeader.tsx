@@ -125,12 +125,12 @@ const AppHeader: React.FC = () => {
   }, [searchValue, isSearchOpen]);
 
   return (
-    <header className="sticky top-0 z-99999 flex w-full border-b border-[#2c6287] bg-gradient-to-r from-[#123f5c] to-[#1b5a80] text-white">
+    <header className="sticky top-0 z-99999 flex w-full border-b border-slate-200 bg-white text-slate-900 dark:border-white/10 dark:bg-black dark:text-white">
       <div className="grow lg:px-6">
         <div className="flex flex-col items-center justify-between lg:flex-row">
-          <div className="flex w-full items-center justify-between gap-2 border-b border-[#2c6287]/80 px-3 py-3 sm:gap-4 lg:justify-normal lg:border-b-0 lg:px-0 lg:py-4">
+          <div className="flex w-full items-center justify-between gap-2 border-b border-slate-200/80 px-3 py-3 sm:gap-4 lg:justify-normal lg:border-b-0 lg:px-0 lg:py-4 dark:border-white/10">
             <button
-              className="z-99999 h-10 w-10 items-center justify-center rounded-lg border border-[#3e7396] bg-[#0f4f76] text-[#dbeaf6] transition-colors hover:bg-[#0b4061] hover:text-white lg:flex lg:h-11 lg:w-11"
+              className="z-99999 h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition-colors hover:bg-slate-100 hover:text-slate-900 lg:flex lg:h-11 lg:w-11 dark:border-white/10 dark:bg-black dark:text-white/80 dark:hover:bg-white/10 dark:hover:text-white"
               onClick={handleToggle}
               aria-label="Toggle Sidebar"
             >
@@ -167,8 +167,8 @@ const AppHeader: React.FC = () => {
               )}
             </button>
 
-            <Link to="/" className="lg:hidden inline-flex items-center gap-2 rounded-lg border border-[#3e7396] bg-[#0f4f76] px-2.5 py-2 text-white">
-              <span className="flex h-6 w-6 items-center justify-center rounded-md bg-[#123f5c]">
+            <Link to="/" className="lg:hidden inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-slate-900 dark:border-white/10 dark:bg-black dark:text-white">
+              <span className="flex h-6 w-6 items-center justify-center rounded-md bg-black text-white dark:bg-white dark:text-black">
                 <ShoppingCart className="h-4 w-4" />
               </span>
               <span className="text-xs font-semibold tracking-wide">KeydMaal ERP</span>
@@ -176,7 +176,7 @@ const AppHeader: React.FC = () => {
 
             <button
               onClick={toggleApplicationMenu}
-              className="z-99999 flex h-10 w-10 items-center justify-center rounded-lg border border-[#3e7396] bg-[#0f4f76] text-[#dbeaf6] transition-colors hover:bg-[#0b4061] hover:text-white lg:hidden"
+              className="z-99999 flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition-colors hover:bg-slate-100 hover:text-slate-900 lg:hidden dark:border-white/10 dark:bg-black dark:text-white/80 dark:hover:bg-white/10 dark:hover:text-white"
             >
               <svg
                 width="24"
@@ -205,7 +205,7 @@ const AppHeader: React.FC = () => {
                 <div ref={searchWrapRef} className="relative">
                   <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2">
                     <svg
-                      className="fill-[#b5d0e4]"
+                      className="fill-slate-400 dark:fill-white/60"
                       width="20"
                       height="20"
                       viewBox="0 0 20 20"
@@ -249,7 +249,7 @@ const AppHeader: React.FC = () => {
                         }
                       }
                     }}
-                    className="h-11 w-full rounded-lg border border-[#3e7396] bg-[#0f4f76]/45 py-2.5 pl-12 pr-14 text-sm text-white shadow-theme-xs placeholder:text-[#b5d0e4] focus:border-[#9ec5df] focus:outline-hidden focus:ring-3 focus:ring-[#9ec5df]/25 xl:w-[430px]"
+                    className="h-11 w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-12 pr-14 text-sm text-slate-900 shadow-theme-xs placeholder:text-slate-400 focus:border-slate-400 focus:outline-hidden focus:ring-3 focus:ring-slate-200/60 xl:w-[430px] dark:border-white/15 dark:bg-black/60 dark:text-white dark:placeholder:text-white/50 dark:focus:border-white/30 dark:focus:ring-white/10"
                   />
 
                   <button
@@ -258,16 +258,16 @@ const AppHeader: React.FC = () => {
                       inputRef.current?.focus();
                       setIsSearchOpen(true);
                     }}
-                    className="absolute right-2.5 top-1/2 inline-flex -translate-y-1/2 items-center gap-0.5 rounded-lg border border-[#4b7ea2] bg-[#0f4f76] px-[7px] py-[4.5px] text-xs -tracking-[0.2px] text-[#dbeaf6]"
+                    className="absolute right-2.5 top-1/2 inline-flex -translate-y-1/2 items-center gap-0.5 rounded-lg border border-slate-200 bg-white px-[7px] py-[4.5px] text-xs -tracking-[0.2px] text-slate-600 dark:border-white/15 dark:bg-black dark:text-white/70"
                   >
                     <span>Ctrl</span>
                     <span>K</span>
                   </button>
 
                   {isSearchOpen && (
-                    <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-[100000] overflow-hidden rounded-xl border border-[#3e7396] bg-[#0f4f76] shadow-2xl">
+                    <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-[100000] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-white/15 dark:bg-black">
                       {filteredCommands.length === 0 ? (
-                        <div className="px-4 py-3 text-sm text-[#c7dfef]">No matching commands.</div>
+                        <div className="px-4 py-3 text-sm text-slate-500 dark:text-white/60">No matching commands.</div>
                       ) : (
                         <ul className="max-h-80 overflow-auto py-1">
                           {filteredCommands.map((command, index) => (
@@ -275,15 +275,15 @@ const AppHeader: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => runCommand(command)}
-                                className={`w-full px-4 py-2.5 text-left text-sm transition ${
-                                  index === activeIndex
-                                    ? "bg-[#1b5a80] text-white"
-                                    : "text-[#dbeaf6] hover:bg-[#1b5a80]/70"
-                                }`}
-                              >
-                                <span className="block font-semibold">{command.label}</span>
-                                <span className="block text-xs text-[#b5d0e4]">{command.to}</span>
-                              </button>
+                                  className={`w-full px-4 py-2.5 text-left text-sm transition ${
+                                    index === activeIndex
+                                      ? "bg-slate-100 text-slate-900 dark:bg-white/10 dark:text-white"
+                                      : "text-slate-700 hover:bg-slate-50 dark:text-white/80 dark:hover:bg-white/10"
+                                  }`}
+                                >
+                                  <span className="block font-semibold">{command.label}</span>
+                                  <span className="block text-xs text-slate-500 dark:text-white/50">{command.to}</span>
+                                </button>
                             </li>
                           ))}
                         </ul>
@@ -295,7 +295,7 @@ const AppHeader: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center gap-4 px-3 py-2 lg:px-0 lg:py-0">
-            <span className="hidden items-center whitespace-nowrap px-1 text-sm font-extrabold leading-none tracking-wide text-white drop-shadow-[0_1px_1px_rgba(0,0,0,0.35)] sm:inline-flex">
+            <span className="hidden items-center whitespace-nowrap px-1 text-sm font-extrabold leading-none tracking-wide text-slate-900 sm:inline-flex dark:text-white">
               Version 1.0
             </span>
             <div className="flex items-center gap-2 2xsm:gap-3">

@@ -589,7 +589,7 @@ const normalizedAccountTransactionsCte = `
   )
 `;
 
-const buildBalanceSheetFromLedger = async (branchId: number, asOfDate: string): Promise<BalanceSheetRow[]> => {
+export const buildBalanceSheetFromLedger = async (branchId: number, asOfDate: string): Promise<BalanceSheetRow[]> => {
   const [customerBalanceColumn, supplierBalanceExpr] = await Promise.all([
     resolveBalanceColumn('customers'),
     resolveBalanceExpression('suppliers', 's'),
@@ -686,14 +686,15 @@ const buildBalanceSheetFromLedger = async (branchId: number, asOfDate: string): 
         [branchId]
       ),
       queryManyIfTableExists<{ asset_name: string; amount: number }>(
-        'fixed_assets',
+        'assets',
         `SELECT
-           COALESCE(NULLIF(BTRIM(fa.asset_name), ''), 'Fixed Asset') AS asset_name,
-           COALESCE(SUM(fa.cost), 0)::double precision AS amount
-         FROM ims.fixed_assets fa
-         WHERE fa.branch_id = $1
-           AND fa.purchase_date <= $2::date
-           AND LOWER(COALESCE(fa.status, 'active')) <> 'disposed'
+           COALESCE(NULLIF(BTRIM(a.asset_name), ''), 'Fixed Asset') AS asset_name,
+           COALESCE(SUM(a.amount), 0)::double precision AS amount
+         FROM ims.assets a
+         WHERE a.branch_id = $1
+           AND a.asset_type = 'fixed'::ims.asset_type_enum
+           AND a.purchased_date <= $2::date
+           AND LOWER(COALESCE(a.state::text, 'active')) <> 'disposed'
          GROUP BY 1
          ORDER BY 1`,
         params
@@ -1171,7 +1172,13 @@ const buildBalanceSheetFromGl = async (branchId: number, asOfDate: string): Prom
                  AND at2.acc_id = a.acc_id
                LIMIT 1
             ) THEN COALESCE(SUM(COALESCE(at.debit, 0) - COALESCE(at.credit, 0)), 0)
-            ELSE COALESCE(a.balance, 0)
+            ELSE (
+              CASE
+                WHEN COALESCE(a.account_type::text, 'asset') IN ('liability', 'equity', 'revenue', 'income')
+                  THEN -ABS(COALESCE(a.balance, 0))
+                ELSE ABS(COALESCE(a.balance, 0))
+              END
+            )
           END
         )::double precision AS net
       FROM ims.accounts a
@@ -1193,7 +1200,7 @@ const buildBalanceSheetFromGl = async (branchId: number, asOfDate: string): Prom
 
   const add = (target: BalanceSheetRow[], section: string, label: string, amount: number) => {
     if (isApproxZero(amount)) return;
-    target.push({ section, line_item: label, amount, row_type: 'detail' });
+    target.push({ section, line_item: label, amount, row_type: 'detail' as const });
   };
 
   let revenueTotal = 0;
@@ -1253,19 +1260,19 @@ const buildBalanceSheetFromGl = async (branchId: number, asOfDate: string): Prom
 
   const rows: BalanceSheetRow[] = [
     ...currentAssets,
-    { section: 'Current Assets', line_item: 'Total Current Assets', amount: totalCurrentAssets, row_type: 'total' },
+    { section: 'Current Assets', line_item: 'Total Current Assets', amount: totalCurrentAssets, row_type: 'total' as const },
     ...nonCurrentAssets,
-    { section: 'Non-Current Assets', line_item: 'Total Non-Current Assets', amount: totalNonCurrentAssets, row_type: 'total' },
-    { section: 'Assets', line_item: 'Total Assets', amount: totalAssets, row_type: 'total' },
+    { section: 'Non-Current Assets', line_item: 'Total Non-Current Assets', amount: totalNonCurrentAssets, row_type: 'total' as const },
+    { section: 'Assets', line_item: 'Total Assets', amount: totalAssets, row_type: 'total' as const },
     ...currentLiabilities,
-    { section: 'Current Liabilities', line_item: 'Total Current Liabilities', amount: totalCurrentLiabilities, row_type: 'total' },
+    { section: 'Current Liabilities', line_item: 'Total Current Liabilities', amount: totalCurrentLiabilities, row_type: 'total' as const },
     ...equityRows,
-    { section: 'Equity', line_item: 'Total Equity', amount: totalEquity, row_type: 'total' },
-    { section: 'Summary', line_item: 'Total Liabilities', amount: totalLiabilities, row_type: 'total' },
-    { section: 'Summary', line_item: 'Total Liabilities + Equity', amount: totalLiabilitiesEquity, row_type: 'total' },
+    { section: 'Equity', line_item: 'Total Equity', amount: totalEquity, row_type: 'total' as const },
+    { section: 'Summary', line_item: 'Total Liabilities', amount: totalLiabilities, row_type: 'total' as const },
+    { section: 'Summary', line_item: 'Total Liabilities + Equity', amount: totalLiabilitiesEquity, row_type: 'total' as const },
     ...(isApproxZero(unbalanced)
       ? []
-      : [{ section: 'Summary', line_item: 'Unbalanced Difference', amount: unbalanced, row_type: 'detail' }]),
+      : [{ section: 'Summary', line_item: 'Unbalanced Difference', amount: unbalanced, row_type: 'detail' as const }]),
   ];
 
   return rows.filter((row) => row.row_type === 'total' || !isApproxZero(row.amount));
@@ -1982,14 +1989,15 @@ export const financialReportsService = {
         params
       ),
       queryManyIfTableExists<{ asset_name: string; amount: number }>(
-        'fixed_assets',
+        'assets',
         `SELECT
-           COALESCE(NULLIF(BTRIM(fa.asset_name), ''), 'Fixed Asset') AS asset_name,
-           COALESCE(SUM(fa.cost), 0)::double precision AS amount
-         FROM ims.fixed_assets fa
-         WHERE fa.branch_id = $1
-           AND fa.purchase_date <= $2::date
-           AND LOWER(COALESCE(fa.status, 'active')) <> 'disposed'
+           COALESCE(NULLIF(BTRIM(a.asset_name), ''), 'Fixed Asset') AS asset_name,
+           COALESCE(SUM(a.amount), 0)::double precision AS amount
+         FROM ims.assets a
+         WHERE a.branch_id = $1
+           AND a.asset_type = 'fixed'::ims.asset_type_enum
+           AND a.purchased_date <= $2::date
+           AND LOWER(COALESCE(a.state::text, 'active')) <> 'disposed'
          GROUP BY 1
          ORDER BY 1`,
         params
@@ -2316,7 +2324,10 @@ export const financialReportsService = {
   },
 
   async getBalanceSheet(branchId: number, asOfDate: string): Promise<BalanceSheetRow[]> {
-    return financialReportsService.getBalanceSheetLegacy(branchId, asOfDate);
+    // Prefer professional GL-based balance sheet (QuickBooks/Odoo style):
+    // - No forced plug accounts
+    // - Shows "Net Income (Unclosed)" until period closing entries are posted
+    return buildBalanceSheetFromGl(branchId, asOfDate);
   },
 
   async getAccountsReceivable(branchId: number, fromDate: string, toDate: string): Promise<AccountsReceivableRow[]> {
@@ -2612,12 +2623,13 @@ export const financialReportsService = {
         params
       ),
       queryAmountIfTableExists(
-        'fixed_assets',
-        `SELECT COALESCE(SUM(fa.cost), 0)::double precision AS amount
-           FROM ims.fixed_assets fa
-          WHERE fa.branch_id = $1
-            AND fa.purchase_date BETWEEN $2::date AND $3::date
-            AND LOWER(COALESCE(fa.status, 'active')) <> 'disposed'`,
+        'assets',
+        `SELECT COALESCE(SUM(a.amount), 0)::double precision AS amount
+           FROM ims.assets a
+          WHERE a.branch_id = $1
+            AND a.asset_type = 'fixed'::ims.asset_type_enum
+            AND a.purchased_date BETWEEN $2::date AND $3::date
+            AND LOWER(COALESCE(a.state::text, 'active')) <> 'disposed'`,
         params
       ),
       queryAmountIfTableExists(
@@ -2817,17 +2829,23 @@ export const financialReportsService = {
            OR ABS(closing_credit) > 0.000001`;
 
     const rows = await queryMany<TrialBalanceRow>(
-      `WITH account_master AS (
-         SELECT
-           a.acc_id AS account_id,
-           COALESCE(NULLIF(BTRIM(a.name), ''), 'Account #' || a.acc_id::text) AS account_name,
-           COALESCE(a.balance, 0)::double precision AS base_balance,
-           EXISTS (
-             SELECT 1
-               FROM ims.account_transactions atx
-              WHERE atx.branch_id = a.branch_id
-                AND atx.acc_id = a.acc_id
-              LIMIT 1
+	      `WITH account_master AS (
+	         SELECT
+	           a.acc_id AS account_id,
+	           COALESCE(NULLIF(BTRIM(a.name), ''), 'Account #' || a.acc_id::text) AS account_name,
+	           (
+	             CASE
+	               WHEN COALESCE(a.account_type::text, 'asset') IN ('liability', 'equity', 'revenue', 'income')
+	                 THEN -ABS(COALESCE(a.balance, 0))
+	               ELSE ABS(COALESCE(a.balance, 0))
+	             END
+	           )::double precision AS base_balance,
+	           EXISTS (
+	             SELECT 1
+	               FROM ims.account_transactions atx
+	              WHERE atx.branch_id = a.branch_id
+	                AND atx.acc_id = a.acc_id
+	              LIMIT 1
            ) AS has_any_txn
          FROM ims.accounts a
          WHERE a.branch_id = $1
@@ -2868,29 +2886,37 @@ export const financialReportsService = {
          LEFT JOIN opening o ON o.account_id = am.account_id
          LEFT JOIN period p ON p.account_id = am.account_id
        ),
-       calc AS (
-         SELECT
-           account_id,
-           account_name,
-           CASE WHEN opening_balance >= 0 THEN opening_balance ELSE 0 END::double precision AS opening_debit,
-           CASE WHEN opening_balance < 0 THEN ABS(opening_balance) ELSE 0 END::double precision AS opening_credit,
-           period_debit,
-           period_credit,
-           (opening_balance + (period_debit - period_credit))::double precision AS closing_balance
-         FROM merged
-       )
-       SELECT
-         account_id,
-         account_name,
-         opening_debit,
-         opening_credit,
-         period_debit,
-         period_credit,
-         CASE WHEN closing_balance >= 0 THEN closing_balance ELSE 0 END::double precision AS closing_debit,
-         CASE WHEN closing_balance < 0 THEN ABS(closing_balance) ELSE 0 END::double precision AS closing_credit
-       FROM calc
-       ${nonZeroSql}
-       ORDER BY account_name ASC, account_id ASC`,
+        calc AS (
+          SELECT
+            account_id,
+            account_name,
+            CASE WHEN opening_balance >= 0 THEN opening_balance ELSE 0 END::double precision AS opening_debit,
+            CASE WHEN opening_balance < 0 THEN ABS(opening_balance) ELSE 0 END::double precision AS opening_credit,
+            period_debit,
+            period_credit,
+            (opening_balance + (period_debit - period_credit))::double precision AS closing_balance,
+            CASE
+              WHEN (opening_balance + (period_debit - period_credit)) >= 0 THEN (opening_balance + (period_debit - period_credit))
+              ELSE 0
+            END::double precision AS closing_debit,
+            CASE
+              WHEN (opening_balance + (period_debit - period_credit)) < 0 THEN ABS(opening_balance + (period_debit - period_credit))
+              ELSE 0
+            END::double precision AS closing_credit
+          FROM merged
+        )
+        SELECT
+          account_id,
+          account_name,
+          opening_debit,
+          opening_credit,
+          period_debit,
+          period_credit,
+          closing_debit,
+          closing_credit
+        FROM calc
+        ${nonZeroSql}
+        ORDER BY account_name ASC, account_id ASC`,
       [branchId, fromDate, toDate]
     );
 
@@ -2906,12 +2932,12 @@ export const financialReportsService = {
     }
 
     return queryMany<AccountBalanceRow>(
-      `WITH txn AS (
-         SELECT
-           at.acc_id,
-           COUNT(*)::int AS txn_count,
-           COALESCE(SUM(COALESCE(at.debit, 0) - COALESCE(at.credit, 0)), 0)::double precision AS txn_balance,
-           MAX(at.txn_date)::text AS last_transaction_date
+	      `WITH txn AS (
+	         SELECT
+	           at.acc_id,
+	           COUNT(*)::int AS txn_count,
+	           COALESCE(SUM(COALESCE(at.debit, 0) - COALESCE(at.credit, 0)), 0)::double precision AS txn_balance,
+	           MAX(at.txn_date)::text AS last_transaction_date
          FROM ims.account_transactions at
          WHERE at.branch_id = $1
            AND at.txn_date::date <= CURRENT_DATE
@@ -2921,14 +2947,20 @@ export const financialReportsService = {
          a.acc_id AS account_id,
          a.name AS account_name,
          COALESCE(a.institution, '') AS institution,
-         (
-           CASE
-             WHEN COALESCE(txn.txn_count, 0) > 0 THEN COALESCE(txn.txn_balance, 0)
-             ELSE COALESCE(a.balance, 0)::double precision
-           END
-         )::double precision AS current_balance,
-         txn.last_transaction_date
-       FROM ims.accounts a
+	         (
+	           CASE
+	             WHEN COALESCE(txn.txn_count, 0) > 0 THEN COALESCE(txn.txn_balance, 0)
+	             ELSE (
+	               CASE
+	                 WHEN COALESCE(a.account_type::text, 'asset') IN ('liability', 'equity', 'revenue', 'income')
+	                   THEN -ABS(COALESCE(a.balance, 0))
+	                 ELSE ABS(COALESCE(a.balance, 0))
+	               END
+	             )::double precision
+	           END
+	         )::double precision AS current_balance,
+	         txn.last_transaction_date
+	       FROM ims.accounts a
        LEFT JOIN txn ON txn.acc_id = a.acc_id
       WHERE a.branch_id = $1
         AND a.is_active = TRUE

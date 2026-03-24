@@ -96,7 +96,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
             {/* Dialog */}
             <div className="flex min-h-full items-center justify-center p-4">
                 <div
-                    className="relative w-full max-w-sm rounded-xl border border-[#6f8fbd] bg-[#fbfcff] shadow-2xl transform transition-all animate-[scaleIn_200ms_ease-out] dark:border-[#264676] dark:bg-[#10233f]"
+                    className="erp-modal-body relative w-full max-w-sm rounded-xl border border-[#6f8fbd] bg-[#fbfcff] shadow-2xl transform transition-all animate-[scaleIn_200ms_ease-out] dark:border-[#264676] dark:bg-[#10233f]"
                     onClick={(e) => e.stopPropagation()}
                 >
                     {/* Icon */}

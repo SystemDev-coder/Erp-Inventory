@@ -28,7 +28,6 @@ import { Modal } from '../../components/ui/modal/Modal';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { useAuth } from '../../context/AuthContext';
 import { assetsService } from '../../services/assets.service';
-import { accountService } from '../../services/account.service';
 import { ImageUpload } from '../../components/common/ImageUpload';
 import { imageService } from '../../services/image.service';
 import { env } from '../../config/env';
@@ -286,16 +285,17 @@ const Settings = () => {
   const [fixedAssetDeleting, setFixedAssetDeleting] = useState(false);
   const [fixedAssetForm, setFixedAssetForm] = useState({
     assetName: '',
-    purchaseDate: today(),
-    cost: '',
-    status: 'active',
+    purchasedDate: today(),
+    amount: '',
+    state: 'active',
   });
   const [currentAssetModalOpen, setCurrentAssetModalOpen] = useState(false);
   const [currentAssetSaving, setCurrentAssetSaving] = useState(false);
   const [currentAssetForm, setCurrentAssetForm] = useState({
-    name: '',
-    institution: '',
-    openingBalance: '',
+    assetName: '',
+    purchasedDate: today(),
+    amount: '',
+    state: 'active',
   });
 
   const [logs, setLogs] = useState<SystemAuditLog[]>([]);
@@ -839,9 +839,10 @@ const Settings = () => {
 
   const resetCurrentAssetModal = () => {
     setCurrentAssetForm({
-      name: '',
-      institution: '',
-      openingBalance: '',
+      assetName: '',
+      purchasedDate: today(),
+      amount: '',
+      state: 'active',
     });
   };
 
@@ -851,30 +852,36 @@ const Settings = () => {
   };
 
   const saveCurrentAsset = async () => {
-    if (!currentAssetForm.name.trim()) {
-      showToast('error', 'Assets', 'Account name is required');
+    if (!currentAssetForm.assetName.trim()) {
+      showToast('error', 'Assets', 'Asset name is required');
       return;
     }
-    const opening = currentAssetForm.openingBalance.trim() === '' ? 0 : Number(currentAssetForm.openingBalance);
-    if (!Number.isFinite(opening)) {
-      showToast('error', 'Assets', 'Opening balance is invalid');
+    const amount = currentAssetForm.amount.trim() === '' ? 0 : Number(currentAssetForm.amount);
+    if (!Number.isFinite(amount)) {
+      showToast('error', 'Assets', 'Amount is invalid');
+      return;
+    }
+    if (amount < 0) {
+      showToast('error', 'Assets', 'Amount cannot be negative');
       return;
     }
 
     setCurrentAssetSaving(true);
-    const res = await accountService.create({
-      name: currentAssetForm.name.trim(),
-      institution: currentAssetForm.institution.trim() || undefined,
-      balance: opening,
+    const res = await assetsService.create({
+      assetName: currentAssetForm.assetName.trim(),
+      type: 'current',
+      purchasedDate: currentAssetForm.purchasedDate,
+      amount,
+      state: currentAssetForm.state as any,
     });
     setCurrentAssetSaving(false);
 
-    if (!res.success || !res.data?.account) {
-      showToast('error', 'Assets', res.error || 'Failed to create current asset account');
+    if (!res.success || !res.data?.asset) {
+      showToast('error', 'Assets', res.error || 'Failed to create asset');
       return;
     }
 
-    showToast('success', 'Assets', 'Current asset account created');
+    showToast('success', 'Assets', 'Current asset created');
     setCurrentAssetModalOpen(false);
     resetCurrentAssetModal();
     await loadAssetAccounts();
@@ -884,9 +891,9 @@ const Settings = () => {
     setEditingFixedAssetId(null);
     setFixedAssetForm({
       assetName: '',
-      purchaseDate: today(),
-      cost: '',
-      status: 'active',
+      purchasedDate: today(),
+      amount: '',
+      state: 'active',
     });
   };
 
@@ -898,16 +905,16 @@ const Settings = () => {
   const openEditFixedAssetModal = (asset: {
     asset_id: number;
     asset_name: string;
-    purchase_date: string;
-    cost: number;
-    status: string;
+    purchased_date: string;
+    amount: number;
+    state: string;
   }) => {
     setEditingFixedAssetId(asset.asset_id);
     setFixedAssetForm({
       assetName: asset.asset_name || '',
-      purchaseDate: formatDateOnly(asset.purchase_date) || today(),
-      cost: String(Number(asset.cost || 0)),
-      status: asset.status || 'active',
+      purchasedDate: formatDateOnly(asset.purchased_date) || today(),
+      amount: String(Number(asset.amount || 0)),
+      state: asset.state || 'active',
     });
     setFixedAssetModalOpen(true);
   };
@@ -917,22 +924,23 @@ const Settings = () => {
       showToast('error', 'Assets', 'Asset name is required');
       return;
     }
-    if (!fixedAssetForm.purchaseDate) {
-      showToast('error', 'Assets', 'Purchase date is required');
+    if (!fixedAssetForm.purchasedDate) {
+      showToast('error', 'Assets', 'Purchased date is required');
       return;
     }
-    const cost = Number(fixedAssetForm.cost || 0);
-    if (!Number.isFinite(cost) || cost <= 0) {
-      showToast('error', 'Assets', 'Cost must be greater than 0');
+    const amount = Number(fixedAssetForm.amount || 0);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      showToast('error', 'Assets', 'Amount must be greater than 0');
       return;
     }
 
     setFixedAssetSaving(true);
     const payload = {
       assetName: fixedAssetForm.assetName.trim(),
-      purchaseDate: fixedAssetForm.purchaseDate,
-      cost,
-      status: fixedAssetForm.status,
+      type: 'fixed' as const,
+      purchasedDate: fixedAssetForm.purchasedDate,
+      amount,
+      state: fixedAssetForm.state,
     };
     const res = editingFixedAssetId
       ? await assetsService.update(editingFixedAssetId, payload)
@@ -1213,8 +1221,8 @@ const Settings = () => {
       <div className="bg-white border border-black rounded-xl p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h3 className="text-base font-semibold">Asset Accounts</h3>
-            <p className="text-sm text-zinc-600">Display current asset balances and fixed asset costs.</p>
+            <h3 className="text-base font-semibold">Assets</h3>
+            <p className="text-sm text-zinc-600">Display current and fixed assets.</p>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -1247,70 +1255,48 @@ const Settings = () => {
         </div>
 
         {!assetAccountsDisplayed ? (
-          <p className="text-sm mt-3">Click Display to load current and fixed assets.</p>
+          <p className="text-sm mt-3">Click Display to load assets.</p>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-sm mt-3">
-            <div className="rounded border border-black p-3">
-              <div className="font-semibold mb-2">Current Assets Accounts</div>
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-black text-left">
-                      <th className="py-2 pr-3">Account</th>
-                      <th className="py-2 pr-3">Institution</th>
-                      <th className="py-2 pr-0 text-right">Balance</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {currentAssetRows.length === 0 ? (
-                      <tr>
-                        <td colSpan={3} className="py-3 text-zinc-600">No current asset accounts found.</td>
-                      </tr>
-                    ) : (
-                      currentAssetRows.map((row, idx) => (
-                        <tr key={`${row.account_name}-${idx}`} className="border-b border-zinc-200">
-                          <td className="py-2 pr-3">{row.account_name}</td>
-                          <td className="py-2 pr-3">{row.institution || '-'}</td>
-                          <td className="py-2 pr-0 text-right">{formatMoney(row.balance)}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                  <tfoot>
+          <div className="mt-3 rounded border border-black p-3 text-sm">
+            <div className="font-semibold mb-2">Assets</div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="border-b border-black text-left">
+                    <th className="py-2 pr-3">Asset</th>
+                    <th className="py-2 pr-3">Type</th>
+                    <th className="py-2 pr-3">Purchased Date</th>
+                    <th className="py-2 pr-3">State</th>
+                    <th className="py-2 pr-0 text-right">Amount</th>
+                    <th className="py-2 pl-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {currentAssetRows.length === 0 && fixedAssetRows.length === 0 ? (
                     <tr>
-                      <td colSpan={2} className="pt-3 font-semibold">Total</td>
-                      <td className="pt-3 text-right font-semibold">{formatMoney(assetOverview?.current_assets_total || 0)}</td>
+                      <td colSpan={6} className="py-3 text-zinc-600">
+                        No assets found.
+                      </td>
                     </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </div>
-
-            <div className="rounded border border-black p-3">
-              <div className="font-semibold mb-2">Fixed Assets</div>
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-black text-left">
-                      <th className="py-2 pr-3">Asset</th>
-                      <th className="py-2 pr-3">Purchase Date</th>
-                      <th className="py-2 pr-3">Status</th>
-                      <th className="py-2 pr-0 text-right">Cost</th>
-                      <th className="py-2 pl-3 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {fixedAssetRows.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} className="py-3 text-zinc-600">No fixed assets found.</td>
-                      </tr>
-                    ) : (
-                      fixedAssetRows.map((row) => (
-                        <tr key={row.asset_id} className="border-b border-zinc-200">
+                  ) : (
+                    <>
+                      {currentAssetRows.map((row, idx) => (
+                        <tr key={`current-${row.asset_id}-${idx}`} className="border-b border-zinc-200">
                           <td className="py-2 pr-3">{row.asset_name}</td>
-                          <td className="py-2 pr-3">{row.purchase_date}</td>
-                          <td className="py-2 pr-3 capitalize">{row.status || 'active'}</td>
-                          <td className="py-2 pr-0 text-right">{formatMoney(row.cost)}</td>
+                          <td className="py-2 pr-3">Current</td>
+                          <td className="py-2 pr-3">{row.purchased_date}</td>
+                          <td className="py-2 pr-3 capitalize">{row.state || 'active'}</td>
+                          <td className="py-2 pr-0 text-right">{formatMoney(row.amount)}</td>
+                          <td className="py-2 pl-3" />
+                        </tr>
+                      ))}
+                      {fixedAssetRows.map((row) => (
+                        <tr key={`fixed-${row.asset_id}`} className="border-b border-zinc-200">
+                          <td className="py-2 pr-3">{row.asset_name}</td>
+                          <td className="py-2 pr-3">Fixed</td>
+                          <td className="py-2 pr-3">{row.purchased_date}</td>
+                          <td className="py-2 pr-3 capitalize">{row.state || 'active'}</td>
+                          <td className="py-2 pr-0 text-right">{formatMoney(row.amount)}</td>
                           <td className="py-2 pl-3">
                             <div className="flex items-center justify-end gap-2">
                               <button
@@ -1330,17 +1316,22 @@ const Settings = () => {
                             </div>
                           </td>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                  <tfoot>
-                    <tr>
-                      <td colSpan={4} className="pt-3 font-semibold">Total</td>
-                      <td className="pt-3 text-right font-semibold">{formatMoney(assetOverview?.fixed_assets_total || 0)}</td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
+                      ))}
+                    </>
+                  )}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td colSpan={4} className="pt-3 font-semibold">
+                      Total
+                    </td>
+                    <td className="pt-3 text-right font-semibold">
+                      {formatMoney(Number(assetOverview?.current_assets_total || 0) + Number(assetOverview?.fixed_assets_total || 0))}
+                    </td>
+                    <td />
+                  </tr>
+                </tfoot>
+              </table>
             </div>
           </div>
         )}
@@ -1356,36 +1347,52 @@ const Settings = () => {
         size="lg"
       >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <label className="text-sm font-medium flex flex-col gap-1 md:col-span-2">
-            Account Name *
+          <label className={modalLabelClass}>
+            Asset Name *
             <input
-              className="rounded border border-black px-3 py-2"
-              value={currentAssetForm.name}
-              onChange={(e) => setCurrentAssetForm((prev) => ({ ...prev, name: e.target.value }))}
+              className={modalInputClass}
+              value={currentAssetForm.assetName}
+              onChange={(e) => setCurrentAssetForm((prev) => ({ ...prev, assetName: e.target.value }))}
+              placeholder="e.g. Supplies"
             />
           </label>
-          <label className="text-sm font-medium flex flex-col gap-1">
-            Institution
+          <label className={modalLabelClass}>
+            Purchased Date
             <input
-              className="rounded border border-black px-3 py-2"
-              value={currentAssetForm.institution}
-              onChange={(e) => setCurrentAssetForm((prev) => ({ ...prev, institution: e.target.value }))}
+              type="date"
+              className={modalInputClass}
+              value={currentAssetForm.purchasedDate}
+              onChange={(e) => setCurrentAssetForm((prev) => ({ ...prev, purchasedDate: e.target.value }))}
             />
           </label>
-          <label className="text-sm font-medium flex flex-col gap-1">
-            Opening Balance
+          <label className={modalLabelClass}>
+            Amount
             <input
               type="number"
+              min="0"
               step="0.01"
-              className="rounded border border-black px-3 py-2"
-              value={currentAssetForm.openingBalance}
-              onChange={(e) => setCurrentAssetForm((prev) => ({ ...prev, openingBalance: e.target.value }))}
+              className={modalInputClass}
+              value={currentAssetForm.amount}
+              onChange={(e) => setCurrentAssetForm((prev) => ({ ...prev, amount: e.target.value }))}
+              placeholder="0.00"
             />
+          </label>
+          <label className={modalLabelClass}>
+            State
+            <select
+              className={modalInputClass}
+              value={currentAssetForm.state}
+              onChange={(e) => setCurrentAssetForm((prev) => ({ ...prev, state: e.target.value }))}
+            >
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+              <option value="disposed">Disposed</option>
+            </select>
           </label>
         </div>
         <div className="flex justify-end gap-2 pt-4">
           <button
-            className="px-4 py-2 rounded border border-black"
+            className={modalBtnSecondaryClass}
             onClick={() => {
               setCurrentAssetModalOpen(false);
               resetCurrentAssetModal();
@@ -1394,11 +1401,7 @@ const Settings = () => {
           >
             Cancel
           </button>
-          <button
-            className="px-4 py-2 rounded border border-black bg-black text-white"
-            onClick={() => void saveCurrentAsset()}
-            disabled={currentAssetSaving}
-          >
+          <button className={modalBtnPrimaryClass} onClick={() => void saveCurrentAsset()} disabled={currentAssetSaving}>
             {currentAssetSaving ? 'Saving...' : 'Create'}
           </button>
         </div>
@@ -1414,40 +1417,42 @@ const Settings = () => {
         size="lg"
       >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <label className="text-sm font-medium flex flex-col gap-1">
+          <label className={modalLabelClass}>
             Asset Name *
             <input
-              className="rounded border border-black px-3 py-2"
+              className={modalInputClass}
               value={fixedAssetForm.assetName}
               onChange={(e) => setFixedAssetForm((prev) => ({ ...prev, assetName: e.target.value }))}
+              placeholder="e.g. Vehicle"
             />
           </label>
-          <label className="text-sm font-medium flex flex-col gap-1">
-            Purchase Date *
+          <label className={modalLabelClass}>
+            Purchased Date *
             <input
               type="date"
-              className="rounded border border-black px-3 py-2"
-              value={fixedAssetForm.purchaseDate}
-              onChange={(e) => setFixedAssetForm((prev) => ({ ...prev, purchaseDate: e.target.value }))}
+              className={modalInputClass}
+              value={fixedAssetForm.purchasedDate}
+              onChange={(e) => setFixedAssetForm((prev) => ({ ...prev, purchasedDate: e.target.value }))}
             />
           </label>
-          <label className="text-sm font-medium flex flex-col gap-1">
-            Cost *
+          <label className={modalLabelClass}>
+            Amount *
             <input
               type="number"
               min="0"
               step="0.01"
-              className="rounded border border-black px-3 py-2"
-              value={fixedAssetForm.cost}
-              onChange={(e) => setFixedAssetForm((prev) => ({ ...prev, cost: e.target.value }))}
+              className={modalInputClass}
+              value={fixedAssetForm.amount}
+              onChange={(e) => setFixedAssetForm((prev) => ({ ...prev, amount: e.target.value }))}
+              placeholder="0.00"
             />
           </label>
-          <label className="text-sm font-medium flex flex-col gap-1">
-            Status *
+          <label className={modalLabelClass}>
+            State *
             <select
-              className="rounded border border-black px-3 py-2"
-              value={fixedAssetForm.status}
-              onChange={(e) => setFixedAssetForm((prev) => ({ ...prev, status: e.target.value }))}
+              className={modalInputClass}
+              value={fixedAssetForm.state}
+              onChange={(e) => setFixedAssetForm((prev) => ({ ...prev, state: e.target.value }))}
             >
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
@@ -1457,7 +1462,7 @@ const Settings = () => {
         </div>
         <div className="flex justify-end gap-2 pt-4">
           <button
-            className="px-4 py-2 rounded border border-black"
+            className={modalBtnSecondaryClass}
             onClick={() => {
               setFixedAssetModalOpen(false);
               resetFixedAssetModal();
@@ -1466,7 +1471,7 @@ const Settings = () => {
             Cancel
           </button>
           <button
-            className="px-4 py-2 rounded border border-black bg-black text-white"
+            className={modalBtnPrimaryClass}
             onClick={() => void saveFixedAsset()}
             disabled={fixedAssetSaving}
           >

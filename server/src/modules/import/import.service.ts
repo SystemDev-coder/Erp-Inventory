@@ -33,12 +33,25 @@ type CandidateRow<T> = {
   skipReason?: string;
 };
 
+type ImportExecutionOptions = {
+  updateExistingBalances?: boolean;
+};
+
 type ImportDefinition<T> = {
   type: ImportType;
   requiredHeaders: Array<{ field: string; aliases: string[] }>;
   parseRow: (raw: Record<string, unknown>, row: number) => ParseResult<T>;
-  applyBusinessChecks: (rows: CandidateRow<T>[], branchId: number) => Promise<void>;
-  insertRow: (client: PoolClient, row: T, branchId: number) => Promise<void>;
+  applyBusinessChecks: (
+    rows: CandidateRow<T>[],
+    branchId: number,
+    options: ImportExecutionOptions
+  ) => Promise<void>;
+  insertRow: (
+    client: PoolClient,
+    row: T,
+    branchId: number,
+    options: ImportExecutionOptions
+  ) => Promise<'inserted' | 'updated'>;
   toPreviewData: (row: T) => Record<string, unknown>;
 };
 
@@ -544,8 +557,14 @@ const parseItemRow = (raw: Record<string, unknown>): ParseResult<ItemImportRow> 
   };
 };
 
-const applyCustomerChecks = async (rows: CandidateRow<CustomerImportRow>[], branchId: number) => {
+const applyCustomerChecks = async (
+  rows: CandidateRow<CustomerImportRow>[],
+  branchId: number,
+  options: ImportExecutionOptions
+) => {
   addFileDuplicateSkips(rows, (row) => row.data.phone, 'Phone');
+
+  if (options.updateExistingBalances) return;
 
   const phones = uniqueLowerSet(
     rows
@@ -573,8 +592,14 @@ const applyCustomerChecks = async (rows: CandidateRow<CustomerImportRow>[], bran
   }
 };
 
-const applySupplierChecks = async (rows: CandidateRow<SupplierImportRow>[], branchId: number) => {
+const applySupplierChecks = async (
+  rows: CandidateRow<SupplierImportRow>[],
+  branchId: number,
+  options: ImportExecutionOptions
+) => {
   addFileDuplicateSkips(rows, (row) => row.data.supplier_name, 'Supplier name');
+
+  if (options.updateExistingBalances) return;
 
   const supplierNames = uniqueLowerSet(
     rows
@@ -601,7 +626,11 @@ const applySupplierChecks = async (rows: CandidateRow<SupplierImportRow>[], bran
   }
 };
 
-const applyItemChecks = async (rows: CandidateRow<ItemImportRow>[], branchId: number) => {
+const applyItemChecks = async (
+  rows: CandidateRow<ItemImportRow>[],
+  branchId: number,
+  _options: ImportExecutionOptions
+) => {
   addFileDuplicateSkips(rows, (row) => row.data.name, 'Item name');
   addFileDuplicateSkips(
     rows,
@@ -684,12 +713,134 @@ const applyItemChecks = async (rows: CandidateRow<ItemImportRow>[], branchId: nu
   }
 };
 
+const hasCustomerNonOpeningLedger = async (
+  client: PoolClient,
+  branchId: number,
+  customerId: number
+): Promise<boolean> => {
+  const result = await client.query<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM ims.customer_ledger
+        WHERE branch_id = $1
+          AND customer_id = $2
+          AND NOT (entry_type = 'opening' AND ref_table = 'opening_balance')
+     ) AS exists`,
+    [branchId, customerId]
+  );
+  return Boolean(result.rows[0]?.exists);
+};
+
+const upsertCustomerOpeningLedger = async (
+  client: PoolClient,
+  branchId: number,
+  customerId: number,
+  amount: number
+) => {
+  await client.query(
+    `DELETE FROM ims.customer_ledger
+      WHERE branch_id = $1
+        AND customer_id = $2
+        AND entry_type = 'opening'
+        AND ref_table = 'opening_balance'`,
+    [branchId, customerId]
+  );
+
+  if (!amount) return;
+
+  await client.query(
+    `INSERT INTO ims.customer_ledger
+      (branch_id, customer_id, entry_type, ref_table, ref_id, acc_id, debit, credit, entry_date, note)
+     VALUES
+      ($1, $2, 'opening', 'opening_balance', $2, NULL, $3, 0, NOW() - INTERVAL '1 second', $4)`,
+    [branchId, customerId, amount, '[OPENING BALANCE] Imported from spreadsheet']
+  );
+};
+
 const insertCustomer = async (
   client: PoolClient,
   row: CustomerImportRow,
-  branchId: number
-) => {
+  branchId: number,
+  options: ImportExecutionOptions
+): Promise<'inserted' | 'updated'> => {
   const shape = await detectCustomerShape();
+
+  const phoneKey = row.phone ? normalizeLookup(row.phone) : null;
+  const existing = phoneKey
+    ? await client.query<{ customer_id: number }>(
+        `SELECT customer_id
+           FROM ims.customers
+          WHERE branch_id = $1
+            AND phone IS NOT NULL
+            AND LOWER(phone) = $2
+          LIMIT 1`,
+        [branchId, phoneKey]
+      )
+    : null;
+  const existingId = Number(existing?.rows?.[0]?.customer_id || 0) || null;
+
+  if (existingId && options.updateExistingBalances) {
+    if (await hasCustomerNonOpeningLedger(client, branchId, existingId)) {
+      throw new ImportSkipError(
+        `Customer "${row.full_name}" has transactions; cannot update opening balance`
+      );
+    }
+
+    const updates: string[] = ['full_name = $2'];
+    const values: unknown[] = [branchId, row.full_name];
+    let p = 3;
+
+    updates.push(`phone = $${p++}`);
+    values.push(row.phone);
+
+    updates.push(`sex = $${p++}::ims.sex_enum`);
+    values.push(row.sex);
+
+    if (shape.hasGenderColumn) {
+      updates.push(`gender = $${p++}`);
+      values.push(row.gender);
+    }
+
+    if (shape.hasTypeColumn) {
+      updates.push(`customer_type = $${p++}`);
+      values.push(row.customer_type);
+    }
+
+    updates.push(`address = $${p++}`);
+    values.push(row.address);
+
+    // If the schema has `remaining_balance`, treat it as the single source-of-truth for outstanding/opening balance.
+    // Do NOT also populate `open_balance` (legacy) because "Prepare Accounts" migrations would double-count it.
+    if (shape.hasRemainingBalance) {
+      updates.push(`remaining_balance = $${p++}`);
+      values.push(row.remaining_balance);
+      if (shape.hasOpenBalance) {
+        updates.push(`open_balance = 0`);
+      }
+    } else if (shape.hasOpenBalance) {
+      updates.push(`open_balance = $${p++}`);
+      values.push(row.remaining_balance);
+    } else {
+      updates.push(`${shape.balanceColumn} = $${p++}`);
+      values.push(row.remaining_balance);
+    }
+
+    updates.push(`is_active = TRUE`);
+
+    await client.query(
+      `UPDATE ims.customers
+          SET ${updates.join(', ')}
+        WHERE branch_id = $1
+          AND customer_id = $${p}`,
+      [...values, existingId]
+    );
+
+    if (shape.hasOpenBalance || shape.hasRemainingBalance) {
+      await upsertCustomerOpeningLedger(client, branchId, existingId, row.remaining_balance);
+    }
+
+    return 'updated';
+  }
 
   const columns: string[] = ['branch_id', 'full_name', 'phone', 'sex'];
   const placeholders: string[] = ['$1', '$2', '$3', '$4::ims.sex_enum'];
@@ -710,38 +861,160 @@ const insertCustomer = async (
   placeholders.push(`$${values.length + 1}`);
   values.push(row.address);
 
-  if (shape.hasRemainingBalance) {
-    columns.push('remaining_balance');
-    placeholders.push(`$${values.length + 1}`);
-    values.push(row.remaining_balance);
-  } else {
-    columns.push(shape.balanceColumn);
-    placeholders.push(`$${values.length + 1}`);
-    values.push(row.remaining_balance);
-  }
+   if (shape.hasRemainingBalance) {
+     columns.push('remaining_balance');
+     placeholders.push(`$${values.length + 1}`);
+     values.push(row.remaining_balance);
+     if (shape.hasOpenBalance) {
+       columns.push('open_balance');
+       placeholders.push(`$${values.length + 1}`);
+       values.push(0);
+     }
+   } else if (shape.hasOpenBalance) {
+     columns.push('open_balance');
+     placeholders.push(`$${values.length + 1}`);
+     values.push(row.remaining_balance);
+   } else {
+     columns.push(shape.balanceColumn);
+     placeholders.push(`$${values.length + 1}`);
+     values.push(row.remaining_balance);
+   }
 
   columns.push('is_active');
   placeholders.push(`$${values.length + 1}`);
   // Customer imports always default to active status.
   values.push(true);
 
-  await client.query(
+  const inserted = await client.query<{ customer_id: number }>(
     `INSERT INTO ims.customers (${columns.join(', ')})
-     VALUES (${placeholders.join(', ')})`,
+     VALUES (${placeholders.join(', ')})
+     RETURNING customer_id`,
     values
+  );
+
+  const customerId = Number(inserted.rows[0]?.customer_id || 0);
+  if (!customerId) {
+    throw new Error('Failed to insert customer');
+  }
+
+  if (shape.hasOpenBalance || shape.hasRemainingBalance) {
+    await upsertCustomerOpeningLedger(client, branchId, customerId, row.remaining_balance);
+  }
+
+  return 'inserted';
+};
+
+const hasSupplierNonOpeningLedger = async (
+  client: PoolClient,
+  branchId: number,
+  supplierId: number
+): Promise<boolean> => {
+  const result = await client.query<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM ims.supplier_ledger
+        WHERE branch_id = $1
+          AND supplier_id = $2
+          AND NOT (entry_type = 'opening' AND ref_table = 'opening_balance')
+     ) AS exists`,
+    [branchId, supplierId]
+  );
+  return Boolean(result.rows[0]?.exists);
+};
+
+const upsertSupplierOpeningLedger = async (
+  client: PoolClient,
+  branchId: number,
+  supplierId: number,
+  amount: number
+) => {
+  await client.query(
+    `DELETE FROM ims.supplier_ledger
+      WHERE branch_id = $1
+        AND supplier_id = $2
+        AND entry_type = 'opening'
+        AND ref_table = 'opening_balance'`,
+    [branchId, supplierId]
+  );
+
+  if (!amount) return;
+
+  await client.query(
+    `INSERT INTO ims.supplier_ledger
+      (branch_id, supplier_id, entry_type, ref_table, ref_id, acc_id, debit, credit, entry_date, note)
+     VALUES
+      ($1, $2, 'opening', 'opening_balance', $2, NULL, 0, $3, NOW() - INTERVAL '1 second', $4)`,
+    [branchId, supplierId, amount, '[OPENING BALANCE] Imported from spreadsheet']
   );
 };
 
 const insertSupplier = async (
   client: PoolClient,
   row: SupplierImportRow,
-  branchId: number
-) => {
+  branchId: number,
+  options: ImportExecutionOptions
+): Promise<'inserted' | 'updated'> => {
   const shape = await detectSupplierShape();
   const locationValue =
     shape.locationColumn === 'company_name'
       ? row.company_name ?? row.location ?? null
       : row.location ?? row.company_name ?? null;
+
+  const existing = await client.query<{ supplier_id: number }>(
+    `SELECT supplier_id
+       FROM ims.suppliers
+      WHERE branch_id = $1
+        AND LOWER(${shape.nameColumn}) = LOWER($2)
+      LIMIT 1`,
+    [branchId, row.supplier_name]
+  );
+  const existingId = Number(existing.rows[0]?.supplier_id || 0) || null;
+
+  if (existingId && options.updateExistingBalances) {
+    if (await hasSupplierNonOpeningLedger(client, branchId, existingId)) {
+      throw new ImportSkipError(
+        `Supplier "${row.supplier_name}" has transactions; cannot update opening balance`
+      );
+    }
+
+    const updates: string[] = [
+      `${shape.nameColumn} = $2`,
+      `${shape.locationColumn} = $3`,
+      `phone = $4`,
+      `is_active = $5`,
+    ];
+    const values: unknown[] = [branchId, row.supplier_name, locationValue, row.phone, row.is_active];
+    let p = 6;
+
+    // If `remaining_balance` exists, keep it as the only balance column and do not also set `open_balance`.
+    if (shape.hasRemainingBalance) {
+      updates.push(`remaining_balance = $${p++}`);
+      values.push(row.remaining_balance);
+      if (shape.hasOpenBalance) {
+        updates.push(`open_balance = 0`);
+      }
+    } else if (shape.hasOpenBalance) {
+      updates.push(`open_balance = $${p++}`);
+      values.push(row.remaining_balance);
+    } else {
+      updates.push(`${shape.balanceColumn} = $${p++}`);
+      values.push(row.remaining_balance);
+    }
+
+    await client.query(
+      `UPDATE ims.suppliers
+          SET ${updates.join(', ')}
+        WHERE branch_id = $1
+          AND supplier_id = $${p}`,
+      [...values, existingId]
+    );
+
+    if (shape.hasOpenBalance || shape.hasRemainingBalance) {
+      await upsertSupplierOpeningLedger(client, branchId, existingId, row.remaining_balance);
+    }
+
+    return 'updated';
+  }
 
   const columns: string[] = [
     'branch_id',
@@ -756,6 +1029,15 @@ const insertSupplier = async (
     columns.push('remaining_balance');
     placeholders.push(`$${values.length + 1}`);
     values.push(row.remaining_balance);
+    if (shape.hasOpenBalance) {
+      columns.push('open_balance');
+      placeholders.push(`$${values.length + 1}`);
+      values.push(0);
+    }
+  } else if (shape.hasOpenBalance) {
+    columns.push('open_balance');
+    placeholders.push(`$${values.length + 1}`);
+    values.push(row.remaining_balance);
   } else {
     columns.push(shape.balanceColumn);
     placeholders.push(`$${values.length + 1}`);
@@ -766,14 +1048,31 @@ const insertSupplier = async (
   placeholders.push(`$${values.length + 1}`);
   values.push(row.is_active);
 
-  await client.query(
+  const inserted = await client.query<{ supplier_id: number }>(
     `INSERT INTO ims.suppliers (${columns.join(', ')})
-     VALUES (${placeholders.join(', ')})`,
+     VALUES (${placeholders.join(', ')})
+     RETURNING supplier_id`,
     values
   );
+
+  const supplierId = Number(inserted.rows[0]?.supplier_id || 0);
+  if (!supplierId) {
+    throw new Error('Failed to insert supplier');
+  }
+
+  if (shape.hasOpenBalance || shape.hasRemainingBalance) {
+    await upsertSupplierOpeningLedger(client, branchId, supplierId, row.remaining_balance);
+  }
+
+  return 'inserted';
 };
 
-const insertItem = async (client: PoolClient, row: ItemImportRow, branchId: number) => {
+const insertItem = async (
+  client: PoolClient,
+  row: ItemImportRow,
+  branchId: number,
+  _options: ImportExecutionOptions
+): Promise<'inserted' | 'updated'> => {
   const shape = await detectItemShape();
   const values: unknown[] = [branchId];
   const columns: string[] = ['branch_id'];
@@ -826,12 +1125,25 @@ const insertItem = async (client: PoolClient, row: ItemImportRow, branchId: numb
       [row.store_id, itemId, row.opening_balance]
     );
   }
+
+  return 'inserted';
 };
+
+class ImportSkipError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ImportSkipError';
+  }
+}
 
 const classifyInsertError = (
   importType: ImportType,
   error: unknown
 ): { kind: 'skipped' | 'failed'; reason: string } => {
+  if (error instanceof ImportSkipError) {
+    return { kind: 'skipped', reason: error.message };
+  }
+
   const pgError = error as {
     code?: string;
     constraint?: string;
@@ -867,8 +1179,11 @@ const classifyInsertError = (
 
 const customersDefinition: ImportDefinition<CustomerImportRow> = {
   type: 'customers',
-  requiredHeaders: [{ field: 'full_name', aliases: ['full_name', 'name', 'customer_name'] }],
-  parseRow: (raw) => parseCustomerRow(raw),
+  requiredHeaders: [
+    { field: 'full_name', aliases: ['full_name', 'name', 'customer_name'] },
+    { field: 'remaining_balance', aliases: ['remaining_balance', 'open_balance', 'balance'] },
+  ],
+  parseRow: (raw, _row) => parseCustomerRow(raw),
   applyBusinessChecks: applyCustomerChecks,
   insertRow: insertCustomer,
   toPreviewData: (row) => row,
@@ -880,7 +1195,7 @@ const suppliersDefinition: ImportDefinition<SupplierImportRow> = {
     { field: 'supplier_name', aliases: ['supplier_name', 'name'] },
     { field: 'remaining_balance', aliases: ['remaining_balance', 'open_balance', 'balance'] },
   ],
-  parseRow: (raw) => parseSupplierRow(raw),
+  parseRow: (raw, _row) => parseSupplierRow(raw),
   applyBusinessChecks: applySupplierChecks,
   insertRow: insertSupplier,
   toPreviewData: (row) => row,
@@ -894,7 +1209,7 @@ const itemsDefinition: ImportDefinition<ItemImportRow> = {
     { field: 'cost_price', aliases: ['cost_price', 'cost'] },
     { field: 'sell_price', aliases: ['sell_price', 'price'] },
   ],
-  parseRow: (raw) => parseItemRow(raw),
+  parseRow: (raw, _row) => parseItemRow(raw),
   applyBusinessChecks: applyItemChecks,
   insertRow: insertItem,
   toPreviewData: (row) => {
@@ -961,7 +1276,8 @@ const executeImport = async <
   definition: ImportDefinition<T>,
   file: UploadedFile,
   branchId: number,
-  mode: ImportMode
+  mode: ImportMode,
+  options: ImportExecutionOptions
 ): Promise<ImportSummary> => {
   const parsed = parseSpreadsheet(file);
   ensureFileHasRows(parsed.rows.length);
@@ -1001,7 +1317,7 @@ const executeImport = async <
     });
   }
 
-  await definition.applyBusinessChecks(candidates, branchId);
+  await definition.applyBusinessChecks(candidates, branchId, options);
 
   const rowsToInsert: CandidateRow<T>[] = [];
   for (const row of candidates) {
@@ -1037,6 +1353,7 @@ const executeImport = async <
   }
 
   let insertedCount = 0;
+  let updatedCount = 0;
   if (mode === 'import' && rowsToInsert.length) {
     await withTransaction(async (client) => {
       for (const row of rowsToInsert) {
@@ -1044,8 +1361,12 @@ const executeImport = async <
         await client.query(`SAVEPOINT ${savepoint}`);
 
         try {
-          await definition.insertRow(client, row.data, branchId);
-          insertedCount += 1;
+          const action = await definition.insertRow(client, row.data, branchId, options);
+          if (action === 'updated') {
+            updatedCount += 1;
+          } else {
+            insertedCount += 1;
+          }
           await client.query(`RELEASE SAVEPOINT ${savepoint}`);
         } catch (error) {
           await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
@@ -1100,6 +1421,7 @@ const executeImport = async <
     total_rows: parsed.rows.length,
     valid_count: rowsToInsert.length,
     inserted_count: mode === 'import' ? insertedCount : 0,
+    updated_count: mode === 'import' ? updatedCount : 0,
     failed_count: failedRows.length,
     skipped_count: skippedRows.length,
     failed_rows: failedRows.sort((left, right) => left.row - right.row),
@@ -1113,6 +1435,7 @@ export const importService = {
     type: ImportType;
     mode: ImportMode;
     branchId: number;
+    updateExistingBalances?: boolean;
     file: UploadedFile;
   }): Promise<ImportSummary> {
     const definition = getDefinition(params.type);
@@ -1122,7 +1445,8 @@ export const importService = {
       >,
       params.file,
       params.branchId,
-      params.mode
+      params.mode,
+      { updateExistingBalances: params.updateExistingBalances }
     );
   },
 };

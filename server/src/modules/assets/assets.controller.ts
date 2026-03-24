@@ -7,36 +7,32 @@ import { resolveBranchScope } from '../../utils/branchScope';
 import { assetsService } from './assets.service';
 import { ApiError } from '../../utils/ApiError';
 
-const fixedAssetCreateSchema = z.object({
+const assetCreateSchema = z.object({
   assetName: z.string().trim().min(1, 'Asset name is required'),
-  purchaseDate: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Purchase date must be YYYY-MM-DD'),
-  cost: z.coerce.number().positive('Cost must be greater than 0'),
-  category: z.string().trim().optional(),
-  status: z.string().trim().optional(),
+  type: z.enum(['current', 'fixed']),
+  purchasedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Purchased date must be YYYY-MM-DD').optional(),
+  amount: z.coerce.number().min(0, 'Amount must be zero or positive'),
+  state: z.enum(['active', 'inactive', 'disposed']).optional(),
   branchId: z.coerce.number().int().positive().optional(),
 });
 
-const fixedAssetUpdateSchema = z
+const assetUpdateSchema = z
   .object({
     assetName: z.string().trim().min(1, 'Asset name is required').optional(),
-    purchaseDate: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Purchase date must be YYYY-MM-DD')
-      .optional(),
-    cost: z.coerce.number().positive('Cost must be greater than 0').optional(),
-    category: z.string().trim().optional(),
-    status: z.string().trim().optional(),
+    type: z.enum(['current', 'fixed']).optional(),
+    purchasedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Purchased date must be YYYY-MM-DD').optional(),
+    amount: z.coerce.number().min(0, 'Amount must be zero or positive').optional(),
+    state: z.enum(['active', 'inactive', 'disposed']).optional(),
   })
   .refine((val) => Object.keys(val).length > 0, {
     message: 'At least one field must be provided',
   });
 
-export const listFixedAssets = asyncHandler(async (req: AuthRequest, res: Response) => {
+export const listAssets = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const search = (req.query.search as string | undefined)?.trim();
-  const status = (req.query.status as string | undefined)?.trim();
+  const type = (req.query.type as string | undefined)?.trim() as any;
+  const state = (req.query.state as string | undefined)?.trim();
   const fromDate = (req.query.fromDate as string) || undefined;
   const toDate = (req.query.toDate as string) || undefined;
   if ((fromDate && !toDate) || (!fromDate && toDate)) {
@@ -46,9 +42,10 @@ export const listFixedAssets = asyncHandler(async (req: AuthRequest, res: Respon
     throw ApiError.badRequest('fromDate cannot be after toDate');
   }
 
-  const assets = await assetsService.listFixedAssets(scope, {
+  const assets = await assetsService.listAssets(scope, {
     search: search || undefined,
-    status: status || undefined,
+    type: type || undefined,
+    state: state || undefined,
     fromDate,
     toDate,
   });
@@ -56,64 +53,64 @@ export const listFixedAssets = asyncHandler(async (req: AuthRequest, res: Respon
   return ApiResponse.success(res, { assets });
 });
 
-export const createFixedAsset = asyncHandler(async (req: AuthRequest, res: Response) => {
+export const createAsset = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
-  const input = fixedAssetCreateSchema.parse(req.body);
+  const input = assetCreateSchema.parse(req.body);
 
-  const asset = await assetsService.createFixedAsset(
+  const asset = await assetsService.createAsset(
     {
       assetName: input.assetName,
-      category: input.category,
-      purchaseDate: input.purchaseDate,
-      cost: input.cost,
-      status: input.status || 'active',
+      type: input.type,
+      purchasedDate: input.purchasedDate,
+      amount: input.amount,
+      state: input.state || 'active',
       branchId: input.branchId,
     },
     scope,
     req.user?.userId || 0
   );
 
-  return ApiResponse.created(res, { asset }, 'Fixed asset registered');
+  return ApiResponse.created(res, { asset }, 'Asset saved');
 });
 
-export const updateFixedAsset = asyncHandler(async (req: AuthRequest, res: Response) => {
+export const updateAsset = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
     throw ApiError.badRequest('Invalid asset id');
   }
-  const input = fixedAssetUpdateSchema.parse(req.body);
+  const input = assetUpdateSchema.parse(req.body);
 
-  const asset = await assetsService.updateFixedAsset(
+  const asset = await assetsService.updateAsset(
     id,
     {
       assetName: input.assetName,
-      category: input.category,
-      purchaseDate: input.purchaseDate,
-      cost: input.cost,
-      status: input.status,
+      type: input.type,
+      purchasedDate: input.purchasedDate,
+      amount: input.amount,
+      state: input.state,
     },
     scope
   );
 
   if (!asset) {
-    throw ApiError.notFound('Fixed asset not found');
+    throw ApiError.notFound('Asset not found');
   }
 
-  return ApiResponse.success(res, { asset }, 'Fixed asset updated');
+  return ApiResponse.success(res, { asset }, 'Asset updated');
 });
 
-export const deleteFixedAsset = asyncHandler(async (req: AuthRequest, res: Response) => {
+export const deleteAsset = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
     throw ApiError.badRequest('Invalid asset id');
   }
 
-  const deleted = await assetsService.deleteFixedAsset(id, scope);
+  const deleted = await assetsService.deleteAsset(id, scope);
   if (!deleted) {
-    throw ApiError.notFound('Fixed asset not found');
+    throw ApiError.notFound('Asset not found');
   }
 
-  return ApiResponse.success(res, null, 'Fixed asset deleted');
+  return ApiResponse.success(res, null, 'Asset deleted');
 });

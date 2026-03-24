@@ -31,6 +31,7 @@ export interface ImportSummary {
   total_rows: number;
   valid_count: number;
   inserted_count: number;
+  updated_count: number;
   failed_count: number;
   skipped_count: number;
   failed_rows: ImportRowError[];
@@ -44,19 +45,27 @@ const endpointByType: Record<ImportType, string> = {
   items: API.IMPORT.ITEMS,
 };
 
-const submit = (type: ImportType, file: File, mode: ImportMode) => {
+const submit = (
+  type: ImportType,
+  file: File,
+  mode: ImportMode,
+  options?: { update_existing?: boolean }
+) => {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('mode', mode);
+  if (options?.update_existing) {
+    formData.append('update_existing', 'true');
+  }
   return apiClient.post<ImportSummary>(endpointByType[type], formData);
 };
 
 export const importService = {
-  preview(type: ImportType, file: File) {
-    return submit(type, file, 'preview');
+  preview(type: ImportType, file: File, options?: { update_existing?: boolean }) {
+    return submit(type, file, 'preview', options);
   },
-  import(type: ImportType, file: File) {
-    return submit(type, file, 'import');
+  import(type: ImportType, file: File, options?: { update_existing?: boolean }) {
+    return submit(type, file, 'import', options);
   },
 };
 

@@ -4,6 +4,7 @@ import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
 import { useToast } from '../../components/ui/toast/Toast';
 import { inventoryService, InventoryItem } from '../../services/inventory.service';
+import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
 
 type AdjustmentType = 'INCREASE' | 'DECREASE';
 
@@ -77,6 +78,11 @@ export default function StockAdjustmentCreatePage() {
     itemOptions.forEach((it) => map.set(it.item_id, it));
     return map;
   }, [itemOptions]);
+
+  const itemComboboxOptions = useMemo(
+    () => itemOptions.map((it) => ({ value: it.item_id, label: it.item_name })),
+    [itemOptions]
+  );
 
   const hasInsufficientStock = useMemo(() => {
     return form.items.some((line) => {
@@ -219,27 +225,19 @@ export default function StockAdjustmentCreatePage() {
                       className="border-t border-slate-200 dark:border-slate-800 odd:bg-white even:bg-slate-50/40 dark:odd:bg-slate-900 dark:even:bg-slate-900/60"
                     >
                       <td className="px-4 py-4 align-top">
-                        <select
-                          className="w-full rounded-lg border px-3 py-2 text-sm bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
-                          value={line.item_id}
-                          onChange={(e) => {
-                            const val = e.target.value ? Number(e.target.value) : '';
+                        <SearchableCombobox<number>
+                          value={line.item_id === '' ? '' : Number(line.item_id)}
+                          options={itemComboboxOptions}
+                          placeholder="Search & select item"
+                          disabled={loading || submitting}
+                          onChange={(val) => {
                             setForm((prev) => {
                               const next = [...prev.items];
-                              next[idx] = { ...next[idx], item_id: val };
+                              next[idx] = { ...next[idx], item_id: val === '' ? '' : Number(val) };
                               return { ...prev, items: next };
                             });
                           }}
-                          disabled={loading || submitting}
-                          required
-                        >
-                          <option value="">Select item</option>
-                          {itemOptions.map((it) => (
-                            <option key={it.item_id} value={it.item_id}>
-                              {it.item_name}
-                            </option>
-                          ))}
-                        </select>
+                        />
                         <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                           {selected ? (
                             <>

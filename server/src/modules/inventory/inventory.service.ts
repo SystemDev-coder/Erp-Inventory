@@ -1741,11 +1741,33 @@ export const inventoryService = {
 
   async adjust(input: any, user: AuthContext) {
     return withTransaction(async (client) => {
+      const productId = Number(input.productId ?? input.itemId ?? 0);
+      if (!productId) {
+        throw ApiError.badRequest('Item is required');
+      }
+
+      let qty = input.qty !== undefined ? Number(input.qty) : undefined;
+      if (qty === undefined) {
+        const adjustmentType = String(input.adjustmentType || '').toUpperCase();
+        const quantity = Math.round(Number(input.quantity ?? 0));
+        if (!adjustmentType) {
+          throw ApiError.badRequest('Adjustment type is required');
+        }
+        if (!Number.isFinite(quantity) || quantity <= 0) {
+          throw ApiError.badRequest('Quantity must be at least 1');
+        }
+        qty = adjustmentType === 'DECREASE' ? -quantity : quantity;
+      }
+
+      if (!Number.isFinite(qty) || qty === 0) {
+        throw ApiError.badRequest('Quantity difference cannot be zero');
+      }
+
       return createAdjustmentEntry(client, {
         branchId: input.branchId,
         whId: input.whId || null,
-        productId: input.productId,
-        qty: input.qty,
+        productId,
+        qty,
         unitCost: input.unitCost || 0,
         note: input.note,
         reason: input.reason || 'Manual Adjustment',

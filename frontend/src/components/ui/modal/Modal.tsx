@@ -5,12 +5,14 @@ import { X } from 'lucide-react';
 interface ModalProps {
     isOpen: boolean;
     onClose: () => void;
-    title: React.ReactNode;
+    title?: React.ReactNode;
     children: React.ReactNode;
     size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl';
     showCloseButton?: boolean;
     resizable?: boolean;
     centerTitle?: boolean;
+    className?: string;
+    isFullscreen?: boolean;
 }
 
 export const Modal: React.FC<ModalProps> = ({
@@ -22,6 +24,8 @@ export const Modal: React.FC<ModalProps> = ({
     showCloseButton = true,
     resizable = false,
     centerTitle = false,
+    className,
+    isFullscreen = false,
 }) => {
     const MODAL_Z_INDEX = 2147483000;
 
@@ -56,37 +60,52 @@ export const Modal: React.FC<ModalProps> = ({
         '2xl': 'max-w-[95vw] sm:max-w-6xl',
     };
 
+    const showHeader = title !== undefined && title !== null && String(title).trim() !== '';
+
     return createPortal(
         <div className="fixed inset-0 z-[9999] overflow-y-auto" style={{ zIndex: MODAL_Z_INDEX }}>
             {/* Backdrop */}
             <div
                 className="fixed inset-0 bg-[#0c2235]/65 backdrop-blur-sm transition-opacity"
-                onClick={onClose}
+                onClick={isFullscreen ? undefined : onClose}
             />
 
             {/* Modal */}
             <div className="flex min-h-screen items-center justify-center p-4 sm:p-6">
                 <div
-                    className={`relative w-full ${sizeClasses[size]} max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-3rem)] rounded-xl border border-[#6f8fbd] bg-[#fbfcff] shadow-2xl transform transition-all flex flex-col dark:border-[#264676] dark:bg-[#10233f] ${resizable ? 'resize overflow-auto min-w-[320px] min-h-[240px]' : 'overflow-hidden'}`}
+                    className={`relative w-full ${isFullscreen ? 'max-w-none h-[calc(100vh-2rem)] sm:h-[calc(100vh-3rem)]' : sizeClasses[size]} max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-3rem)] ${isFullscreen ? 'rounded-none border-0' : 'rounded-xl border border-[#6f8fbd]'} bg-[#fbfcff] shadow-2xl transform transition-all flex flex-col dark:border-[#264676] dark:bg-[#10233f] ${resizable ? 'resize overflow-auto min-w-[320px] min-h-[240px]' : 'overflow-hidden'} ${className || ''}`}
                     onClick={(e) => e.stopPropagation()}
                 >
                     {/* Header */}
-                    <div className={`${centerTitle ? 'relative flex items-center justify-end' : 'flex items-center justify-between'} border-b border-[#264676] bg-gradient-to-r from-[#0a1f44] to-[#102b59] px-6 py-4`}>
-                        <h3 className={`text-lg font-semibold text-white ${centerTitle ? 'absolute left-1/2 -translate-x-1/2 w-full text-center pointer-events-none' : ''}`}>
-                            {title}
-                        </h3>
-                        {showCloseButton && (
-                            <button
-                                onClick={onClose}
-                                className="rounded-md p-1 text-[#dde7f7] transition-colors hover:bg-[#163a72] hover:text-white"
-                            >
-                                <X className="w-5 h-5" />
-                            </button>
-                        )}
-                    </div>
+                    {showHeader && (
+                        <div className={`${centerTitle ? 'relative flex items-center justify-end' : 'flex items-center justify-between'} border-b border-[#264676] bg-gradient-to-r from-[#0a1f44] to-[#102b59] px-6 py-4`}>
+                            <h3 className={`text-lg font-semibold text-white ${centerTitle ? 'absolute left-1/2 -translate-x-1/2 w-full text-center pointer-events-none' : ''}`}>
+                                {title}
+                            </h3>
+                            {showCloseButton && (
+                                <button
+                                    onClick={onClose}
+                                    className="rounded-md p-1 text-[#dde7f7] transition-colors hover:bg-[#163a72] hover:text-white"
+                                >
+                                    <X className="w-5 h-5" />
+                                </button>
+                            )}
+                        </div>
+                    )}
+
+                    {!showHeader && showCloseButton && (
+                        <button
+                            onClick={onClose}
+                            className="absolute right-3 top-3 z-10 rounded-md p-1 text-[#6f86a8] transition-colors hover:bg-[#eaf5fb] hover:text-[#163a72] dark:text-[#dde7f7] dark:hover:bg-[#102b59]/35 dark:hover:text-[#f4f8ff]"
+                        >
+                            <X className="w-5 h-5" />
+                        </button>
+                    )}
 
                     {/* Content */}
-                    <div className="overflow-y-auto bg-[#fbfcff] px-4 py-4 text-[#10233f] dark:bg-[#10233f] dark:text-[#f4f8ff] sm:px-6">{children}</div>
+                    <div className="erp-modal-body overflow-y-auto bg-[#fbfcff] px-4 py-4 text-[#10233f] dark:bg-[#10233f] dark:text-[#f4f8ff] sm:px-6">
+                        {children}
+                    </div>
                 </div>
             </div>
         </div>,

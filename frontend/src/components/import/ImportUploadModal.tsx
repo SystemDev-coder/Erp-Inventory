@@ -64,6 +64,9 @@ const ImportUploadModal = ({
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState<ImportSummary | null>(null);
   const [showPreview, setShowPreview] = useState(false);
+  const [updateExistingBalances, setUpdateExistingBalances] = useState(
+    importType === 'customers' || importType === 'suppliers'
+  );
 
   useEffect(() => {
     if (!isOpen) {
@@ -71,8 +74,9 @@ const ImportUploadModal = ({
       setLoading(false);
       setSummary(null);
       setShowPreview(false);
+      setUpdateExistingBalances(importType === 'customers' || importType === 'suppliers');
     }
-  }, [isOpen]);
+  }, [isOpen, importType]);
 
   const ensureFile = () => {
     if (file) return true;
@@ -83,7 +87,9 @@ const ImportUploadModal = ({
   const runCheck = async () => {
     if (!ensureFile()) return;
     setLoading(true);
-    const response = await importService.preview(importType, file as File);
+    const response = await importService.preview(importType, file as File, {
+      update_existing: updateExistingBalances,
+    });
     setLoading(false);
     if (response.success && response.data) {
       setSummary(response.data);
@@ -105,7 +111,9 @@ const ImportUploadModal = ({
   const runImport = async () => {
     if (!ensureFile()) return;
     setLoading(true);
-    const response = await importService.import(importType, file as File);
+    const response = await importService.import(importType, file as File, {
+      update_existing: updateExistingBalances,
+    });
     setLoading(false);
     if (response.success && response.data) {
       if (onImported) await onImported();
@@ -113,7 +121,7 @@ const ImportUploadModal = ({
       showToast(
         'success',
         'Import completed',
-        `Inserted ${response.data.inserted_count}, skipped ${response.data.skipped_count}, failed ${response.data.failed_count}`
+        `Inserted ${response.data.inserted_count}, updated ${response.data.updated_count}, skipped ${response.data.skipped_count}, failed ${response.data.failed_count}`
       );
       return;
     }
@@ -194,6 +202,18 @@ const ImportUploadModal = ({
               Download Template
             </button>
           </div>
+
+          {(importType === 'customers' || importType === 'suppliers') && (
+            <label className="mt-3 flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+              <input
+                type="checkbox"
+                checked={updateExistingBalances}
+                onChange={(event) => setUpdateExistingBalances(event.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500 dark:border-slate-700"
+              />
+              <span>Update existing balances (match by phone / supplier name)</span>
+            </label>
+          )}
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button

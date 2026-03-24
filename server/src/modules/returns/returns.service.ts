@@ -175,15 +175,63 @@ let cachedCustomerBalanceColumns: BalanceColumns | null = null;
 let cachedSupplierBalanceColumns: BalanceColumns | null = null;
 let cachedSalesReturnBalanceColumn: boolean | null = null;
 let cachedPurchaseReturnBalanceColumn: boolean | null = null;
-let cachedReturnRefundColumnsReady: boolean | null = null;
 
-const ensureReturnRefundColumns = async (client: PoolClient) => {
-    if (cachedReturnRefundColumnsReady) return;
-    await client.query(`ALTER TABLE ims.sales_returns ADD COLUMN IF NOT EXISTS refund_acc_id BIGINT`);
-    await client.query(`ALTER TABLE ims.sales_returns ADD COLUMN IF NOT EXISTS refund_amount NUMERIC(14,2) NOT NULL DEFAULT 0`);
-    await client.query(`ALTER TABLE ims.purchase_returns ADD COLUMN IF NOT EXISTS refund_acc_id BIGINT`);
-    await client.query(`ALTER TABLE ims.purchase_returns ADD COLUMN IF NOT EXISTS refund_amount NUMERIC(14,2) NOT NULL DEFAULT 0`);
-    cachedReturnRefundColumnsReady = true;
+const listSalesReturnRefundLines = async (
+    client: PoolClient,
+    params: { branchId: number; srId: number }
+): Promise<Array<{ accId: number; amount: number; accountName: string | null }>> => {
+    const res = await client.query<{ acc_id: number; amount: string; account_name: string | null }>(
+        `SELECT
+            cl.acc_id,
+            COALESCE(SUM(COALESCE(cl.debit, 0)), 0)::text AS amount,
+            a.name AS account_name
+           FROM ims.customer_ledger cl
+           LEFT JOIN ims.accounts a ON a.acc_id = cl.acc_id
+          WHERE cl.branch_id = $1
+            AND cl.ref_table = 'sales_returns'
+            AND cl.ref_id = $2
+            AND cl.acc_id IS NOT NULL
+            AND COALESCE(cl.debit, 0) > 0
+          GROUP BY cl.acc_id, a.name
+          ORDER BY SUM(COALESCE(cl.debit, 0)) DESC, cl.acc_id ASC`,
+        [params.branchId, params.srId]
+    );
+    return res.rows
+        .map((r) => ({
+            accId: Number(r.acc_id),
+            amount: roundMoney(Number(r.amount || 0)),
+            accountName: r.account_name ?? null,
+        }))
+        .filter((r) => r.accId > 0 && r.amount > 0);
+};
+
+const listPurchaseReturnRefundLines = async (
+    client: PoolClient,
+    params: { branchId: number; prId: number }
+): Promise<Array<{ accId: number; amount: number; accountName: string | null }>> => {
+    const res = await client.query<{ acc_id: number; amount: string; account_name: string | null }>(
+        `SELECT
+            sl.acc_id,
+            COALESCE(SUM(COALESCE(sl.credit, 0)), 0)::text AS amount,
+            a.name AS account_name
+           FROM ims.supplier_ledger sl
+           LEFT JOIN ims.accounts a ON a.acc_id = sl.acc_id
+          WHERE sl.branch_id = $1
+            AND sl.ref_table = 'purchase_returns'
+            AND sl.ref_id = $2
+            AND sl.acc_id IS NOT NULL
+            AND COALESCE(sl.credit, 0) > 0
+          GROUP BY sl.acc_id, a.name
+          ORDER BY SUM(COALESCE(sl.credit, 0)) DESC, sl.acc_id ASC`,
+        [params.branchId, params.prId]
+    );
+    return res.rows
+        .map((r) => ({
+            accId: Number(r.acc_id),
+            amount: roundMoney(Number(r.amount || 0)),
+            accountName: r.account_name ?? null,
+        }))
+        .filter((r) => r.accId > 0 && r.amount > 0);
 };
 
 type LedgerEntryEnumMeta = { schema: string; name: string };
@@ -518,49 +566,6 @@ const hasItemsQuantityColumn = async (client: PoolClient): Promise<boolean> => {
     return cachedItemsHasQuantity;
 };
 
-const applyItemQuantityDelta = async (
-    client: PoolClient,
-    params: { branchId: number; itemId: number; deltaQty: number }
-) => {
-    const delta = Math.round(params.deltaQty);
-    if (!delta) return;
-    const hasQty = await hasItemsQuantityColumn(client);
-    const colExpr = hasQty
-        ? `COALESCE(quantity, COALESCE(opening_balance, 0))`
-        : `COALESCE(opening_balance, 0)`;
-    const row = await client.query<{ quantity: string }>(
-        `SELECT ${colExpr}::text AS quantity
-           FROM ims.items
-          WHERE item_id = $1
-            AND branch_id = $2
-          FOR UPDATE`,
-        [params.itemId, params.branchId]
-    );
-    if (!row.rows[0]) throw ApiError.badRequest('Item not found');
-    const currentQty = Number(row.rows[0].quantity || 0);
-    const nextQty = currentQty + delta;
-    if (!isNegativeStockAllowed() && nextQty < 0) {
-        throw ApiError.badRequest('Insufficient stock for this return');
-    }
-    if (hasQty) {
-        await client.query(
-            `UPDATE ims.items
-                SET quantity = $3
-              WHERE item_id = $1
-                AND branch_id = $2`,
-            [params.itemId, params.branchId, nextQty]
-        );
-        return;
-    }
-    await client.query(
-        `UPDATE ims.items
-            SET opening_balance = $3
-          WHERE item_id = $1
-            AND branch_id = $2`,
-        [params.itemId, params.branchId, Math.max(0, nextQty)]
-    );
-};
-
 const applyStoreItemDelta = async (
     client: PoolClient,
     params: { branchId: number; itemId: number; deltaQty: number; storeId?: number | null }
@@ -858,23 +863,17 @@ const insertReturnMovement = async (
 };
 
 const rewriteSalesReturnGl = async (client: PoolClient, params: { branchId: number; srId: number }) => {
-    await ensureReturnRefundColumns(client);
-
     const srRes = await client.query<{
         sr_id: number;
         return_date: string;
         total: string;
         balance_adjustment: string;
-        refund_acc_id: number | null;
-        refund_amount: string;
     }>(
         `SELECT sr_id,
                 return_date::text AS return_date,
                 total::text AS total,
-                balance_adjustment::text AS balance_adjustment,
-                refund_acc_id,
-                refund_amount::text AS refund_amount
-           FROM ims.sales_returns
+                COALESCE(NULLIF(to_jsonb(sr)->>'balance_adjustment','')::numeric, 0)::text AS balance_adjustment
+           FROM ims.sales_returns sr
           WHERE branch_id = $1
             AND sr_id = $2
           LIMIT 1`,
@@ -884,7 +883,8 @@ const rewriteSalesReturnGl = async (client: PoolClient, params: { branchId: numb
     if (!sr) return;
 
     const total = roundMoney(Number(sr.total || 0));
-    const refundAmount = roundMoney(Number(sr.refund_amount || 0));
+    const refundLines = await listSalesReturnRefundLines(client, { branchId: params.branchId, srId: params.srId });
+    const refundAmount = roundMoney(refundLines.reduce((s, r) => s + r.amount, 0));
     const balanceAdjustment = roundMoney(Number(sr.balance_adjustment || 0) || Math.max(total - refundAmount, 0));
 
     const costRes = await client.query<{ amount: string }>(
@@ -927,8 +927,13 @@ const rewriteSalesReturnGl = async (client: PoolClient, params: { branchId: numb
 
     const glLines = [
         { accId: coa.salesReturns, debit: total, credit: 0, note: 'Sales return (revenue reversal)' },
-        ...(refundAmount > 0
-            ? [{ accId: Number(sr.refund_acc_id), debit: 0, credit: refundAmount, note: 'Customer refund (cash/bank)' }]
+        ...(refundLines.length
+            ? refundLines.map((r) => ({
+                  accId: Number(r.accId),
+                  debit: 0,
+                  credit: r.amount,
+                  note: 'Customer refund (cash/bank)',
+              }))
             : []),
         ...(balanceAdjustment > 0
             ? [{ accId: coa.accountsReceivable, debit: 0, credit: balanceAdjustment, note: 'Credit note (reduce receivable)' }]
@@ -941,7 +946,7 @@ const rewriteSalesReturnGl = async (client: PoolClient, params: { branchId: numb
             : []),
     ];
 
-    if (refundAmount > 0 && !sr.refund_acc_id) {
+    if (refundAmount > 0 && !refundLines.length) {
         throw ApiError.badRequest('Refund account is required to post GL for this sales return');
     }
 
@@ -956,23 +961,17 @@ const rewriteSalesReturnGl = async (client: PoolClient, params: { branchId: numb
 };
 
 const rewritePurchaseReturnGl = async (client: PoolClient, params: { branchId: number; prId: number }) => {
-    await ensureReturnRefundColumns(client);
-
     const prRes = await client.query<{
         pr_id: number;
         return_date: string;
         total: string;
         balance_adjustment: string;
-        refund_acc_id: number | null;
-        refund_amount: string;
     }>(
         `SELECT pr_id,
                 return_date::text AS return_date,
                 total::text AS total,
-                balance_adjustment::text AS balance_adjustment,
-                refund_acc_id,
-                refund_amount::text AS refund_amount
-           FROM ims.purchase_returns
+                COALESCE(NULLIF(to_jsonb(pr)->>'balance_adjustment','')::numeric, 0)::text AS balance_adjustment
+           FROM ims.purchase_returns pr
           WHERE branch_id = $1
             AND pr_id = $2
           LIMIT 1`,
@@ -982,7 +981,8 @@ const rewritePurchaseReturnGl = async (client: PoolClient, params: { branchId: n
     if (!pr) return;
 
     const total = roundMoney(Number(pr.total || 0));
-    const refundAmount = roundMoney(Number(pr.refund_amount || 0));
+    const refundLines = await listPurchaseReturnRefundLines(client, { branchId: params.branchId, prId: params.prId });
+    const refundAmount = roundMoney(refundLines.reduce((s, r) => s + r.amount, 0));
     const balanceAdjustment = roundMoney(Number(pr.balance_adjustment || 0) || Math.max(total - refundAmount, 0));
 
     const costRes = await client.query<{ amount: string }>(
@@ -1007,8 +1007,13 @@ const rewritePurchaseReturnGl = async (client: PoolClient, params: { branchId: n
     );
 
     const glLines = [
-        ...(refundAmount > 0
-            ? [{ accId: Number(pr.refund_acc_id), debit: refundAmount, credit: 0, note: 'Supplier refund (cash/bank)' }]
+        ...(refundLines.length
+            ? refundLines.map((r) => ({
+                  accId: Number(r.accId),
+                  debit: r.amount,
+                  credit: 0,
+                  note: 'Supplier refund (cash/bank)',
+              }))
             : []),
         ...(balanceAdjustment > 0
             ? [{ accId: coa.accountsPayable, debit: balanceAdjustment, credit: 0, note: 'Reduce payable (debit AP)' }]
@@ -1016,7 +1021,7 @@ const rewritePurchaseReturnGl = async (client: PoolClient, params: { branchId: n
         { accId: coa.inventory, debit: 0, credit: inventoryCredit, note: 'Inventory returned to supplier' },
     ];
 
-    if (refundAmount > 0 && !pr.refund_acc_id) {
+    if (refundAmount > 0 && !refundLines.length) {
         throw ApiError.badRequest('Refund account is required to post GL for this purchase return');
     }
 
@@ -1294,14 +1299,29 @@ export const returnsService = {
            ('SR-' || LPAD(sr.sr_id::text, 5, '0')) AS reference_no,
            'POSTED'::text AS status,
            sr.return_date AS created_at,
-           NULLIF(to_jsonb(sr) ->> 'refund_acc_id', '')::bigint AS refund_acc_id,
-           COALESCE(NULLIF(to_jsonb(sr) ->> 'refund_amount', '')::numeric, 0)::numeric(14,2) AS refund_amount,
+           rf.refund_acc_id AS refund_acc_id,
+           rf.refund_amount AS refund_amount,
            ra.name AS refund_account_name,
            b.branch_name,
            u.name AS created_by_name,
            c.full_name AS customer_name
         FROM ims.sales_returns sr
-        LEFT JOIN ims.accounts ra ON ra.acc_id = NULLIF(to_jsonb(sr) ->> 'refund_acc_id', '')::bigint
+        LEFT JOIN LATERAL (
+          WITH per_acc AS (
+            SELECT cl.acc_id, SUM(COALESCE(cl.debit, 0))::numeric(14,2) AS amount
+              FROM ims.customer_ledger cl
+             WHERE cl.branch_id = sr.branch_id
+               AND cl.ref_table = 'sales_returns'
+               AND cl.ref_id = sr.sr_id
+               AND cl.acc_id IS NOT NULL
+               AND COALESCE(cl.debit, 0) > 0
+             GROUP BY cl.acc_id
+          )
+          SELECT
+            COALESCE((SELECT SUM(amount) FROM per_acc), 0)::numeric(14,2) AS refund_amount,
+            (SELECT acc_id FROM per_acc ORDER BY amount DESC, acc_id ASC LIMIT 1) AS refund_acc_id
+        ) rf ON TRUE
+        LEFT JOIN ims.accounts ra ON ra.acc_id = rf.refund_acc_id
         LEFT JOIN ims.branches b ON b.branch_id = sr.branch_id
         LEFT JOIN ims.users u ON u.user_id = sr.user_id
         LEFT JOIN ims.customers c ON c.customer_id = sr.customer_id
@@ -1328,14 +1348,29 @@ export const returnsService = {
            ('SR-' || LPAD(sr.sr_id::text, 5, '0')) AS reference_no,
            'POSTED'::text AS status,
            sr.return_date AS created_at,
-           NULLIF(to_jsonb(sr) ->> 'refund_acc_id', '')::bigint AS refund_acc_id,
-           COALESCE(NULLIF(to_jsonb(sr) ->> 'refund_amount', '')::numeric, 0)::numeric(14,2) AS refund_amount,
+           rf.refund_acc_id AS refund_acc_id,
+           rf.refund_amount AS refund_amount,
            ra.name AS refund_account_name,
            b.branch_name,
            u.name AS created_by_name,
            c.full_name AS customer_name
         FROM ims.sales_returns sr
-        LEFT JOIN ims.accounts ra ON ra.acc_id = NULLIF(to_jsonb(sr) ->> 'refund_acc_id', '')::bigint
+        LEFT JOIN LATERAL (
+          WITH per_acc AS (
+            SELECT cl.acc_id, SUM(COALESCE(cl.debit, 0))::numeric(14,2) AS amount
+              FROM ims.customer_ledger cl
+             WHERE cl.branch_id = sr.branch_id
+               AND cl.ref_table = 'sales_returns'
+               AND cl.ref_id = sr.sr_id
+               AND cl.acc_id IS NOT NULL
+               AND COALESCE(cl.debit, 0) > 0
+             GROUP BY cl.acc_id
+          )
+          SELECT
+            COALESCE((SELECT SUM(amount) FROM per_acc), 0)::numeric(14,2) AS refund_amount,
+            (SELECT acc_id FROM per_acc ORDER BY amount DESC, acc_id ASC LIMIT 1) AS refund_acc_id
+        ) rf ON TRUE
+        LEFT JOIN ims.accounts ra ON ra.acc_id = rf.refund_acc_id
         LEFT JOIN ims.branches b ON b.branch_id = sr.branch_id
         LEFT JOIN ims.users u ON u.user_id = sr.user_id
         LEFT JOIN ims.customers c ON c.customer_id = sr.customer_id
@@ -1463,8 +1498,6 @@ export const returnsService = {
             // `ledger_entry_enum` does not include 'refund' in this system; use a proper entry type.
             const refundEntryType = await pickLedgerEntryType(client, ['payment', 'return', 'adjustment']);
 
-            await ensureReturnRefundColumns(client);
-
             let refundAccId: number | null = null;
             if (refundAmount > 0) {
                 refundAccId = Number(input.refundAccId || 0);
@@ -1481,8 +1514,6 @@ export const returnsService = {
                 'subtotal',
                 'total',
                 'note',
-                'refund_acc_id',
-                'refund_amount',
             ];
             const insertValues: Array<string | number | null> = [
                 context.branchId,
@@ -1493,8 +1524,6 @@ export const returnsService = {
                 subtotal,
                 total,
                 input.note || null,
-                refundAccId,
-                refundAmount,
             ];
             if (hasBalanceColumn) {
                 insertColumns.push('balance_adjustment');
@@ -1605,20 +1634,17 @@ export const returnsService = {
         try {
             await client.query('BEGIN');
             const hasBalanceColumn = await hasSalesReturnBalanceAdjustment(client);
-            await ensureReturnRefundColumns(client);
-
-            const selectColumns = hasBalanceColumn
-                ? 'sr_id, branch_id, customer_id, balance_adjustment, refund_acc_id, refund_amount'
-                : 'sr_id, branch_id, customer_id, refund_acc_id, refund_amount';
             const existing = await client.query<{
                 sr_id: number;
                 branch_id: number;
                 customer_id: number | null;
                 balance_adjustment?: string;
-                refund_acc_id?: number | null;
-                refund_amount?: string;
             }>(
-                `SELECT ${selectColumns}
+                `SELECT
+                    sr_id,
+                    branch_id,
+                    customer_id,
+                    ${hasBalanceColumn ? `balance_adjustment::text AS balance_adjustment` : `NULL::text AS balance_adjustment`}
                    FROM ims.sales_returns
                   WHERE sr_id = $1
                   LIMIT 1`,
@@ -1703,8 +1729,11 @@ export const returnsService = {
             const refundUpdateRequested =
                 Object.prototype.hasOwnProperty.call(input, 'refundAccId') ||
                 Object.prototype.hasOwnProperty.call(input, 'refundAmount');
-            const previousRefundAmount = roundMoney(Number((current as any).refund_amount || 0));
-            const previousRefundAccId = (current as any).refund_acc_id ? Number((current as any).refund_acc_id) : null;
+            const previousRefundLines = await listSalesReturnRefundLines(client, {
+                branchId: Number(current.branch_id),
+                srId: id,
+            });
+            const previousRefundAmount = roundMoney(previousRefundLines.reduce((s, r) => s + r.amount, 0));
             const refundAmountCandidate = refundUpdateRequested ? Number(input.refundAmount || 0) : previousRefundAmount;
 
             const newCustomerId = Number(input.customerId || 0);
@@ -1721,14 +1750,22 @@ export const returnsService = {
                 label: 'customer',
             });
 
-            const nextRefundAccId = refundUpdateRequested
-                ? (refundAmount > 0 ? Number(input.refundAccId || 0) : null)
-                : previousRefundAccId;
-            if (refundAmount > 0 && !nextRefundAccId) {
+            const nextRefundLines = refundUpdateRequested
+                ? refundAmount > 0
+                    ? [
+                          {
+                              accId: Number(input.refundAccId || 0),
+                              amount: roundMoney(refundAmount),
+                              accountName: null,
+                          },
+                      ]
+                    : []
+                : previousRefundLines;
+            if (refundAmount > 0 && !nextRefundLines.length) {
                 throw ApiError.badRequest('Refund account is required');
             }
-            if (refundAmount > 0 && nextRefundAccId) {
-                await assertAccountInBranch(client, Number(current.branch_id), nextRefundAccId);
+            for (const r of nextRefundLines) {
+                await assertAccountInBranch(client, Number(current.branch_id), Number(r.accId));
             }
 
             const updateSets = [
@@ -1750,12 +1787,6 @@ export const returnsService = {
                 input.note || null,
                 context.userId,
             ];
-            if (refundUpdateRequested) {
-                updateSets.push(`refund_acc_id = $${updateValues.length + 1}`);
-                updateValues.push(nextRefundAccId);
-                updateSets.push(`refund_amount = $${updateValues.length + 1}`);
-                updateValues.push(refundAmount);
-            }
             if (hasBalanceColumn) {
                 updateSets.push(`balance_adjustment = $${updateValues.length + 1}`);
                 updateValues.push(newBalanceAdjustment);
@@ -1815,18 +1846,18 @@ export const returnsService = {
             }
             if (refundUpdateRequested) {
                 // Reverse previous refund cash impact (if any), then apply the new refund (if any).
-                if (previousRefundAmount > 0 && previousRefundAccId) {
+                for (const prev of previousRefundLines) {
                     await applyAccountBalanceDelta(client, {
                         branchId: Number(current.branch_id),
-                        accId: previousRefundAccId,
-                        delta: previousRefundAmount,
+                        accId: Number(prev.accId),
+                        delta: prev.amount,
                     });
                 }
-                if (refundAmount > 0 && nextRefundAccId) {
+                for (const next of nextRefundLines) {
                     await applyAccountBalanceDelta(client, {
                         branchId: Number(current.branch_id),
-                        accId: nextRefundAccId,
-                        delta: -refundAmount,
+                        accId: Number(next.accId),
+                        delta: -next.amount,
                     });
                 }
             }
@@ -1848,14 +1879,15 @@ export const returnsService = {
                 );
             }
             if (refundAmount > 0 && input.customerId) {
-                const refundAccId = nextRefundAccId;
                 const refundEntryType = await pickLedgerEntryType(client, ['payment', 'return', 'adjustment']);
-                await client.query(
-                    `INSERT INTO ims.customer_ledger
-                       (branch_id, customer_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
-                     VALUES ($1, $2, $3, 'sales_returns', $4, $5, $6, 0, $7)`,
-                    [current.branch_id, input.customerId, refundEntryType, id, refundAccId, refundAmount, 'Customer refund']
-                );
+                for (const r of nextRefundLines) {
+                    await client.query(
+                        `INSERT INTO ims.customer_ledger
+                           (branch_id, customer_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
+                         VALUES ($1, $2, $3, 'sales_returns', $4, $5, $6, 0, $7)`,
+                        [current.branch_id, input.customerId, refundEntryType, id, Number(r.accId), r.amount, 'Customer refund']
+                    );
+                }
             }
             if (newBalanceAdjustment > 0 && newCustomerId) {
                 await adjustCustomerBalance(client, {
@@ -1883,19 +1915,19 @@ export const returnsService = {
         try {
             await client.query('BEGIN');
             const hasBalanceColumn = await hasSalesReturnBalanceAdjustment(client);
-            await ensureReturnRefundColumns(client);
-            const selectColumns = hasBalanceColumn
-                ? 'sr_id, branch_id, customer_id, balance_adjustment, refund_acc_id, refund_amount'
-                : 'sr_id, branch_id, customer_id, refund_acc_id, refund_amount';
             const existing = await client.query<{
                 sr_id: number;
                 branch_id: number;
                 customer_id: number | null;
                 balance_adjustment?: string;
-                refund_acc_id?: number | null;
-                refund_amount?: string;
             }>(
-                `SELECT ${selectColumns} FROM ims.sales_returns WHERE sr_id = $1`,
+                `SELECT
+                    sr_id,
+                    branch_id,
+                    customer_id,
+                    ${hasBalanceColumn ? `balance_adjustment::text AS balance_adjustment` : `NULL::text AS balance_adjustment`}
+                   FROM ims.sales_returns
+                  WHERE sr_id = $1`,
                 [id]
             );
             const current = existing.rows[0];
@@ -1919,14 +1951,16 @@ export const returnsService = {
                 });
             }
 
-            const refundAmount = roundMoney(Number((current as any).refund_amount || 0));
-            const refundAccId = (current as any).refund_acc_id ? Number((current as any).refund_acc_id) : null;
-            if (refundAmount > 0 && refundAccId) {
-                // Reverse the cash outflow from the stored refund.
+            const refundLines = await listSalesReturnRefundLines(client, {
+                branchId: Number(current.branch_id),
+                srId: id,
+            });
+            for (const r of refundLines) {
+                // Reverse the cash outflow for the refund.
                 await applyAccountBalanceDelta(client, {
                     branchId: Number(current.branch_id),
-                    accId: refundAccId,
-                    delta: refundAmount,
+                    accId: Number(r.accId),
+                    delta: r.amount,
                 });
             }
 
@@ -1996,14 +2030,29 @@ export const returnsService = {
           ('PR-' || LPAD(pr.pr_id::text, 5, '0')) AS reference_no,
           'POSTED'::text AS status,
           pr.return_date AS created_at,
-          NULLIF(to_jsonb(pr) ->> 'refund_acc_id', '')::bigint AS refund_acc_id,
-          COALESCE(NULLIF(to_jsonb(pr) ->> 'refund_amount', '')::numeric, 0)::numeric(14,2) AS refund_amount,
+          rf.refund_acc_id AS refund_acc_id,
+          rf.refund_amount AS refund_amount,
           ra.name AS refund_account_name,
           b.branch_name,
           u.name AS created_by_name,
           s.${supplierNameColumn} AS supplier_name
        FROM ims.purchase_returns pr
-       LEFT JOIN ims.accounts ra ON ra.acc_id = NULLIF(to_jsonb(pr) ->> 'refund_acc_id', '')::bigint
+       LEFT JOIN LATERAL (
+          WITH per_acc AS (
+            SELECT sl.acc_id, SUM(COALESCE(sl.credit, 0))::numeric(14,2) AS amount
+              FROM ims.supplier_ledger sl
+             WHERE sl.branch_id = pr.branch_id
+               AND sl.ref_table = 'purchase_returns'
+               AND sl.ref_id = pr.pr_id
+               AND sl.acc_id IS NOT NULL
+               AND COALESCE(sl.credit, 0) > 0
+             GROUP BY sl.acc_id
+          )
+          SELECT
+            COALESCE((SELECT SUM(amount) FROM per_acc), 0)::numeric(14,2) AS refund_amount,
+            (SELECT acc_id FROM per_acc ORDER BY amount DESC, acc_id ASC LIMIT 1) AS refund_acc_id
+       ) rf ON TRUE
+       LEFT JOIN ims.accounts ra ON ra.acc_id = rf.refund_acc_id
        LEFT JOIN ims.branches b ON b.branch_id = pr.branch_id
        LEFT JOIN ims.users u ON u.user_id = pr.user_id
        LEFT JOIN ims.suppliers s ON s.supplier_id = pr.supplier_id
@@ -2030,14 +2079,29 @@ export const returnsService = {
           ('PR-' || LPAD(pr.pr_id::text, 5, '0')) AS reference_no,
           'POSTED'::text AS status,
           pr.return_date AS created_at,
-          NULLIF(to_jsonb(pr) ->> 'refund_acc_id', '')::bigint AS refund_acc_id,
-          COALESCE(NULLIF(to_jsonb(pr) ->> 'refund_amount', '')::numeric, 0)::numeric(14,2) AS refund_amount,
+          rf.refund_acc_id AS refund_acc_id,
+          rf.refund_amount AS refund_amount,
           ra.name AS refund_account_name,
           b.branch_name,
           u.name AS created_by_name,
           s.${await getSupplierNameColumn()} AS supplier_name
        FROM ims.purchase_returns pr
-       LEFT JOIN ims.accounts ra ON ra.acc_id = NULLIF(to_jsonb(pr) ->> 'refund_acc_id', '')::bigint
+       LEFT JOIN LATERAL (
+          WITH per_acc AS (
+            SELECT sl.acc_id, SUM(COALESCE(sl.credit, 0))::numeric(14,2) AS amount
+              FROM ims.supplier_ledger sl
+             WHERE sl.branch_id = pr.branch_id
+               AND sl.ref_table = 'purchase_returns'
+               AND sl.ref_id = pr.pr_id
+               AND sl.acc_id IS NOT NULL
+               AND COALESCE(sl.credit, 0) > 0
+             GROUP BY sl.acc_id
+          )
+          SELECT
+            COALESCE((SELECT SUM(amount) FROM per_acc), 0)::numeric(14,2) AS refund_amount,
+            (SELECT acc_id FROM per_acc ORDER BY amount DESC, acc_id ASC LIMIT 1) AS refund_acc_id
+       ) rf ON TRUE
+       LEFT JOIN ims.accounts ra ON ra.acc_id = rf.refund_acc_id
        LEFT JOIN ims.branches b ON b.branch_id = pr.branch_id
        LEFT JOIN ims.users u ON u.user_id = pr.user_id
        LEFT JOIN ims.suppliers s ON s.supplier_id = pr.supplier_id
@@ -2157,8 +2221,6 @@ export const returnsService = {
             });
             const hasBalanceColumn = await hasPurchaseReturnBalanceAdjustment(client);
 
-            await ensureReturnRefundColumns(client);
-
             let refundAccId: number | null = null;
             if (refundAmount > 0) {
                 refundAccId = Number(input.refundAccId || 0);
@@ -2175,8 +2237,6 @@ export const returnsService = {
                 'subtotal',
                 'total',
                 'note',
-                'refund_acc_id',
-                'refund_amount',
             ];
             const insertValues: Array<string | number | null> = [
                 context.branchId,
@@ -2187,8 +2247,6 @@ export const returnsService = {
                 subtotal,
                 total,
                 input.note || null,
-                refundAccId,
-                refundAmount,
             ];
             if (hasBalanceColumn) {
                 insertColumns.push('balance_adjustment');
@@ -2292,19 +2350,19 @@ export const returnsService = {
         try {
             await client.query('BEGIN');
             const hasBalanceColumn = await hasPurchaseReturnBalanceAdjustment(client);
-            await ensureReturnRefundColumns(client);
-            const selectColumns = hasBalanceColumn
-                ? 'pr_id, branch_id, supplier_id, balance_adjustment, refund_acc_id, refund_amount'
-                : 'pr_id, branch_id, supplier_id, refund_acc_id, refund_amount';
             const existing = await client.query<{
                 pr_id: number;
                 branch_id: number;
                 supplier_id: number | null;
                 balance_adjustment?: string;
-                refund_acc_id?: number | null;
-                refund_amount?: string;
             }>(
-                `SELECT ${selectColumns} FROM ims.purchase_returns WHERE pr_id = $1`,
+                `SELECT
+                    pr_id,
+                    branch_id,
+                    supplier_id,
+                    ${hasBalanceColumn ? `balance_adjustment::text AS balance_adjustment` : `NULL::text AS balance_adjustment`}
+                   FROM ims.purchase_returns
+                  WHERE pr_id = $1`,
                 [id]
             );
             const current = existing.rows[0];
@@ -2378,8 +2436,11 @@ export const returnsService = {
             const refundUpdateRequested =
                 Object.prototype.hasOwnProperty.call(input, 'refundAccId') ||
                 Object.prototype.hasOwnProperty.call(input, 'refundAmount');
-            const previousRefundAmount = roundMoney(Number((current as any).refund_amount || 0));
-            const previousRefundAccId = (current as any).refund_acc_id ? Number((current as any).refund_acc_id) : null;
+            const previousRefundLines = await listPurchaseReturnRefundLines(client, {
+                branchId: Number(current.branch_id),
+                prId: id,
+            });
+            const previousRefundAmount = roundMoney(previousRefundLines.reduce((s, r) => s + r.amount, 0));
             const refundAmountCandidate = refundUpdateRequested ? Number(input.refundAmount || 0) : previousRefundAmount;
 
             const newSupplierId = Number(input.supplierId || 0);
@@ -2396,14 +2457,22 @@ export const returnsService = {
                 label: 'supplier',
             });
 
-            const nextRefundAccId = refundUpdateRequested
-                ? (refundAmount > 0 ? Number(input.refundAccId || 0) : null)
-                : previousRefundAccId;
-            if (refundAmount > 0 && !nextRefundAccId) {
+            const nextRefundLines = refundUpdateRequested
+                ? refundAmount > 0
+                    ? [
+                          {
+                              accId: Number(input.refundAccId || 0),
+                              amount: roundMoney(refundAmount),
+                              accountName: null,
+                          },
+                      ]
+                    : []
+                : previousRefundLines;
+            if (refundAmount > 0 && !nextRefundLines.length) {
                 throw ApiError.badRequest('Refund account is required');
             }
-            if (refundAmount > 0 && nextRefundAccId) {
-                await assertAccountInBranch(client, Number(current.branch_id), nextRefundAccId);
+            for (const r of nextRefundLines) {
+                await assertAccountInBranch(client, Number(current.branch_id), Number(r.accId));
             }
 
             const updateSets = [
@@ -2425,12 +2494,6 @@ export const returnsService = {
                 input.note || null,
                 context.userId,
             ];
-            if (refundUpdateRequested) {
-                updateSets.push(`refund_acc_id = $${updateValues.length + 1}`);
-                updateValues.push(nextRefundAccId);
-                updateSets.push(`refund_amount = $${updateValues.length + 1}`);
-                updateValues.push(refundAmount);
-            }
             if (hasBalanceColumn) {
                 updateSets.push(`balance_adjustment = $${updateValues.length + 1}`);
                 updateValues.push(newBalanceAdjustment);
@@ -2482,18 +2545,18 @@ export const returnsService = {
             }
             if (refundUpdateRequested) {
                 // Reverse previous refund cash impact (if any), then apply the new refund (if any).
-                if (previousRefundAmount > 0 && previousRefundAccId) {
+                for (const prev of previousRefundLines) {
                     await applyAccountBalanceDelta(client, {
                         branchId: Number(current.branch_id),
-                        accId: previousRefundAccId,
-                        delta: -previousRefundAmount,
+                        accId: Number(prev.accId),
+                        delta: -prev.amount,
                     });
                 }
-                if (refundAmount > 0 && nextRefundAccId) {
+                for (const next of nextRefundLines) {
                     await applyAccountBalanceDelta(client, {
                         branchId: Number(current.branch_id),
-                        accId: nextRefundAccId,
-                        delta: refundAmount,
+                        accId: Number(next.accId),
+                        delta: next.amount,
                     });
                 }
             }
@@ -2515,14 +2578,15 @@ export const returnsService = {
                 );
             }
             if (refundAmount > 0) {
-                const refundAccId = nextRefundAccId;
                 const refundEntryType = await pickLedgerEntryType(client, ['payment', 'return', 'adjustment']);
-                await client.query(
-                    `INSERT INTO ims.supplier_ledger
-                       (branch_id, supplier_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
-                     VALUES ($1, $2, $3, 'purchase_returns', $4, $5, 0, $6, $7)`,
-                    [current.branch_id, input.supplierId, refundEntryType, id, refundAccId, refundAmount, 'Supplier refund']
-                );
+                for (const r of nextRefundLines) {
+                    await client.query(
+                        `INSERT INTO ims.supplier_ledger
+                           (branch_id, supplier_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
+                         VALUES ($1, $2, $3, 'purchase_returns', $4, $5, 0, $6, $7)`,
+                        [current.branch_id, input.supplierId, refundEntryType, id, Number(r.accId), r.amount, 'Supplier refund']
+                    );
+                }
             }
             if (newBalanceAdjustment > 0 && newSupplierId) {
                 await adjustSupplierBalance(client, {
@@ -2550,19 +2614,19 @@ export const returnsService = {
         try {
             await client.query('BEGIN');
             const hasBalanceColumn = await hasPurchaseReturnBalanceAdjustment(client);
-            await ensureReturnRefundColumns(client);
-            const selectColumns = hasBalanceColumn
-                ? 'pr_id, branch_id, supplier_id, balance_adjustment, refund_acc_id, refund_amount'
-                : 'pr_id, branch_id, supplier_id, refund_acc_id, refund_amount';
             const existing = await client.query<{
                 pr_id: number;
                 branch_id: number;
                 supplier_id: number | null;
                 balance_adjustment?: string;
-                refund_acc_id?: number | null;
-                refund_amount?: string;
             }>(
-                `SELECT ${selectColumns} FROM ims.purchase_returns WHERE pr_id = $1`,
+                `SELECT
+                    pr_id,
+                    branch_id,
+                    supplier_id,
+                    ${hasBalanceColumn ? `balance_adjustment::text AS balance_adjustment` : `NULL::text AS balance_adjustment`}
+                   FROM ims.purchase_returns
+                  WHERE pr_id = $1`,
                 [id]
             );
             const current = existing.rows[0];
@@ -2586,14 +2650,16 @@ export const returnsService = {
                 });
             }
 
-            const refundAmount = roundMoney(Number((current as any).refund_amount || 0));
-            const refundAccId = (current as any).refund_acc_id ? Number((current as any).refund_acc_id) : null;
-            if (refundAmount > 0 && refundAccId) {
-                // Reverse the cash inflow from the stored refund.
+            const refundLines = await listPurchaseReturnRefundLines(client, {
+                branchId: Number(current.branch_id),
+                prId: id,
+            });
+            for (const r of refundLines) {
+                // Reverse the cash inflow for the refund.
                 await applyAccountBalanceDelta(client, {
                     branchId: Number(current.branch_id),
-                    accId: refundAccId,
-                    delta: -refundAmount,
+                    accId: Number(r.accId),
+                    delta: -r.amount,
                 });
             }
 

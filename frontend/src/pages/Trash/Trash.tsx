@@ -4,6 +4,7 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { trashService, TrashModule, TrashRow } from '../../services/trash.service';
 import { DataTable } from '../../components/ui/table/DataTable';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
+import { todayYmd } from '../../utils/dateRange';
 
 const formatDate = (value?: string | null) => {
   if (!value) return '-';
@@ -14,20 +15,19 @@ const formatDate = (value?: string | null) => {
 
 export default function Trash() {
   const { showToast } = useToast();
+  type TrashRowView = TrashRow & { module_label?: string };
   const [modules, setModules] = useState<TrashModule[]>([]);
-  const [tables, setTables] = useState<string[]>([]);
-  const [selectedTable, setSelectedTable] = useState('');
-  const [fromDate, setFromDate] = useState('');
-  const [toDate, setToDate] = useState('');
-  const [rows, setRows] = useState<TrashRow[]>([]);
+  const [fromDate, setFromDate] = useState(() => todayYmd());
+  const [toDate, setToDate] = useState(() => todayYmd());
+  const [rows, setRows] = useState<TrashRowView[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [restoreTarget, setRestoreTarget] = useState<TrashRow | null>(null);
+  const [restoreTarget, setRestoreTarget] = useState<TrashRowView | null>(null);
   const [restoreConfirmOpen, setRestoreConfirmOpen] = useState(false);
 
   const moduleLabelByKey = useMemo(() => new Map(modules.map((m) => [m.key, m.label])), [modules]);
 
-  const requestRestore = useCallback((row: TrashRow) => {
+  const requestRestore = useCallback((row: TrashRowView) => {
     setRestoreTarget(row);
     setRestoreConfirmOpen(true);
   }, []);
@@ -35,9 +35,9 @@ export default function Trash() {
   const columns = useMemo(
     () => [
       {
-        accessorKey: 'table',
+        accessorKey: 'module_label',
         header: 'Module',
-        cell: ({ row }: any) => moduleLabelByKey.get(row.original.table || selectedTable) || row.original.table || '-',
+        cell: ({ row }: any) => row.original.module_label || moduleLabelByKey.get(row.original.table) || row.original.table || '-',
       },
       { accessorKey: 'id', header: 'ID' },
       { accessorKey: 'label', header: 'Name / Reference' },
@@ -66,13 +66,12 @@ export default function Trash() {
         ),
       },
     ],
-    [moduleLabelByKey, requestRestore, selectedTable]
+    [moduleLabelByKey, requestRestore]
   );
 
   const loadTables = async () => {
     const res = await trashService.listTables();
     if (res.success && res.data?.tables) {
-      setTables(res.data.tables);
       setModules(res.data.modules || []);
       return;
     }
@@ -80,14 +79,12 @@ export default function Trash() {
   };
 
   const loadRows = async () => {
-    if (!selectedTable) return;
     if (!fromDate || !toDate) {
       showToast('warning', 'Trash', 'Please select a From Date and To Date');
       return;
     }
     setLoading(true);
     const res = await trashService.listRows({
-      table: selectedTable,
       fromDate: fromDate || undefined,
       toDate: toDate || undefined,
       limit: 200,
@@ -95,15 +92,19 @@ export default function Trash() {
     });
     setLoading(false);
     if (res.success && res.data) {
-      setRows(res.data.rows || []);
+      const mapped = (res.data.rows || []).map((row) => ({
+        ...row,
+        module_label: moduleLabelByKey.get(row.table || '') || row.table || '-',
+      }));
+      setRows(mapped);
       setTotal(res.data.total || 0);
       return;
     }
     showToast('error', 'Trash', res.error || 'Failed to load deleted records');
   };
 
-  const restoreRow = async (row: TrashRow) => {
-    const tableName = row.table || selectedTable;
+  const restoreRow = async (row: TrashRowView) => {
+    const tableName = row.table || '';
     if (!tableName) {
       showToast('error', 'Trash', 'Table is missing for this record');
       return;
@@ -128,29 +129,6 @@ export default function Trash() {
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="grid gap-3 md:grid-cols-4">
           <div className="space-y-1">
-            <label className="text-xs font-semibold text-slate-600">Module</label>
-            <select
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              value={selectedTable}
-              onChange={(e) => setSelectedTable(e.target.value)}
-            >
-              <option value="" disabled>
-                Select your module
-              </option>
-              {modules.length > 0
-                ? modules.map((module) => (
-                    <option key={module.key} value={module.key}>
-                      {module.label}
-                    </option>
-                  ))
-                : tables.map((table) => (
-                    <option key={table} value={table}>
-                      {table}
-                    </option>
-                  ))}
-            </select>
-          </div>
-          <div className="space-y-1">
             <label className="text-xs font-semibold text-slate-600">From Date</label>
             <input
               type="date"
@@ -168,22 +146,24 @@ export default function Trash() {
               onChange={(e) => setToDate(e.target.value)}
             />
           </div>
-          <div className="flex items-end">
+          <div className="md:col-span-2 flex items-end">
             <button
               type="button"
               onClick={loadRows}
-              disabled={!fromDate || !toDate || !selectedTable}
+              disabled={!fromDate || !toDate}
               className="w-full rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-700"
             >
               Apply Filter
             </button>
           </div>
         </div>
-        <div className="mt-3 text-xs text-slate-500">Showing {rows.length} of {total} deleted records.</div>
+        <div className="mt-3 text-xs text-slate-500">
+          Showing {rows.length} of {total} deleted records. Use search to filter by module name or reference.
+        </div>
       </div>
 
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <DataTable data={rows} columns={columns} isLoading={loading} searchPlaceholder="Search deleted records..." />
+        <DataTable data={rows} columns={columns} isLoading={loading} searchPlaceholder="Search module, ID, or reference..." />
       </div>
 
       <ConfirmDialog

@@ -323,12 +323,12 @@ const Customers = () => {
                 isOpen={isAddOpen}
                 onClose={() => setIsAddOpen(false)}
                 title={form.customer_id ? 'Edit Customer' : 'Add New Customer'}
-                size="md"
+                size="lg"
             >
                 <form onSubmit={(e) => {
                     e.preventDefault();
                     handleSave();
-                }} className="mx-auto max-w-xl space-y-4 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-4 dark:border-slate-700 dark:bg-slate-900/40">
+                }} className="w-full space-y-4 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-5 dark:border-slate-700 dark:bg-slate-900/40">
                     <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                         <div className="space-y-1">
                             <label className={formLabelClass}>Customer Name</label>

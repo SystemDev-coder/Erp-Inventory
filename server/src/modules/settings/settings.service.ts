@@ -7,6 +7,7 @@ import { getUploadedImageUrl } from '../../config/cloudinary';
 import { systemService } from '../system/system.service';
 import { postGl } from '../../utils/glPosting';
 import { ensureCoaAccounts } from '../../utils/coaDefaults';
+import { assetsService } from '../assets/assets.service';
 
 export interface Branch {
   branch_id: number;
@@ -100,17 +101,19 @@ export interface OwnerDrawing {
 }
 
 export interface AssetOverviewCurrentAccount {
-  account_name: string;
-  institution: string | null;
-  balance: number;
+  asset_id: number;
+  asset_name: string;
+  purchased_date: string;
+  amount: number;
+  state: string;
 }
 
 export interface AssetOverviewFixedAsset {
   asset_id: number;
   asset_name: string;
-  purchase_date: string;
-  cost: number;
-  status: string;
+  purchased_date: string;
+  amount: number;
+  state: string;
 }
 
 export interface AssetOverviewSummary {
@@ -632,6 +635,7 @@ export const settingsService = {
             OR LOWER(name) LIKE 'accounts receivable%'
             OR LOWER(name) LIKE 'fixed asset%'
             OR LOWER(name) LIKE '%capital%'
+            OR LOWER(BTRIM(name)) = 'supplies'
             OR LOWER(name) LIKE 'office furniture%'
             OR LOWER(name) LIKE 'computer%'
             OR LOWER(name) LIKE 'equipment%'
@@ -648,134 +652,63 @@ export const settingsService = {
   },
 
   async getAssetOverview(scope: BranchScope): Promise<AssetOverviewSummary> {
-    await ensureAssetAccountsSchema();
-    const where: string[] = ['a.is_active = TRUE'];
-    const params: Array<string | number | number[] | string[]> = [];
+    await assetsService.ensureSchema();
 
+    const params: Array<number | number[]> = [];
+    const where: string[] = [];
     if (!scope.isAdmin) {
       params.push(scope.branchIds);
       where.push(`a.branch_id = ANY($${params.length})`);
     }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-    where.push(`a.account_type = 'asset'`);
-    where.push(`
-      NOT (
-        LOWER(a.name) LIKE 'accounts payable%'
-        OR LOWER(a.name) LIKE 'accounts receivable%'
-        OR LOWER(a.name) LIKE 'fixed asset%'
-        OR LOWER(a.name) LIKE '%capital%'
-        OR LOWER(a.name) LIKE 'office furniture%'
-        OR LOWER(a.name) LIKE 'computer%'
-        OR LOWER(a.name) LIKE 'equipment%'
-        OR LOWER(a.name) LIKE 'vehicle%'
-        OR LOWER(a.name) LIKE 'mukeef%'
-      )
-    `);
-
-    const currentRows = await queryMany<{
-      account_name: string;
-      institution: string | null;
-      balance: string | number;
+    const rows = await queryMany<{
+      asset_id: number;
+      asset_name: string;
+      asset_type: string;
+      purchased_date: string;
+      amount: string;
+      state: string;
     }>(
       `SELECT
-         a.name AS account_name,
-         NULLIF(BTRIM(a.institution), '') AS institution,
-         COALESCE(SUM(COALESCE(a.balance, 0)), 0)::text AS balance
-       FROM ims.accounts a
-       WHERE ${where.join(' AND ')}
-       GROUP BY a.name, NULLIF(BTRIM(a.institution), '')
-       ORDER BY a.name`,
+         a.asset_id,
+         a.asset_name,
+         a.asset_type::text AS asset_type,
+         a.purchased_date::text AS purchased_date,
+         a.amount::text AS amount,
+         a.state::text AS state
+       FROM ims.assets a
+       ${whereSql}
+       ORDER BY a.purchased_date DESC, a.asset_id DESC
+       LIMIT 5000`,
       params
     );
 
-    const fixedAssetsExists = await queryOne<{ exists: boolean }>(
-      `SELECT EXISTS (
-         SELECT 1
-           FROM information_schema.tables
-          WHERE table_schema = 'ims'
-            AND table_name = 'fixed_assets'
-       ) AS exists`
-    );
+    const current_assets = rows
+      .filter((r) => (r.asset_type || '').toLowerCase() === 'current')
+      .map((r) => ({
+        asset_id: Number(r.asset_id),
+        asset_name: r.asset_name,
+        purchased_date: r.purchased_date,
+        amount: Number(r.amount || 0),
+        state: r.state,
+      }));
 
-    let fixedRows: Array<{
-      asset_id: number;
-      asset_name: string;
-      purchase_date: string;
-      cost: string | number;
-      status: string;
-    }> = [];
-    if (fixedAssetsExists?.exists) {
-      const fixedWhere: string[] = [];
-      const fixedParams: Array<number | number[]> = [];
-      if (!scope.isAdmin) {
-        fixedParams.push(scope.branchIds);
-        fixedWhere.push(`fa.branch_id = ANY($${fixedParams.length})`);
-      }
-      const fixedWhereSql = fixedWhere.length ? `WHERE ${fixedWhere.join(' AND ')}` : '';
-      fixedRows = await queryMany<{
-        asset_id: number;
-        asset_name: string;
-        purchase_date: string;
-        cost: string | number;
-        status: string;
-      }>(
-        `SELECT
-           fa.asset_id,
-           fa.asset_name,
-           fa.purchase_date::text AS purchase_date,
-           COALESCE(fa.cost, 0)::text AS cost,
-           COALESCE(fa.status, 'active') AS status
-         FROM ims.fixed_assets fa
-         ${fixedWhereSql}
-         ORDER BY fa.purchase_date DESC, fa.asset_id DESC`,
-        fixedParams
-      );
-    }
+    const fixed_assets = rows
+      .filter((r) => (r.asset_type || '').toLowerCase() === 'fixed')
+      .map((r) => ({
+        asset_id: Number(r.asset_id),
+        asset_name: r.asset_name,
+        purchased_date: r.purchased_date,
+        amount: Number(r.amount || 0),
+        state: r.state,
+      }));
 
-    const byName = new Map(
-      currentRows.map((row) => [
-        row.account_name.trim().toLowerCase(),
-        {
-          account_name: row.account_name,
-          institution: row.institution,
-          balance: Number(row.balance || 0),
-        },
-      ])
-    );
-    const requiredLower = new Set(REQUIRED_CURRENT_ASSET_ACCOUNTS.map((name) => name.toLowerCase()));
-    const current_assets = REQUIRED_CURRENT_ASSET_ACCOUNTS.map((name) => {
-      const found = byName.get(name.toLowerCase());
-      return (
-        found || {
-          account_name: name,
-          institution: null,
-          balance: 0,
-        }
-      );
-    });
-    const extraCurrentAssets = currentRows
-      .filter((row) => !requiredLower.has(row.account_name.trim().toLowerCase()))
-      .map((row) => ({
-        account_name: row.account_name,
-        institution: row.institution,
-        balance: Number(row.balance || 0),
-      }))
-      .sort((a, b) => a.account_name.localeCompare(b.account_name));
-
-    const fixed_assets = fixedRows.map((row) => ({
-      asset_id: Number(row.asset_id),
-      asset_name: row.asset_name,
-      purchase_date: row.purchase_date,
-      cost: Number(row.cost || 0),
-      status: row.status,
-    }));
-
-    const currentAssetsAll = [...current_assets, ...extraCurrentAssets];
     return {
-      current_assets: currentAssetsAll,
+      current_assets,
       fixed_assets,
-      current_assets_total: currentAssetsAll.reduce((sum, row) => sum + Number(row.balance || 0), 0),
-      fixed_assets_total: fixed_assets.reduce((sum, row) => sum + Number(row.cost || 0), 0),
+      current_assets_total: current_assets.reduce((sum, r) => sum + Number(r.amount || 0), 0),
+      fixed_assets_total: fixed_assets.reduce((sum, r) => sum + Number(r.amount || 0), 0),
     };
   },
 
@@ -1288,7 +1221,6 @@ export const settingsService = {
       amount: number;
       sharePct?: number;
       date: string;
-      accountId?: number;
       note?: string | null;
       branchId?: number;
     },
@@ -1299,41 +1231,6 @@ export const settingsService = {
     const branchId = pickBranchForWrite(scope, input.branchId);
     const ownerName = compactOwnerName(input.ownerName);
     if (!ownerName) throw ApiError.badRequest('Owner name is required');
-    const account = input.accountId
-      ? await queryOne<{ acc_id: number; account_type: string }>(
-          `SELECT acc_id, account_type
-             FROM ims.accounts
-            WHERE acc_id = $1
-              AND branch_id = $2
-              AND is_active = TRUE`,
-          [input.accountId, branchId]
-        )
-      : await queryOne<{ acc_id: number; account_type: string }>(
-          `SELECT acc_id, account_type
-             FROM ims.accounts
-            WHERE branch_id = $1
-              AND is_active = TRUE
-              AND account_type = 'asset'
-            ORDER BY
-              CASE
-                WHEN name ILIKE '%cash%' THEN 0
-                WHEN name ILIKE '%bank%' THEN 1
-                ELSE 2
-              END,
-              acc_id ASC
-            LIMIT 1`,
-          [branchId]
-        );
-    if (!account) {
-      if (!input.accountId) {
-        throw ApiError.badRequest('No active asset account found for this branch. Please create one in Accounts.');
-      }
-      throw ApiError.badRequest('Receiving account not found in selected branch');
-    }
-    if ((account.account_type || 'asset') !== 'asset') {
-      throw ApiError.badRequest('Receiving account must be an asset (cash/bank) account');
-    }
-    const receivingAccountId = Number(account.acc_id);
 
     if (await isCapitalDateLocked(branchId, input.date)) {
       throw ApiError.badRequest('Cannot create capital entry in a closed accounting period');
@@ -1342,6 +1239,13 @@ export const settingsService = {
     const ownerCapitalAccId = await ensureOwnerCapitalAccount(branchId);
 
     const capitalId = await withTransaction(async (client) => {
+      // IMPORTANT:
+      // Capital entries in this system are used to record OWNER EQUITY allocation,
+      // not to move cash/bank (cash opening balances are recorded in Accounts).
+      // So we reclassify within equity: Dr Opening Balance Equity, Cr Owner Capital.
+      const coa = await ensureCoaAccounts(client, branchId, ['openingBalanceEquity']);
+      const sourceEquityAccId = coa.openingBalanceEquity;
+
       const rowRes = await client.query<{ capital_id: number }>(
         `INSERT INTO ims.capital_contributions
            (branch_id, owner_name, amount, share_pct, contribution_date, acc_id, equity_acc_id, note, created_by)
@@ -1353,7 +1257,7 @@ export const settingsService = {
           input.amount,
           Number(input.sharePct || 0),
           input.date,
-          receivingAccountId,
+          sourceEquityAccId,
           ownerCapitalAccId,
           input.note || null,
           userId,
@@ -1379,18 +1283,10 @@ export const settingsService = {
         refId: capital_id,
         note: memo,
         lines: [
-          { accId: receivingAccountId, debit: Number(input.amount || 0), credit: 0, note: 'Cash/bank received' },
+          { accId: sourceEquityAccId, debit: Number(input.amount || 0), credit: 0, note: 'Reclass from opening balance equity' },
           { accId: ownerCapitalAccId, debit: 0, credit: Number(input.amount || 0), note: 'Owner capital' },
         ],
       });
-
-      await client.query(
-        `UPDATE ims.accounts
-            SET balance = COALESCE(balance, 0) + $1
-          WHERE branch_id = $2
-            AND acc_id = $3`,
-        [input.amount, branchId, receivingAccountId]
-      );
 
       return capital_id;
     });
@@ -1852,15 +1748,11 @@ export const settingsService = {
     if (!existing) throw ApiError.notFound('Capital record not found');
     assertBranchAccess(scope, Number(existing.branch_id));
 
-    const prevAmount = Number(existing.amount || 0);
-    const prevAccountId = Number(existing.acc_id);
-
     const next = {
       ownerName: compactOwnerName(input.ownerName ?? existing.owner_name),
       amount: input.amount ?? Number(existing.amount),
       sharePct: input.sharePct ?? Number(existing.share_pct || 0),
       date: input.date ?? existing.contribution_date,
-      accountId: Number(existing.acc_id),
       note: input.note !== undefined ? input.note : existing.note,
     };
 
@@ -1892,15 +1784,16 @@ export const settingsService = {
                 amount = $3,
                 share_pct = $4,
                 contribution_date = $5::date,
-                acc_id = $6,
-                note = $7,
+                note = $6,
                 journal_id = NULL,
                 updated_at = NOW()
           WHERE capital_id = $1`,
-        [id, next.ownerName, next.amount, Number(next.sharePct || 0), next.date, next.accountId, next.note || null]
+        [id, next.ownerName, next.amount, Number(next.sharePct || 0), next.date, next.note || null]
       );
 
       const memo = `[CAPITAL] ${next.ownerName}${next.note ? ` - ${next.note}` : ''}`;
+      const coa = await ensureCoaAccounts(client, Number(existing.branch_id), ['openingBalanceEquity']);
+      const sourceEquityAccId = coa.openingBalanceEquity;
       await postGl(client, {
         branchId: Number(existing.branch_id),
         txnDate: next.date || null,
@@ -1909,26 +1802,13 @@ export const settingsService = {
         refId: id,
         note: memo,
         lines: [
-          { accId: Number(next.accountId), debit: Number(next.amount || 0), credit: 0, note: 'Cash/bank received' },
+          { accId: sourceEquityAccId, debit: Number(next.amount || 0), credit: 0, note: 'Reclass from opening balance equity' },
           { accId: Number(existing.equity_acc_id), debit: 0, credit: Number(next.amount || 0), note: 'Owner capital' },
         ],
       });
 
-      const nextAccountId = Number(next.accountId);
-      await client.query(
-        `UPDATE ims.accounts
-            SET balance = COALESCE(balance, 0) - $1
-          WHERE branch_id = $2
-            AND acc_id = $3`,
-        [prevAmount, Number(existing.branch_id), prevAccountId]
-      );
-      await client.query(
-        `UPDATE ims.accounts
-            SET balance = COALESCE(balance, 0) + $1
-          WHERE branch_id = $2
-            AND acc_id = $3`,
-        [Number(next.amount), Number(existing.branch_id), nextAccountId]
-      );
+      // Keep contribution's acc_id pointing to the equity source (not cash/bank).
+      await client.query(`UPDATE ims.capital_contributions SET acc_id = $2 WHERE capital_id = $1`, [id, sourceEquityAccId]);
 
       const reloaded = await this.getCapitalContributionById(id, scope);
       if (!reloaded) throw ApiError.internal('Failed to load updated capital entry');
@@ -1964,15 +1844,6 @@ export const settingsService = {
       if (existing.journal_id) {
         await client.query(`DELETE FROM ims.journal_entries WHERE journal_id = $1`, [existing.journal_id]);
       }
-
-      // Reverse cash movement (capital increased cash).
-      await client.query(
-        `UPDATE ims.accounts
-            SET balance = COALESCE(balance, 0) - $1
-          WHERE branch_id = $2
-            AND acc_id = $3`,
-        [Number(existing.amount || 0), Number(existing.branch_id), Number(existing.acc_id)]
-      );
 
       await client.query(
         `DELETE FROM ims.account_transactions

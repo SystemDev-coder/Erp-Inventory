@@ -8,6 +8,7 @@ import { customerService, Customer } from '../../services/customer.service';
 import { inventoryService, InventoryItem } from '../../services/inventory.service';
 import { SaleDocType, SaleStatus, salesService } from '../../services/sales.service';
 import { formatAvailableQty, itemLabelWithAvailability } from '../../utils/itemAvailability';
+import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
 
 type FormLine = {
   item_id: number | '';
@@ -50,6 +51,13 @@ const SaleCreate = () => {
   const [itemOptions, setItemOptions] = useState<SaleItemOption[]>([]);
   // Manual tax: user enters percent directly, no dropdown
   const [isDebt, setIsDebt] = useState(false);
+
+  const controlCls =
+    'h-12 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100';
+  const controlReadonlyCls =
+    'h-12 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 text-sm text-slate-700 shadow-sm outline-none disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200';
+  const textareaCls =
+    'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100';
 
   const [saleForm, setSaleForm] = useState({
     customer_id: '' as number | '',
@@ -426,13 +434,13 @@ const SaleCreate = () => {
             Document Type
             {effectiveDocType === 'quotation' ? (
               <input
-                className="rounded-lg border px-3 py-2 bg-slate-50 dark:bg-slate-800 border-slate-300 dark:border-slate-700"
+                className={controlReadonlyCls}
                 value="Quotation"
                 disabled
               />
             ) : (
               <select
-                className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
+                className={controlCls}
                 value={saleForm.doc_type}
                 onChange={(e) => {
                   const nextDoc = e.target.value as SaleDocType;
@@ -454,7 +462,7 @@ const SaleCreate = () => {
             Date
             <input
               type="date"
-              className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
+              className={controlCls}
               value={saleForm.sale_date}
               onChange={(e) => setSaleForm((prev) => ({ ...prev, sale_date: e.target.value }))}
               disabled={loading}
@@ -466,7 +474,7 @@ const SaleCreate = () => {
               Quote Valid Until
               <input
                 type="date"
-                className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
+                className={controlCls}
                 value={saleForm.quote_valid_until}
                 onChange={(e) =>
                   setSaleForm((prev) => ({ ...prev, quote_valid_until: e.target.value }))
@@ -478,34 +486,28 @@ const SaleCreate = () => {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-            Customer
-            <select
-              className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
-              value={saleForm.customer_id}
-              onChange={(e) => {
-                const customerId = e.target.value ? Number(e.target.value) : '';
-                setIsDebt(false);
-                setSaleForm((prev) => ({
-                  ...prev,
-                  customer_id: customerId,
-                }));
-              }}
-              disabled={loading}
-            >
-              <option value="">Walking Customer</option>
-              {customers.map((customer) => (
-                <option key={customer.customer_id} value={customer.customer_id}>
-                  {customer.full_name}
-                </option>
-              ))}
-            </select>
-          </label>
+	          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+	            Customer
+	            <SearchableCombobox<number>
+	              value={saleForm.customer_id}
+	              options={customers.map((customer) => ({
+	                value: customer.customer_id,
+	                label: customer.full_name,
+	              }))}
+	              placeholder="Walking Customer"
+	              disabled={loading}
+	              onChange={(nextValue) => {
+	                const customerId = nextValue === '' ? '' : Number(nextValue);
+	                setIsDebt(false);
+	                setSaleForm((prev) => ({ ...prev, customer_id: customerId }));
+	              }}
+	            />
+	          </label>
 
           <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
             Status
             <select
-              className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
+              className={controlCls}
               value={effectiveStatus}
               onChange={(e) =>
                 setSaleForm((prev) => ({
@@ -528,7 +530,7 @@ const SaleCreate = () => {
           <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
             Sale Type
             <select
-              className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
+              className={controlCls}
               value={effectiveSaleType}
               onChange={(e) =>
                 setSaleForm((prev) => {
@@ -552,24 +554,18 @@ const SaleCreate = () => {
           {shouldShowAccount && (
             <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
               Receive To Account
-              <select
-                className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
+              <SearchableCombobox<number>
                 value={saleForm.acc_id}
-                onChange={(e) =>
-                  setSaleForm((prev) => ({
-                    ...prev,
-                    acc_id: e.target.value ? Number(e.target.value) : '',
-                  }))
-                }
+                options={accounts.map((account) => ({
+                  value: account.acc_id,
+                  label: `${account.name} (${account.institution || 'Cash'})`,
+                }))}
+                placeholder="Select account"
                 disabled={loading}
-              >
-                <option value="">Select account</option>
-                {accounts.map((account) => (
-                  <option key={account.acc_id} value={account.acc_id}>
-                    {account.name} ({account.institution || 'Cash'})
-                  </option>
-                ))}
-              </select>
+                onChange={(nextValue) =>
+                  setSaleForm((prev) => ({ ...prev, acc_id: nextValue === '' ? '' : Number(nextValue) }))
+                }
+              />
             </label>
           )}
         </div>
@@ -602,7 +598,7 @@ const SaleCreate = () => {
         <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
           Note
           <textarea
-            className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 min-h-[90px]"
+            className={`${textareaCls} min-h-[90px]`}
             value={saleForm.note}
             onChange={(e) => setSaleForm((prev) => ({ ...prev, note: e.target.value }))}
             disabled={loading}
@@ -640,11 +636,16 @@ const SaleCreate = () => {
                 className="grid grid-cols-1 md:grid-cols-[2fr_1fr_1fr_auto] gap-2 items-start"
               >
                 <div>
-                  <select
-                    className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-sm w-full"
+                  <SearchableCombobox<number>
                     value={line.item_id}
-                    onChange={(e) => {
-                      const itemId = e.target.value ? Number(e.target.value) : '';
+                    options={itemOptions.map((item) => ({
+                      value: item.item_id,
+                      label: itemLabelWithAvailability(item.item_name, item.available_qty),
+                    }))}
+                    placeholder="Select item"
+                    disabled={loading}
+                    onChange={(nextValue) => {
+                      const itemId = nextValue === '' ? '' : Number(nextValue);
                       const option = itemOptions.find((item) => item.item_id === itemId);
                       const nextItems = [...saleForm.items];
                       nextItems[idx] = {
@@ -656,15 +657,7 @@ const SaleCreate = () => {
                       setSaleForm((prev) => ({ ...prev, items: nextItems }));
                       recalcTotals(nextItems, saleForm.discount);
                     }}
-                    disabled={loading}
-                  >
-                    <option value="">Select item</option>
-                    {itemOptions.map((item) => (
-                      <option key={item.item_id} value={item.item_id}>
-                        {itemLabelWithAvailability(item.item_name, item.available_qty)}
-                      </option>
-                    ))}
-                  </select>
+                  />
                   <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                     Available Quantity:{' '}
                     <span className="font-medium text-slate-700 dark:text-slate-200">
@@ -678,7 +671,7 @@ const SaleCreate = () => {
                     type="number"
                     min={0}
                     step={0.001}
-                    className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-sm text-right w-full"
+                    className={`${controlCls} text-right`}
                     value={line.quantity}
                     onChange={(e) => {
                       const quantity = Number(e.target.value || 0);
@@ -707,7 +700,7 @@ const SaleCreate = () => {
                 <input
                   type="number"
                   min={0}
-                  className="rounded-lg border px-3 py-2 bg-slate-50 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-sm text-right text-slate-700 dark:text-slate-200"
+                  className={`${controlReadonlyCls} text-right`}
                   value={line.unit_price}
                   readOnly
                   title="Unit price is set automatically from item price"
@@ -756,7 +749,7 @@ const SaleCreate = () => {
             <input
               type="number"
               min={0}
-              className="mt-1 rounded-lg border px-3 py-1 text-sm text-right bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
+              className={`${controlCls} mt-1 text-right h-10`}
               value={saleForm.discount}
               onChange={(e) => {
                 const discount = Number(e.target.value || 0);
@@ -773,7 +766,7 @@ const SaleCreate = () => {
               type="number"
               min={0}
               step={0.01}
-              className="mt-1 rounded-lg border px-3 py-1 text-sm text-right bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 w-28"
+              className={`${controlCls} mt-1 text-right h-10 w-28`}
               value={saleForm.tax_rate}
               onChange={(e) => {
                 const taxRate = Number(e.target.value || 0);

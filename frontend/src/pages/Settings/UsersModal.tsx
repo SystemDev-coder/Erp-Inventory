@@ -36,6 +36,7 @@ const UsersModal = ({ isOpen, onClose, onSave, form, setForm, roles, branches, e
             className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
+            placeholder="Full name"
           />
         </label>
         <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
@@ -44,6 +45,7 @@ const UsersModal = ({ isOpen, onClose, onSave, form, setForm, roles, branches, e
             className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
             value={form.username}
             onChange={(e) => setForm({ ...form, username: e.target.value })}
+            placeholder="Username"
           />
         </label>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -82,7 +84,7 @@ const UsersModal = ({ isOpen, onClose, onSave, form, setForm, roles, branches, e
               className="w-full rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 pr-16"
               value={form.password}
               onChange={(e) => setForm({ ...form, password: e.target.value })}
-              placeholder={editing ? '••••••••' : 'Set password'}
+              placeholder={editing ? 'Leave blank to keep password' : 'Set password'}
             />
             <button
               type="button"
@@ -93,15 +95,19 @@ const UsersModal = ({ isOpen, onClose, onSave, form, setForm, roles, branches, e
             </button>
           </div>
         </label>
-        <label className="flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
-          <input
-            type="checkbox"
-            checked={form.is_active}
-            onChange={(e) => setForm({ ...form, is_active: e.target.checked })}
-            className="h-4 w-4 accent-primary-600"
-          />
-          Active
-        </label>
+        {editing && (
+          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+            Status
+            <select
+              className="w-full rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
+              value={form.is_active ? 'active' : 'inactive'}
+              onChange={(e) => setForm({ ...form, is_active: e.target.value === 'active' })}
+            >
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+          </label>
+        )}
         <div className="flex justify-end gap-3">
           <button
             type="button"
