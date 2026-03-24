@@ -300,6 +300,21 @@ const ensureCapitalSchema = async (): Promise<void> => {
     )
   `);
 
+  // Legacy DBs may already have capital_contributions but without acc_id/equity_acc_id.
+  // Add them as nullable columns first; runtime logic will backfill where possible.
+  await adminQueryMany(`
+    ALTER TABLE ims.capital_contributions
+      ADD COLUMN IF NOT EXISTS acc_id BIGINT REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE RESTRICT
+  `);
+  await adminQueryMany(`
+    ALTER TABLE ims.capital_contributions
+      ADD COLUMN IF NOT EXISTS equity_acc_id BIGINT REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE RESTRICT
+  `);
+  await adminQueryMany(`
+    ALTER TABLE ims.capital_contributions
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  `);
+
   await adminQueryMany(`
     ALTER TABLE ims.capital_contributions
       ADD COLUMN IF NOT EXISTS share_pct NUMERIC(7,4) NOT NULL DEFAULT 0
@@ -321,6 +336,84 @@ const ensureCapitalSchema = async (): Promise<void> => {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+
+  await adminQueryMany(`
+    ALTER TABLE ims.owner_drawings
+      ADD COLUMN IF NOT EXISTS acc_id BIGINT REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE RESTRICT
+  `);
+  await adminQueryMany(`
+    ALTER TABLE ims.owner_drawings
+      ADD COLUMN IF NOT EXISTS equity_acc_id BIGINT REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE RESTRICT
+  `);
+  await adminQueryMany(`
+    ALTER TABLE ims.owner_drawings
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  `);
+
+  // Best-effort backfill for older rows so listing pages don't error / hide all records.
+  const legacyCapitalBranches = await queryMany<{ branch_id: number }>(`
+    SELECT DISTINCT branch_id
+      FROM ims.capital_contributions
+     WHERE acc_id IS NULL
+        OR equity_acc_id IS NULL
+  `);
+  for (const row of legacyCapitalBranches) {
+    const branchId = Number(row.branch_id);
+    if (!branchId) continue;
+    await withTransaction(async (client) => {
+      const coa = await ensureCoaAccounts(client, branchId, ['openingBalanceEquity', 'ownerCapital']);
+      await client.query(
+        `UPDATE ims.capital_contributions
+            SET acc_id = COALESCE(acc_id, $2),
+                equity_acc_id = COALESCE(equity_acc_id, $3),
+                updated_at = COALESCE(updated_at, NOW())
+          WHERE branch_id = $1
+            AND (acc_id IS NULL OR equity_acc_id IS NULL)`,
+        [branchId, coa.openingBalanceEquity, coa.ownerCapital]
+      );
+    });
+  }
+
+  const legacyDrawingBranches = await queryMany<{ branch_id: number }>(`
+    SELECT DISTINCT branch_id
+      FROM ims.owner_drawings
+     WHERE acc_id IS NULL
+        OR equity_acc_id IS NULL
+  `);
+  for (const row of legacyDrawingBranches) {
+    const branchId = Number(row.branch_id);
+    if (!branchId) continue;
+    await withTransaction(async (client) => {
+      const payout = await client.query<{ acc_id: number }>(
+        `SELECT acc_id
+           FROM ims.accounts
+          WHERE branch_id = $1
+            AND is_active = TRUE
+            AND account_type = 'asset'
+          ORDER BY
+            CASE
+              WHEN name ILIKE '%cash%' THEN 0
+              WHEN name ILIKE '%bank%' THEN 1
+              ELSE 2
+            END,
+            acc_id ASC
+          LIMIT 1`,
+        [branchId]
+      );
+      const payoutAccId = Number(payout.rows[0]?.acc_id || 0);
+      const coa = await ensureCoaAccounts(client, branchId, ['ownerCapital']);
+
+      await client.query(
+        `UPDATE ims.owner_drawings
+            SET acc_id = COALESCE(acc_id, NULLIF($2, 0)),
+                equity_acc_id = COALESCE(equity_acc_id, $3),
+                updated_at = COALESCE(updated_at, NOW())
+          WHERE branch_id = $1
+            AND (acc_id IS NULL OR equity_acc_id IS NULL)`,
+        [branchId, payoutAccId, coa.ownerCapital]
+      );
+    });
+  }
 
   await adminQueryMany(`
     DO $$
