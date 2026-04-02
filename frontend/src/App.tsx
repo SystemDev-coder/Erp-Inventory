@@ -59,7 +59,7 @@ function AppRoutes() {
             </ProtectedRoute>
           }
         >
-          <Route index path="/" element={<ProtectedRoute permission="dashboard.view"><Home /></ProtectedRoute>} />
+          <Route index path="/" element={<ProtectedRoute permissionAny={['dashboard.view', 'home.view']}><Home /></ProtectedRoute>} />
           <Route path="/stock-management" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
           <Route path="/stock-management/items" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
           <Route path="/inventory/stock" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />

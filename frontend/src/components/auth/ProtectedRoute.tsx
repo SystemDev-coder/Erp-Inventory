@@ -6,10 +6,12 @@ import { useAuth } from "../../context/AuthContext";
  */
 export default function ProtectedRoute({
   children,
-  permission
+  permission,
+  permissionAny,
 }: {
   children: React.ReactNode;
   permission?: string;
+  permissionAny?: string[];
 }) {
   const { isAuthenticated, isLoading, permissions, isLocked } = useAuth();
   const location = useLocation();
@@ -45,7 +47,9 @@ export default function ProtectedRoute({
     return <Navigate to="/lock" state={{ from: location }} replace />;
   }
 
-  if (permission && !expandPermissionKeys(permission).some((key) => permissions.includes(key))) {
+  const requiredAny = permissionAny && permissionAny.length > 0 ? permissionAny : permission ? [permission] : undefined;
+
+  if (requiredAny && !requiredAny.some((perm) => expandPermissionKeys(perm).some((key) => permissions.includes(key)))) {
     return <Navigate to="/" replace />; // Or to a forbidden page
   }
 

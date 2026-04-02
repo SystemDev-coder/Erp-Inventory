@@ -16,7 +16,7 @@ type QuickCommand = {
 };
 
 const QUICK_COMMANDS: QuickCommand[] = [
-  { id: "dashboard", label: "Open Dashboard", to: "/", keywords: ["home", "kpi"], permissionAny: ["dashboard.view"] },
+  { id: "dashboard", label: "Open Dashboard", to: "/", keywords: ["home", "kpi"], permissionAny: ["dashboard.view", "home.view"] },
   { id: "customers", label: "Open Customers", to: "/customers", keywords: ["customer", "ledger"], permissionAny: ["customers.view"] },
   { id: "items", label: "Open Items", to: "/stock-management/items", keywords: ["stock", "products", "inventory"], permissionAny: ["items.view", "products.view", "stock.view", "inventory.view"] },
   { id: "adjust", label: "Open Adjust Items", to: "/stock-management/adjust-items", keywords: ["stock adjust", "adjustment"], permissionAny: ["items.view", "products.view", "stock.view", "inventory.view"] },

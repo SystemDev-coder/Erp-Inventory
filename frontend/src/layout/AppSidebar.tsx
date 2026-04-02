@@ -88,8 +88,8 @@ const AppSidebar: React.FC = () => {
     const base: { title: string; items: SidebarItem[] }[] = [
       {
         title: 'Main',
-        items: [
-          { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: '/', exact: true, permissionAny: ['dashboard.view'] },
+          items: [
+          { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: '/', exact: true, permissionAny: ['dashboard.view', 'home.view'] },
           { id: 'customers', label: 'Customers', icon: Users, to: '/customers', permissionAny: ['customers.view'] },
         ],
       },

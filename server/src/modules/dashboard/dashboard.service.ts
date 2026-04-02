@@ -77,9 +77,18 @@ export class DashboardService {
     branchId: number,
     permissions: string[]
   ): Promise<DashboardCard[]> {
-    if (!permissions.includes('dashboard.view')) {
+    if (!permissions.includes('dashboard.view') && !permissions.includes('home.view')) {
       return [];
     }
+
+    const canViewCustomers = hasPermission(permissions, 'customers.view');
+    const canViewEmployees = hasPermission(permissions, 'employees.view') || permissions.includes('users.view');
+    const canViewProducts = hasPermission(permissions, 'items.view') || hasPermission(permissions, 'products.view');
+    const canViewStock = hasPermission(permissions, 'stock.view');
+    const canViewSales = permissions.includes('sales.view');
+    const canViewExpenses = permissions.includes('expenses.view');
+    const canViewAccounts = permissions.includes('accounts.view');
+    const canViewPayments = canViewAccounts || canViewExpenses;
 
     const runLowStockCount = async (): Promise<{ count: string } | null> => {
       const alertExpr = await getItemAlertExpression();
@@ -156,154 +165,200 @@ export class DashboardService {
       monthlyPaymentsRow,
       balanceRow,
     ] = await Promise.all([
-      queryOne<{ count: string }>(
-        `SELECT COUNT(*)::text AS count
-           FROM ims.customers
-          WHERE branch_id = $1`,
-        [branchId]
-      ),
-      queryOne<{ count: string }>(
-        `SELECT COUNT(*)::text AS count
-           FROM ims.employees
-          WHERE branch_id = $1
-            AND status = 'active'`,
-        [branchId]
-      ),
-      queryOne<{ count: string }>(
-        `SELECT COUNT(*)::text AS count
-           FROM ims.items
-          WHERE branch_id = $1
-            AND is_active = TRUE`,
-        [branchId]
-      ),
-      queryOne<{ total: string }>(
-        `SELECT COALESCE(SUM(s.total), 0)::text AS total
-           FROM ims.sales s
-          WHERE s.branch_id = $1
-            AND s.status <> 'void'
-            AND s.sale_date::date = CURRENT_DATE
-            AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'`,
-        [branchId]
-      ),
-      queryOne<{ total: string }>(
-        `SELECT COALESCE(SUM(s.total), 0)::text AS total
-           FROM ims.sales s
-          WHERE s.branch_id = $1
-            AND s.status <> 'void'
-            AND s.sale_date >= date_trunc('month', CURRENT_DATE)
-            AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'`,
-        [branchId]
-      ),
-      queryOne<{ total: string }>(
-        `SELECT (
-            COALESCE((SELECT SUM(ep.amount_paid) FROM ims.expense_payments ep WHERE ep.branch_id = $1 AND ep.pay_date::date = CURRENT_DATE), 0)
-            +
-            COALESCE((SELECT SUM(emp.amount_paid) FROM ims.employee_payments emp WHERE emp.branch_id = $1 AND emp.pay_date::date = CURRENT_DATE), 0)
-          )::text AS total`,
-        [branchId]
-      ),
-      queryOne<{ total: string }>(
-        `SELECT (
-            COALESCE((SELECT SUM(ep.amount_paid) FROM ims.expense_payments ep WHERE ep.branch_id = $1 AND ep.pay_date >= date_trunc('month', CURRENT_DATE)), 0)
-            +
-            COALESCE((SELECT SUM(emp.amount_paid) FROM ims.employee_payments emp WHERE emp.branch_id = $1 AND emp.pay_date >= date_trunc('month', CURRENT_DATE)), 0)
-          )::text AS total`,
-        [branchId]
-      ),
-      queryOne<{ total: string }>(
-        `SELECT COALESCE(SUM(balance), 0)::text AS total
-           FROM ims.accounts
-          WHERE branch_id = $1
-            AND is_active = TRUE`,
-        [branchId]
-      ),
+      canViewCustomers
+        ? queryOne<{ count: string }>(
+            `SELECT COUNT(*)::text AS count
+               FROM ims.customers
+              WHERE branch_id = $1`,
+            [branchId]
+          )
+        : Promise.resolve(null),
+      canViewEmployees
+        ? queryOne<{ count: string }>(
+            `SELECT COUNT(*)::text AS count
+               FROM ims.employees
+              WHERE branch_id = $1
+                AND status = 'active'`,
+            [branchId]
+          )
+        : Promise.resolve(null),
+      canViewProducts
+        ? queryOne<{ count: string }>(
+            `SELECT COUNT(*)::text AS count
+               FROM ims.items
+              WHERE branch_id = $1
+                AND is_active = TRUE`,
+            [branchId]
+          )
+        : Promise.resolve(null),
+      canViewSales
+        ? queryOne<{ total: string }>(
+            `SELECT COALESCE(SUM(s.total), 0)::text AS total
+               FROM ims.sales s
+              WHERE s.branch_id = $1
+                AND s.status <> 'void'
+                AND s.sale_date::date = CURRENT_DATE
+                AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'`,
+            [branchId]
+          )
+        : Promise.resolve(null),
+      canViewSales
+        ? queryOne<{ total: string }>(
+            `SELECT COALESCE(SUM(s.total), 0)::text AS total
+               FROM ims.sales s
+              WHERE s.branch_id = $1
+                AND s.status <> 'void'
+                AND s.sale_date >= date_trunc('month', CURRENT_DATE)
+                AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'`,
+            [branchId]
+          )
+        : Promise.resolve(null),
+      canViewPayments
+        ? queryOne<{ total: string }>(
+            `SELECT (
+                COALESCE((SELECT SUM(ep.amount_paid) FROM ims.expense_payments ep WHERE ep.branch_id = $1 AND ep.pay_date::date = CURRENT_DATE), 0)
+                +
+                COALESCE((SELECT SUM(emp.amount_paid) FROM ims.employee_payments emp WHERE emp.branch_id = $1 AND emp.pay_date::date = CURRENT_DATE), 0)
+              )::text AS total`,
+            [branchId]
+          )
+        : Promise.resolve(null),
+      canViewPayments
+        ? queryOne<{ total: string }>(
+            `SELECT (
+                COALESCE((SELECT SUM(ep.amount_paid) FROM ims.expense_payments ep WHERE ep.branch_id = $1 AND ep.pay_date >= date_trunc('month', CURRENT_DATE)), 0)
+                +
+                COALESCE((SELECT SUM(emp.amount_paid) FROM ims.employee_payments emp WHERE emp.branch_id = $1 AND emp.pay_date >= date_trunc('month', CURRENT_DATE)), 0)
+              )::text AS total`,
+            [branchId]
+          )
+        : Promise.resolve(null),
+      canViewAccounts
+        ? queryOne<{ total: string }>(
+            `SELECT COALESCE(SUM(balance), 0)::text AS total
+               FROM ims.accounts
+              WHERE branch_id = $1
+                AND is_active = TRUE`,
+            [branchId]
+          )
+        : Promise.resolve(null),
     ]);
 
-    const inventoryStockRow = await runInventoryStock();
-    const lowStockRow = await runLowStockCount();
+    const [inventoryStockRow, lowStockRow] = await Promise.all([
+      canViewStock ? runInventoryStock() : Promise.resolve(null),
+      canViewStock ? runLowStockCount() : Promise.resolve(null),
+    ]);
 
-    return [
-      {
+    const cards: DashboardCard[] = [];
+
+    if (canViewCustomers) {
+      cards.push({
         id: 'total-customers',
         title: 'Total Customers',
         value: Number(totalCustomersRow?.count || 0),
         subtitle: 'Registered customers',
         icon: 'Users',
         format: 'number',
-      },
-      {
+      });
+    }
+
+    if (canViewEmployees) {
+      cards.push({
         id: 'total-employees',
         title: 'Total Employees',
         value: Number(totalEmployeesRow?.count || 0),
         subtitle: 'Active employees',
         icon: 'BriefcaseBusiness',
         format: 'number',
-      },
-      {
+      });
+    }
+
+    if (canViewProducts) {
+      cards.push({
         id: 'total-products',
         title: 'Total Products',
         value: Number(totalProductsRow?.count || 0),
         subtitle: 'Active products',
         icon: 'Package',
         format: 'number',
-      },
-      {
-        id: 'inventory-stock',
-        title: 'Inventory Stock',
-        value: Number((inventoryStockRow as { total: string } | null)?.total || 0),
-        subtitle: 'Units in stock',
-        icon: 'Boxes',
-        format: 'number',
-      },
-      {
-        id: 'low-stock-alert',
-        title: 'Low Stock Alert',
-        value: Number((lowStockRow as { count: string } | null)?.count || 0),
-        subtitle: 'Items below reorder level',
-        icon: 'AlertTriangle',
-        format: 'number',
-      },
-      {
-        id: 'today-income',
-        title: 'Today Income',
-        value: Number(todayIncomeRow?.total || 0),
-        subtitle: 'Sales today',
-        icon: 'TrendingUp',
-        format: 'currency',
-      },
-      {
-        id: 'monthly-income',
-        title: 'Monthly Income',
-        value: Number(monthlyIncomeRow?.total || 0),
-        subtitle: 'Sales this month',
-        icon: 'TrendingUp',
-        format: 'currency',
-      },
-      {
-        id: 'today-payment',
-        title: 'Today Payment',
-        value: Number(todayPaymentsRow?.total || 0),
-        subtitle: 'Expenses + salary',
-        icon: 'ReceiptText',
-        format: 'currency',
-      },
-      {
-        id: 'monthly-payment',
-        title: 'Monthly Payment',
-        value: Number(monthlyPaymentsRow?.total || 0),
-        subtitle: 'Expenses + salary this month',
-        icon: 'ReceiptText',
-        format: 'currency',
-      },
-      {
+      });
+    }
+
+    if (canViewStock) {
+      cards.push(
+        {
+          id: 'inventory-stock',
+          title: 'Inventory Stock',
+          value: Number((inventoryStockRow as { total: string } | null)?.total || 0),
+          subtitle: 'Units in stock',
+          icon: 'Boxes',
+          format: 'number',
+        },
+        {
+          id: 'low-stock-alert',
+          title: 'Low Stock Alert',
+          value: Number((lowStockRow as { count: string } | null)?.count || 0),
+          subtitle: 'Items below reorder level',
+          icon: 'AlertTriangle',
+          format: 'number',
+        }
+      );
+    }
+
+    if (canViewSales) {
+      cards.push(
+        {
+          id: 'today-income',
+          title: 'Today Income',
+          value: Number((todayIncomeRow as { total: string } | null)?.total || 0),
+          subtitle: 'Sales today',
+          icon: 'TrendingUp',
+          format: 'currency',
+        },
+        {
+          id: 'monthly-income',
+          title: 'Monthly Income',
+          value: Number((monthlyIncomeRow as { total: string } | null)?.total || 0),
+          subtitle: 'Sales this month',
+          icon: 'TrendingUp',
+          format: 'currency',
+        }
+      );
+    }
+
+    if (canViewPayments) {
+      cards.push(
+        {
+          id: 'today-payment',
+          title: 'Today Payment',
+          value: Number((todayPaymentsRow as { total: string } | null)?.total || 0),
+          subtitle: 'Expenses + salary',
+          icon: 'ReceiptText',
+          format: 'currency',
+        },
+        {
+          id: 'monthly-payment',
+          title: 'Monthly Payment',
+          value: Number((monthlyPaymentsRow as { total: string } | null)?.total || 0),
+          subtitle: 'Expenses + salary this month',
+          icon: 'ReceiptText',
+          format: 'currency',
+        }
+      );
+    }
+
+    if (canViewAccounts) {
+      cards.push({
         id: 'balance',
         title: 'Balance',
-        value: Number(balanceRow?.total || 0),
+        value: Number((balanceRow as { total: string } | null)?.total || 0),
         subtitle: 'Current account balances',
         icon: 'Wallet',
         format: 'currency',
-      },
-    ];
+      });
+    }
+
+    return cards;
   }
 
   async getLowStockItems(

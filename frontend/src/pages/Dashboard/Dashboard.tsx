@@ -14,6 +14,7 @@ import {
   Wallet,
 } from 'lucide-react';
 import { useTheme } from '../../context/ThemeContext';
+import { useAuth } from '../../context/AuthContext';
 import { apiClient, type ApiResponse } from '../../services/api';
 import { API } from '../../config/env';
 
@@ -53,6 +54,7 @@ type DashboardLowStockItem = {
 };
 
 type DashboardResponse = {
+  widgets?: Array<{ id: string; name: string; permission: string; description?: string }>;
   cards: DashboardCard[];
   charts: DashboardChart[];
   low_stock_items: DashboardLowStockItem[];
@@ -61,6 +63,7 @@ type DashboardResponse = {
     modules: number;
     sections: number;
   };
+  permissions?: string[];
   role: {
     role_id: number;
     role_name: string;
@@ -134,12 +137,58 @@ const statusTone = (status: string) => {
 const Dashboard = () => {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
+  const { permissions: userPermissions } = useAuth();
 
   const [data, setData] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<string>('');
   const [hasLoaded, setHasLoaded] = useState(false);
+
+  const expandPermissionKeys = (permKey: string): string[] => {
+    if (permKey.startsWith('items.')) {
+      return [permKey, permKey.replace('items.', 'products.')];
+    }
+    if (permKey.startsWith('products.')) {
+      return [permKey, permKey.replace('products.', 'items.')];
+    }
+    if (permKey === 'stock.view') {
+      return [permKey, 'warehouse_stock.view', 'inventory.view', 'items.view', 'products.view'];
+    }
+    if (permKey === 'warehouse_stock.view') {
+      return [permKey, 'stock.view', 'inventory.view', 'items.view', 'products.view'];
+    }
+    if (permKey === 'inventory.view') {
+      return [permKey, 'stock.view', 'warehouse_stock.view', 'items.view', 'products.view'];
+    }
+    return [permKey];
+  };
+
+  const hasAnyPermission = (permKeys: string[]) =>
+    permKeys.some((key) => expandPermissionKeys(key).some((expanded) => userPermissions.includes(expanded)));
+
+  const visibleCards = useMemo(() => {
+    const cards = data?.cards ?? [];
+
+    const cardPermissions: Record<string, string[]> = {
+      'total-customers': ['customers.view'],
+      'total-employees': ['employees.view', 'users.view'],
+      'total-products': ['items.view', 'products.view'],
+      'inventory-stock': ['stock.view', 'warehouse_stock.view', 'inventory.view', 'items.view', 'products.view'],
+      'low-stock-alert': ['stock.view', 'warehouse_stock.view', 'inventory.view', 'items.view', 'products.view'],
+      'today-income': ['sales.view'],
+      'monthly-income': ['sales.view'],
+      'today-payment': ['accounts.view', 'expenses.view'],
+      'monthly-payment': ['accounts.view', 'expenses.view'],
+      balance: ['accounts.view'],
+    };
+
+    return cards.filter((card) => {
+      const required = cardPermissions[card.id];
+      if (!required?.length) return true;
+      return hasAnyPermission(required);
+    });
+  }, [data?.cards, userPermissions]);
 
   const loadDashboard = async () => {
     setLoading(true);
@@ -356,7 +405,7 @@ const Dashboard = () => {
       {hasLoaded && data && (
         <>
           <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-            {data.cards.map((card, index) => {
+            {visibleCards.map((card, index) => {
               const tone = CARD_TONES[index % CARD_TONES.length];
               const Icon = card.icon && card.icon in ICONS ? ICONS[card.icon as keyof typeof ICONS] : TrendingUp;
               return (
