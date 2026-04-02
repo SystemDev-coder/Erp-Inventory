@@ -3,6 +3,7 @@ import { requireAuth } from '../../middlewares/requireAuth';
 import { requirePerm } from '../../middlewares/requirePerm';
 import {
   listSuppliers,
+  lookupSuppliers,
   getSupplier,
   createSupplier,
   updateSupplier,
@@ -15,6 +16,7 @@ router.use(requireAuth);
 
 // List suppliers
 router.get('/', requirePerm('suppliers.view'), listSuppliers);
+router.get('/lookup', requirePerm('suppliers.view'), lookupSuppliers);
 
 // Get single supplier
 router.get('/:id', requirePerm('suppliers.view'), getSupplier);

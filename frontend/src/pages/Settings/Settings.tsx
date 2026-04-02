@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  ArrowLeftRight,
   BriefcaseBusiness,
   CircleDollarSign,
   History,
@@ -17,6 +18,7 @@ import {
   OwnerDrawing,
   CompanyInfo,
   CapitalContribution,
+  OpeningBalanceCleanupInfo,
   OwnerProfitPreview,
   SettingsAssetOverview,
   SettingsClosingPeriod,
@@ -221,6 +223,14 @@ const Settings = () => {
   const [capitalDisplayed, setCapitalDisplayed] = useState(false);
   const [drawingDisplayed, setDrawingDisplayed] = useState(false);
   const [drawingLoading, setDrawingLoading] = useState(false);
+
+  const [cleanupInfo, setCleanupInfo] = useState<OpeningBalanceCleanupInfo | null>(null);
+  const [cleanupDisplayed, setCleanupDisplayed] = useState(false);
+  const [cleanupLoading, setCleanupLoading] = useState(false);
+  const [cleanupSaving, setCleanupSaving] = useState(false);
+  const [cleanupTarget, setCleanupTarget] = useState<'retained' | 'capital'>('retained');
+  const [cleanupDate, setCleanupDate] = useState(today());
+  const [cleanupNote, setCleanupNote] = useState('');
 
   const [capitalModalOpen, setCapitalModalOpen] = useState(false);
   const [capitalSaving, setCapitalSaving] = useState(false);
@@ -427,6 +437,44 @@ const Settings = () => {
     setDrawingTotal(drawingRes.data.total || 0);
     setDrawingDisplayed(true);
     setCapitalDisplayed(false);
+  };
+
+  const loadCleanup = async () => {
+    setCleanupLoading(true);
+    const res = await settingsService.getOpeningBalanceCleanupInfo();
+    setCleanupLoading(false);
+    if (!res.success || !res.data) {
+      showToast('error', 'Accounting Cleanup', res.error || 'Failed to load cleanup accounts');
+      return;
+    }
+    setCleanupInfo(res.data.info);
+    setCleanupDisplayed(true);
+  };
+
+  const submitCleanupTransfer = async () => {
+    if (!cleanupInfo) {
+      await loadCleanup();
+      return;
+    }
+    setCleanupSaving(true);
+    const res = await settingsService.transferOpeningBalanceEquityCleanup({
+      target: cleanupTarget,
+      date: cleanupDate,
+      note: cleanupNote || undefined,
+    });
+    setCleanupSaving(false);
+    if (!res.success || !res.data) {
+      showToast('error', 'Accounting Cleanup', res.error || 'Failed to post cleanup transfer');
+      return;
+    }
+    const result = res.data.result;
+    if (result.posted) {
+      showToast('success', 'Accounting Cleanup', `Transferred ${formatMoney(result.amount || 0)} successfully`);
+    } else {
+      showToast('info', 'Accounting Cleanup', result.message || 'No cleanup needed');
+    }
+    if (result.info) setCleanupInfo(result.info);
+    else await loadCleanup();
   };
 
   const handleDisplayCompany = async () => {
@@ -1914,6 +1962,112 @@ const Settings = () => {
     </div>
   );
 
+  const cleanupContent = (
+    <div className="space-y-4 text-black">
+      <div className="bg-white border border-black rounded-xl p-4">
+        <div className="flex flex-wrap items-end gap-2 justify-between">
+          <div>
+            <h3 className="text-base font-semibold">Accounting Cleanup</h3>
+            <p className="text-xs text-zinc-600">
+              Move <span className="font-semibold">Opening Balance Equity</span> into{' '}
+              <span className="font-semibold">Retained Earnings</span> or <span className="font-semibold">Owner Capital</span> so
+              Opening Balance Equity becomes <span className="font-semibold">0</span>.
+            </p>
+          </div>
+          <button
+            onClick={() => void loadCleanup()}
+            className="px-3 py-2 rounded border border-black bg-white text-black text-sm"
+            disabled={cleanupLoading}
+          >
+            {cleanupLoading ? 'Loading...' : cleanupDisplayed ? 'Refresh' : 'Display'}
+          </button>
+        </div>
+      </div>
+
+      {!cleanupDisplayed && (
+        <div className="bg-white border border-black rounded-xl p-4">
+          <p className="text-sm">Click Display to load the cleanup balances for your branch.</p>
+        </div>
+      )}
+
+      {cleanupDisplayed && cleanupInfo && (
+        <div className="bg-white border border-black rounded-xl p-4 space-y-4">
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="text-left border-b border-black">
+                  <th className="py-2 pr-4">Account</th>
+                  <th className="py-2 pr-0 text-right">Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-b border-zinc-200">
+                  <td className="py-2 pr-4">{cleanupInfo.openingBalanceEquity.name}</td>
+                  <td className="py-2 pr-0 text-right font-semibold">{formatMoney(cleanupInfo.openingBalanceEquity.balance)}</td>
+                </tr>
+                <tr className="border-b border-zinc-200">
+                  <td className="py-2 pr-4">{cleanupInfo.retainedEarnings.name}</td>
+                  <td className="py-2 pr-0 text-right">{formatMoney(cleanupInfo.retainedEarnings.balance)}</td>
+                </tr>
+                <tr className="border-b border-zinc-200">
+                  <td className="py-2 pr-4">{cleanupInfo.ownerCapital.name}</td>
+                  <td className="py-2 pr-0 text-right">{formatMoney(cleanupInfo.ownerCapital.balance)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <label className="text-sm font-medium flex flex-col gap-1">
+              Transfer To *
+              <select
+                className="rounded border border-black px-3 py-2"
+                value={cleanupTarget}
+                onChange={(e) => setCleanupTarget(e.target.value === 'capital' ? 'capital' : 'retained')}
+              >
+                <option value="retained">Retained Earnings</option>
+                <option value="capital">Owner Capital</option>
+              </select>
+            </label>
+
+            <label className="text-sm font-medium flex flex-col gap-1">
+              Date
+              <input
+                type="date"
+                className="rounded border border-black px-3 py-2"
+                value={cleanupDate}
+                onChange={(e) => setCleanupDate(e.target.value)}
+              />
+            </label>
+
+            <label className="text-sm font-medium flex flex-col gap-1">
+              Note
+              <input
+                className="rounded border border-black px-3 py-2"
+                value={cleanupNote}
+                onChange={(e) => setCleanupNote(e.target.value)}
+                placeholder="Optional"
+              />
+            </label>
+          </div>
+
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xs text-zinc-600">
+              This posts a balanced GL entry and records it under Account Reclassifications.
+            </div>
+            <button
+              onClick={() => void submitCleanupTransfer()}
+              className="px-4 py-2 rounded border border-black bg-black text-white text-sm disabled:opacity-50"
+              disabled={cleanupSaving || Math.abs(Number(cleanupInfo.openingBalanceEquity.balance || 0)) <= 0.005}
+            >
+              {cleanupSaving ? 'Posting...' : 'Transfer Full Balance'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
   const closingContent = (
     <div className="space-y-4 text-black">
       <div className="bg-white border border-black rounded-xl p-4">
@@ -2386,6 +2540,7 @@ const Settings = () => {
     const result = [
       { id: 'company', label: 'Company Info', icon: Home, content: companyContent },
       { id: 'capital', label: 'Capital', icon: CircleDollarSign, content: capitalContent },
+      { id: 'account-cleanup', label: 'Accounting Cleanup', icon: ArrowLeftRight, content: cleanupContent },
       { id: 'closing-period', label: 'Closing Period', icon: CircleDollarSign, content: closingContent },
       { id: 'profit-sharing', label: 'Profit Sharing', icon: Percent, content: profitContent },
     ];
@@ -2401,6 +2556,7 @@ const Settings = () => {
     companyContent,
     assetsContent,
     capitalContent,
+    cleanupContent,
     closingContent,
     profitContent,
     logsContent,

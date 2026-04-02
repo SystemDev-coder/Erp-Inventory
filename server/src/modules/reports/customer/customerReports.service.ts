@@ -172,16 +172,48 @@ export const customerReportsService = {
            l.entry_date,
            l.customer_id,
            COALESCE(c.full_name, 'Unknown Customer') AS customer_name,
-           COALESCE(l.entry_type::text, 'sale') AS entry_type,
+           (
+             CASE
+               WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%')
+                 THEN 'refund'
+               ELSE COALESCE(l.entry_type::text, 'sale')
+             END
+           ) AS entry_type,
            COALESCE(l.ref_table, '') AS ref_table,
            l.ref_id,
-           COALESCE(l.debit, 0)::double precision AS debit,
-           COALESCE(l.credit, 0)::double precision AS credit,
+           -- ERP behavior: show refunds as a "credit" (subtraction) on the customer ledger report.
+           -- This is a presentation/reporting convention; operational modules may store refunds as debits.
+           (
+             CASE
+               WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%')
+                 THEN 0
+               ELSE COALESCE(l.debit, 0)
+             END
+           )::double precision AS debit,
+           (
+             CASE
+               WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%')
+                 THEN COALESCE(l.debit, 0) + COALESCE(l.credit, 0)
+               ELSE COALESCE(l.credit, 0)
+             END
+           )::double precision AS credit,
            COALESCE(l.note, '') AS note
          FROM ims.customer_ledger l
          LEFT JOIN ims.customers c ON c.customer_id = l.customer_id
         WHERE l.branch_id = $1
           AND l.entry_date::date BETWEEN $2::date AND $3::date
+          AND NOT (
+            COALESCE(l.ref_table, '') = 'sales'
+            AND l.ref_id IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1
+                FROM ims.sales s
+               WHERE s.branch_id = $1
+                 AND s.sale_id = l.ref_id
+                 AND LOWER(COALESCE(s.status::text, '')) <> 'void'
+                 AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
+            )
+          )
           ${filter}
       )
       SELECT
@@ -222,12 +254,30 @@ export const customerReportsService = {
       `WITH ledger AS (
          SELECT
            l.customer_id,
-           COALESCE(SUM(l.debit), 0)::double precision AS total_debit,
-           COALESCE(SUM(l.credit), 0)::double precision AS total_credit,
-           COALESCE(SUM(l.debit - l.credit), 0)::double precision AS ledger_balance
-         FROM ims.customer_ledger l
-        WHERE l.branch_id = $1
-        GROUP BY l.customer_id
+           COALESCE(SUM(CASE WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%') THEN 0 ELSE l.debit END), 0)::double precision AS total_debit,
+           COALESCE(SUM(CASE WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%') THEN (COALESCE(l.debit, 0) + COALESCE(l.credit, 0)) ELSE l.credit END), 0)::double precision AS total_credit,
+           COALESCE(
+             SUM(
+               (CASE WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%') THEN 0 ELSE l.debit END)
+               - (CASE WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%') THEN (COALESCE(l.debit, 0) + COALESCE(l.credit, 0)) ELSE l.credit END)
+             ),
+             0
+           )::double precision AS ledger_balance
+          FROM ims.customer_ledger l
+         WHERE l.branch_id = $1
+           AND NOT (
+             COALESCE(l.ref_table, '') = 'sales'
+             AND l.ref_id IS NOT NULL
+             AND NOT EXISTS (
+               SELECT 1
+                 FROM ims.sales s
+                WHERE s.branch_id = $1
+                  AND s.sale_id = l.ref_id
+                  AND LOWER(COALESCE(s.status::text, '')) <> 'void'
+                  AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
+             )
+           )
+         GROUP BY l.customer_id
       )
       SELECT
         c.customer_id,
@@ -235,12 +285,24 @@ export const customerReportsService = {
         COALESCE(c.phone, '') AS phone,
         COALESCE(l.total_debit, 0)::double precision AS total_debit,
         COALESCE(l.total_credit, 0)::double precision AS total_credit,
-        GREATEST(COALESCE(c.${balanceColumn}, 0), COALESCE(l.ledger_balance, 0), 0)::double precision AS outstanding_balance
+        (
+          CASE
+            -- Prefer ledger-derived outstanding because it correctly reflects returns/refunds.
+            -- Fall back to stored balance only when the ledger has no rows for the customer.
+            WHEN l.customer_id IS NULL THEN GREATEST(COALESCE(c.${balanceColumn}, 0), 0)
+            ELSE GREATEST(COALESCE(l.ledger_balance, 0), 0)
+          END
+        )::double precision AS outstanding_balance
       FROM ims.customers c
       LEFT JOIN ledger l ON l.customer_id = c.customer_id
       WHERE c.branch_id = $1
         ${filter}
-        AND GREATEST(COALESCE(c.${balanceColumn}, 0), COALESCE(l.ledger_balance, 0), 0) > 0
+        AND (
+          CASE
+            WHEN l.customer_id IS NULL THEN GREATEST(COALESCE(c.${balanceColumn}, 0), 0)
+            ELSE GREATEST(COALESCE(l.ledger_balance, 0), 0)
+          END
+        ) > 0
       ORDER BY outstanding_balance DESC, c.full_name
       LIMIT 2000`,
       params
@@ -357,25 +419,59 @@ export const customerReportsService = {
       `WITH ledger AS (
          SELECT
            l.customer_id,
-           COALESCE(SUM(l.debit - l.credit), 0)::double precision AS ledger_balance
-         FROM ims.customer_ledger l
-        WHERE l.branch_id = $1
-        GROUP BY l.customer_id
-      )
-      SELECT
-        c.customer_id,
-        c.full_name AS customer_name,
-        COALESCE(c.phone, '') AS phone,
-        COALESCE(c.customer_type, 'regular') AS customer_type,
-        GREATEST(COALESCE(c.${balanceColumn}, 0), COALESCE(l.ledger_balance, 0), 0)::double precision AS current_credit,
-        CASE WHEN c.is_active THEN 'Active' ELSE 'Inactive' END AS status
-      FROM ims.customers c
-      LEFT JOIN ledger l ON l.customer_id = c.customer_id
-      WHERE c.branch_id = $1
-        ${filter}
-        AND GREATEST(COALESCE(c.${balanceColumn}, 0), COALESCE(l.ledger_balance, 0), 0) > 0
-      ORDER BY current_credit DESC, c.full_name
-      LIMIT 2000`,
+           COALESCE(
+             SUM(
+               CASE
+                 -- Normalize refunds to always reduce outstanding, regardless of whether legacy rows used debit or credit.
+                 WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%')
+                   THEN -ABS(COALESCE(l.debit, 0) + COALESCE(l.credit, 0))
+                 ELSE COALESCE(l.debit, 0) - COALESCE(l.credit, 0)
+               END
+             ),
+             0
+           )::double precision AS ledger_balance
+          FROM ims.customer_ledger l
+         WHERE l.branch_id = $1
+           AND NOT (
+             COALESCE(l.ref_table, '') = 'sales'
+             AND l.ref_id IS NOT NULL
+             AND NOT EXISTS (
+               SELECT 1
+                 FROM ims.sales s
+                WHERE s.branch_id = $1
+                  AND s.sale_id = l.ref_id
+                  AND LOWER(COALESCE(s.status::text, '')) <> 'void'
+                  AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
+             )
+           )
+         GROUP BY l.customer_id
+       )
+       SELECT
+         c.customer_id,
+         c.full_name AS customer_name,
+         COALESCE(c.phone, '') AS phone,
+         COALESCE(c.customer_type, 'regular') AS customer_type,
+         (
+           CASE
+             -- Prefer ledger-derived outstanding because it correctly reflects returns/refunds.
+             -- Fall back to stored balance only when the ledger has no rows for the customer.
+             WHEN l.customer_id IS NULL THEN GREATEST(COALESCE(c.${balanceColumn}, 0), 0)
+             ELSE GREATEST(COALESCE(l.ledger_balance, 0), 0)
+           END
+         )::double precision AS current_credit,
+         CASE WHEN c.is_active THEN 'Active' ELSE 'Inactive' END AS status
+       FROM ims.customers c
+       LEFT JOIN ledger l ON l.customer_id = c.customer_id
+       WHERE c.branch_id = $1
+         ${filter}
+         AND (
+           CASE
+             WHEN l.customer_id IS NULL THEN GREATEST(COALESCE(c.${balanceColumn}, 0), 0)
+             ELSE GREATEST(COALESCE(l.ledger_balance, 0), 0)
+           END
+         ) > 0
+       ORDER BY current_credit DESC, c.full_name
+       LIMIT 2000`,
       params
     );
   },

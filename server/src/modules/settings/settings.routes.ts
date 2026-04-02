@@ -20,8 +20,11 @@ import {
   createOwnerDrawing,
   updateOwnerDrawing,
   deleteOwnerDrawing,
+  getOpeningBalanceCleanupInfo,
+  transferOpeningBalanceEquityCleanup,
   getAssetOverview,
   prepareAssetAccounts,
+  reconcileCustomerBalances,
   listSettingsClosingPeriods,
   createSettingsClosingPeriod,
   updateSettingsClosingPeriod,
@@ -41,6 +44,7 @@ router.put('/company', requireAnyPerm(['company.update', 'company.create', 'syst
 router.delete('/company', requireAnyPerm(['company.delete', 'system.company.manage', 'system.settings']), deleteCompanyInfo);
 router.get('/assets/overview', requireAnyPerm(['system.settings', 'accounts.view', 'finance.reports']), getAssetOverview);
 router.post('/assets/prepare', requireAnyPerm(['system.settings', 'accounts.view']), prepareAssetAccounts);
+router.post('/customers/reconcile-balances', requireAnyPerm(['system.settings', 'customers.update', 'customers.view']), reconcileCustomerBalances);
 
 // Branches
 router.get('/branches', requirePerm('system.branches'), listBranches);
@@ -62,6 +66,10 @@ router.get('/capital/drawings', requireAnyPerm(['system.settings', 'accounts.vie
 router.post('/capital/drawings', requireAnyPerm(['system.settings', 'accounts.view']), createOwnerDrawing);
 router.put('/capital/drawings/:id', requireAnyPerm(['system.settings', 'accounts.view']), updateOwnerDrawing);
 router.delete('/capital/drawings/:id', requireAnyPerm(['system.settings', 'accounts.view']), deleteOwnerDrawing);
+
+// Accounting cleanup: Opening Balance Equity reclassification
+router.get('/account-cleanup/opening-balance-equity', requireAnyPerm(['system.settings', 'accounts.view', 'finance.reports']), getOpeningBalanceCleanupInfo);
+router.post('/account-cleanup/opening-balance-equity/transfer', requireAnyPerm(['system.settings', 'accounts.view']), transferOpeningBalanceEquityCleanup);
 
 // Settings > Closing Finance + Profit Sharing
 router.get('/closing/periods', requireAnyPerm(['system.settings', 'finance.reports', 'accounts.view']), listSettingsClosingPeriods);

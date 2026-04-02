@@ -3,6 +3,7 @@ import { requireAuth } from '../../middlewares/requireAuth';
 import { requirePerm } from '../../middlewares/requirePerm';
 import {
   listCustomers,
+  lookupCustomers,
   getCustomer,
   createCustomer,
   updateCustomer,
@@ -14,6 +15,7 @@ const router = Router();
 router.use(requireAuth);
 
 router.get('/', requirePerm('customers.view'), listCustomers);
+router.get('/lookup', requirePerm('customers.view'), lookupCustomers);
 router.get('/:id', requirePerm('customers.view'), getCustomer);
 router.post('/', requirePerm('customers.create'), createCustomer);
 router.put('/:id', requirePerm('customers.update'), updateCustomer);

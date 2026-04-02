@@ -51,8 +51,15 @@ export const customerService = {
       sex: data.sex ?? data.gender,
       gender: data.gender ?? data.sex,
       isActive: data.is_active,
-      remainingBalance: data.remaining_balance,
     });
+  },
+
+  async lookup(params?: { search?: string; limit?: number }) {
+    const qsParts: string[] = [];
+    if (params?.search) qsParts.push(`search=${encodeURIComponent(params.search)}`);
+    if (params?.limit) qsParts.push(`limit=${encodeURIComponent(String(params.limit))}`);
+    const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
+    return apiClient.get<{ customers: Customer[] }>(`${API.CUSTOMERS.LIST}/lookup${qs}`);
   },
 
   async remove(id: number) {

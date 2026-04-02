@@ -244,7 +244,14 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
       const rows = toRecordRows(response.data.rows || []);
       const totalDebit = sumByKey(rows, 'debit');
       const totalCredit = sumByKey(rows, 'credit');
-      const closingBalance = rows.length > 0 ? Number(rows[rows.length - 1].running_balance || 0) : 0;
+      // When showing ALL customers, `running_balance` is partitioned by customer, so the "last row" balance is meaningless.
+      // For the totals row, show the net (Total Debit - Total Credit) to match ERP expectations.
+      const closingBalance =
+        mode === 'all'
+          ? Number((totalDebit - totalCredit).toFixed(2))
+          : rows.length > 0
+            ? Number(rows[rows.length - 1].running_balance || 0)
+            : 0;
       onOpenModal({
         title: 'Customer Ledger',
         subtitle: `${formatDateOnly(ledgerRange.fromDate)} - ${formatDateOnly(ledgerRange.toDate)}`,
@@ -262,7 +269,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
         totals: [
           moneyTotal('Total Debit', totalDebit),
           moneyTotal('Total Credit', totalCredit),
-          moneyTotal('Closing Balance', closingBalance),
+          moneyTotal(mode === 'all' ? 'Net Balance' : 'Closing Balance', closingBalance),
         ],
         filters: {
           'From Date': ledgerRange.fromDate,

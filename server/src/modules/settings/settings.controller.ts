@@ -22,6 +22,7 @@ import {
   settingsOwnerProfitPreviewSchema,
   settingsProfitOwnerUpsertSchema,
   settingsAssetPrepareSchema,
+  openingBalanceCleanupSchema,
 } from './settings.schemas';
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { logAudit } from '../../utils/audit';
@@ -29,6 +30,7 @@ import { pickBranchForWrite, resolveBranchScope } from '../../utils/branchScope'
 import { financeClosingService } from '../finance/financeClosing.service';
 import { queryMany } from '../../db/query';
 import { financialReportsService } from '../reports/financial/financialReports.service';
+import { systemService } from '../system/system.service';
 
 const normalizeOwnerName = (value: string) => value.trim().replace(/\s+/g, ' ');
 
@@ -285,6 +287,21 @@ export const prepareAssetAccounts = asyncHandler(async (req: AuthRequest, res: R
   const input = settingsAssetPrepareSchema.parse(req.body || {});
   const result = await settingsService.prepareAssetAccounts(scope, input.branchId);
   return ApiResponse.success(res, result, 'Asset accounts prepared');
+});
+
+export const reconcileCustomerBalances = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const input = settingsAssetPrepareSchema.parse(req.body || {});
+
+  const targetBranchId =
+    input.branchId != null
+      ? pickBranchForWrite(scope, input.branchId)
+      : scope.isAdmin
+        ? undefined
+        : pickBranchForWrite(scope);
+
+  const result = await systemService.reconcileCustomerBalances(targetBranchId);
+  return ApiResponse.success(res, result, 'Customer balances reconciled');
 });
 
 export const listBranches = asyncHandler(async (_req: AuthRequest, res: Response) => {
@@ -569,6 +586,45 @@ export const deleteOwnerDrawing = asyncHandler(async (req: AuthRequest, res: Res
     userAgent: req.get('user-agent') || null,
   });
   return ApiResponse.success(res, null, 'Owner drawing deleted');
+});
+
+export const getOpeningBalanceCleanupInfo = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const raw = req.query.branchId;
+  const branchId = raw ? Number(raw) : scope.primaryBranchId;
+  if (!Number.isFinite(branchId) || branchId <= 0) throw ApiError.badRequest('Invalid branchId');
+  const info = await settingsService.getOpeningBalanceCleanupInfo(scope, branchId);
+  return ApiResponse.success(res, { info });
+});
+
+export const transferOpeningBalanceEquityCleanup = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const input = openingBalanceCleanupSchema.parse(req.body);
+  const userId = req.user?.userId || 0;
+  const result = await settingsService.transferOpeningBalanceEquity(
+    {
+      branchId: input.branchId,
+      target: input.target,
+      date: input.date,
+      note: (input.note || '').trim() || null,
+    },
+    scope,
+    userId
+  );
+
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: result.posted ? 'finance.cleanup.transfer' : 'finance.cleanup.noop',
+    entity: 'account_reclassifications',
+    entityId: (result as any).reclassId ?? null,
+    newValue: result,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
+
+  return result.posted
+    ? ApiResponse.created(res, { result }, 'Cleanup transfer posted')
+    : ApiResponse.success(res, { result }, (result as any).message || 'No cleanup needed');
 });
 
 export const listSettingsClosingPeriods = asyncHandler(async (req: AuthRequest, res: Response) => {

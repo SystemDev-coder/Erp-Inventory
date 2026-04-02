@@ -25,7 +25,10 @@ export interface AccountBalanceRow {
   account_id: number;
   account_name: string;
   institution: string;
+  account_type?: string;
   current_balance: number;
+  debit_balance?: number;
+  credit_balance?: number;
   last_transaction_date: string | null;
 }
 

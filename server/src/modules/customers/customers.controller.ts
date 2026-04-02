@@ -53,6 +53,17 @@ export const listCustomers = asyncHandler(async (req: AuthRequest, res: Response
   return ApiResponse.success(res, { customers });
 });
 
+export const lookupCustomers = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const querySchema = z.object({
+    search: z.string().trim().optional().default(''),
+    limit: z.coerce.number().int().positive().max(200).optional().default(50),
+  });
+  const input = querySchema.parse(req.query);
+  const customers = await customersService.lookupCustomers(scope, input.search, input.limit);
+  return ApiResponse.success(res, { customers });
+});
+
 export const getCustomer = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);

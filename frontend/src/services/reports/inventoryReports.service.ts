@@ -17,23 +17,6 @@ export interface CurrentStockLevelRow {
   stock_value: number;
 }
 
-export interface StockMovementHistoryRow {
-  transaction_id: number;
-  transaction_date: string;
-  transaction_type: string;
-  direction: string;
-  item_id: number | null;
-  item_name: string;
-  store_id: number | null;
-  store_name: string;
-  quantity: number;
-  unit_cost: number;
-  total_cost: number;
-  reference_no: string;
-  status: string;
-  notes: string;
-}
-
 export interface InventoryValuationRow {
   item_id: number;
   item_name: string;
@@ -122,15 +105,6 @@ export const inventoryReportsService = {
   async getLowStockAlert(branchId?: number) {
     const query = toQuery({ branchId });
     return apiClient.get<RowsResponse<CurrentStockLevelRow>>(`${API.REPORTS.INVENTORY_LOW_STOCK}${query}`);
-  },
-
-  async getStockMovementHistory(input: { fromDate: string; toDate: string; branchId?: number }) {
-    const query = toQuery({
-      branchId: input.branchId,
-      fromDate: input.fromDate,
-      toDate: input.toDate,
-    });
-    return apiClient.get<RowsResponse<StockMovementHistoryRow>>(`${API.REPORTS.INVENTORY_MOVEMENT_HISTORY}${query}`);
   },
 
   async getInventoryValuation(branchId?: number) {

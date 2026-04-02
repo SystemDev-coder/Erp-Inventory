@@ -34,8 +34,7 @@ let customerHasGenderColumn: boolean | null = null;
 let customerHasTypeColumn: boolean | null = null;
 
 const detectCustomerBalanceColumn = async (): Promise<'open_balance' | 'remaining_balance'> => {
-  if (customerBalanceColumn) return customerBalanceColumn;
-
+  if (customerBalanceColumn === 'remaining_balance') return customerBalanceColumn;
   const columns = await queryMany<{ column_name: string }>(
     `SELECT column_name
        FROM information_schema.columns
@@ -45,10 +44,13 @@ const detectCustomerBalanceColumn = async (): Promise<'open_balance' | 'remainin
   const names = new Set(columns.map((row) => row.column_name));
 
   // Prefer `remaining_balance` as the live outstanding; keep `open_balance` as opening balance.
-  customerBalanceColumn = names.has('remaining_balance') ? 'remaining_balance' : 'open_balance';
+  // NOTE: The system can add `remaining_balance` at runtime (e.g. during "Prepare Accounts").
+  // So we must not permanently cache `open_balance` as the live column.
+  const next = names.has('remaining_balance') ? 'remaining_balance' : 'open_balance';
+  customerBalanceColumn = next;
   customerHasGenderColumn = names.has('gender');
   customerHasTypeColumn = names.has('customer_type');
-  return customerBalanceColumn;
+  return next;
 };
 
 const mapCustomer = (row: {
@@ -179,29 +181,135 @@ export const customersService = {
   ): Promise<Customer[]> {
     const balanceColumn = await detectCustomerBalanceColumn();
     const genderSelect = getGenderSelect();
-    const params: unknown[] = [];
-    const where: string[] = [];
 
-    if (!scope.isAdmin) {
-      params.push(scope.branchIds);
-      where.push(`branch_id = ANY($${params.length})`);
-    }
+    return withTransaction(async (client) => {
+      // Keep customer table balances aligned with refund/return ledger logic so the Customers page updates immediately.
+      // Only applies when the system is using `remaining_balance` as the live outstanding column.
+      if (balanceColumn === 'remaining_balance' && scope.branchIds.length) {
+        await client.query(
+          `WITH touched AS (
+             SELECT DISTINCT l.customer_id
+               FROM ims.customer_ledger l
+              WHERE l.branch_id = ANY($1)
+                AND (
+                  COALESCE(l.ref_table, '') = 'sales_returns'
+                  OR COALESCE(l.entry_type::text, '') = 'refund'
+                  OR COALESCE(l.note, '') ILIKE '%refund%'
+                )
+           ),
+           ledger AS (
+             SELECT
+               l.customer_id,
+               COALESCE(
+                 SUM(
+                   CASE
+                     WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%')
+                       THEN -ABS(COALESCE(l.debit, 0) + COALESCE(l.credit, 0))
+                     ELSE COALESCE(l.debit, 0) - COALESCE(l.credit, 0)
+                   END
+                 ),
+                 0
+               ) AS amount
+              FROM ims.customer_ledger l
+              JOIN touched t ON t.customer_id = l.customer_id
+             WHERE l.branch_id = ANY($1)
+               AND NOT (
+                 COALESCE(l.ref_table, '') = 'sales'
+                 AND l.ref_id IS NOT NULL
+                 AND NOT EXISTS (
+                   SELECT 1
+                     FROM ims.sales s
+                    WHERE s.branch_id = l.branch_id
+                      AND s.sale_id = l.ref_id
+                      AND LOWER(COALESCE(s.status::text, '')) <> 'void'
+                      AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
+                 )
+               )
+             GROUP BY l.customer_id
+           )
+           UPDATE ims.customers c
+              SET remaining_balance = GREATEST(COALESCE(l.amount, 0), 0)::numeric(14,2)
+             FROM ledger l
+            WHERE c.branch_id = ANY($1)
+              AND c.customer_id = l.customer_id
+              AND c.is_active = TRUE`,
+          [scope.branchIds]
+        );
+      }
 
-    if (search) {
-      params.push(`%${search}%`);
-      where.push(
-        `(full_name ILIKE $${params.length} OR COALESCE(phone, '') ILIKE $${params.length})`
+      const params: unknown[] = [];
+      const where: string[] = [];
+
+      if (!scope.isAdmin) {
+        params.push(scope.branchIds);
+        where.push(`branch_id = ANY($${params.length})`);
+      }
+
+      if (search) {
+        params.push(`%${search}%`);
+        where.push(
+          `(full_name ILIKE $${params.length} OR COALESCE(phone, '') ILIKE $${params.length})`
+        );
+      }
+
+      if (dateRange?.fromDate && dateRange?.toDate) {
+        params.push(dateRange.fromDate);
+        where.push(`registered_date >= $${params.length}::date`);
+        params.push(dateRange.toDate);
+        where.push(`registered_date <= $${params.length}::date`);
+      }
+
+      const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+      const result = await client.query<{
+        customer_id: number;
+        full_name: string;
+        phone: string | null;
+        address: string | null;
+        sex: string | null;
+        gender: string | null;
+        registered_date: string;
+        is_active: boolean;
+        customer_type: string | null;
+        balance_value: string;
+      }>(
+        `SELECT
+            customer_id,
+            full_name,
+            phone,
+            address,
+            sex::text AS sex,
+            ${genderSelect},
+            registered_date::text,
+            is_active,
+            ${getCustomerTypeSelect()},
+            ${balanceColumn}::text AS balance_value
+         FROM ims.customers
+         ${whereSql}
+         ORDER BY full_name`,
+        params
       );
+
+      return result.rows.map(mapCustomer);
+    });
+  },
+
+  async lookupCustomers(scope: BranchScope, search?: string, limit = 50): Promise<Customer[]> {
+    const balanceColumn = await detectCustomerBalanceColumn();
+    const genderSelect = getGenderSelect();
+
+    const safeLimit = Math.max(1, Math.min(200, Math.floor(Number(limit) || 50)));
+    const params: unknown[] = [scope.branchIds];
+    const where: string[] = [`branch_id = ANY($1)`, `is_active = TRUE`];
+
+    const q = String(search || '').trim();
+    if (q) {
+      params.push(`%${q}%`);
+      where.push(`(full_name ILIKE $${params.length} OR COALESCE(phone, '') ILIKE $${params.length})`);
     }
 
-    if (dateRange?.fromDate && dateRange?.toDate) {
-      params.push(dateRange.fromDate);
-      where.push(`registered_date >= $${params.length}::date`);
-      params.push(dateRange.toDate);
-      where.push(`registered_date <= $${params.length}::date`);
-    }
-
-    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    params.push(safeLimit);
+    const whereSql = `WHERE ${where.join(' AND ')}`;
 
     const rows = await queryMany<{
       customer_id: number;
@@ -228,7 +336,8 @@ export const customersService = {
           ${balanceColumn}::text AS balance_value
        FROM ims.customers
        ${whereSql}
-       ORDER BY full_name`,
+       ORDER BY full_name
+       LIMIT $${params.length}`,
       params
     );
 

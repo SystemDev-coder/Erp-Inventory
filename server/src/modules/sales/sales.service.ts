@@ -228,6 +228,25 @@ const normalizePayment = (input: {
   };
 };
 
+const deriveSaleStatusFromPayment = (input: {
+  docType: SaleDocType;
+  saleType: 'cash' | 'credit';
+  status: SaleStatus;
+  total: number;
+  paidAmount: number;
+}): SaleStatus => {
+  if (input.docType === 'quotation') return input.status;
+  if (input.status === 'void') return 'void';
+  if (input.saleType === 'credit') return 'unpaid';
+
+  const total = roundMoney(input.total);
+  const paid = roundMoney(input.paidAmount);
+
+  if (paid <= 0.005) return 'unpaid';
+  if (paid >= total - 0.005) return 'paid';
+  return 'partial';
+};
+
 type PreparedSaleItem = SaleItemInput & { unitPrice: number; productId: number; quantity: number };
 
 const prepareSaleItems = async (
@@ -289,8 +308,6 @@ interface CustomerBalanceColumns {
   hasOpenBalance: boolean;
   hasRemainingBalance: boolean;
 }
-
-let cachedCustomerBalanceColumns: CustomerBalanceColumns | null = null;
 
 const resolveStoreForItem = async (
   client: PoolClient,
@@ -460,7 +477,6 @@ const adjustAccountBalance = async (
 };
 
 const getCustomerBalanceColumns = async (client: PoolClient): Promise<CustomerBalanceColumns> => {
-  if (cachedCustomerBalanceColumns) return cachedCustomerBalanceColumns;
   const result = await client.query<{ column_name: string }>(
     `SELECT column_name
        FROM information_schema.columns
@@ -468,11 +484,10 @@ const getCustomerBalanceColumns = async (client: PoolClient): Promise<CustomerBa
         AND table_name = 'customers'`
   );
   const names = new Set(result.rows.map((row) => row.column_name));
-  cachedCustomerBalanceColumns = {
+  return {
     hasOpenBalance: names.has('open_balance'),
     hasRemainingBalance: names.has('remaining_balance'),
   };
-  return cachedCustomerBalanceColumns;
 };
 
 const adjustCustomerBalance = async (
@@ -535,6 +550,29 @@ const clearSaleFinancialEntries = async (
 
 const roundMoney = (value: unknown) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 
+const listSalePaymentSummary = async (
+  client: PoolClient,
+  params: { branchId: number; saleId: number }
+): Promise<Array<{ accId: number; amount: number }>> => {
+  const rows = (
+    await client.query<{ acc_id: number; amount_paid: string }>(
+      `SELECT sp.acc_id, COALESCE(SUM(sp.amount_paid), 0)::text AS amount_paid
+         FROM ims.sale_payments sp
+        WHERE sp.branch_id = $1
+          AND sp.sale_id = $2
+        GROUP BY sp.acc_id
+        HAVING COALESCE(SUM(sp.amount_paid), 0) > 0.005
+        ORDER BY sp.acc_id ASC`,
+      [params.branchId, params.saleId]
+    )
+  ).rows;
+
+  return rows.map((row) => ({ accId: Number(row.acc_id), amount: roundMoney(row.amount_paid) }));
+};
+
+const sumSalePayments = (rows: Array<{ amount: number }>) =>
+  roundMoney(rows.reduce((sum, row) => sum + Number(row.amount || 0), 0));
+
 const rewriteSaleGl = async (
   client: PoolClient,
   params: { branchId: number; saleId: number }
@@ -588,9 +626,14 @@ const rewriteSaleGl = async (
   const paidAmount = roundMoney(sale.paid_amount);
   const payAccId = sale.pay_acc_id ? Number(sale.pay_acc_id) : null;
 
-  const cashDebit = paidAmount > 0 ? paidAmount : 0;
-  const arDebit = roundMoney(Math.max(total - Math.min(paidAmount, total), 0));
-  const advanceCredit = roundMoney(Math.max(paidAmount - total, 0));
+  const paymentAgg = await listSalePaymentSummary(client, params);
+  const paidFromPayments = sumSalePayments(paymentAgg);
+
+  // Prefer payments table when inline columns are missing.
+  const effectivePaidAmount = paidFromPayments > 0.005 ? paidFromPayments : paidAmount;
+  const cashDebit = effectivePaidAmount > 0 ? effectivePaidAmount : 0;
+  const arDebit = roundMoney(Math.max(total - Math.min(effectivePaidAmount, total), 0));
+  const advanceCredit = roundMoney(Math.max(effectivePaidAmount - total, 0));
 
   const coa = await ensureCoaAccounts(client, params.branchId, [
     'accountsReceivable',
@@ -603,8 +646,16 @@ const rewriteSaleGl = async (
 
   const invoiceLines: Array<{ accId: number; debit?: number; credit?: number; note?: string | null }> = [];
   if (cashDebit > 0) {
-    if (!payAccId) throw ApiError.badRequest('Payment account is required to post this sale');
-    invoiceLines.push({ accId: payAccId, debit: cashDebit, credit: 0, note: 'Cash/bank received' });
+    if (paymentAgg.length > 0) {
+      paymentAgg.forEach((p) => {
+        if (p.amount > 0.005) {
+          invoiceLines.push({ accId: p.accId, debit: p.amount, credit: 0, note: 'Cash/bank received' });
+        }
+      });
+    } else {
+      if (!payAccId) throw ApiError.badRequest('Payment account is required to post this sale');
+      invoiceLines.push({ accId: payAccId, debit: cashDebit, credit: 0, note: 'Cash/bank received' });
+    }
   }
   if (arDebit > 0) {
     invoiceLines.push({ accId: coa.accountsReceivable, debit: arDebit, credit: 0, note: 'Customer receivable' });
@@ -865,9 +916,8 @@ export const salesService = {
         docType === 'quotation'
           ? 'credit'
           : input.saleType || (requestedStatus === 'unpaid' ? 'credit' : 'cash');
-      const status: SaleStatus =
+      let status: SaleStatus =
         saleType === 'credit' && requestedStatus !== 'void' ? 'unpaid' : requestedStatus;
-      const shouldApplyStock = canApplyStock(docType, status);
       const payment = normalizePayment({
         total: totalWithTax,
         docType,
@@ -876,6 +926,14 @@ export const salesService = {
         payAccId: input.payFromAccId,
         paidAmount: input.paidAmount,
       });
+      status = deriveSaleStatusFromPayment({
+        docType,
+        saleType,
+        status,
+        total: totalWithTax,
+        paidAmount: payment.paidAmount,
+      });
+      const shouldApplyStock = canApplyStock(docType, status);
 
       await ensureAccount(client, context.branchId, payment.payAccId);
 
@@ -1004,7 +1062,7 @@ export const salesService = {
     try {
       await client.query('BEGIN');
       const schema = await getSalesSchemaMeta();
-      const supportsInlinePayment =
+  const supportsInlinePayment =
         schema.salesColumns.has('pay_acc_id') && schema.salesColumns.has('paid_amount');
 
       const current = await getSaleForUpdate(client, id, scope);
@@ -1050,40 +1108,51 @@ export const salesService = {
       const taxableBase = totals.subtotal - (input.discount ?? current.discount ?? 0);
       const taxAmount = (taxableBase * Number(tax?.rate_percent || 0)) / 100;
       const totalWithTax = taxableBase + taxAmount;
-      const nextApplyStock = canApplyStock(nextDocType, nextStatus);
       const previousApplyStock =
         current.is_stock_applied ?? canApplyStock(current.doc_type || 'sale', current.status);
       const previousFinancialApplied =
         current.status !== 'void' && (current.doc_type || 'sale') !== 'quotation';
-      const nextFinancialApplied = nextStatus !== 'void' && nextDocType !== 'quotation';
-      const payment = supportsInlinePayment
-        ? normalizePayment({
-            total: totalWithTax,
-            docType: nextDocType,
-            saleType: nextSaleType,
-            status: nextStatus,
-            payAccId:
-              input.payFromAccId === undefined ? current.pay_acc_id : input.payFromAccId,
-            paidAmount:
-              input.paidAmount === undefined ? Number(current.paid_amount || 0) : input.paidAmount,
-          })
-        : { payAccId: null, paidAmount: 0 };
-
-      if (supportsInlinePayment) {
-        await ensureAccount(client, current.branch_id, payment.payAccId);
-      }
-
-      const hadPreviousPayment =
+      // Reverse any prior payments recorded for this sale (table-based first; fallback to inline fields for legacy schemas).
+      const previousPaymentRows = await listSalePaymentSummary(client, { branchId: current.branch_id, saleId: current.sale_id });
+      const legacyInlinePayment =
         supportsInlinePayment &&
-        Number(current.paid_amount || 0) > 0 &&
-        Number(current.pay_acc_id || 0) > 0 &&
+        previousPaymentRows.length === 0 &&
+        Number((current as any).paid_amount || 0) > 0 &&
+        Number((current as any).pay_acc_id || 0) > 0 &&
         current.status !== 'void' &&
-        current.doc_type !== 'quotation';
-      if (hadPreviousPayment) {
+        current.doc_type !== 'quotation'
+          ? [{ accId: Number((current as any).pay_acc_id), amount: roundMoney((current as any).paid_amount) }]
+          : [];
+      const effectivePreviousPayments = previousPaymentRows.length ? previousPaymentRows : legacyInlinePayment;
+      const previousPaidAmount = sumSalePayments(effectivePreviousPayments);
+      const previousSingleAccId = effectivePreviousPayments.length === 1 ? effectivePreviousPayments[0].accId : null;
+
+      const payment = normalizePayment({
+        total: totalWithTax,
+        docType: nextDocType,
+        saleType: nextSaleType,
+        status: nextStatus,
+        payAccId: (input.payFromAccId === undefined ? previousSingleAccId : input.payFromAccId) ?? null,
+        paidAmount: input.paidAmount === undefined ? previousPaidAmount : (input.paidAmount ?? 0),
+      });
+
+      const finalNextStatus = deriveSaleStatusFromPayment({
+        docType: nextDocType,
+        saleType: nextSaleType,
+        status: nextStatus,
+        total: totalWithTax,
+        paidAmount: payment.paidAmount,
+      });
+      const nextApplyStock = canApplyStock(nextDocType, finalNextStatus);
+      const nextFinancialApplied = finalNextStatus !== 'void' && nextDocType !== 'quotation';
+
+      await ensureAccount(client, current.branch_id, payment.payAccId);
+
+      for (const row of effectivePreviousPayments) {
         await adjustAccountBalance(client, {
-          accId: Number(current.pay_acc_id),
+          accId: row.accId,
           branchId: current.branch_id,
-          amount: Number(current.paid_amount),
+          amount: row.amount,
           mode: 'subtract',
         });
       }
@@ -1129,7 +1198,7 @@ export const salesService = {
 
       preparedItems.forEach((line) => affectedProductIds.add(Number(line.productId)));
 
-      if (supportsInlinePayment && payment.payAccId && payment.paidAmount > 0) {
+      if (payment.payAccId && payment.paidAmount > 0) {
         await adjustAccountBalance(client, {
           accId: payment.payAccId,
           branchId: current.branch_id,
@@ -1143,7 +1212,7 @@ export const salesService = {
           ? (current.customer_id ?? null)
           : (input.customerId ?? null);
       const previousOutstanding = previousFinancialApplied
-        ? Math.max(Number(current.total || 0) - Number(current.paid_amount || 0), 0)
+        ? Math.max(Number(current.total || 0) - Number(previousPaidAmount || 0), 0)
         : 0;
       const nextOutstanding = nextFinancialApplied
         ? Math.max(totalWithTax - Number(payment.paidAmount || 0), 0)
@@ -1205,7 +1274,7 @@ export const salesService = {
       pushSet('subtotal', totals.subtotal);
       pushSet('discount', totals.discount);
       pushSet('total', totalWithTax);
-      pushSet('status', nextStatus);
+      pushSet('status', finalNextStatus);
       pushSet('note', input.note === undefined ? current.note : input.note);
       if (supportsInlinePayment) {
         pushSet('pay_acc_id', payment.payAccId);
@@ -1217,11 +1286,11 @@ export const salesService = {
       pushSet('tax_amount', taxAmount);
 
       if (schema.salesColumns.has('voided_at')) {
-        values.push(nextStatus);
+        values.push(finalNextStatus);
         updates.push(`voided_at = CASE WHEN $${values.length} = 'void' THEN COALESCE(voided_at, NOW()) ELSE NULL END`);
       }
       if (schema.salesColumns.has('void_reason')) {
-        values.push(nextStatus);
+        values.push(finalNextStatus);
         const statusIdx = values.length;
         values.push((input.note === undefined ? current.note : input.note) || null);
         const noteIdx = values.length;
@@ -1294,20 +1363,28 @@ export const salesService = {
       const previouslyApplied =
         current.is_stock_applied ?? canApplyStock(current.doc_type || 'sale', current.status);
       const previousFinancialApplied = (current.doc_type || 'sale') !== 'quotation';
-      const previousOutstanding = previousFinancialApplied
-        ? Math.max(Number(current.total || 0) - Number(current.paid_amount || 0), 0)
-        : 0;
-
-      if (
+      const previousPaymentRows = previousFinancialApplied
+        ? await listSalePaymentSummary(client, { branchId: current.branch_id, saleId: current.sale_id })
+        : [];
+      const legacyInlinePayment =
         supportsInlinePayment &&
+        previousPaymentRows.length === 0 &&
         Number(current.paid_amount || 0) > 0 &&
         Number(current.pay_acc_id || 0) > 0 &&
         current.doc_type !== 'quotation'
-      ) {
+          ? [{ accId: Number(current.pay_acc_id), amount: roundMoney(current.paid_amount) }]
+          : [];
+      const effectivePreviousPayments = previousPaymentRows.length ? previousPaymentRows : legacyInlinePayment;
+      const previousPaidAmount = sumSalePayments(effectivePreviousPayments);
+      const previousOutstanding = previousFinancialApplied
+        ? Math.max(Number(current.total || 0) - Number(previousPaidAmount || 0), 0)
+        : 0;
+
+      for (const row of effectivePreviousPayments) {
         await adjustAccountBalance(client, {
-          accId: Number(current.pay_acc_id),
+          accId: row.accId,
           branchId: current.branch_id,
-          amount: Number(current.paid_amount),
+          amount: row.amount,
           mode: 'subtract',
         });
       }

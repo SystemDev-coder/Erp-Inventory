@@ -17,23 +17,6 @@ export interface CurrentStockRow {
   stock_value: number;
 }
 
-export interface StockMovementRow {
-  transaction_id: number;
-  transaction_date: string;
-  transaction_type: string;
-  direction: string;
-  item_id: number | null;
-  item_name: string;
-  store_id: number | null;
-  store_name: string;
-  quantity: number;
-  unit_cost: number;
-  total_cost: number;
-  reference_no: string;
-  status: string;
-  notes: string;
-}
-
 export interface InventoryValuationRow {
   item_id: number;
   item_name: string;
@@ -197,59 +180,6 @@ export const inventoryReportsService = {
         AND COALESCE(st.total_qty, 0) <= GREATEST(COALESCE(NULLIF(i.stock_alert, 0), 5), 1)
       ORDER BY COALESCE(st.total_qty, 0) ASC, i.name`,
       [branchId]
-    );
-  },
-
-  async getStockMovementHistory(branchId: number, fromDate: string, toDate: string): Promise<StockMovementRow[]> {
-    return queryMany<StockMovementRow>(
-      `WITH tx AS (
-         SELECT
-           t.transaction_id,
-           t.transaction_date,
-           UPPER(COALESCE(to_jsonb(t) ->> 'transaction_type', 'UNKNOWN')) AS transaction_type,
-           UPPER(
-             COALESCE(
-               to_jsonb(t) ->> 'direction',
-               CASE
-                 WHEN UPPER(COALESCE(to_jsonb(t) ->> 'transaction_type', '')) IN ('IN', 'PAID') THEN 'IN'
-                 WHEN UPPER(COALESCE(to_jsonb(t) ->> 'transaction_type', '')) = 'ADJUSTMENT'
-                   THEN CASE WHEN COALESCE((to_jsonb(t) ->> 'quantity')::numeric, 0) >= 0 THEN 'IN' ELSE 'OUT' END
-                 ELSE 'OUT'
-               END
-             )
-           ) AS direction,
-           COALESCE((to_jsonb(t) ->> 'item_id')::bigint, (to_jsonb(t) ->> 'product_id')::bigint) AS item_id,
-           (to_jsonb(t) ->> 'store_id')::bigint AS store_id,
-           COALESCE((to_jsonb(t) ->> 'quantity')::numeric, 0) AS quantity,
-           COALESCE((to_jsonb(t) ->> 'unit_cost')::numeric, 0) AS unit_cost,
-           COALESCE(to_jsonb(t) ->> 'reference_no', '') AS reference_no,
-           UPPER(COALESCE(to_jsonb(t) ->> 'status', 'POSTED')) AS status,
-           COALESCE(to_jsonb(t) ->> 'notes', '') AS notes
-         FROM ims.inventory_transaction t
-        WHERE t.branch_id = $1
-          AND t.transaction_date::date BETWEEN $2::date AND $3::date
-       )
-       SELECT
-         tx.transaction_id,
-         tx.transaction_date::text,
-         tx.transaction_type,
-         tx.direction,
-         tx.item_id,
-         COALESCE(i.name, 'Unknown Item') AS item_name,
-         tx.store_id,
-         COALESCE(s.store_name, 'N/A') AS store_name,
-         tx.quantity::double precision AS quantity,
-         tx.unit_cost::double precision AS unit_cost,
-         (tx.quantity * tx.unit_cost)::double precision AS total_cost,
-         tx.reference_no,
-         tx.status,
-         tx.notes
-        FROM tx
-        LEFT JOIN ims.items i ON i.item_id = tx.item_id
-        LEFT JOIN ims.stores s ON s.store_id = tx.store_id
-      ORDER BY tx.transaction_date ASC, tx.transaction_id ASC
-      LIMIT 3000`,
-      [branchId, fromDate, toDate]
     );
   },
 

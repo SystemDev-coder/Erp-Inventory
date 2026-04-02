@@ -1,3 +1,4 @@
+import { PoolClient } from 'pg';
 import { queryMany, queryOne } from '../../db/query';
 import { adminQueryMany } from '../../db/adminQuery';
 import { withTransaction } from '../../db/withTx';
@@ -456,6 +457,47 @@ const ensureCapitalSchema = async (): Promise<void> => {
   `);
 
   capitalSchemaReady = true;
+};
+
+let reclassSchemaReady = false;
+const ensureReclassSchema = async (): Promise<void> => {
+  if (reclassSchemaReady) return;
+  await ensureCapitalSchema();
+  await adminQueryMany(`
+    CREATE TABLE IF NOT EXISTS ims.account_reclassifications (
+      reclass_id BIGSERIAL PRIMARY KEY,
+      branch_id BIGINT NOT NULL REFERENCES ims.branches(branch_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+      from_acc_id BIGINT NOT NULL REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+      to_acc_id BIGINT NOT NULL REFERENCES ims.accounts(acc_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+      amount NUMERIC(14,2) NOT NULL DEFAULT 0,
+      entry_date DATE NOT NULL DEFAULT CURRENT_DATE,
+      note TEXT,
+      created_by BIGINT REFERENCES ims.users(user_id) ON UPDATE CASCADE ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await adminQueryMany(`
+    CREATE INDEX IF NOT EXISTS idx_account_reclassifications_branch_date
+      ON ims.account_reclassifications(branch_id, entry_date DESC, reclass_id DESC)
+  `);
+  reclassSchemaReady = true;
+};
+
+const roundMoney = (value: unknown) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+
+const lockAccountBalance = async (client: PoolClient, branchId: number, accId: number) => {
+  const row = (
+    await client.query<{ acc_id: number; name: string; balance: string }>(
+      `SELECT acc_id, name, balance::text AS balance
+         FROM ims.accounts
+        WHERE branch_id = $1
+          AND acc_id = $2
+        FOR UPDATE`,
+      [branchId, accId]
+    )
+  ).rows[0];
+  if (!row) throw ApiError.badRequest('Account not found in selected branch');
+  return { accId: Number(row.acc_id), name: row.name, balance: Number(row.balance || 0) };
 };
 
 const ensureOwnerCapitalAccount = async (branchId: number): Promise<number> => {
@@ -1947,6 +1989,126 @@ export const settingsService = {
       );
 
       await client.query(`DELETE FROM ims.capital_contributions WHERE capital_id = $1`, [id]);
+    });
+  },
+
+  async getOpeningBalanceCleanupInfo(scope: BranchScope, branchId: number) {
+    assertBranchAccess(scope, branchId);
+    await ensureReclassSchema();
+
+    return withTransaction(async (client) => {
+      const coa = await ensureCoaAccounts(client, branchId, ['openingBalanceEquity', 'retainedEarnings', 'ownerCapital']);
+      const ids = [coa.openingBalanceEquity, coa.retainedEarnings, coa.ownerCapital];
+      const rows = (
+        await client.query<{ acc_id: number; name: string; balance: string }>(
+          `SELECT acc_id, name, balance::text AS balance
+             FROM ims.accounts
+            WHERE branch_id = $1
+              AND acc_id = ANY($2)
+            ORDER BY acc_id ASC`,
+          [branchId, ids]
+        )
+      ).rows;
+
+      const map = new Map(
+        rows.map((row) => [
+          Number(row.acc_id),
+          { acc_id: Number(row.acc_id), name: row.name, balance: Number(row.balance || 0) },
+        ])
+      );
+
+      return {
+        branchId,
+        openingBalanceEquity:
+          map.get(coa.openingBalanceEquity) || { acc_id: coa.openingBalanceEquity, name: 'Opening Balance Equity', balance: 0 },
+        retainedEarnings: map.get(coa.retainedEarnings) || { acc_id: coa.retainedEarnings, name: 'Retained Earnings', balance: 0 },
+        ownerCapital: map.get(coa.ownerCapital) || { acc_id: coa.ownerCapital, name: 'Owner Capital', balance: 0 },
+      };
+    });
+  },
+
+  async transferOpeningBalanceEquity(
+    input: { branchId?: number; target: 'retained' | 'capital'; date?: string; note?: string | null },
+    scope: BranchScope,
+    userId: number
+  ) {
+    const branchId = pickBranchForWrite(scope, input.branchId);
+    const entryDate = (input.date || new Date().toISOString().slice(0, 10)).slice(0, 10);
+    const note = (input.note || '').trim() || null;
+
+    if (await isCapitalDateLocked(branchId, entryDate)) {
+      throw ApiError.badRequest('Cannot post cleanup entry in a closed accounting period');
+    }
+
+    await ensureReclassSchema();
+
+    return withTransaction(async (client) => {
+      const coa = await ensureCoaAccounts(client, branchId, ['openingBalanceEquity', 'retainedEarnings', 'ownerCapital']);
+      const fromAccId = coa.openingBalanceEquity;
+      const toAccId = input.target === 'capital' ? coa.ownerCapital : coa.retainedEarnings;
+      if (fromAccId === toAccId) throw ApiError.badRequest('Source and destination accounts must differ');
+
+      const from = await lockAccountBalance(client, branchId, fromAccId);
+      const to = await lockAccountBalance(client, branchId, toAccId);
+
+      const amount = roundMoney(Math.abs(from.balance));
+      if (amount <= 0.005) {
+        return {
+          branchId,
+          posted: false,
+          message: 'Opening Balance Equity is already zero',
+          amount: 0,
+          fromAccount: from,
+          toAccount: to,
+        };
+      }
+
+      const row = (
+        await client.query<{ reclass_id: number }>(
+          `INSERT INTO ims.account_reclassifications
+             (branch_id, from_acc_id, to_acc_id, amount, entry_date, note, created_by)
+           VALUES ($1, $2, $3, $4, $5::date, $6, $7)
+           RETURNING reclass_id`,
+          [branchId, fromAccId, toAccId, amount, entryDate, note, userId || null]
+        )
+      ).rows[0];
+      const reclassId = Number(row?.reclass_id || 0);
+      if (!reclassId) throw ApiError.internal('Failed to create account reclassification');
+
+      if (from.balance >= 0) {
+        await client.query(`UPDATE ims.accounts SET balance = balance - $3 WHERE branch_id = $1 AND acc_id = $2`, [branchId, fromAccId, amount]);
+        await client.query(`UPDATE ims.accounts SET balance = balance + $3 WHERE branch_id = $1 AND acc_id = $2`, [branchId, toAccId, amount]);
+        await postGl(client, {
+          branchId,
+          txnDate: entryDate,
+          txnType: 'other',
+          refTable: 'account_reclassifications',
+          refId: reclassId,
+          note: `Opening Balance Equity cleanup -> ${to.name}${note ? ` - ${note}` : ''}`,
+          lines: [
+            { accId: fromAccId, debit: amount, credit: 0, note: 'Clear Opening Balance Equity' },
+            { accId: toAccId, debit: 0, credit: amount, note: 'Transfer to target equity' },
+          ],
+        });
+      } else {
+        await client.query(`UPDATE ims.accounts SET balance = balance + $3 WHERE branch_id = $1 AND acc_id = $2`, [branchId, fromAccId, amount]);
+        await client.query(`UPDATE ims.accounts SET balance = balance - $3 WHERE branch_id = $1 AND acc_id = $2`, [branchId, toAccId, amount]);
+        await postGl(client, {
+          branchId,
+          txnDate: entryDate,
+          txnType: 'other',
+          refTable: 'account_reclassifications',
+          refId: reclassId,
+          note: `Opening Balance Equity cleanup -> ${to.name}${note ? ` - ${note}` : ''}`,
+          lines: [
+            { accId: toAccId, debit: amount, credit: 0, note: 'Transfer to target equity' },
+            { accId: fromAccId, debit: 0, credit: amount, note: 'Clear Opening Balance Equity' },
+          ],
+        });
+      }
+
+      const refreshed = await this.getOpeningBalanceCleanupInfo(scope, branchId);
+      return { branchId, posted: true, amount, reclassId, info: refreshed };
     });
   },
 

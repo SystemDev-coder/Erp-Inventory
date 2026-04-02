@@ -189,3 +189,10 @@ export const settingsProfitOwnerUpsertSchema = z.object({
 export const settingsAssetPrepareSchema = z.object({
   branchId: z.coerce.number().int().positive().optional(),
 });
+
+export const openingBalanceCleanupSchema = z.object({
+  branchId: z.coerce.number().int().positive().optional(),
+  target: z.enum(['retained', 'capital']),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD').optional(),
+  note: z.string().trim().max(500).optional().or(z.literal('')),
+});

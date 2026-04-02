@@ -405,6 +405,7 @@ export function ReportModal<T extends Record<string, any>>({
     if (!isTrialBalance) return null;
 
     const rows = data.map((row) => ({
+      accountId: Number((row as Record<string, unknown>).account_id || 0),
       accountName: String((row as Record<string, unknown>).account_name || ""),
       closingDebit: Number((row as Record<string, unknown>).closing_debit || 0),
       closingCredit: Number((row as Record<string, unknown>).closing_credit || 0),
@@ -681,8 +682,8 @@ export function ReportModal<T extends Record<string, any>>({
                 <table className="w-full table-fixed border-collapse text-[12px]">
                   <thead>
                     <tr className="text-zinc-900">
-                      <th className="border-b border-slate-300 px-2 py-2 text-left font-semibold">Particulars</th>
-                      <th className="w-44 border-b border-slate-300 px-2 py-2 text-right font-semibold">Amount</th>
+                      <th className="border-b border-slate-300 px-2 py-2 text-left font-semibold">Account Name</th>
+                      <th className="w-44 border-b border-slate-300 px-2 py-2 text-right font-semibold">Account Balance</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -718,7 +719,7 @@ export function ReportModal<T extends Record<string, any>>({
                 </table>
               </div>
             </div>
-                    ) : isBalanceSheet && balanceSheetData ? (
+          ) : isBalanceSheet && balanceSheetData ? (
             <div className="px-6 pb-6 pt-5 text-slate-900" style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}>
               {!companyInfo?.bannerUrl ? (
                 <div className="mb-4 text-center">
@@ -738,20 +739,46 @@ export function ReportModal<T extends Record<string, any>>({
                     </tr>
                   </thead>
                   <tbody>
-                    <tr className="bg-white font-semibold text-slate-900">
-                      <td className="border-b border-slate-200 px-2 py-2">Assets</td>
-                      <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">{EMPTY_CELL}</td>
-                    </tr>
-                    <tr className="bg-slate-50 font-semibold text-slate-800">
+                    <tr className="bg-[#f3d1b5] font-semibold text-slate-900">
                       <td className="border-b border-slate-200 px-2 py-2">Current Assets</td>
                       <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">{EMPTY_CELL}</td>
                     </tr>
-                    {balanceSheetData.currentAssets.map((row, index) => (
-                      <tr key={`ca-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
-                        <td className="border-b border-slate-200 px-2 py-1.5 pl-6">{cleanText(row.lineItem)}</td>
-                        <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
-                      </tr>
-                    ))}
+                    {(() => {
+                      const rank = (label: string) => {
+                        const name = cleanText(label).toLowerCase();
+                        const isBankLike =
+                          name.includes("bank") ||
+                          name.includes("merchant") ||
+                          name.includes("evc") ||
+                          name.includes("dahab") ||
+                          name.includes("salaam") ||
+                          name.includes("premier") ||
+                          name.includes("wallet") ||
+                          name.includes("checking") ||
+                          name.includes("saving") ||
+                          name.includes("@") ||
+                          name.includes("cash @");
+                        if (name.includes("cash on hand") || (name === "cash" && !isBankLike)) return 0;
+                        if (isBankLike || name.includes("cash")) return 1;
+                        if (name.includes("receivable") || name.includes("debtor")) return 2;
+                        if (name.includes("inventory") || name.includes("stock")) return 3;
+                        if (name.includes("prepaid")) return 4;
+                        return 5;
+                      };
+
+                      const rows = [...balanceSheetData.currentAssets].sort((a, b) => {
+                        const r = rank(a.lineItem) - rank(b.lineItem);
+                        if (r !== 0) return r;
+                        return cleanText(a.lineItem).localeCompare(cleanText(b.lineItem));
+                      });
+
+                      return rows.map((row, index) => (
+                        <tr key={`ca-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
+                          <td className="border-b border-slate-200 px-2 py-1.5 pl-4">{cleanText(row.lineItem)}</td>
+                          <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
+                        </tr>
+                      ));
+                    })()}
                     <tr className="font-semibold text-slate-900">
                       <td className="border-t border-slate-300 px-2 py-2">Total Current Assets</td>
                       <td className="border-t border-slate-300 px-2 py-2 text-right tabular-nums">{formatStatementCurrency(balanceSheetData.currentAssetsTotal)}</td>
@@ -759,16 +786,37 @@ export function ReportModal<T extends Record<string, any>>({
 
                     {balanceSheetData.nonCurrentAssets.length > 0 && (
                       <>
-                        <tr className="bg-slate-50 font-semibold text-slate-800">
+                        <tr className="bg-[#f3d1b5] font-semibold text-slate-900">
                           <td className="border-b border-slate-200 px-2 py-2">Fixed Assets</td>
                           <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">{EMPTY_CELL}</td>
                         </tr>
-                        {balanceSheetData.nonCurrentAssets.map((row, index) => (
-                          <tr key={`fa-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
-                            <td className="border-b border-slate-200 px-2 py-1.5 pl-6">{cleanText(row.lineItem)}</td>
-                            <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
-                          </tr>
-                        ))}
+                        {(() => {
+                          const rank = (label: string) => {
+                            const name = cleanText(label).toLowerCase();
+                            if (name.includes("vehicle") || name.includes("car") || name.includes("truck")) return 0;
+                            if (name.includes("office building") || name.includes("building") || name.includes("property")) return 1;
+                            if (name.includes("production") || name.includes("equipment") || name.includes("machinery") || name.includes("tool")) return 2;
+                            if (name.includes("computer") || name.includes("laptop") || name.includes("printer")) return 3;
+                            if (name.includes("improvement")) return 4;
+                            if (name.includes("furniture") || name.includes("fixture")) return 5;
+                            if (name.includes("land")) return 6;
+                            if (name.includes("accumulated depreciation") || (name.includes("depreciation") && (name.includes("accumulated") || name.includes("accum.")))) return 98;
+                            return 50;
+                          };
+
+                          const rows = [...balanceSheetData.nonCurrentAssets].sort((a, b) => {
+                            const r = rank(a.lineItem) - rank(b.lineItem);
+                            if (r !== 0) return r;
+                            return cleanText(a.lineItem).localeCompare(cleanText(b.lineItem));
+                          });
+
+                          return rows.map((row, index) => (
+                            <tr key={`fa-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
+                              <td className="border-b border-slate-200 px-2 py-1.5 pl-4">{cleanText(row.lineItem)}</td>
+                              <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
+                            </tr>
+                          ));
+                        })()}
                         <tr className="font-semibold text-slate-900">
                           <td className="border-t border-slate-300 px-2 py-2">Total Fixed Assets</td>
                           <td className="border-t border-slate-300 px-2 py-2 text-right tabular-nums">{formatStatementCurrency(balanceSheetData.nonCurrentAssetsTotal)}</td>
@@ -781,39 +829,65 @@ export function ReportModal<T extends Record<string, any>>({
                       <td className="border-t border-slate-900 px-2 py-2 text-right tabular-nums">{formatStatementCurrency(balanceSheetData.totalAssets)}</td>
                     </tr>
 
-                    <tr className="bg-white font-semibold text-slate-900">
-                      <td className="border-b border-slate-200 px-2 py-2">Liabilities</td>
+                    <tr className="bg-[#f3d1b5] font-semibold text-slate-900">
+                      <td className="border-b border-slate-200 px-2 py-2">Liabilities &amp; Owner's Equity</td>
                       <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">{EMPTY_CELL}</td>
                     </tr>
-                    <tr className="bg-slate-50 font-semibold text-slate-800">
-                      <td className="border-b border-slate-200 px-2 py-2">Current Liabilities</td>
-                      <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">{EMPTY_CELL}</td>
-                    </tr>
-                    {balanceSheetData.currentLiabilities.map((row, index) => (
-                      <tr key={`cl-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
-                        <td className="border-b border-slate-200 px-2 py-1.5 pl-6">{cleanText(row.lineItem)}</td>
-                        <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
-                      </tr>
-                    ))}
-                    <tr className="font-semibold text-slate-900">
-                      <td className="border-t border-slate-300 px-2 py-2">Total Current Liabilities</td>
-                      <td className="border-t border-slate-300 px-2 py-2 text-right tabular-nums">{formatStatementCurrency(balanceSheetData.currentLiabilitiesTotal)}</td>
-                    </tr>
-
-                    {balanceSheetData.nonCurrentLiabilities.length > 0 && (
+                    {(() => {
+                      const rows = [...balanceSheetData.currentLiabilities, ...balanceSheetData.nonCurrentLiabilities].sort((a, b) =>
+                        cleanText(a.lineItem).localeCompare(cleanText(b.lineItem))
+                      );
+                      return rows.map((row, index) => (
+                        <tr key={`li-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
+                          <td className="border-b border-slate-200 px-2 py-1.5 pl-4">{cleanText(row.lineItem)}</td>
+                          <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
+                        </tr>
+                      ));
+                    })()}
+                    {false && (
                       <>
                         <tr className="bg-slate-50 font-semibold text-slate-800">
-                          <td className="border-b border-slate-200 px-2 py-2">Long-term Liabilities</td>
+                          <td className="border-b border-slate-200 px-2 py-2">Non-Current Liabilities</td>
                           <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">{EMPTY_CELL}</td>
                         </tr>
-                        {balanceSheetData.nonCurrentLiabilities.map((row, index) => (
-                          <tr key={`ncl-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
-                            <td className="border-b border-slate-200 px-2 py-1.5 pl-6">{cleanText(row.lineItem)}</td>
-                            <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
-                          </tr>
-                        ))}
+                        {(() => {
+                          const classify = (label: string) => {
+                            const name = cleanText(label).toLowerCase();
+                            if (name.includes("bond")) return "Bonds Payable";
+                            if (name.includes("lease")) return "Lease Liabilities";
+                            if (name.includes("loan") || name.includes("mortgage") || name.includes("long") || name.includes("term")) return "Long-term Loans";
+                            return "Other Non-Current Liabilities";
+                          };
+
+                          const order = ["Long-term Loans", "Bonds Payable", "Lease Liabilities", "Other Non-Current Liabilities"] as const;
+                          const groups = order.map((group) => ({
+                            group,
+                            rows: balanceSheetData.nonCurrentLiabilities.filter((row) => classify(row.lineItem) === group),
+                          }));
+
+                          let rowIndex = 0;
+                          return groups.flatMap(({ group, rows }) => {
+                            const groupRow = (
+                              <tr key={`ncl-group-${group}`} className="bg-white font-semibold text-slate-700">
+                                <td className="border-b border-slate-200 px-2 py-2 pl-6">{group}</td>
+                                <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">{EMPTY_CELL}</td>
+                              </tr>
+                            );
+                            if (rows.length === 0) return [];
+                            const detailRows = rows.map((row) => {
+                              const index = rowIndex++;
+                              return (
+                                <tr key={`ncl-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
+                                  <td className="border-b border-slate-200 px-2 py-1.5 pl-10">{cleanText(row.lineItem)}</td>
+                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
+                                </tr>
+                              );
+                            });
+                            return [groupRow, ...detailRows];
+                          });
+                        })()}
                         <tr className="font-semibold text-slate-900">
-                          <td className="border-t border-slate-300 px-2 py-2">Total Long-term Liabilities</td>
+                          <td className="border-t border-slate-300 px-2 py-2">Total Non-Current Liabilities</td>
                           <td className="border-t border-slate-300 px-2 py-2 text-right tabular-nums">{formatStatementCurrency(balanceSheetData.nonCurrentLiabilitiesTotal)}</td>
                         </tr>
                       </>
@@ -824,26 +898,29 @@ export function ReportModal<T extends Record<string, any>>({
                       <td className="border-t border-slate-900 px-2 py-2 text-right tabular-nums">{formatStatementCurrency(balanceSheetData.totalLiabilities)}</td>
                     </tr>
 
-                    <tr className="bg-white font-semibold text-slate-900">
-                      <td className="border-b border-slate-200 px-2 py-2">Equity</td>
+                    <tr className="bg-[#f3d1b5] font-semibold text-slate-900">
+                      <td className="border-b border-slate-200 px-2 py-2">Equities</td>
                       <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">{EMPTY_CELL}</td>
                     </tr>
-                    {(balanceSheetData.equity.length
-                      ? balanceSheetData.equity
-                      : [{ lineItem: "Retained Earnings", amount: balanceSheetData.retainedEarnings }]
-                    ).map((row, index) => (
-                      <tr key={`eq-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
-                        <td className="border-b border-slate-200 px-2 py-1.5 pl-6">{cleanText(row.lineItem)}</td>
-                        <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
-                      </tr>
-                    ))}
+                    {(() => {
+                      const rows = balanceSheetData.equity.length
+                        ? balanceSheetData.equity
+                        : [{ lineItem: "Equity", amount: balanceSheetData.totalEquity }];
+
+                      return rows.map((row, index) => (
+                        <tr key={`eq-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
+                          <td className="border-b border-slate-200 px-2 py-1.5 pl-4">{cleanText(row.lineItem)}</td>
+                          <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
+                        </tr>
+                      ));
+                    })()}
                     <tr className="font-bold text-slate-900">
                       <td className="border-t border-slate-900 px-2 py-2">Total Equity</td>
                       <td className="border-t border-slate-900 px-2 py-2 text-right tabular-nums">{formatStatementCurrency(balanceSheetData.totalEquity)}</td>
                     </tr>
 
                     <tr className="font-extrabold text-slate-900">
-                      <td className="border-t-2 border-slate-900 px-2 py-2">Total Liabilities + Equity</td>
+                      <td className="border-t-2 border-slate-900 px-2 py-2">Total Liabilities &amp; Equity</td>
                       <td className="border-t-2 border-slate-900 px-2 py-2 text-right tabular-nums">{formatStatementCurrency(balanceSheetData.totalLiabilitiesEquity)}</td>
                     </tr>
                   </tbody>
@@ -927,7 +1004,8 @@ export function ReportModal<T extends Record<string, any>>({
                 <table className="w-full table-fixed border-collapse text-[12px]">
                   <thead>
                     <tr className="text-zinc-900">
-                      <th className="border-b border-slate-300 px-2 py-2 text-left font-semibold">Particulars</th>
+                      <th className="w-24 border-b border-slate-300 px-2 py-2 text-left font-semibold">Account #</th>
+                      <th className="border-b border-slate-300 px-2 py-2 text-left font-semibold">Account Name</th>
                       <th className="w-44 border-b border-slate-300 px-2 py-2 text-right font-semibold">Dr. Balance</th>
                       <th className="w-44 border-b border-slate-300 px-2 py-2 text-right font-semibold">Cr. Balance</th>
                     </tr>
@@ -935,9 +1013,10 @@ export function ReportModal<T extends Record<string, any>>({
                   <tbody>
                     {trialBalanceData.rows.map((row, index) => (
                       <tr
-                        key={`${row.accountName}-${index}`}
+                        key={`${row.accountId}-${row.accountName}-${index}`}
                         className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}
                       >
+                        <td className="border-b border-slate-200 px-2 py-1.5">{row.accountId || EMPTY_CELL}</td>
                         <td className="border-b border-slate-200 px-2 py-1.5">{row.accountName}</td>
                         <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">
                           {Math.max(Number(row.closingDebit || 0), 0) > 0.000001
@@ -952,7 +1031,7 @@ export function ReportModal<T extends Record<string, any>>({
                       </tr>
                     ))}
                     <tr className="font-bold text-slate-900">
-                      <td className="border-t border-slate-300 px-2 py-2 text-left">Total</td>
+                      <td className="border-t border-slate-300 px-2 py-2 text-left" colSpan={2}>Total</td>
                       <td className="border-t border-slate-300 px-2 py-2 text-right tabular-nums">
                         {formatTrialAmount(trialBalanceData.totals.totalClosingDebit)}
                       </td>

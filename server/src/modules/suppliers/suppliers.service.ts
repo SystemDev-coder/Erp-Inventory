@@ -240,6 +240,51 @@ export const suppliersService = {
     return rows.map(mapSupplier);
   },
 
+  async lookupSuppliers(scope: BranchScope, search?: string, limit = 50): Promise<Supplier[]> {
+    const shape = await detectSupplierShape();
+    const safeLimit = Math.max(1, Math.min(200, Math.floor(Number(limit) || 50)));
+
+    const params: unknown[] = [scope.branchIds];
+    const where: string[] = [`branch_id = ANY($1)`, `is_active = TRUE`];
+
+    const q = String(search || '').trim();
+    if (q) {
+      params.push(`%${q}%`);
+      where.push(
+        `(${shape.nameColumn} ILIKE $${params.length} OR COALESCE(${shape.locationColumn}, '') ILIKE $${params.length} OR COALESCE(phone, '') ILIKE $${params.length})`
+      );
+    }
+
+    params.push(safeLimit);
+    const whereSql = `WHERE ${where.join(' AND ')}`;
+
+    const rows = await queryMany<{
+      supplier_id: number;
+      supplier_name_value: string;
+      supplier_location_value: string | null;
+      phone: string | null;
+      supplier_balance_value: string;
+      is_active: boolean;
+      created_at: string;
+    }>(
+      `SELECT
+          supplier_id,
+          ${shape.nameColumn} AS supplier_name_value,
+          ${shape.locationColumn} AS supplier_location_value,
+          phone,
+          ${shape.balanceColumn}::text AS supplier_balance_value,
+          is_active,
+          created_at::text
+         FROM ims.suppliers
+         ${whereSql}
+        ORDER BY ${shape.nameColumn}
+        LIMIT $${params.length}`,
+      params
+    );
+
+    return rows.map(mapSupplier);
+  },
+
   async getSupplier(id: number, scope: BranchScope): Promise<Supplier | null> {
     return scopedSupplier(id, scope);
   },

@@ -183,7 +183,7 @@ const listSalesReturnRefundLines = async (
     const res = await client.query<{ acc_id: number; amount: string; account_name: string | null }>(
         `SELECT
             cl.acc_id,
-            COALESCE(SUM(COALESCE(cl.debit, 0)), 0)::text AS amount,
+            COALESCE(SUM(COALESCE(cl.debit, 0) + COALESCE(cl.credit, 0)), 0)::text AS amount,
             a.name AS account_name
            FROM ims.customer_ledger cl
            LEFT JOIN ims.accounts a ON a.acc_id = cl.acc_id
@@ -191,9 +191,10 @@ const listSalesReturnRefundLines = async (
             AND cl.ref_table = 'sales_returns'
             AND cl.ref_id = $2
             AND cl.acc_id IS NOT NULL
-            AND COALESCE(cl.debit, 0) > 0
+            AND (COALESCE(cl.debit, 0) > 0 OR COALESCE(cl.credit, 0) > 0)
+            AND COALESCE(cl.note, '') ILIKE '%refund%'
           GROUP BY cl.acc_id, a.name
-          ORDER BY SUM(COALESCE(cl.debit, 0)) DESC, cl.acc_id ASC`,
+          ORDER BY SUM(COALESCE(cl.debit, 0) + COALESCE(cl.credit, 0)) DESC, cl.acc_id ASC`,
         [params.branchId, params.srId]
     );
     return res.rows
@@ -212,7 +213,7 @@ const listPurchaseReturnRefundLines = async (
     const res = await client.query<{ acc_id: number; amount: string; account_name: string | null }>(
         `SELECT
             sl.acc_id,
-            COALESCE(SUM(COALESCE(sl.credit, 0)), 0)::text AS amount,
+            COALESCE(SUM(COALESCE(sl.debit, 0) + COALESCE(sl.credit, 0)), 0)::text AS amount,
             a.name AS account_name
            FROM ims.supplier_ledger sl
            LEFT JOIN ims.accounts a ON a.acc_id = sl.acc_id
@@ -220,9 +221,10 @@ const listPurchaseReturnRefundLines = async (
             AND sl.ref_table = 'purchase_returns'
             AND sl.ref_id = $2
             AND sl.acc_id IS NOT NULL
-            AND COALESCE(sl.credit, 0) > 0
+            AND (COALESCE(sl.debit, 0) > 0 OR COALESCE(sl.credit, 0) > 0)
+            AND COALESCE(sl.note, '') ILIKE '%refund%'
           GROUP BY sl.acc_id, a.name
-          ORDER BY SUM(COALESCE(sl.credit, 0)) DESC, sl.acc_id ASC`,
+          ORDER BY SUM(COALESCE(sl.debit, 0) + COALESCE(sl.credit, 0)) DESC, sl.acc_id ASC`,
         [params.branchId, params.prId]
     );
     return res.rows
@@ -355,7 +357,6 @@ const hasSalesDocTypeColumn = async (): Promise<boolean> => {
 };
 
 const getCustomerBalanceColumns = async (client: PoolClient): Promise<BalanceColumns> => {
-    if (cachedCustomerBalanceColumns) return cachedCustomerBalanceColumns;
     const result = await client.query<{ column_name: string }>(
         `SELECT column_name
            FROM information_schema.columns
@@ -396,6 +397,64 @@ const getCustomerOutstandingForUpdate = async (
     return Number(row.rows[0]?.balance || 0);
 };
 
+const computeCustomerOutstandingFromLedger = async (
+    client: PoolClient,
+    params: { branchId: number; customerId: number }
+): Promise<number> => {
+    const result = await client.query<{ amount: string }>(
+        `SELECT
+           COALESCE(
+             SUM(
+               CASE
+                 WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%')
+                   THEN -ABS(COALESCE(l.debit, 0) + COALESCE(l.credit, 0))
+                 ELSE COALESCE(l.debit, 0) - COALESCE(l.credit, 0)
+               END
+             ),
+             0
+           )::text AS amount
+          FROM ims.customer_ledger l
+         WHERE l.branch_id = $1
+           AND l.customer_id = $2
+           AND NOT (
+             COALESCE(l.ref_table, '') = 'sales'
+             AND l.ref_id IS NOT NULL
+             AND NOT EXISTS (
+               SELECT 1
+                 FROM ims.sales s
+                WHERE s.branch_id = $1
+                  AND s.sale_id = l.ref_id
+                  AND LOWER(COALESCE(s.status::text, '')) <> 'void'
+                  AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
+             )
+           )`,
+        [params.branchId, params.customerId]
+    );
+    return roundMoney(Math.max(0, Number(result.rows[0]?.amount || 0)));
+};
+
+const syncCustomerOutstandingFromLedger = async (
+    client: PoolClient,
+    params: { branchId: number; customerId: number }
+): Promise<void> => {
+    const column = await getCustomerBalanceColumn(client);
+    if (!column) return;
+    const current = await getCustomerOutstandingForUpdate(client, params);
+    const next = await computeCustomerOutstandingFromLedger(client, params);
+    const delta = roundMoney(next - current);
+    if (Math.abs(delta) > 0.005) {
+        await adjustCustomerBalance(client, { branchId: params.branchId, customerId: params.customerId, delta });
+    }
+    // Enforce exact value (prevents drift from rounding or legacy rows).
+    await client.query(
+        `UPDATE ims.customers
+            SET ${column} = $3
+          WHERE branch_id = $1
+            AND customer_id = $2`,
+        [params.branchId, params.customerId, next]
+    );
+};
+
 const adjustCustomerBalance = async (
     client: PoolClient,
     params: { branchId: number; customerId?: number | null; delta: number }
@@ -425,7 +484,6 @@ const adjustCustomerBalance = async (
 };
 
 const getSupplierBalanceColumns = async (client: PoolClient): Promise<BalanceColumns> => {
-    if (cachedSupplierBalanceColumns) return cachedSupplierBalanceColumns;
     const result = await client.query<{ column_name: string }>(
         `SELECT column_name
            FROM information_schema.columns
@@ -1496,7 +1554,7 @@ export const returnsService = {
 
             const returnEntryType = await pickLedgerEntryType(client, ['return', 'adjustment', 'payment']);
             // `ledger_entry_enum` does not include 'refund' in this system; use a proper entry type.
-            const refundEntryType = await pickLedgerEntryType(client, ['payment', 'return', 'adjustment']);
+            const refundEntryType = await pickLedgerEntryType(client, ['refund', 'payment', 'return', 'adjustment']);
 
             let refundAccId: number | null = null;
             if (refundAmount > 0) {
@@ -1597,18 +1655,32 @@ export const returnsService = {
                 );
             }
             if (refundAmount > 0 && input.customerId) {
+                // Refund should reduce the customer's outstanding (credit), not increase it (debit).
                 await client.query(
                     `INSERT INTO ims.customer_ledger
                        (branch_id, customer_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
-                     VALUES ($1, $2, $3, 'sales_returns', $4, $5, $6, 0, $7)`,
+                     VALUES ($1, $2, $3, 'sales_returns', $4, $5, 0, $6, $7)`,
                     [context.branchId, input.customerId, refundEntryType, sr.sr_id, refundAccId, refundAmount, 'Customer refund']
                 );
             }
-            if (balanceAdjustment > 0) {
-                await adjustCustomerBalance(client, {
+            if (input.customerId) {
+                // Keep customers table in sync with ledger logic used by reports:
+                // - Return credits reduce outstanding by `total`
+                // - Refunds reduce outstanding by `refundAmount` (in addition to the return credit)
+                const desiredDelta = -roundMoney(total + refundAmount);
+                const safeDelta = Math.max(-currentOutstanding, desiredDelta);
+                if (safeDelta !== 0) {
+                    await adjustCustomerBalance(client, {
+                        branchId: context.branchId,
+                        customerId: input.customerId,
+                        delta: safeDelta,
+                    });
+                }
+            }
+            if (input.customerId) {
+                await syncCustomerOutstandingFromLedger(client, {
                     branchId: context.branchId,
                     customerId: input.customerId,
-                    delta: -balanceAdjustment,
                 });
             }
 
@@ -1638,12 +1710,14 @@ export const returnsService = {
                 sr_id: number;
                 branch_id: number;
                 customer_id: number | null;
+                total: string;
                 balance_adjustment?: string;
             }>(
                 `SELECT
                     sr_id,
                     branch_id,
                     customer_id,
+                    total::text AS total,
                     ${hasBalanceColumn ? `balance_adjustment::text AS balance_adjustment` : `NULL::text AS balance_adjustment`}
                    FROM ims.sales_returns
                   WHERE sr_id = $1
@@ -1651,9 +1725,6 @@ export const returnsService = {
                 [id]
             );
             const current = existing.rows[0];
-            const previousBalanceAdjustment = hasBalanceColumn
-                ? Number(current?.balance_adjustment || 0)
-                : 0;
             if (!current) throw ApiError.notFound('Sales return not found');
             if (!canAccessBranch(scope, Number(current.branch_id))) {
                 throw ApiError.forbidden('Access denied');
@@ -1718,13 +1789,6 @@ export const returnsService = {
             const subtotal = items.reduce((s, i) => s + Number(i.quantity) * Number(i.unitPrice || 0), 0);
             const total = roundMoney(subtotal);
             const oldCustomerId = Number(current.customer_id || 0);
-            if (previousBalanceAdjustment > 0 && oldCustomerId) {
-                await adjustCustomerBalance(client, {
-                    branchId: Number(current.branch_id),
-                    customerId: oldCustomerId,
-                    delta: previousBalanceAdjustment,
-                });
-            }
 
             const refundUpdateRequested =
                 Object.prototype.hasOwnProperty.call(input, 'refundAccId') ||
@@ -1735,6 +1799,9 @@ export const returnsService = {
             });
             const previousRefundAmount = roundMoney(previousRefundLines.reduce((s, r) => s + r.amount, 0));
             const refundAmountCandidate = refundUpdateRequested ? Number(input.refundAmount || 0) : previousRefundAmount;
+
+            const previousTotal = roundMoney(Number(current?.total || 0));
+            const previousCustomerEffect = roundMoney(previousTotal + previousRefundAmount);
 
             const newCustomerId = Number(input.customerId || 0);
             const currentOutstanding = newCustomerId
@@ -1879,21 +1946,45 @@ export const returnsService = {
                 );
             }
             if (refundAmount > 0 && input.customerId) {
-                const refundEntryType = await pickLedgerEntryType(client, ['payment', 'return', 'adjustment']);
+                const refundEntryType = await pickLedgerEntryType(client, ['refund', 'payment', 'return', 'adjustment']);
                 for (const r of nextRefundLines) {
                     await client.query(
                         `INSERT INTO ims.customer_ledger
                            (branch_id, customer_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
-                         VALUES ($1, $2, $3, 'sales_returns', $4, $5, $6, 0, $7)`,
+                         VALUES ($1, $2, $3, 'sales_returns', $4, $5, 0, $6, $7)`,
                         [current.branch_id, input.customerId, refundEntryType, id, Number(r.accId), r.amount, 'Customer refund']
                     );
                 }
             }
-            if (newBalanceAdjustment > 0 && newCustomerId) {
+            // Update customer outstanding based on the same ledger interpretation used by reports.
+            if (oldCustomerId && previousCustomerEffect > 0 && oldCustomerId !== newCustomerId) {
                 await adjustCustomerBalance(client, {
                     branchId: Number(current.branch_id),
-                    customerId: newCustomerId,
-                    delta: -newBalanceAdjustment,
+                    customerId: oldCustomerId,
+                    delta: previousCustomerEffect,
+                });
+            }
+            if (newCustomerId) {
+                const newEffect = roundMoney(total + refundAmount);
+                const netDelta =
+                    oldCustomerId && oldCustomerId === newCustomerId ? roundMoney(previousCustomerEffect - newEffect) : -newEffect;
+                const safeDelta = Math.max(-currentOutstanding, netDelta);
+                if (safeDelta !== 0) {
+                    await adjustCustomerBalance(client, {
+                        branchId: Number(current.branch_id),
+                        customerId: newCustomerId,
+                        delta: safeDelta,
+                    });
+                }
+            }
+
+            const toSync = new Set<number>();
+            if (oldCustomerId) toSync.add(oldCustomerId);
+            if (newCustomerId) toSync.add(newCustomerId);
+            for (const customerId of toSync) {
+                await syncCustomerOutstandingFromLedger(client, {
+                    branchId: Number(current.branch_id),
+                    customerId,
                 });
             }
 
@@ -1919,21 +2010,20 @@ export const returnsService = {
                 sr_id: number;
                 branch_id: number;
                 customer_id: number | null;
+                total: string;
                 balance_adjustment?: string;
             }>(
                 `SELECT
                     sr_id,
                     branch_id,
                     customer_id,
+                    total::text AS total,
                     ${hasBalanceColumn ? `balance_adjustment::text AS balance_adjustment` : `NULL::text AS balance_adjustment`}
                    FROM ims.sales_returns
                   WHERE sr_id = $1`,
                 [id]
             );
             const current = existing.rows[0];
-            const previousBalanceAdjustment = hasBalanceColumn
-                ? Number(current?.balance_adjustment || 0)
-                : 0;
             if (!current) throw ApiError.notFound('Sales return not found');
             if (!canAccessBranch(scope, Number(current.branch_id))) throw ApiError.forbidden('Access denied');
 
@@ -1955,6 +2045,9 @@ export const returnsService = {
                 branchId: Number(current.branch_id),
                 srId: id,
             });
+            const refundAmount = roundMoney(refundLines.reduce((s, r) => s + r.amount, 0));
+            const total = roundMoney(Number(current?.total || 0));
+            const previousCustomerEffect = roundMoney(total + refundAmount);
             for (const r of refundLines) {
                 // Reverse the cash outflow for the refund.
                 await applyAccountBalanceDelta(client, {
@@ -1979,11 +2072,17 @@ export const returnsService = {
                     AND ref_id = $2`,
                 [current.branch_id, id]
             );
-            if (previousBalanceAdjustment > 0) {
+            if (previousCustomerEffect > 0) {
                 await adjustCustomerBalance(client, {
                     branchId: Number(current.branch_id),
                     customerId: current.customer_id,
-                    delta: previousBalanceAdjustment,
+                    delta: previousCustomerEffect,
+                });
+            }
+            if (current.customer_id) {
+                await syncCustomerOutstandingFromLedger(client, {
+                    branchId: Number(current.branch_id),
+                    customerId: current.customer_id,
                 });
             }
 
@@ -2312,19 +2411,22 @@ export const returnsService = {
                 );
             }
             if (refundAmount > 0) {
-                const refundEntryType = await pickLedgerEntryType(client, ['payment', 'return', 'adjustment']);
+                const refundEntryType = await pickLedgerEntryType(client, ['refund', 'payment', 'return', 'adjustment']);
                 await client.query(
                     `INSERT INTO ims.supplier_ledger
                        (branch_id, supplier_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
-                     VALUES ($1, $2, $3, 'purchase_returns', $4, $5, 0, $6, $7)`,
+                     VALUES ($1, $2, $3, 'purchase_returns', $4, $5, $6, 0, $7)`,
                     [context.branchId, input.supplierId, refundEntryType, pr.pr_id, refundAccId, refundAmount, 'Supplier refund']
                 );
             }
-            if (balanceAdjustment > 0) {
+            // Keep suppliers table in sync with report expectations: refunds reduce outstanding.
+            const desiredDelta = -roundMoney(total + refundAmount);
+            const safeDelta = Math.max(-currentOutstanding, desiredDelta);
+            if (safeDelta !== 0) {
                 await adjustSupplierBalance(client, {
                     branchId: context.branchId,
                     supplierId: input.supplierId,
-                    delta: -balanceAdjustment,
+                    delta: safeDelta,
                 });
             }
 
@@ -2354,21 +2456,20 @@ export const returnsService = {
                 pr_id: number;
                 branch_id: number;
                 supplier_id: number | null;
+                total: string;
                 balance_adjustment?: string;
             }>(
                 `SELECT
                     pr_id,
                     branch_id,
                     supplier_id,
+                    total::text AS total,
                     ${hasBalanceColumn ? `balance_adjustment::text AS balance_adjustment` : `NULL::text AS balance_adjustment`}
                    FROM ims.purchase_returns
                   WHERE pr_id = $1`,
                 [id]
             );
             const current = existing.rows[0];
-            const previousBalanceAdjustment = hasBalanceColumn
-                ? Number(current?.balance_adjustment || 0)
-                : 0;
             if (!current) throw ApiError.notFound('Purchase return not found');
             if (!canAccessBranch(scope, Number(current.branch_id))) throw ApiError.forbidden('Access denied');
             if (!input.supplierId || Number(input.supplierId) <= 0) throw ApiError.badRequest('Supplier is required');
@@ -2425,13 +2526,6 @@ export const returnsService = {
             const subtotal = items.reduce((s, i) => s + Number(i.quantity) * Number(i.unitCost || 0), 0);
             const total = roundMoney(subtotal);
             const oldSupplierId = Number(current.supplier_id || 0);
-            if (previousBalanceAdjustment > 0 && oldSupplierId) {
-                await adjustSupplierBalance(client, {
-                    branchId: Number(current.branch_id),
-                    supplierId: oldSupplierId,
-                    delta: previousBalanceAdjustment,
-                });
-            }
 
             const refundUpdateRequested =
                 Object.prototype.hasOwnProperty.call(input, 'refundAccId') ||
@@ -2442,6 +2536,16 @@ export const returnsService = {
             });
             const previousRefundAmount = roundMoney(previousRefundLines.reduce((s, r) => s + r.amount, 0));
             const refundAmountCandidate = refundUpdateRequested ? Number(input.refundAmount || 0) : previousRefundAmount;
+
+            const previousTotal = roundMoney(Number(current?.total || 0));
+            const previousSupplierEffect = roundMoney(previousTotal + previousRefundAmount);
+            if (oldSupplierId && previousSupplierEffect > 0) {
+                await adjustSupplierBalance(client, {
+                    branchId: Number(current.branch_id),
+                    supplierId: oldSupplierId,
+                    delta: previousSupplierEffect,
+                });
+            }
 
             const newSupplierId = Number(input.supplierId || 0);
             const currentOutstanding = newSupplierId
@@ -2578,22 +2682,30 @@ export const returnsService = {
                 );
             }
             if (refundAmount > 0) {
-                const refundEntryType = await pickLedgerEntryType(client, ['payment', 'return', 'adjustment']);
+                const refundEntryType = await pickLedgerEntryType(client, ['refund', 'payment', 'return', 'adjustment']);
                 for (const r of nextRefundLines) {
                     await client.query(
                         `INSERT INTO ims.supplier_ledger
                            (branch_id, supplier_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
-                         VALUES ($1, $2, $3, 'purchase_returns', $4, $5, 0, $6, $7)`,
+                         VALUES ($1, $2, $3, 'purchase_returns', $4, $5, $6, 0, $7)`,
                         [current.branch_id, input.supplierId, refundEntryType, id, Number(r.accId), r.amount, 'Supplier refund']
                     );
                 }
             }
-            if (newBalanceAdjustment > 0 && newSupplierId) {
-                await adjustSupplierBalance(client, {
-                    branchId: Number(current.branch_id),
-                    supplierId: newSupplierId,
-                    delta: -newBalanceAdjustment,
-                });
+            if (newSupplierId) {
+                const newSupplierEffect = roundMoney(total + refundAmount);
+                const netDelta =
+                    oldSupplierId && oldSupplierId === newSupplierId
+                        ? roundMoney(previousSupplierEffect - newSupplierEffect)
+                        : -newSupplierEffect;
+                const safeDelta = Math.max(-currentOutstanding, netDelta);
+                if (safeDelta !== 0) {
+                    await adjustSupplierBalance(client, {
+                        branchId: Number(current.branch_id),
+                        supplierId: newSupplierId,
+                        delta: safeDelta,
+                    });
+                }
             }
 
             await rewritePurchaseReturnGl(client, { branchId: Number(current.branch_id), prId: id });
@@ -2618,21 +2730,20 @@ export const returnsService = {
                 pr_id: number;
                 branch_id: number;
                 supplier_id: number | null;
+                total: string;
                 balance_adjustment?: string;
             }>(
                 `SELECT
                     pr_id,
                     branch_id,
                     supplier_id,
+                    total::text AS total,
                     ${hasBalanceColumn ? `balance_adjustment::text AS balance_adjustment` : `NULL::text AS balance_adjustment`}
                    FROM ims.purchase_returns
                   WHERE pr_id = $1`,
                 [id]
             );
             const current = existing.rows[0];
-            const previousBalanceAdjustment = hasBalanceColumn
-                ? Number(current?.balance_adjustment || 0)
-                : 0;
             if (!current) throw ApiError.notFound('Purchase return not found');
             if (!canAccessBranch(scope, Number(current.branch_id))) throw ApiError.forbidden('Access denied');
 
@@ -2654,6 +2765,9 @@ export const returnsService = {
                 branchId: Number(current.branch_id),
                 prId: id,
             });
+            const refundAmount = roundMoney(refundLines.reduce((s, r) => s + r.amount, 0));
+            const total = roundMoney(Number(current?.total || 0));
+            const previousSupplierEffect = roundMoney(total + refundAmount);
             for (const r of refundLines) {
                 // Reverse the cash inflow for the refund.
                 await applyAccountBalanceDelta(client, {
@@ -2678,11 +2792,11 @@ export const returnsService = {
                     AND ref_id = $2`,
                 [current.branch_id, id]
             );
-            if (previousBalanceAdjustment > 0) {
+            if (previousSupplierEffect > 0) {
                 await adjustSupplierBalance(client, {
                     branchId: Number(current.branch_id),
                     supplierId: current.supplier_id,
-                    delta: previousBalanceAdjustment,
+                    delta: previousSupplierEffect,
                 });
             }
 

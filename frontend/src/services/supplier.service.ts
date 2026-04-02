@@ -23,6 +23,14 @@ export const supplierService = {
     return apiClient.get<{ suppliers: Supplier[] }>(`/api/suppliers${qs}`);
   },
 
+  async lookup(params?: { search?: string; limit?: number }) {
+    const qsParts: string[] = [];
+    if (params?.search) qsParts.push(`search=${encodeURIComponent(params.search)}`);
+    if (params?.limit) qsParts.push(`limit=${encodeURIComponent(String(params.limit))}`);
+    const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
+    return apiClient.get<{ suppliers: Supplier[] }>(`/api/suppliers/lookup${qs}`);
+  },
+
   async create(data: Partial<Supplier>) {
     return apiClient.post<{ supplier: Supplier }>(`/api/suppliers`, {
       supplierName: data.supplier_name,

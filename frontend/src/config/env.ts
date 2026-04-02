@@ -132,7 +132,6 @@ export const API = {
     INVENTORY_OPTIONS: '/api/reports/inventory/options',
     INVENTORY_CURRENT_STOCK: '/api/reports/inventory/current-stock',
     INVENTORY_LOW_STOCK: '/api/reports/inventory/low-stock',
-    INVENTORY_MOVEMENT_HISTORY: '/api/reports/inventory/movement-history',
     INVENTORY_VALUATION: '/api/reports/inventory/valuation',
     INVENTORY_EXPIRY_TRACKING: '/api/reports/inventory/expiry-tracking',
     INVENTORY_ADJUSTMENT_LOG: '/api/reports/inventory/adjustment-log',

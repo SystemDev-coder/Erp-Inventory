@@ -36,19 +36,6 @@ export const getLowStockAlertReport = asyncHandler(async (req: AuthRequest, res:
   });
 });
 
-export const getStockMovementHistoryReport = asyncHandler(async (req: AuthRequest, res: Response) => {
-  const branchId = await resolveBranchIdForReports(req);
-  const { fromDate, toDate } = parseDateRange(req);
-  const rows = await inventoryReportsService.getStockMovementHistory(branchId, fromDate, toDate);
-  return ApiResponse.success(res, {
-    branchId,
-    reportKey: 'stock-movement-history',
-    fromDate,
-    toDate,
-    rows,
-  });
-});
-
 export const getInventoryValuationReport = asyncHandler(async (req: AuthRequest, res: Response) => {
   const branchId = await resolveBranchIdForReports(req);
   const rows = await inventoryReportsService.getInventoryValuation(branchId);

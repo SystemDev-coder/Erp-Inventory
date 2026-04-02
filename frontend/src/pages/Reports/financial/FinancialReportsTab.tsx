@@ -36,7 +36,8 @@ const accountBalanceColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'account_id', header: 'Account #' },
   { key: 'account_name', header: 'Account' },
   { key: 'institution', header: 'Institution' },
-  { key: 'current_balance', header: 'Current Balance', align: 'right', render: (row) => formatCurrency(row.current_balance) },
+  { key: 'debit_balance', header: 'Debit', align: 'right', render: (row) => formatCurrency(row.debit_balance) },
+  { key: 'credit_balance', header: 'Credit', align: 'right', render: (row) => formatCurrency(row.credit_balance) },
   { key: 'last_transaction_date', header: 'Last Transaction', render: (row) => formatDateTime(row.last_transaction_date) },
 ];
 
@@ -116,6 +117,8 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
   const [optionsError, setOptionsError] = useState('');
   const [accounts, setAccounts] = useState<Array<{ id: number; label: string }>>([]);
 
+  const normalizeAccountLabel = (label: string) => label.replace(/^\s*\d+\s*-\s*(?=\S)/, '').trim();
+
   useEffect(() => {
     let alive = true;
     setOptionsLoading(true);
@@ -129,7 +132,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
           setOptionsError(response.error || response.message || 'Failed to load financial options');
           return;
         }
-        setAccounts(response.data.accounts || []);
+        setAccounts((response.data.accounts || []).map((option) => ({ ...option, label: normalizeAccountLabel(option.label) })));
       })
       .catch((error: unknown) => {
         if (!alive) return;
@@ -221,7 +224,8 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
       const response = await financialReportsService.getAccountBalances({ mode, accountId });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load account balances');
       const rows = toRecordRows(response.data.rows || []);
-      const totalCurrentBalance = rows.reduce((sum, row) => sum + Number(row.current_balance || 0), 0);
+      const totalDebit = rows.reduce((sum, row) => sum + Number(row.debit_balance || 0), 0);
+      const totalCredit = rows.reduce((sum, row) => sum + Number(row.credit_balance || 0), 0);
       onOpenModal({
         title: 'Account Balances',
         subtitle: mode === 'show' ? selectedAccountBalanceLabel || 'Selected Account' : 'All Accounts',
@@ -230,14 +234,19 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
         columns: accountBalanceColumns,
         totals: [
           {
-            label: mode === 'show' ? 'Selected Account Balance' : 'Total Current Balance',
-            value: formatCurrency(totalCurrentBalance),
+            label: mode === 'show' ? 'Selected Account Debit' : 'Total Debit',
+            value: formatCurrency(totalDebit),
+          },
+          {
+            label: mode === 'show' ? 'Selected Account Credit' : 'Total Credit',
+            value: formatCurrency(totalCredit),
           },
         ],
         tableTotals: {
           label: 'Total',
           values: {
-            current_balance: formatCurrency(totalCurrentBalance),
+            debit_balance: formatCurrency(totalDebit),
+            credit_balance: formatCurrency(totalCredit),
           },
         },
         filters: {
@@ -292,7 +301,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
       const rows = toRecordRows(response.data.rows || []);
       const totalDebit = sumNumericField(rows, 'debit');
       const totalCredit = sumNumericField(rows, 'credit');
-      const closingBalance = rows.length > 0 ? Number(rows[rows.length - 1].running_balance || 0) : 0;
+      const closingBalance = mode === 'show' && rows.length > 0 ? Number(rows[rows.length - 1].running_balance || 0) : null;
       onOpenModal({
         title: 'Account Statement',
         subtitle: `${formatDateOnly(statementRange.fromDate)} - ${formatDateOnly(statementRange.toDate)}`,
@@ -304,7 +313,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
           values: {
             debit: formatCurrency(totalDebit),
             credit: formatCurrency(totalCredit),
-            running_balance: formatCurrency(closingBalance),
+            running_balance: closingBalance === null ? '—' : formatCurrency(closingBalance),
           },
         },
         filters: {
@@ -461,6 +470,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
           <select
             value={selectedAccountBalanceId}
             onChange={(event) => setSelectedAccountBalanceId(event.target.value)}
+            disabled={optionsLoading}
             className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2.5 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none"
           >
             <option value="">Select Account</option>
@@ -513,6 +523,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
           <select
             value={selectedAccountStatementId}
             onChange={(event) => setSelectedAccountStatementId(event.target.value)}
+            disabled={optionsLoading}
             className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2.5 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none"
           >
             <option value="">Select Account</option>

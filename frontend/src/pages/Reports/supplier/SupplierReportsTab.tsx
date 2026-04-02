@@ -212,7 +212,10 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
       const rows = toRecordRows(response.data.rows || []);
       const totalDebit = sumByKey(rows, 'debit');
       const totalCredit = sumByKey(rows, 'credit');
-      const closingBalance = rows.length > 0 ? Number(rows[rows.length - 1].running_balance || 0) : 0;
+      const closingBalance =
+        mode === 'all'
+          ? Number(totalCredit - totalDebit)
+          : (rows.length > 0 ? Number(rows[rows.length - 1].running_balance || 0) : 0);
       onOpenModal({
         title: 'Supplier Ledger',
         subtitle: mode === 'show' ? supplierNameById.get(selectedLedgerSupplierId) || 'Selected Supplier' : 'All Suppliers',

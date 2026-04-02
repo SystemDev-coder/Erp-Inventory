@@ -65,6 +65,17 @@ export const listSuppliers = asyncHandler(async (req: AuthRequest, res: Response
   return ApiResponse.success(res, { suppliers });
 });
 
+export const lookupSuppliers = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const querySchema = z.object({
+    search: z.string().trim().optional().default(''),
+    limit: z.coerce.number().int().positive().max(200).optional().default(50),
+  });
+  const input = querySchema.parse(req.query);
+  const suppliers = await suppliersService.lookupSuppliers(scope, input.search, input.limit);
+  return ApiResponse.success(res, { suppliers });
+});
+
 // Get single supplier
 export const getSupplier = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);

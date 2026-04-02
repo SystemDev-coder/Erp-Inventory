@@ -1572,6 +1572,30 @@ export const systemService = {
        for (const b of branches.rows) {
          const bid = Number(b.branch_id);
 
+         // Canonicalize legacy refund rows so ledgers and stored balances agree.
+         // Customer refunds: should reduce receivable => credit.
+         await client.query(
+           `UPDATE ims.customer_ledger
+               SET credit = ABS(COALESCE(debit, 0)) + ABS(COALESCE(credit, 0)),
+                   debit = 0
+             WHERE branch_id = $1
+               AND (COALESCE(entry_type::text, '') = 'refund' OR COALESCE(note, '') ILIKE '%refund%')
+               AND (COALESCE(debit, 0) <> 0 OR COALESCE(credit, 0) <> 0)
+               AND COALESCE(credit, 0) = 0`,
+           [bid]
+         );
+         // Supplier refunds: should reduce payable => debit.
+         await client.query(
+           `UPDATE ims.supplier_ledger
+               SET debit = ABS(COALESCE(debit, 0)) + ABS(COALESCE(credit, 0)),
+                   credit = 0
+             WHERE branch_id = $1
+               AND (COALESCE(entry_type::text, '') = 'refund' OR COALESCE(note, '') ILIKE '%refund%')
+               AND (COALESCE(debit, 0) <> 0 OR COALESCE(credit, 0) <> 0)
+               AND COALESCE(debit, 0) = 0`,
+           [bid]
+         );
+
          // Normalize opening balances to be non-negative (opening balances should never be negative).
          await client.query(
            `UPDATE ims.customers
@@ -2064,32 +2088,56 @@ export const systemService = {
          } else if (customerCols.has('open_balance')) {
            customerSets.push(`open_balance = b.amount`);
          }
-         if (customerSets.length) {
-           const custRes = await client.query(
-             `WITH ledger AS (
-                SELECT customer_id, COALESCE(SUM(COALESCE(debit,0) - COALESCE(credit,0)), 0) AS amount
-                  FROM ims.customer_ledger
-                 WHERE branch_id = $1
-                 GROUP BY customer_id
-              ),
-              balances AS (
-                SELECT
-                  c.customer_id,
-                  GREATEST(COALESCE(l.amount, 0), 0)::numeric(14,2) AS amount
-                FROM ims.customers c
-                LEFT JOIN ledger l ON l.customer_id = c.customer_id
+          if (customerSets.length) {
+            const custRes = await client.query(
+              `WITH ledger AS (
+                 SELECT
+                   l.customer_id,
+                   COALESCE(
+                     SUM(
+                       CASE
+                         -- Normalize refunds to always reduce outstanding, regardless of whether legacy rows used debit or credit.
+                         WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%')
+                           THEN -ABS(COALESCE(l.debit, 0) + COALESCE(l.credit, 0))
+                         ELSE COALESCE(l.debit, 0) - COALESCE(l.credit, 0)
+                       END
+                     ),
+                     0
+                    ) AS amount
+                    FROM ims.customer_ledger l
+                   WHERE l.branch_id = $1
+                     AND NOT (
+                       COALESCE(l.ref_table, '') = 'sales'
+                       AND l.ref_id IS NOT NULL
+                       AND NOT EXISTS (
+                        SELECT 1
+                          FROM ims.sales s
+                         WHERE s.branch_id = $1
+                           AND s.sale_id = l.ref_id
+                           AND LOWER(COALESCE(s.status::text, '')) <> 'void'
+                           AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
+                      )
+                    )
+                  GROUP BY l.customer_id
+               ),
+               balances AS (
+                 SELECT
+                   c.customer_id,
+                   GREATEST(COALESCE(l.amount, 0), 0)::numeric(14,2) AS amount
+                 FROM ims.customers c
+                 LEFT JOIN ledger l ON l.customer_id = c.customer_id
+                 WHERE c.branch_id = $1
+                   AND c.is_active = TRUE
+               )
+               UPDATE ims.customers c
+                  SET ${customerSets.join(', ')}
+                 FROM balances b
                 WHERE c.branch_id = $1
-                  AND c.is_active = TRUE
-              )
-              UPDATE ims.customers c
-                 SET ${customerSets.join(', ')}
-                FROM balances b
-               WHERE c.branch_id = $1
-                 AND c.customer_id = b.customer_id`,
-             [bid]
-           );
-           updated.customers += custRes.rowCount ?? 0;
-         }
+                  AND c.customer_id = b.customer_id`,
+              [bid]
+            );
+            updated.customers += custRes.rowCount ?? 0;
+          }
 
          const supplierSets: string[] = [];
          if (supplierCols.has('remaining_balance')) {
@@ -2097,17 +2145,40 @@ export const systemService = {
          } else if (supplierCols.has('open_balance')) {
            supplierSets.push(`open_balance = b.amount`);
          }
-         if (supplierSets.length) {
-           const suppRes = await client.query(
-             `WITH ledger AS (
-                SELECT supplier_id, COALESCE(SUM(COALESCE(credit,0) - COALESCE(debit,0)), 0) AS amount
-                  FROM ims.supplier_ledger
-                 WHERE branch_id = $1
-                 GROUP BY supplier_id
-              ),
-              balances AS (
-                SELECT
-                  s.supplier_id,
+          if (supplierSets.length) {
+            const suppRes = await client.query(
+              `WITH ledger AS (
+                 SELECT
+                   l.supplier_id,
+                   COALESCE(
+                     SUM(
+                       CASE
+                         -- Normalize refunds to always reduce outstanding, regardless of whether legacy rows used debit or credit.
+                         WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%')
+                           THEN -ABS(COALESCE(l.debit, 0) + COALESCE(l.credit, 0))
+                         ELSE COALESCE(l.credit, 0) - COALESCE(l.debit, 0)
+                       END
+                     ),
+                     0
+                   ) AS amount
+                   FROM ims.supplier_ledger l
+                  WHERE l.branch_id = $1
+                    AND NOT (
+                      COALESCE(l.ref_table, '') = 'purchases'
+                      AND l.ref_id IS NOT NULL
+                      AND NOT EXISTS (
+                        SELECT 1
+                          FROM ims.purchases p
+                         WHERE p.branch_id = $1
+                           AND p.purchase_id = l.ref_id
+                           AND LOWER(COALESCE(p.status::text, '')) <> 'void'
+                      )
+                    )
+                  GROUP BY l.supplier_id
+               ),
+               balances AS (
+                 SELECT
+                   s.supplier_id,
                   GREATEST(COALESCE(l.amount, 0), 0)::numeric(14,2) AS amount
                 FROM ims.suppliers s
                 LEFT JOIN ledger l ON l.supplier_id = s.supplier_id
@@ -2146,5 +2217,92 @@ export const systemService = {
 
     const audit = await this.auditBalances(branchId);
     return { updated, audit };
+  },
+
+  async reconcileCustomerBalances(
+    branchId?: number
+  ): Promise<{ updated: { customers: number } }> {
+    const updated = { customers: 0 };
+
+    await withTransaction(async (client) => {
+      const customerColsRes = await client.query<{ column_name: string }>(
+        `SELECT column_name
+           FROM information_schema.columns
+          WHERE table_schema = 'ims'
+            AND table_name = 'customers'`
+      );
+      const customerCols = new Set(customerColsRes.rows.map((r) => r.column_name));
+
+      const customerSets: string[] = [];
+      if (customerCols.has('remaining_balance')) {
+        customerSets.push(`remaining_balance = b.amount`);
+      } else if (customerCols.has('open_balance')) {
+        customerSets.push(`open_balance = b.amount`);
+      }
+      if (!customerSets.length) return;
+
+      const branches = await client.query<{ branch_id: number }>(
+        branchId
+          ? `SELECT branch_id FROM ims.branches WHERE branch_id = $1`
+          : `SELECT branch_id FROM ims.branches WHERE is_active = TRUE`,
+        branchId ? [branchId] : []
+      );
+
+      for (const b of branches.rows) {
+        const bid = Number(b.branch_id);
+
+        const res = await client.query(
+          `WITH ledger AS (
+             SELECT
+               l.customer_id,
+               COALESCE(
+                 SUM(
+                   CASE
+                     -- Refunds should always reduce outstanding, regardless of legacy sign/column usage.
+                     WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%')
+                       THEN -ABS(COALESCE(l.debit, 0) + COALESCE(l.credit, 0))
+                     ELSE COALESCE(l.debit, 0) - COALESCE(l.credit, 0)
+                   END
+                 ),
+                 0
+               ) AS amount
+              FROM ims.customer_ledger l
+             WHERE l.branch_id = $1
+               AND NOT (
+                 COALESCE(l.ref_table, '') = 'sales'
+                 AND l.ref_id IS NOT NULL
+                 AND NOT EXISTS (
+                   SELECT 1
+                     FROM ims.sales s
+                    WHERE s.branch_id = $1
+                      AND s.sale_id = l.ref_id
+                      AND LOWER(COALESCE(s.status::text, '')) <> 'void'
+                      AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
+                 )
+               )
+             GROUP BY l.customer_id
+           ),
+           balances AS (
+             SELECT
+               c.customer_id,
+               GREATEST(COALESCE(l.amount, 0), 0)::numeric(14,2) AS amount
+             FROM ims.customers c
+             LEFT JOIN ledger l ON l.customer_id = c.customer_id
+             WHERE c.branch_id = $1
+               AND c.is_active = TRUE
+           )
+           UPDATE ims.customers c
+              SET ${customerSets.join(', ')}
+             FROM balances b
+            WHERE c.branch_id = $1
+              AND c.customer_id = b.customer_id`,
+          [bid]
+        );
+
+        updated.customers += res.rowCount ?? 0;
+      }
+    });
+
+    return { updated };
   },
 };

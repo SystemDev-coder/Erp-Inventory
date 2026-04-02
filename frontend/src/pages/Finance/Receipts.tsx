@@ -7,6 +7,7 @@ import { DataTable } from '../../components/ui/table/DataTable';
 import { useToast } from '../../components/ui/toast/Toast';
 import { Modal } from '../../components/ui/modal/Modal';
 import DeleteConfirmModal from '../../components/ui/modal/DeleteConfirmModal';
+import { SearchableCombobox, ComboboxOption } from '../../components/ui/combobox/SearchableCombobox';
 import { accountService, Account } from '../../services/account.service';
 import { customerService, Customer } from '../../services/customer.service';
 import { supplierService, Supplier } from '../../services/supplier.service';
@@ -68,8 +69,6 @@ const StatCard = ({ label, value, icon: Icon, color }: { label: string; value: s
     </div>
 );
 
-const PAYMENT_METHODS = ['Cash', 'Bank Transfer', 'Cheque', 'Mobile Money', 'Credit Card', 'Other'];
-
 const toAmountInput = (value: number | null | undefined) => {
     const n = Number(value ?? 0);
     if (!Number.isFinite(n) || n <= 0) return '';
@@ -96,6 +95,8 @@ const Receipts = () => {
     const [accounts, setAccounts] = useState<Account[]>([]);
     const [customers, setCustomers] = useState<Customer[]>([]);
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+    const [customerLookup, setCustomerLookup] = useState<Customer[]>([]);
+    const [supplierLookup, setSupplierLookup] = useState<Supplier[]>([]);
     const [customerReceipts, setCustomerReceipts] = useState<Receipt[]>([]);
     const [supplierReceipts, setSupplierReceipts] = useState<Receipt[]>([]);
     const [unpaidCustomers, setUnpaidCustomers] = useState<UnpaidCustomer[]>([]);
@@ -119,6 +120,40 @@ const Receipts = () => {
     const [customerBalanceLoading, setCustomerBalanceLoading] = useState(false);
     const [supplierCombinedBalance, setSupplierCombinedBalance] = useState<number | null>(null);
     const [supplierBalanceLoading, setSupplierBalanceLoading] = useState(false);
+
+    const customerOptions: ComboboxOption<number>[] = useMemo(
+        () =>
+            (customerLookup.length ? customerLookup : customers).map((c) => ({
+                value: Number(c.customer_id),
+                label: `${c.full_name}${c.phone ? ` · ${c.phone}` : ''}`,
+            })),
+        [customerLookup, customers]
+    );
+
+    const supplierOptions: ComboboxOption<number>[] = useMemo(
+        () =>
+            (supplierLookup.length ? supplierLookup : suppliers).map((s) => ({
+                value: Number(s.supplier_id),
+                label: String(s.supplier_name || ''),
+            })),
+        [supplierLookup, suppliers]
+    );
+
+    const lookupCustomers = async (query: string) => {
+        const q = String(query || '').trim();
+        const res = await customerService.lookup({ search: q, limit: 50 });
+        if (res.success && res.data?.customers) {
+            setCustomerLookup(res.data.customers);
+        }
+    };
+
+    const lookupSuppliers = async (query: string) => {
+        const q = String(query || '').trim();
+        const res = await supplierService.lookup({ search: q, limit: 50 });
+        if (res.success && res.data?.suppliers) {
+            setSupplierLookup(res.data.suppliers);
+        }
+    };
 
     // ─── Data Loading ──────────────────────────────────────────────────────────
     const loadCustomerData = async () => {
@@ -311,7 +346,7 @@ const Receipts = () => {
                 acc_id: row.acc_id,
                 customer_id: row.customer_id ?? undefined,
                 amount: toAmountInput(Number(row.amount)),
-                payment_method: row.payment_method ?? '',
+                payment_method: 'Cash',
                 reference_no: row.reference_no ?? '',
                 note: row.note ?? '',
             });
@@ -331,9 +366,10 @@ const Receipts = () => {
             }
         } else {
             setEditingReceiptId(null);
-            setReceiptForm({});
+            setReceiptForm({ payment_method: 'Cash' });
             setCustomerCombinedBalance(null);
         }
+        void lookupCustomers('');
         setIsCustModalOpen(true);
     };
 
@@ -391,7 +427,7 @@ const Receipts = () => {
                 acc_id: row.acc_id,
                 supplier_id: row.supplier_id ?? undefined,
                 amount: toAmountInput(Number(row.amount)),
-                payment_method: row.payment_method ?? '',
+                payment_method: 'Cash',
                 reference_no: row.reference_no ?? '',
                 note: row.note ?? '',
             });
@@ -402,14 +438,16 @@ const Receipts = () => {
             }
         } else {
             setEditingReceiptId(null);
-            setReceiptForm({});
+            setReceiptForm({ payment_method: 'Cash' });
             setSupplierCombinedBalance(null);
         }
+        void lookupSuppliers('');
         setIsSupModalOpen(true);
     };
 
     const submitCustReceipt = async () => {
         const amount = parseAmountInput(receiptForm.amount);
+        if (!receiptForm.customer_id) return showToast('error', 'Receipts', 'Customer is required');
         if (!receiptForm.acc_id || amount <= 0) return showToast('error', 'Receipts', 'Account and amount are required');
         setSubmitting(true);
         try {
@@ -418,7 +456,7 @@ const Receipts = () => {
                     acc_id: receiptForm.acc_id,
                     customer_id: receiptForm.customer_id,
                     amount,
-                    payment_method: receiptForm.payment_method,
+                    payment_method: 'Cash',
                     reference_no: receiptForm.reference_no,
                     note: receiptForm.note,
                 })
@@ -426,7 +464,7 @@ const Receipts = () => {
                     acc_id: receiptForm.acc_id,
                     customer_id: receiptForm.customer_id,
                     amount,
-                    payment_method: receiptForm.payment_method,
+                    payment_method: 'Cash',
                     reference_no: receiptForm.reference_no,
                     note: receiptForm.note,
                 });
@@ -469,7 +507,7 @@ const Receipts = () => {
                     supplier_id: receiptForm.supplier_id,
                     purchase_id: receiptForm.purchase_id,
                     amount,
-                    payment_method: receiptForm.payment_method,
+                    payment_method: 'Cash',
                     reference_no: receiptForm.reference_no,
                     note: receiptForm.note,
                 })
@@ -478,7 +516,7 @@ const Receipts = () => {
                     supplier_id: receiptForm.supplier_id,
                     purchase_id: receiptForm.purchase_id,
                     amount,
-                    payment_method: receiptForm.payment_method,
+                    payment_method: 'Cash',
                     reference_no: receiptForm.reference_no,
                     note: receiptForm.note,
                 });
@@ -816,19 +854,14 @@ const Receipts = () => {
                 <div className="space-y-4">
                     {/* Customer selector */}
                     <label className="block text-sm">
-                        <span className="mb-1 block font-medium text-slate-700">Customer</span>
-                        <select
-                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        <span className="mb-1 block font-medium text-slate-700">Customer <span className="text-red-500">*</span></span>
+                        <SearchableCombobox<number>
                             value={receiptForm.customer_id ?? ''}
-                            onChange={(e) => void handleCustomerChange(e.target.value ? Number(e.target.value) : undefined)}
-                        >
-                            <option value="">— Select Customer (optional) —</option>
-                            {customers.map(c => (
-                                <option key={c.customer_id} value={c.customer_id}>
-                                    {c.full_name}{c.phone ? ` · ${c.phone}` : ''}
-                                </option>
-                            ))}
-                        </select>
+                            options={customerOptions}
+                            placeholder="Search and select customer..."
+                            onSearch={lookupCustomers}
+                            onChange={(value) => void handleCustomerChange(value === '' ? undefined : Number(value))}
+                        />
                         {receiptForm.customer_id ? (
                             <div className="mt-1.5 rounded-md bg-white px-2 py-1.5 text-sm font-bold text-slate-900 ring-1 ring-slate-200">
                                 Customer Balance:{' '}
@@ -871,24 +904,11 @@ const Receipts = () => {
                         <input
                             type="text"
                             inputMode="decimal"
-                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-right focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-left focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                             placeholder="0.00"
                             value={receiptForm.amount ?? ''}
                             onChange={(e) => setReceiptForm(f => ({ ...f, amount: e.target.value }))}
                         />
-                    </label>
-
-                    {/* Payment method */}
-                    <label className="block text-sm">
-                        <span className="mb-1 block font-medium text-slate-700">Payment Method</span>
-                        <select
-                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                            value={receiptForm.payment_method ?? ''}
-                            onChange={(e) => setReceiptForm(f => ({ ...f, payment_method: e.target.value }))}
-                        >
-                            <option value="">— Select Method —</option>
-                            {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
-                        </select>
                     </label>
 
                     {/* Reference + Note */}
@@ -940,18 +960,13 @@ const Receipts = () => {
                     {/* Supplier selector */}
                     <label className="block text-sm">
                         <span className="mb-1 block font-medium text-slate-700">Supplier <span className="text-red-500">*</span></span>
-                        <select
-                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        <SearchableCombobox<number>
                             value={receiptForm.supplier_id ?? ''}
-                            onChange={(e) => void handleSupplierChange(e.target.value ? Number(e.target.value) : undefined)}
-                        >
-                            <option value="">— Select Supplier —</option>
-                            {suppliers.map(s => (
-                                <option key={s.supplier_id} value={s.supplier_id}>
-                                    {s.supplier_name}
-                                </option>
-                            ))}
-                        </select>
+                            options={supplierOptions}
+                            placeholder="Search and select supplier..."
+                            onSearch={lookupSuppliers}
+                            onChange={(value) => void handleSupplierChange(value === '' ? undefined : Number(value))}
+                        />
                         {receiptForm.supplier_id ? (
                             <div className="mt-1.5 rounded-md bg-white px-2 py-1.5 text-sm font-bold text-slate-900 ring-1 ring-slate-200">
                                 Supplier Balance:{' '}
@@ -1024,24 +1039,11 @@ const Receipts = () => {
                         <input
                             type="text"
                             inputMode="decimal"
-                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-right focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-left focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                             placeholder="0.00"
                             value={receiptForm.amount ?? ''}
                             onChange={(e) => setReceiptForm(f => ({ ...f, amount: e.target.value }))}
                         />
-                    </label>
-
-                    {/* Payment method */}
-                    <label className="block text-sm">
-                        <span className="mb-1 block font-medium text-slate-700">Payment Method</span>
-                        <select
-                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            value={receiptForm.payment_method ?? ''}
-                            onChange={(e) => setReceiptForm(f => ({ ...f, payment_method: e.target.value }))}
-                        >
-                            <option value="">— Select Method —</option>
-                            {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
-                        </select>
                     </label>
 
                     {/* Reference + Note */}

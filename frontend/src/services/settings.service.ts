@@ -162,6 +162,13 @@ export interface SettingsAssetOverview {
   fixed_assets_total: number;
 }
 
+export interface OpeningBalanceCleanupInfo {
+  branchId: number;
+  openingBalanceEquity: { acc_id: number; name: string; balance: number };
+  retainedEarnings: { acc_id: number; name: string; balance: number };
+  ownerCapital: { acc_id: number; name: string; balance: number };
+}
+
 export const settingsService = {
   async getCompany(): Promise<ApiResponse<{ company: CompanyInfo }>> {
     return apiClient.get('/api/settings/company');
@@ -408,5 +415,21 @@ export const settingsService = {
 
   async prepareAssetAccounts(input?: { branchId?: number }): Promise<ApiResponse<{ created: number }>> {
     return apiClient.post('/api/settings/assets/prepare', input || {});
+  },
+
+  async getOpeningBalanceCleanupInfo(input?: { branchId?: number }): Promise<ApiResponse<{ info: OpeningBalanceCleanupInfo }>> {
+    const params = new URLSearchParams();
+    if (input?.branchId) params.set('branchId', String(input.branchId));
+    const qs = params.toString();
+    return apiClient.get(`/api/settings/account-cleanup/opening-balance-equity${qs ? `?${qs}` : ''}`);
+  },
+
+  async transferOpeningBalanceEquityCleanup(input: {
+    target: 'retained' | 'capital';
+    date?: string;
+    note?: string;
+    branchId?: number;
+  }): Promise<ApiResponse<{ result: { posted: boolean; amount: number; reclassId?: number; info?: OpeningBalanceCleanupInfo; message?: string } }>> {
+    return apiClient.post('/api/settings/account-cleanup/opening-balance-equity/transfer', input);
   },
 };

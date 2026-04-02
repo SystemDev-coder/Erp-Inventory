@@ -263,7 +263,7 @@ export const purchaseReportsService = {
       supplierFilters.push(`s.supplier_id = $${params.length}`);
     }
 
-    return queryMany<SupplierLedgerRow>(
+       return queryMany<SupplierLedgerRow>(
       `WITH ledger_rows AS (
          SELECT
            l.sup_ledger_id::bigint AS sup_ledger_id,
@@ -273,8 +273,20 @@ export const purchaseReportsService = {
            COALESCE(l.entry_type::text, 'purchase') AS entry_type,
            COALESCE(l.ref_table, '') AS ref_table,
            l.ref_id,
-           COALESCE(l.debit, 0)::double precision AS debit,
-           COALESCE(l.credit, 0)::double precision AS credit,
+           (
+             CASE
+               WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%')
+                 THEN ABS(COALESCE(l.debit, 0)) + ABS(COALESCE(l.credit, 0))
+               ELSE COALESCE(l.debit, 0)
+             END
+           )::double precision AS debit,
+           (
+             CASE
+               WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%')
+                 THEN 0
+               ELSE COALESCE(l.credit, 0)
+             END
+           )::double precision AS credit,
            COALESCE(l.note, '') AS note
          FROM ims.supplier_ledger l
          LEFT JOIN ims.suppliers s ON s.supplier_id = l.supplier_id
@@ -297,6 +309,14 @@ export const purchaseReportsService = {
            'Opening payable balance'::text AS note
          FROM ims.suppliers s
         WHERE ${supplierFilters.join(' AND ')}
+          -- Only inject an opening row when there are no supplier ledger rows.
+          -- If ledger rows exist, remaining_balance already reflects the live outstanding and would double-count.
+          AND NOT EXISTS (
+            SELECT 1
+              FROM ims.supplier_ledger l
+             WHERE l.branch_id = $1
+               AND l.supplier_id = s.supplier_id
+          )
           AND GREATEST(
                 COALESCE(NULLIF(to_jsonb(s) ->> 'remaining_balance', '')::double precision, 0),
                 COALESCE(NULLIF(to_jsonb(s) ->> 'open_balance', '')::double precision, 0)

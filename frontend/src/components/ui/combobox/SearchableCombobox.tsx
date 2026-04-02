@@ -42,19 +42,25 @@ export function SearchableCombobox<TValue extends string | number>({
   const [query, setQuery] = useState('');
   const blurTimeoutRef = useRef<number | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const onSearchRef = useRef<Props<TValue>['onSearch']>(onSearch);
   const [menuRect, setMenuRect] = useState<{ left: number; top: number; width: number } | null>(
     null
   );
+
+  useEffect(() => {
+    onSearchRef.current = onSearch;
+  }, [onSearch]);
 
   useEffect(() => {
     setQuery(selected?.label || '');
   }, [selected?.label]);
 
   useEffect(() => {
-    if (!onSearch) return;
-    const handle = window.setTimeout(() => onSearch(query), 250);
+    const fn = onSearchRef.current;
+    if (!fn) return;
+    const handle = window.setTimeout(() => fn(query), 250);
     return () => window.clearTimeout(handle);
-  }, [query, onSearch]);
+  }, [query]);
 
   useEffect(() => {
     if (!open) return;
@@ -153,8 +159,15 @@ export function SearchableCombobox<TValue extends string | number>({
         createPortal(
           <div
             onMouseDown={(e) => e.preventDefault()}
-            style={{ position: 'fixed', left: menuRect.left, top: menuRect.top, width: menuRect.width }}
-            className="z-[1000] max-h-72 overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-800 dark:bg-slate-900"
+            // Must be above `Modal` which uses a very high z-index in this project.
+            style={{
+              position: 'fixed',
+              left: menuRect.left,
+              top: menuRect.top,
+              width: menuRect.width,
+              zIndex: 2147483500,
+            }}
+            className="max-h-72 overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-800 dark:bg-slate-900"
           >
             {filtered.length === 0 ? (
               <div className="px-3 py-2 text-sm text-slate-500">No results</div>
