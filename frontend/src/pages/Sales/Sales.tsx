@@ -1,14 +1,15 @@
 ﻿import { useCallback, useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
-import { Ban, Edit3, FileCheck2, FileText, Printer, ReceiptText, Trash2 } from 'lucide-react';
+import { Ban, Edit3, Eye, FileCheck2, FileText, Printer, ReceiptText, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { PageHeader, TabActionToolbar } from '../../components/ui/layout';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
+import { Modal } from '../../components/ui/modal/Modal';
 import { DataTable } from '../../components/ui/table/DataTable';
 import Badge from '../../components/ui/badge/Badge';
 import { Tabs } from '../../components/ui/tabs/Tabs';
 import { useToast } from '../../components/ui/toast/Toast';
-import { Sale, salesService } from '../../services/sales.service';
+import { Sale, SaleItem, salesService } from '../../services/sales.service';
 import { defaultDateRange } from '../../utils/dateRange';
 
 const formatMoney = (value: number) => `$${Number(value || 0).toFixed(2)}`;
@@ -33,6 +34,10 @@ const Sales = () => {
   const [saleToConvert, setSaleToConvert] = useState<Sale | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [saleToDelete, setSaleToDelete] = useState<Sale | null>(null);
+  const [viewOpen, setViewOpen] = useState(false);
+  const [viewLoading, setViewLoading] = useState(false);
+  const [viewSale, setViewSale] = useState<Sale | null>(null);
+  const [viewItems, setViewItems] = useState<SaleItem[]>([]);
 
   const loadSales = useCallback(async () => {
     setLoading(true);
@@ -154,6 +159,24 @@ const Sales = () => {
     setDeleteOpen(true);
   }, []);
 
+  const handleView = useCallback(
+    async (sale: Sale) => {
+      setViewLoading(true);
+      setViewOpen(true);
+      const res = await salesService.get(sale.sale_id);
+      if (!res.success || !res.data?.sale) {
+        showToast('error', 'Sales', res.error || 'Failed to load document details');
+        setViewOpen(false);
+        setViewLoading(false);
+        return;
+      }
+      setViewSale(res.data.sale);
+      setViewItems(res.data.items || []);
+      setViewLoading(false);
+    },
+    [showToast]
+  );
+
   const columns: ColumnDef<Sale>[] = useMemo(
     () => [
       {
@@ -216,6 +239,16 @@ const Sales = () => {
           const sale = row.original;
           return (
             <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => void handleView(sale)}
+                className="inline-flex items-center gap-1 rounded-lg border border-blue-200 px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-900/30"
+                title="View"
+              >
+                <Eye className="h-3.5 w-3.5" />
+                View
+              </button>
+
               <button
                 type="button"
                 onClick={() => void printSaleInvoice(sale)}
@@ -287,7 +320,7 @@ const Sales = () => {
         },
       },
     ],
-    [handleConvertQuotation, handleDelete, navigate, printSaleInvoice]
+    [handleConvertQuotation, handleDelete, handleView, navigate, printSaleInvoice]
   );
 
   const salesDocs = useMemo(() => {
@@ -454,6 +487,117 @@ const Sales = () => {
         variant="danger"
         isLoading={loading}
       />
+
+      <Modal
+        isOpen={viewOpen}
+        onClose={() => {
+          setViewOpen(false);
+          setViewSale(null);
+          setViewItems([]);
+          setViewLoading(false);
+        }}
+        title={viewSale ? `${(viewSale.doc_type || 'sale').toUpperCase()} Details` : 'Document Details'}
+        size="xl"
+      >
+        {viewLoading ? (
+          <div className="py-10 text-center text-sm text-slate-500">Loading document details...</div>
+        ) : !viewSale ? (
+          <div className="py-10 text-center text-sm text-slate-500">No details to display.</div>
+        ) : (
+          <div className="space-y-4 text-sm">
+            <div className="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <p className="text-xs text-slate-500">Document #</p>
+                <p className="font-semibold text-slate-900">{getDocRef(viewSale)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Type</p>
+                <p className="font-semibold text-slate-900 capitalize">{viewSale.doc_type || 'sale'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Date & Time</p>
+                <p className="font-semibold text-slate-900">{new Date(viewSale.sale_date).toLocaleString()}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Customer</p>
+                <p className="font-semibold text-slate-900">{viewSale.customer_name || 'Walking Customer'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Status</p>
+                <p className="font-semibold text-slate-900 capitalize">{viewSale.status}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Payment Type</p>
+                <p className="font-semibold text-slate-900 capitalize">{viewSale.sale_type || 'cash'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Paid Amount</p>
+                <p className="font-semibold text-slate-900">{formatMoney(Number(viewSale.paid_amount || 0))}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Balance</p>
+                <p className="font-semibold text-slate-900">
+                  {formatMoney(
+                    Number((viewSale as any).outstanding_amount ?? Math.max(Number(viewSale.total || 0) - Number(viewSale.paid_amount || 0), 0))
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-100 text-left text-slate-600">
+                  <tr>
+                    <th className="px-3 py-2">Item</th>
+                    <th className="px-3 py-2 text-right">Qty</th>
+                    <th className="px-3 py-2 text-right">Unit Price</th>
+                    <th className="px-3 py-2 text-right">Line Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {viewItems.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
+                        No items found.
+                      </td>
+                    </tr>
+                  ) : (
+                    viewItems.map((item, index) => (
+                      <tr key={`${item.sale_item_id || item.item_id || index}`} className="border-t border-slate-200">
+                        <td className="px-3 py-2 text-slate-900">{item.item_name || `Item #${item.item_id}`}</td>
+                        <td className="px-3 py-2 text-right text-slate-900">{Number(item.quantity || 0)}</td>
+                        <td className="px-3 py-2 text-right text-slate-900">{formatMoney(Number(item.unit_price || 0))}</td>
+                        <td className="px-3 py-2 text-right font-medium text-slate-900">
+                          {formatMoney(Number(item.line_total ?? Number(item.quantity || 0) * Number(item.unit_price || 0)))}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="ml-auto grid w-full max-w-xs gap-2 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-600">Subtotal</span>
+                <span className="font-semibold text-slate-900">{formatMoney(Number(viewSale.subtotal || 0))}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-600">Discount</span>
+                <span className="font-semibold text-slate-900">{formatMoney(Number(viewSale.discount || 0))}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-600">Tax</span>
+                <span className="font-semibold text-slate-900">{formatMoney(Number(viewSale.tax_amount || 0))}</span>
+              </div>
+              <div className="flex items-center justify-between border-t border-slate-300 pt-2">
+                <span className="text-slate-700">Total</span>
+                <span className="font-bold text-slate-900">{formatMoney(Number(viewSale.total || 0))}</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 };

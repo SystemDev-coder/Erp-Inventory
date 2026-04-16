@@ -9,7 +9,7 @@ import { Modal } from '../../components/ui/modal/Modal';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import Badge from '../../components/ui/badge/Badge';
 import { useToast } from '../../components/ui/toast/Toast';
-import { purchaseService, Purchase, PurchaseItemView } from '../../services/purchase.service';
+import { PurchaseItem, purchaseService, Purchase, PurchaseItemView } from '../../services/purchase.service';
 import { supplierService, Supplier } from '../../services/supplier.service';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
 import { defaultDateRange } from '../../utils/dateRange';
@@ -44,6 +44,10 @@ const Purchases = () => {
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [purchaseToDelete, setPurchaseToDelete] = useState<Purchase | null>(null);
+  const [viewOpen, setViewOpen] = useState(false);
+  const [viewLoading, setViewLoading] = useState(false);
+  const [viewPurchase, setViewPurchase] = useState<Purchase | null>(null);
+  const [viewItems, setViewItems] = useState<PurchaseItem[]>([]);
   const [supplierDeleteOpen, setSupplierDeleteOpen] = useState(false);
   const [supplierToDelete, setSupplierToDelete] = useState<Supplier | null>(null);
   const [supplierModalOpen, setSupplierModalOpen] = useState(false);
@@ -154,6 +158,26 @@ const Purchases = () => {
   const onDelete = (row: Purchase) => {
     setPurchaseToDelete(row);
     setDeleteOpen(true);
+  };
+
+  const onView = async (row: Purchase) => {
+    setViewOpen(true);
+    setViewLoading(true);
+    const res = await purchaseService.get(row.purchase_id);
+    if (!res.success || !res.data?.purchase) {
+      showToast('error', 'Purchase', res.error || 'Failed to load purchase details');
+      setViewOpen(false);
+      setViewLoading(false);
+      return;
+    }
+
+    const paidFromSummary = Number(res.data.paymentSummary?.total_paid ?? 0);
+    const paidFallback = Number(res.data.purchase.paid_amount ?? 0);
+    const paidAmount = paidFromSummary > 0.005 ? paidFromSummary : paidFallback;
+
+    setViewPurchase({ ...res.data.purchase, paid_amount: paidAmount });
+    setViewItems(res.data.items || []);
+    setViewLoading(false);
   };
 
   const downloadPurchasesXlsx = async () => {
@@ -471,6 +495,7 @@ const Purchases = () => {
             columns={columns}
             isLoading={loading}
             searchPlaceholder="Find by supplier or note..."
+            onView={onView}
             onEdit={onEdit}
             onDelete={onDelete}
           />
@@ -522,45 +547,125 @@ const Purchases = () => {
       <ConfirmDialog
         isOpen={supplierDeleteOpen}
         onClose={() => { setSupplierDeleteOpen(false); setSupplierToDelete(null); }}
-        onConfirm={() => {
-          if (supplierToDelete && Number(supplierToDelete.remaining_balance || 0) > 0) {
-            // Just acknowledge the warning; do NOT delete
-            return;
-          }
-          confirmDeleteSupplier();
-        }}
-        title={
-          supplierToDelete && Number(supplierToDelete.remaining_balance || 0) > 0
-            ? 'Supplier Has Remaining Balance'
-            : 'Delete Supplier?'
-        }
+        onConfirm={confirmDeleteSupplier}
+        title="Delete Supplier?"
         message={
           supplierToDelete
-            ? Number(supplierToDelete.remaining_balance || 0) > 0
-              ? `N.B: This supplier "${supplierToDelete.supplier_name}" has remaining balance of $${Number(
-                  supplierToDelete.remaining_balance || 0
-                ).toFixed(
-                  2
-                )}. If you need to remove this supplier, first settle their balance (pay all remaining money), then you can delete them.`
-              : `Deleting supplier "${supplierToDelete.supplier_name}" will remove their record. This cannot be undone.`
+            ? `Deleting supplier "${supplierToDelete.supplier_name}" will remove their record. If this supplier has transactions, deletion will be blocked automatically.`
             : 'Are you sure you want to delete this supplier?'
         }
-        confirmText={
-          supplierToDelete && Number(supplierToDelete.remaining_balance || 0) > 0
-            ? 'OK'
-            : 'Delete'
-        }
+        confirmText="Delete"
         cancelText="Cancel"
-        hideCancel={
-          !!(supplierToDelete && Number(supplierToDelete.remaining_balance || 0) > 0)
-        }
-        variant={
-          supplierToDelete && Number(supplierToDelete.remaining_balance || 0) > 0
-            ? 'warning'
-            : 'danger'
-        }
+        variant="danger"
         isLoading={loading}
       />
+
+      <Modal
+        isOpen={viewOpen}
+        onClose={() => {
+          setViewOpen(false);
+          setViewLoading(false);
+          setViewPurchase(null);
+          setViewItems([]);
+        }}
+        title={viewPurchase ? `Purchase Details (PO-${viewPurchase.purchase_id})` : 'Purchase Details'}
+        size="xl"
+      >
+        {viewLoading ? (
+          <div className="py-10 text-center text-sm text-slate-500">Loading purchase details...</div>
+        ) : !viewPurchase ? (
+          <div className="py-10 text-center text-sm text-slate-500">No details to display.</div>
+        ) : (
+          <div className="space-y-4 text-sm">
+            <div className="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <p className="text-xs text-slate-500">PO #</p>
+                <p className="font-semibold text-slate-900">{`PO-${viewPurchase.purchase_id}`}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Date & Time</p>
+                <p className="font-semibold text-slate-900">{new Date(viewPurchase.purchase_date).toLocaleString()}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Supplier</p>
+                <p className="font-semibold text-slate-900">{viewPurchase.supplier_name || 'Walk-in'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Type</p>
+                <p className="font-semibold text-slate-900 capitalize">{viewPurchase.purchase_type}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Status</p>
+                <p className="font-semibold text-slate-900 capitalize">{viewPurchase.status}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Paid</p>
+                <p className="font-semibold text-slate-900">${Number(viewPurchase.paid_amount || 0).toFixed(2)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Balance</p>
+                <p className="font-semibold text-slate-900">
+                  ${Math.max(Number(viewPurchase.total || 0) - Number(viewPurchase.paid_amount || 0), 0).toFixed(2)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Note</p>
+                <p className="font-semibold text-slate-900">{viewPurchase.note || '-'}</p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-100 text-left text-slate-600">
+                  <tr>
+                    <th className="px-3 py-2">Item</th>
+                    <th className="px-3 py-2 text-right">Qty</th>
+                    <th className="px-3 py-2 text-right">Unit Cost</th>
+                    <th className="px-3 py-2 text-right">Discount</th>
+                    <th className="px-3 py-2 text-right">Line Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {viewItems.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                        No items found.
+                      </td>
+                    </tr>
+                  ) : (
+                    viewItems.map((item, index) => (
+                      <tr key={`${item.purchase_item_id || item.product_id || index}`} className="border-t border-slate-200">
+                        <td className="px-3 py-2 text-slate-900">{item.product_name || `Item #${item.product_id || '-'}`}</td>
+                        <td className="px-3 py-2 text-right text-slate-900">{Number(item.quantity || 0)}</td>
+                        <td className="px-3 py-2 text-right text-slate-900">${Number(item.unit_cost || 0).toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right text-slate-900">${Number(item.discount || 0).toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right font-medium text-slate-900">
+                          ${Number(item.line_total ?? Number(item.quantity || 0) * Number(item.unit_cost || 0) - Number(item.discount || 0)).toFixed(2)}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="ml-auto grid w-full max-w-xs gap-2 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-600">Subtotal</span>
+                <span className="font-semibold text-slate-900">${Number(viewPurchase.subtotal || 0).toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-600">Discount</span>
+                <span className="font-semibold text-slate-900">${Number(viewPurchase.discount || 0).toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between border-t border-slate-300 pt-2">
+                <span className="text-slate-700">Total</span>
+                <span className="font-bold text-slate-900">${Number(viewPurchase.total || 0).toFixed(2)}</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <Modal
         isOpen={supplierModalOpen}

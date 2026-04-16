@@ -124,6 +124,10 @@ export interface AccountStatementRow {
   txn_type: string;
   ref_table: string;
   ref_id: number | null;
+  txn_number?: string;
+  party_name?: string;
+  memo?: string;
+  split_account?: string;
   debit: number;
   credit: number;
   running_balance: number;
@@ -298,6 +302,89 @@ const moneyAbs = (value: unknown) => Math.abs(Number(value || 0));
 const moneyPos = (value: unknown) => Math.max(Number(value || 0), 0);
 const isApproxZero = (value: unknown, epsilon = 0.000001) => Math.abs(Number(value || 0)) <= epsilon;
 
+const isInventoryAssetAccountName = (name: string) => {
+  const n = normalizeAccountName(name);
+  if (!n.includes('inventory')) return false;
+  // Avoid misclassifying expense-style inventory accounts (e.g. "Inventory Loss") as stock assets.
+  if (n.includes('loss') || n.includes('shrink') || n.includes('damage') || n.includes('write')) return false;
+  return true;
+};
+
+const isInventoryLossAccountName = (name: string) => {
+  const n = normalizeAccountName(name);
+  if (!n.includes('inventory')) return false;
+  return n.includes('loss') || n.includes('shrink') || n.includes('damage') || n.includes('write');
+};
+
+const queryInventoryOnHandValue = async (branchId: number): Promise<number> =>
+  queryAmount(
+    `WITH legacy_adjustments AS (
+       SELECT
+         i.branch_id,
+         a.item_id,
+         COALESCE(SUM(
+           CASE
+             WHEN UPPER(COALESCE(a.adjustment_type, 'INCREASE')) = 'DECREASE' THEN -COALESCE(a.quantity, 0)
+             ELSE COALESCE(a.quantity, 0)
+           END
+         ), 0)::numeric(14,3) AS qty_delta
+       FROM ims.stock_adjustment a
+       JOIN ims.items i ON i.item_id = a.item_id
+       WHERE i.is_active = TRUE
+         AND COALESCE(a.is_deleted, 0)::int = 0
+         AND UPPER(COALESCE(a.status, 'POSTED')) = 'POSTED'
+         AND NOT EXISTS (
+           SELECT 1
+             FROM ims.inventory_movements m
+            WHERE m.branch_id = i.branch_id
+              AND m.ref_table = 'stock_adjustment'
+              AND m.ref_id = a.adjustment_id
+         )
+       GROUP BY i.branch_id, a.item_id
+    ),
+    item_stock AS (
+       SELECT
+         i.item_id,
+         (
+           COALESCE(i.opening_balance, 0)
+           + COALESCE(SUM(COALESCE(m.qty_in, 0) - COALESCE(m.qty_out, 0)), 0)
+           + COALESCE(la.qty_delta, 0)
+         )::numeric(14,3) AS total_qty,
+         COALESCE(i.cost_price, 0)::numeric(14,2) AS cost_price
+       FROM ims.items i
+       LEFT JOIN ims.inventory_movements m
+         ON m.branch_id = i.branch_id
+        AND m.item_id = i.item_id
+        AND COALESCE(LOWER(to_jsonb(m) ->> 'is_deleted'), '0') NOT IN ('1', 'true', 't', 'yes')
+       LEFT JOIN legacy_adjustments la
+         ON la.branch_id = i.branch_id
+        AND la.item_id = i.item_id
+      WHERE i.branch_id = $1
+        AND i.is_active = TRUE
+      GROUP BY i.item_id, i.branch_id, i.opening_balance, i.cost_price, la.qty_delta
+     )
+     SELECT COALESCE(SUM(item_stock.total_qty * item_stock.cost_price), 0)::double precision AS amount
+       FROM item_stock`,
+    [branchId]
+  );
+
+const queryInventoryAssetAccountIds = async (branchId: number): Promise<number[]> => {
+  const rows = await queryMany<{ acc_id: number; name: string; account_type: string }>(
+    `SELECT
+        acc_id,
+        COALESCE(NULLIF(BTRIM(name), ''), '') AS name,
+        COALESCE(account_type::text, 'asset') AS account_type
+     FROM ims.accounts
+     WHERE branch_id = $1
+       AND is_active = TRUE`,
+    [branchId]
+  );
+
+  return rows
+    .filter((row) => normalizeAccountName(row.account_type) === 'asset' && isInventoryAssetAccountName(row.name))
+    .map((row) => Number(row.acc_id));
+};
+
 const addDaysIsoDate = (isoDate: string, days: number) => {
   const d = new Date(`${String(isoDate)}T00:00:00.000Z`);
   if (Number.isNaN(d.getTime())) return String(isoDate);
@@ -350,6 +437,11 @@ const isReceivableAccount = (name: string) => {
 const isPayableAccount = (name: string) => {
   const n = normalizeAccountName(name);
   return n.includes('payable') || n.includes('creditor') || n.includes('tax payable') || n.includes('unearned');
+};
+
+const isAccountsPayableAccount = (name: string) => {
+  const n = normalizeAccountName(name);
+  return n.includes('accounts payable') || n.includes('account payable');
 };
 
 const isAccumulatedDepreciationAccount = (name: string) => {
@@ -425,6 +517,7 @@ const classifyForBalanceSheet = (accountType: string, accountName: string): Bala
   if (isSuppliesAccount(accountName) && !name.includes('expense')) return 'asset';
 
   // P&L accounts should roll into Net Income, not appear on the balance sheet detail.
+  if (isInventoryLossAccountName(accountName)) return 'expense';
   if (name.includes('revenue') || name.includes('income') || (name.includes('sales') && !name.includes('tax'))) return 'revenue';
   if (
     name.includes('expense')
@@ -549,6 +642,7 @@ const normalizedAccountTransactionsCte = `
          WHERE at.branch_id = ec.branch_id
            AND at.ref_table = 'expense_charges'
            AND at.ref_id = ec.charge_id
+           AND COALESCE(at.is_deleted, 0) = 0
       )
   ),
   synthetic_payroll_charge AS (
@@ -578,6 +672,7 @@ const normalizedAccountTransactionsCte = `
          WHERE at.branch_id = pl.branch_id
            AND at.ref_table = 'payroll_lines'
            AND at.ref_id = pl.payroll_line_id
+           AND COALESCE(at.is_deleted, 0) = 0
       )
   ),
   synthetic_expense AS (
@@ -603,6 +698,7 @@ const normalizedAccountTransactionsCte = `
            AND at.txn_type = 'expense_payment'
            AND at.ref_table = 'expense_payments'
            AND at.ref_id = ep.exp_payment_id
+           AND COALESCE(at.is_deleted, 0) = 0
       )
   ),
   synthetic_payroll AS (
@@ -626,6 +722,7 @@ const normalizedAccountTransactionsCte = `
            AND at.txn_type = 'payroll_payment'
            AND at.ref_table = 'employee_payments'
            AND at.ref_id = emp.emp_payment_id
+           AND COALESCE(at.is_deleted, 0) = 0
       )
   ),
   synthetic_sale_payment_debit AS (
@@ -656,6 +753,7 @@ const normalizedAccountTransactionsCte = `
        WHERE at.branch_id = sp.branch_id
             AND at.ref_table = 'sales'
             AND at.ref_id = sp.sale_id
+            AND COALESCE(at.is_deleted, 0) = 0
             AND COALESCE(
               NULLIF(to_jsonb(at) ->> 'acc_id', '')::bigint,
               NULLIF(to_jsonb(at) ->> 'account_id', '')::bigint
@@ -695,6 +793,7 @@ const normalizedAccountTransactionsCte = `
          WHERE at.branch_id = sp.branch_id
             AND at.ref_table = 'sales'
             AND at.ref_id = sp.sale_id
+            AND COALESCE(at.is_deleted, 0) = 0
             AND COALESCE(
               NULLIF(to_jsonb(at) ->> 'acc_id', '')::bigint,
               NULLIF(to_jsonb(at) ->> 'account_id', '')::bigint
@@ -723,6 +822,7 @@ const normalizedAccountTransactionsCte = `
       COALESCE(at.note, '') AS note
     FROM ims.account_transactions at
     WHERE at.branch_id = $1
+      AND COALESCE(at.is_deleted, 0) = 0
       AND NOT (
         COALESCE(at.ref_table, '') = 'expense_charges'
         AND EXISTS (
@@ -851,7 +951,11 @@ const normalizedAccountTransactionsCte = `
   )
 `;
 
-export const buildBalanceSheetFromLedger = async (branchId: number, asOfDate: string): Promise<BalanceSheetRow[]> => {
+export const buildBalanceSheetFromLedger = async (
+  branchId: number,
+  asOfDate: string,
+  netIncomeFromDate?: string
+): Promise<BalanceSheetRow[]> => {
   const [customerBalanceColumn, supplierBalanceExpr] = await Promise.all([
     resolveBalanceColumn('customers'),
     resolveBalanceExpression('suppliers', 's'),
@@ -863,6 +967,7 @@ export const buildBalanceSheetFromLedger = async (branchId: number, asOfDate: st
     inventoryFallback,
     receivableFallback,
     payableFallback,
+    payableFromSupplierLedger,
     currentAssetRows,
     fixedAssetRows,
     capitalFallback,
@@ -907,28 +1012,50 @@ export const buildBalanceSheetFromLedger = async (branchId: number, asOfDate: st
         params
       ),
       queryAmount(
-        `WITH item_stock AS (
+        `WITH legacy_adjustments AS (
+           SELECT
+             i.branch_id,
+             a.item_id,
+             COALESCE(SUM(
+               CASE
+                 WHEN UPPER(COALESCE(a.adjustment_type, 'INCREASE')) = 'DECREASE' THEN -COALESCE(a.quantity, 0)
+                 ELSE COALESCE(a.quantity, 0)
+               END
+             ), 0)::numeric(14,3) AS qty_delta
+           FROM ims.stock_adjustment a
+           JOIN ims.items i ON i.item_id = a.item_id
+           WHERE i.is_active = TRUE
+             AND COALESCE(a.is_deleted, 0)::int = 0
+             AND UPPER(COALESCE(a.status, 'POSTED')) = 'POSTED'
+             AND NOT EXISTS (
+               SELECT 1
+                 FROM ims.inventory_movements m
+                WHERE m.branch_id = i.branch_id
+                  AND m.ref_table = 'stock_adjustment'
+                  AND m.ref_id = a.adjustment_id
+             )
+           GROUP BY i.branch_id, a.item_id
+        ),
+        item_stock AS (
            SELECT
              i.item_id,
-             CASE
-               WHEN COALESCE(st.row_count, 0) = 0 THEN COALESCE(i.opening_balance, 0)
-               ELSE COALESCE(st.total_qty, 0)
-             END::numeric(14,3) AS total_qty,
+             (
+               COALESCE(i.opening_balance, 0)
+               + COALESCE(SUM(COALESCE(m.qty_in, 0) - COALESCE(m.qty_out, 0)), 0)
+               + COALESCE(la.qty_delta, 0)
+             )::numeric(14,3) AS total_qty,
              COALESCE(i.cost_price, 0)::numeric(14,2) AS cost_price
            FROM ims.items i
-           LEFT JOIN (
-             SELECT
-               s.branch_id,
-               si.product_id AS item_id,
-               COALESCE(SUM(si.quantity), 0)::numeric(14,3) AS total_qty,
-               COUNT(*)::int AS row_count
-             FROM ims.store_items si
-             JOIN ims.stores s ON s.store_id = si.store_id
-             GROUP BY s.branch_id, si.product_id
-           ) st
-             ON st.item_id = i.item_id
-            AND st.branch_id = i.branch_id
-          WHERE i.branch_id = $1
+           LEFT JOIN ims.inventory_movements m
+             ON m.branch_id = i.branch_id
+            AND m.item_id = i.item_id
+            AND COALESCE(LOWER(to_jsonb(m) ->> 'is_deleted'), '0') NOT IN ('1', 'true', 't', 'yes')
+           LEFT JOIN legacy_adjustments la
+             ON la.branch_id = i.branch_id
+            AND la.item_id = i.item_id
+           WHERE i.branch_id = $1
+             AND i.is_active = TRUE
+           GROUP BY i.item_id, i.branch_id, i.opening_balance, i.cost_price, la.qty_delta
         )
         SELECT COALESCE(SUM(item_stock.total_qty * item_stock.cost_price), 0)::double precision AS amount
           FROM item_stock`,
@@ -947,6 +1074,53 @@ export const buildBalanceSheetFromLedger = async (branchId: number, asOfDate: st
           WHERE s.branch_id = $1
             AND s.is_active = TRUE`,
         [branchId]
+      ),
+      queryAmount(
+        `WITH ledger_rows AS (
+           SELECT
+             l.supplier_id,
+             (
+               CASE
+                 WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%')
+                   THEN ABS(COALESCE(l.debit, 0)) + ABS(COALESCE(l.credit, 0))
+                 ELSE COALESCE(l.debit, 0)
+               END
+             )::double precision AS debit,
+             (
+               CASE
+                 WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%')
+                   THEN 0
+                 ELSE COALESCE(l.credit, 0)
+               END
+             )::double precision AS credit
+           FROM ims.supplier_ledger l
+          WHERE l.branch_id = $1
+            AND l.entry_date::date <= $2::date
+         ),
+         opening_rows AS (
+           SELECT
+             s.supplier_id,
+             0::double precision AS debit,
+             GREATEST(COALESCE(${supplierBalanceExpr}, 0), 0)::double precision AS credit
+           FROM ims.suppliers s
+          WHERE s.branch_id = $1
+            AND GREATEST(COALESCE(${supplierBalanceExpr}, 0), 0) > 0
+            AND NOT EXISTS (
+              SELECT 1
+                FROM ims.supplier_ledger l
+               WHERE l.branch_id = $1
+                 AND l.supplier_id = s.supplier_id
+                 AND l.entry_date::date <= $2::date
+            )
+         ),
+         unioned AS (
+           SELECT * FROM ledger_rows
+           UNION ALL
+           SELECT * FROM opening_rows
+         )
+         SELECT GREATEST(COALESCE(SUM(COALESCE(u.credit, 0) - COALESCE(u.debit, 0)), 0), 0)::double precision AS amount
+           FROM unioned u`,
+        params
       ),
       queryManyIfTableExists<{ asset_name: string; amount: number }>(
         'assets',
@@ -1102,7 +1276,7 @@ export const buildBalanceSheetFromLedger = async (branchId: number, asOfDate: st
   const equityRows: BalanceSheetRow[] = [];
 
   let receivableFromAccounts = 0;
-  let payableFromAccounts = 0;
+  let accountsPayableFromAccounts = 0;
   let inventoryFromAccounts = 0;
   let drawingFromAccounts = 0;
   let usedPrepaidAccounts = false;
@@ -1123,9 +1297,18 @@ export const buildBalanceSheetFromLedger = async (branchId: number, asOfDate: st
       return side === 'credit' ? -Math.abs(baseBalanceRaw) : Math.abs(baseBalanceRaw);
     })();
 
-    const debitMinusCredit = !isApproxZero(baseBalanceRaw)
-      ? baseSignedDebitMinusCredit
-      : (Number(row.txn_count || 0) > 0 ? Number(row.txn_balance || 0) : 0);
+    const isCashAccount = isCashOrBankAccount(accountName, row.institution);
+    const txnBalanceRaw = Number(row.txn_balance || 0);
+    const hasTxnBalance = Number(row.txn_count || 0) > 0 && !isApproxZero(txnBalanceRaw);
+    const preferTxnForCash =
+      isCashAccount
+      && hasTxnBalance
+      && (isApproxZero(baseBalanceRaw) || Math.abs(txnBalanceRaw - baseSignedDebitMinusCredit) > 0.005);
+    const debitMinusCredit = isCashAccount
+      ? (preferTxnForCash ? txnBalanceRaw : baseSignedDebitMinusCredit)
+      : !isApproxZero(baseBalanceRaw)
+        ? baseSignedDebitMinusCredit
+        : (hasTxnBalance ? txnBalanceRaw : 0);
 
     if (isApproxZero(debitMinusCredit)) continue;
 
@@ -1141,13 +1324,16 @@ export const buildBalanceSheetFromLedger = async (branchId: number, asOfDate: st
     }
 
     if (kind === 'liability' || isPayableAccount(accountName)) {
+      if (isAccountsPayableAccount(accountName)) {
+        accountsPayableFromAccounts += moneyPos(naturalBalance);
+        continue;
+      }
       currentLiabilities.push({
         section: 'Current Liabilities',
         line_item: accountName,
         amount: naturalBalance,
         row_type: 'detail',
       });
-      payableFromAccounts += moneyPos(naturalBalance);
       continue;
     }
 
@@ -1182,7 +1368,7 @@ export const buildBalanceSheetFromLedger = async (branchId: number, asOfDate: st
       continue;
     }
 
-    if (isInventoryAccount(accountName)) {
+    if (kind === 'asset' && isInventoryAssetAccountName(accountName)) {
       inventoryFromAccounts += Number(naturalBalance || 0);
       continue;
     }
@@ -1217,16 +1403,29 @@ export const buildBalanceSheetFromLedger = async (branchId: number, asOfDate: st
     });
   }
 
-  if (isApproxZero(payableFromAccounts) && !isApproxZero(payableFallback)) {
+  const accountsPayableFromSuppliers =
+    !isApproxZero(payableFromSupplierLedger)
+      ? moneyPos(payableFromSupplierLedger)
+      : moneyPos(payableFallback);
+  const effectiveAccountsPayable =
+    !isApproxZero(accountsPayableFromSuppliers)
+      ? accountsPayableFromSuppliers
+      : moneyPos(accountsPayableFromAccounts);
+
+  if (!isApproxZero(effectiveAccountsPayable)) {
     currentLiabilities.push({
       section: 'Current Liabilities',
       line_item: 'Accounts Payable',
-      amount: moneyPos(payableFallback),
+      amount: effectiveAccountsPayable,
       row_type: 'detail',
     });
   }
 
-  const inventoryValue = !isApproxZero(inventoryFromAccounts) ? Number(inventoryFromAccounts || 0) : Number(inventoryFallback || 0);
+  // Inventory on the Balance Sheet should reflect current on-hand stock valuation (items/store_items),
+  // not whatever was posted (or not posted) to the Inventory GL account.
+  const inventoryValue = !isApproxZero(inventoryFallback)
+    ? Number(inventoryFallback || 0)
+    : Number(inventoryFromAccounts || 0);
   if (!isApproxZero(inventoryValue)) {
     currentAssets.push({
       section: 'Current Assets',
@@ -1369,12 +1568,21 @@ export const buildBalanceSheetFromLedger = async (branchId: number, asOfDate: st
   // - openingRetained: prior retained earnings / opening imbalance
   // - retainedEarnings: openingRetained + netIncomeYtd (must equal residual for the BS to balance)
   const profitStart = await resolveProfitStartDate(branchId, asOfDate);
+  const netIncomeStart = netIncomeFromDate || profitStart;
   const hasClosedPeriods = await hasAnyClosedClosingPeriod(branchId, asOfDate);
-  const netIncomeRows = await financialReportsService.getIncomeStatement(branchId, profitStart, asOfDate);
-  const netIncomeYtd =
+  const netIncomeRows = await financialReportsService.getIncomeStatement(branchId, netIncomeStart, asOfDate);
+  const netIncomePeriod =
     Number(
       netIncomeRows.find((row) => String(row.line_item || '').toLowerCase() === 'net income')?.amount ?? 0
     ) || 0;
+  const netIncomeYtd =
+    netIncomeStart === profitStart
+      ? netIncomePeriod
+      : (Number(
+          (
+            await financialReportsService.getIncomeStatement(branchId, profitStart, asOfDate)
+          ).find((row) => String(row.line_item || '').toLowerCase() === 'net income')?.amount ?? 0
+        ) || 0);
 
   const residualRetained = totalAssets - totalLiabilities - baseEquity;
   const openingRetained = residualRetained - netIncomeYtd;
@@ -1398,7 +1606,7 @@ export const buildBalanceSheetFromLedger = async (branchId: number, asOfDate: st
         row_type: 'detail',
       });
     }
-    if (!isApproxZero(netIncomeYtd)) {
+    if (!isApproxZero(netIncomeYtd) && netIncomeStart === profitStart) {
       equityRows.push({
         section: 'Equity',
         line_item: netIncomeYtd >= 0 ? 'Net Income (YTD)' : 'Net Loss (YTD)',
@@ -1415,21 +1623,25 @@ export const buildBalanceSheetFromLedger = async (branchId: number, asOfDate: st
       });
     }
   } else {
-    // Before any closing period exists, avoid showing retained earnings lines (they confuse first-time setups).
-    // Keep the balance sheet balanced via a single current-period profit/loss line.
+    // Before any closing period exists, keep Opening Balance Equity strictly for import-only entries.
+    // Show retained earnings separately so daily transactions do not inflate Opening Balance Equity.
     if (!isApproxZero(retainedEarnings)) {
-      const existingIdx = equityRows.findIndex((row) => /opening balance equity/i.test(String(row.line_item || '')));
-      if (existingIdx >= 0) {
-        equityRows[existingIdx].amount = Number(equityRows[existingIdx].amount || 0) + Number(retainedEarnings || 0);
-      } else {
-        equityRows.push({
-          section: 'Equity',
-          line_item: 'Opening Balance Equity',
-          amount: retainedEarnings,
-          row_type: 'detail',
-        });
-      }
+      equityRows.push({
+        section: 'Equity',
+        line_item: retainedEarnings >= 0 ? 'Retained Earnings' : 'Accumulated Loss',
+        amount: retainedEarnings,
+        row_type: 'detail',
+      });
     }
+  }
+
+  if (!isApproxZero(netIncomePeriod)) {
+    equityRows.push({
+      section: 'Equity',
+      line_item: netIncomePeriod >= 0 ? 'Net Income' : 'Net Loss',
+      amount: netIncomePeriod,
+      row_type: 'detail',
+    });
   }
 
   // Total equity should NOT double-count the retained components.
@@ -1497,6 +1709,7 @@ const buildBalanceSheetFromGl = async (branchId: number, asOfDate: string): Prom
               SELECT 1
                 FROM ims.account_transactions at2
                WHERE at2.branch_id = a.branch_id
+                 AND COALESCE(at2.is_deleted, 0) = 0
                  AND COALESCE(
                    NULLIF(to_jsonb(at2) ->> 'acc_id', '')::bigint,
                    NULLIF(to_jsonb(at2) ->> 'account_id', '')::bigint
@@ -1515,6 +1728,7 @@ const buildBalanceSheetFromGl = async (branchId: number, asOfDate: string): Prom
       FROM accounts_norm a
       LEFT JOIN ims.account_transactions at
         ON at.branch_id = a.branch_id
+       AND COALESCE(at.is_deleted, 0) = 0
        AND COALESCE(
          NULLIF(to_jsonb(at) ->> 'acc_id', '')::bigint,
          NULLIF(to_jsonb(at) ->> 'account_id', '')::bigint
@@ -1797,6 +2011,14 @@ const buildIncomeStatementFromLedger = async (
   );
 
   if (ledgerRows.length === 0) return null;
+  const purchaseDiscount = await queryAmount(
+    `SELECT COALESCE(SUM(p.discount), 0)::double precision AS amount
+       FROM ims.purchases p
+      WHERE p.branch_id = $1
+        AND p.purchase_date::date BETWEEN $2::date AND $3::date
+        AND LOWER(COALESCE(p.status::text, '')) <> 'void'`,
+    [branchId, fromDate, toDate]
+  );
 
   type PnlKind = 'revenue' | 'cogs' | 'payroll' | 'expense' | 'ignore';
 
@@ -1862,7 +2084,8 @@ const buildIncomeStatementFromLedger = async (
 
   const sum = (rows: Array<{ amount: number }>) => rows.reduce((s, r) => s + Number(r.amount || 0), 0);
   const totalRevenue = sum(revenue);
-  const totalCogs = sum(cogs);
+  const discountApplied = Math.max(purchaseDiscount, 0);
+  const totalCogs = sum(cogs) + discountApplied;
   const grossProfit = totalRevenue + totalCogs;
   const payrollExpense = sum(payroll);
   const operatingExpense = sum(expenses);
@@ -1879,6 +2102,9 @@ const buildIncomeStatementFromLedger = async (
   cogs.sort((a, b) => a.name.localeCompare(b.name)).forEach((row) => {
     rows.push({ section: 'Cost of Goods Sold', line_item: row.name, amount: row.amount, row_type: 'detail' });
   });
+  if (!isApproxZero(discountApplied)) {
+    rows.push({ section: 'Cost of Goods Sold', line_item: 'Purchase Discount', amount: discountApplied, row_type: 'detail' });
+  }
   rows.push({ section: 'Cost of Goods Sold', line_item: 'Total Cost of Goods Sold', amount: totalCogs, row_type: 'total' });
 
   rows.push({ section: 'Gross Profit', line_item: 'Gross Profit', amount: grossProfit, row_type: 'total' });
@@ -1970,6 +2196,7 @@ export const financialReportsService = {
       salesReturns,
       movementCostSales,
       movementCostSalesReturns,
+      purchaseDiscount,
       stockPurchases,
       purchaseReturns,
       payrollExpense,
@@ -2005,6 +2232,14 @@ export const financialReportsService = {
           WHERE m.branch_id = $1
             AND m.move_type = 'sales_return'
             AND m.move_date::date BETWEEN $2::date AND $3::date`,
+        params
+      ),
+      queryAmount(
+        `SELECT COALESCE(SUM(p.discount), 0)::double precision AS amount
+           FROM ims.purchases p
+          WHERE p.branch_id = $1
+            AND p.purchase_date::date BETWEEN $2::date AND $3::date
+            AND LOWER(COALESCE(p.status::text, '')) <> 'void'`,
         params
       ),
       queryAmount(
@@ -2053,7 +2288,9 @@ export const financialReportsService = {
     const revenueFromSales = grossSales - salesReturns;
     const movementCost = Math.max(movementCostSales - movementCostSalesReturns, 0);
     const purchaseCostFallback = Math.max(stockPurchases - purchaseReturns, 0);
-    const costOfGoodsSold = movementCost > 0 ? movementCost : purchaseCostFallback;
+    const rawCogs = movementCost > 0 ? movementCost : purchaseCostFallback;
+    const discountApplied = Math.max(purchaseDiscount, 0);
+    const costOfGoodsSold = Math.max(rawCogs - discountApplied, 0);
     const detailedExpenseTotal = expenseRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
     const totalOperatingExpenses = detailedExpenseTotal + payrollExpense;
     const totalRevenue = revenueFromSales;
@@ -2067,7 +2304,10 @@ export const financialReportsService = {
 
     rows.push({ section: 'Revenue', line_item: 'Total Revenue', amount: totalRevenue, row_type: 'total' });
 
-    rows.push({ section: 'Cost of Goods Sold', line_item: 'Cost of Goods Sold', amount: -costOfGoodsSold, row_type: 'detail' });
+    rows.push({ section: 'Cost of Goods Sold', line_item: 'Cost of Goods Sold', amount: -rawCogs, row_type: 'detail' });
+    if (!isApproxZero(discountApplied)) {
+      rows.push({ section: 'Cost of Goods Sold', line_item: 'Purchase Discount', amount: discountApplied, row_type: 'detail' });
+    }
     rows.push({ section: 'Cost of Goods Sold', line_item: 'Total Cost of Goods Sold', amount: -costOfGoodsSold, row_type: 'total' });
     rows.push({ section: 'Gross Profit', line_item: 'Gross Profit', amount: grossProfit, row_type: 'total' });
 
@@ -2722,12 +2962,12 @@ export const financialReportsService = {
     });
   },
 
-  async getBalanceSheet(branchId: number, asOfDate: string): Promise<BalanceSheetRow[]> {
+  async getBalanceSheet(branchId: number, asOfDate: string, fromDate?: string): Promise<BalanceSheetRow[]> {
     // Smart ERP balance sheet:
     // - Uses normalized transactions (fills missing postings from operational modules when possible)
     // - Falls back to system balances for legacy branches
     // - Keeps Total Assets = Total Liabilities + Equity via retained earnings reconciliation
-    return buildBalanceSheetFromLedger(branchId, asOfDate);
+    return buildBalanceSheetFromLedger(branchId, asOfDate, fromDate);
   },
 
   async getAccountsReceivable(branchId: number, fromDate: string, toDate: string): Promise<AccountsReceivableRow[]> {
@@ -3152,7 +3392,13 @@ export const financialReportsService = {
       accountFilter = `AND at.acc_id = $${params.length}`;
     }
 
-    const rows = await queryMany<AccountStatementRow & { account_type: string; running_balance_raw: number }>(
+    const orderSql = accountId
+      ? 'ORDER BY txn_date ASC, sort_id ASC, txn_id ASC'
+      : 'ORDER BY account_name ASC, account_id ASC, txn_date ASC, sort_id ASC, txn_id ASC';
+
+    const rows = await queryMany<
+      AccountStatementRow & { account_type: string; running_balance_raw: number }
+    >(
       `${normalizedAccountTransactionsCte},
         account_meta AS (
           SELECT
@@ -3185,23 +3431,82 @@ export const financialReportsService = {
            COALESCE(at.debit, 0)::double precision AS debit,
            COALESCE(at.credit, 0)::double precision AS credit,
            COALESCE(at.note, '') AS note,
-           at.txn_id AS sort_id
+           at.sort_id AS sort_id
          FROM normalized_txn at
          LEFT JOIN account_meta am ON am.acc_id = at.acc_id
          WHERE at.branch_id = $1
            AND at.txn_date::date BETWEEN $2::date AND $3::date
            ${accountFilter}
-       ),
+      ),
+      split_meta AS (
+        SELECT
+          f.txn_id,
+          f.account_id,
+          CASE
+            WHEN COALESCE(f.ref_table, '') = '' OR f.ref_id IS NULL THEN ''
+            WHEN COUNT(DISTINCT ot.acc_id) FILTER (WHERE ot.acc_id IS NOT NULL) = 0 THEN ''
+            WHEN COUNT(DISTINCT ot.acc_id) FILTER (WHERE ot.acc_id IS NOT NULL) = 1
+              THEN COALESCE(
+                     MAX(COALESCE(om.account_name, 'Account #' || ot.acc_id::text))
+                     FILTER (WHERE ot.acc_id IS NOT NULL),
+                     ''
+                   )
+            ELSE '-SPLIT-'
+          END AS split_account
+        FROM filtered f
+        LEFT JOIN normalized_txn ot
+          ON ot.branch_id = $1
+         AND COALESCE(f.ref_table, '') <> ''
+         AND f.ref_id IS NOT NULL
+         AND COALESCE(ot.ref_table, '') = COALESCE(f.ref_table, '')
+         AND ot.ref_id = f.ref_id
+         AND COALESCE(ot.txn_type, '') = COALESCE(f.txn_type, '')
+         AND ot.acc_id <> f.account_id
+        LEFT JOIN account_meta om ON om.acc_id = ot.acc_id
+        GROUP BY f.txn_id, f.account_id, f.ref_table, f.ref_id
+      ),
        running AS (
          SELECT
            f.*,
+           COALESCE(NULLIF(BTRIM(spl.split_account), ''), '') AS split_account,
+           COALESCE(
+             NULLIF(BTRIM(COALESCE(c_sale.full_name, c_receipt.full_name, s_purchase.name, s_receipt.name)), ''),
+             ''
+           ) AS party_name,
            (
              COALESCE(o.opening_balance, 0)
              + SUM(f.debit - f.credit)
-               OVER (PARTITION BY f.account_id ORDER BY f.txn_date, f.sort_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+              OVER (
+                PARTITION BY f.account_id
+                ORDER BY f.txn_date, f.sort_id, f.txn_id
+                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+              )
            )::double precision AS running_balance_raw
          FROM filtered f
          LEFT JOIN opening o ON o.account_id = f.account_id
+         LEFT JOIN split_meta spl
+           ON spl.txn_id = f.txn_id
+          AND spl.account_id = f.account_id
+         LEFT JOIN ims.sales sale
+           ON COALESCE(f.ref_table, '') = 'sales'
+          AND sale.branch_id = $1
+          AND sale.sale_id = f.ref_id
+         LEFT JOIN ims.customers c_sale ON c_sale.customer_id = sale.customer_id
+         LEFT JOIN ims.customer_receipts receipt
+           ON COALESCE(f.ref_table, '') = 'customer_receipts'
+          AND receipt.branch_id = $1
+          AND receipt.receipt_id = f.ref_id
+         LEFT JOIN ims.customers c_receipt ON c_receipt.customer_id = receipt.customer_id
+         LEFT JOIN ims.purchases purchase
+           ON COALESCE(f.ref_table, '') = 'purchases'
+          AND purchase.branch_id = $1
+          AND purchase.purchase_id = f.ref_id
+         LEFT JOIN ims.suppliers s_purchase ON s_purchase.supplier_id = purchase.supplier_id
+         LEFT JOIN ims.supplier_receipts supplier_receipt
+           ON COALESCE(f.ref_table, '') = 'supplier_receipts'
+          AND supplier_receipt.branch_id = $1
+          AND supplier_receipt.receipt_id = f.ref_id
+         LEFT JOIN ims.suppliers s_receipt ON s_receipt.supplier_id = supplier_receipt.supplier_id
        )
        SELECT
          txn_id,
@@ -3212,12 +3517,16 @@ export const financialReportsService = {
          txn_type,
          ref_table,
          ref_id,
+         COALESCE(ref_id::text, '') AS txn_number,
+         party_name,
+         COALESCE(note, '') AS memo,
+         split_account,
          debit,
          credit,
          running_balance_raw,
          note
        FROM running
-       ORDER BY txn_date ASC, sort_id ASC, txn_id ASC
+       ${orderSql}
        LIMIT 5000`,
       params
     );
@@ -3257,6 +3566,10 @@ export const financialReportsService = {
       txn_type: 'opening',
       ref_table: '',
       ref_id: null,
+      txn_number: 'OB',
+      party_name: '',
+      memo: 'Opening Balance',
+      split_account: '',
       debit: 0,
       credit: 0,
       running_balance: toNaturalBalance(opening.opening_balance_raw, opening.account_type, opening.account_name),
@@ -3282,7 +3595,8 @@ export const financialReportsService = {
            OR ABS(closing_debit) > 0.000001
            OR ABS(closing_credit) > 0.000001`;
 
-    const rows = await queryMany<TrialBalanceRow>(
+    const [rows, inventoryOnHandValue, inventoryAccountIds, openingBalanceEquity] = await Promise.all([
+      queryMany<TrialBalanceRow>(
 	      `${normalizedAccountTransactionsCte},
          account_master AS (
 	         SELECT
@@ -3373,9 +3687,87 @@ export const financialReportsService = {
         ${nonZeroSql}
         ORDER BY account_id ASC, account_name ASC`,
       [branchId, fromDate, toDate]
-    );
+      ),
+      queryInventoryOnHandValue(branchId),
+      queryInventoryAssetAccountIds(branchId),
+      queryOne<{ acc_id: number; name: string }>(
+        `SELECT acc_id, name
+           FROM ims.accounts
+          WHERE branch_id = $1
+            AND is_active = TRUE
+            AND LOWER(COALESCE(name, '')) LIKE '%opening balance equity%'
+          ORDER BY acc_id
+          LIMIT 1`,
+        [branchId]
+      ),
+    ]);
 
-    return includeZero ? rows : rows.filter((row) => !isZeroTrialBalanceRow(row));
+    const adjustedRows = (() => {
+      if (inventoryAccountIds.length === 0) return rows;
+      if (isApproxZero(inventoryOnHandValue)) return rows;
+
+      const targetId = Math.min(...inventoryAccountIds);
+      const onHand = Math.max(Number(inventoryOnHandValue || 0), 0);
+      const currentInv = rows
+        .filter((row) => inventoryAccountIds.includes(Number(row.account_id)))
+        .reduce((sum, row) => sum + (Number(row.closing_debit || 0) - Number(row.closing_credit || 0)), 0);
+      const delta = onHand - currentInv;
+
+      const updated = rows.map((row) => {
+        if (!inventoryAccountIds.includes(Number(row.account_id))) return row;
+
+        // Replace the Inventory asset account(s) balance with on-hand valuation.
+        // Keep it simple: put the full on-hand value on the primary inventory account id.
+        const closingDebit = Number(row.account_id) === targetId ? onHand : 0;
+        return {
+          ...row,
+          opening_debit: 0,
+          opening_credit: 0,
+          period_debit: 0,
+          period_credit: 0,
+          closing_debit: closingDebit,
+          closing_credit: 0,
+        };
+      });
+
+      if (isApproxZero(delta)) return updated;
+
+      const obeId = Number(openingBalanceEquity?.acc_id || 0);
+      const obeName = String(openingBalanceEquity?.name || 'Opening Balance Equity');
+      const obeIndex = updated.findIndex((row) => Number(row.account_id) === obeId || /opening balance equity/i.test(String(row.account_name || '')));
+
+      const debit = delta < 0 ? Math.abs(delta) : 0;
+      const credit = delta > 0 ? delta : 0;
+
+      if (obeIndex >= 0) {
+        const row = updated[obeIndex];
+        updated[obeIndex] = {
+          ...row,
+          opening_debit: row.opening_debit,
+          opening_credit: row.opening_credit,
+          period_debit: row.period_debit,
+          period_credit: row.period_credit,
+          closing_debit: Number(row.closing_debit || 0) + debit,
+          closing_credit: Number(row.closing_credit || 0) + credit,
+        };
+        return updated;
+      }
+
+      updated.push({
+        account_id: obeId || 0,
+        account_name: obeName,
+        opening_debit: 0,
+        opening_credit: 0,
+        period_debit: 0,
+        period_credit: 0,
+        closing_debit: debit,
+        closing_credit: credit,
+      });
+
+      return updated;
+    })();
+
+    return includeZero ? adjustedRows : adjustedRows.filter((row) => !isZeroTrialBalanceRow(row));
   },
 
   async getAccountBalances(branchId: number, accountId?: number): Promise<AccountBalanceRow[]> {

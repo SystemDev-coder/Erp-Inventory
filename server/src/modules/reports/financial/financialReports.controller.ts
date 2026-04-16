@@ -32,11 +32,15 @@ export const getIncomeStatementReport = asyncHandler(async (req: AuthRequest, re
 
 export const getBalanceSheetReport = asyncHandler(async (req: AuthRequest, res: Response) => {
   const branchId = await resolveBranchIdForReports(req);
+  const fromDate = req.query.fromDate
+    ? parseIsoDate(req.query.fromDate as string | undefined, 'fromDate')
+    : undefined;
   const asOfDate = parseIsoDate(req.query.asOfDate as string | undefined, 'asOfDate');
-  const rows = await financialReportsService.getBalanceSheet(branchId, asOfDate);
+  const rows = await financialReportsService.getBalanceSheet(branchId, asOfDate, fromDate || undefined);
   return ApiResponse.success(res, {
     branchId,
     reportKey: 'balance-sheet',
+    fromDate: fromDate || null,
     asOfDate,
     rows,
   });

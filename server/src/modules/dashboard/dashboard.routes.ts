@@ -8,5 +8,6 @@ const router = Router();
 router.use(requireAuth);
 
 router.get('/dashboard', requireAnyPerm(['dashboard.view', 'home.view']), dashboardController.getDashboard);
+router.get('/dashboard/cards/:cardId', requireAnyPerm(['dashboard.view', 'home.view']), dashboardController.getDashboardCardDrilldown);
 
 export default router;

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Chart from 'react-apexcharts';
 import type { ApexOptions } from 'apexcharts';
 import {
@@ -6,6 +6,7 @@ import {
   BarChart3,
   BriefcaseBusiness,
   Boxes,
+  Loader2,
   Package,
   ReceiptText,
   RefreshCcw,
@@ -16,7 +17,9 @@ import {
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { apiClient, type ApiResponse } from '../../services/api';
-import { API } from '../../config/env';
+import { API, env } from '../../config/env';
+import { ReportModal, type ReportColumn } from '../../components/reports/ReportModal';
+import { settingsService } from '../../services/settings.service';
 
 type DashboardCard = {
   id: string;
@@ -70,6 +73,14 @@ type DashboardResponse = {
   };
 };
 
+type DashboardCardDrilldownResponse = {
+  cardId: string;
+  title: string;
+  format?: 'currency' | 'number';
+  total: number;
+  rows: Record<string, unknown>[];
+};
+
 const ICONS = {
   TrendingUp,
   ReceiptText,
@@ -83,20 +94,20 @@ const ICONS = {
 
 const CARD_TONES = [
   {
-    stripe: 'from-[#0e4e75] to-[#2d7faa]',
-    iconWrap: 'bg-[#e5f2fb] text-[#0e4e75] dark:bg-[#1a4b69] dark:text-[#9ed2ef]',
+    stripe: 'from-primary-500 to-primary-700',
+    iconWrap: 'bg-primary-50 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300',
   },
   {
-    stripe: 'from-[#0f7a58] to-[#2ea27b]',
-    iconWrap: 'bg-[#e5f7ee] text-[#0f7a58] dark:bg-[#1a4f41] dark:text-[#9de6cc]',
+    stripe: 'from-primary-400 to-primary-600',
+    iconWrap: 'bg-primary-50 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300',
   },
   {
-    stripe: 'from-[#4d5aa9] to-[#6f7bd2]',
-    iconWrap: 'bg-[#edf1ff] text-[#4d5aa9] dark:bg-[#29376b] dark:text-[#bcc6ff]',
+    stripe: 'from-primary-600 to-primary-800',
+    iconWrap: 'bg-primary-50 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300',
   },
   {
-    stripe: 'from-[#b96f2c] to-[#d59452]',
-    iconWrap: 'bg-[#fff0e1] text-[#b96f2c] dark:bg-[#5b3e26] dark:text-[#ffd2a8]',
+    stripe: 'from-primary-500 to-primary-700',
+    iconWrap: 'bg-primary-50 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300',
   },
 ] as const;
 
@@ -123,15 +134,15 @@ const formatDateTime = (value: string) => {
 const statusTone = (status: string) => {
   const normalized = status.toLowerCase();
   if (normalized.includes('paid') || normalized.includes('posted') || normalized.includes('received')) {
-    return 'border-[#bde0d3] bg-[#eaf8f1] text-[#0f7a58] dark:border-[#2f725b] dark:bg-[#123a30] dark:text-[#8ae1bf]';
+    return 'border-success-200 bg-success-50 text-success-700 dark:border-success-800 dark:bg-success-900/30 dark:text-success-200';
   }
   if (normalized.includes('void') || normalized.includes('cancel')) {
-    return 'border-[#f2c3c3] bg-[#fff0f0] text-[#b93232] dark:border-[#7c3434] dark:bg-[#3c1d1d] dark:text-[#ffabab]';
+    return 'border-error-200 bg-error-50 text-error-700 dark:border-error-800 dark:bg-error-900/30 dark:text-error-200';
   }
   if (normalized.includes('unpaid') || normalized.includes('pending') || normalized.includes('partial')) {
-    return 'border-[#f0d6be] bg-[#fff6eb] text-[#b8681f] dark:border-[#7c5b33] dark:bg-[#3d2d18] dark:text-[#ffc98d]';
+    return 'border-warning-200 bg-warning-50 text-warning-700 dark:border-warning-800 dark:bg-warning-900/30 dark:text-warning-200';
   }
-  return 'border-[#b9d4e6] bg-[#f4f7fd] text-[#163a72] dark:border-[#2c6183] dark:bg-[#123b56] dark:text-[#9bcde8]';
+  return 'border-primary-200 bg-primary-50 text-primary-700 dark:border-primary-800 dark:bg-primary-900/30 dark:text-primary-200';
 };
 
 const Dashboard = () => {
@@ -144,6 +155,49 @@ const Dashboard = () => {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<string>('');
   const [hasLoaded, setHasLoaded] = useState(false);
+  const [companyInfo, setCompanyInfo] = useState<{
+    name?: string;
+    logoUrl?: string;
+    bannerUrl?: string;
+    manager?: string;
+    phone?: string;
+    updatedAt?: string;
+  }>({});
+  const [cardModalOpen, setCardModalOpen] = useState(false);
+  const [cardModalTitle, setCardModalTitle] = useState('');
+  const [cardModalSubtitle, setCardModalSubtitle] = useState('');
+  const [cardModalData, setCardModalData] = useState<Record<string, unknown>[]>([]);
+  const [cardModalColumns, setCardModalColumns] = useState<ReportColumn<Record<string, unknown>>[]>([]);
+  const [cardModalTotalLabel, setCardModalTotalLabel] = useState('Total');
+  const [cardModalTotalKey, setCardModalTotalKey] = useState('total');
+  const [cardModalTotalValue, setCardModalTotalValue] = useState<string>('0');
+  const [cardModalLoadingId, setCardModalLoadingId] = useState<string | null>(null);
+
+  const resolveImageUrl = (value?: string | null) => {
+    const raw = (value || '').trim();
+    if (!raw) return undefined;
+    if (/^https?:\/\//i.test(raw) || raw.startsWith('data:')) return raw;
+    if (raw.startsWith('/images/') || raw === '/favicon.png') return raw;
+    if (raw.startsWith('uploads/')) return `${env.API_URL}/${raw}`;
+    if (raw.startsWith('/')) return `${env.API_URL}${raw}`;
+    return raw;
+  };
+
+  useEffect(() => {
+    settingsService.getCompany().then((response) => {
+      if (!response.success || !response.data?.company) return;
+      const company = response.data.company;
+      setCompanyInfo({
+        name: company.company_name || undefined,
+        logoUrl: resolveImageUrl(company.logo_img),
+        bannerUrl: resolveImageUrl(company.banner_img),
+        manager: company.manager_name || undefined,
+        phone: company.phone || undefined,
+        updatedAt: company.updated_at ? new Date(company.updated_at).toLocaleString() : undefined,
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const expandPermissionKeys = (permKey: string): string[] => {
     if (permKey.startsWith('items.')) {
@@ -180,7 +234,7 @@ const Dashboard = () => {
       'monthly-income': ['sales.view'],
       'today-payment': ['accounts.view', 'expenses.view'],
       'monthly-payment': ['accounts.view', 'expenses.view'],
-      balance: ['accounts.view'],
+      'total-revenue': ['sales.view'],
     };
 
     return cards.filter((card) => {
@@ -207,6 +261,150 @@ const Dashboard = () => {
     setLoading(false);
   };
 
+  const openCardModal = async (card: DashboardCard) => {
+    try {
+      setCardModalLoadingId(card.id);
+      const res: ApiResponse<DashboardCardDrilldownResponse> = await apiClient.get<DashboardCardDrilldownResponse>(
+        `${API.DASHBOARD}/cards/${encodeURIComponent(card.id)}`
+      );
+      if (!res.success || !res.data) throw new Error(res.error || 'Failed to load card details');
+
+      const payload = res.data;
+      const rows = payload.rows || [];
+
+      const money = (key: string, header: string) =>
+        ({
+          key,
+          header,
+          align: 'right',
+          render: (row) => formatValue(Number(row[key] || 0), 'currency'),
+        }) satisfies ReportColumn<Record<string, unknown>>;
+
+      const num = (key: string, header: string) =>
+        ({
+          key,
+          header,
+          align: 'right',
+          render: (row) => formatValue(Number(row[key] || 0), 'number'),
+        }) satisfies ReportColumn<Record<string, unknown>>;
+
+      const text = (key: string, header: string) =>
+        ({
+          key,
+          header,
+        }) satisfies ReportColumn<Record<string, unknown>>;
+
+      const dateTime = (key: string, header: string) =>
+        ({
+          key,
+          header,
+          render: (row) => (row[key] ? formatDateTime(String(row[key])) : '—'),
+        }) satisfies ReportColumn<Record<string, unknown>>;
+
+      const totalsOnlyColumn = (key: string, header: string) =>
+        ({
+          key,
+          header,
+          align: 'right',
+          render: () => '—',
+        }) satisfies ReportColumn<Record<string, unknown>>;
+
+      let columns: ReportColumn<Record<string, unknown>>[] = [];
+      let totalLabel = 'Total';
+      let totalKey = 'total';
+      let totalValue = payload.format === 'currency' ? formatValue(payload.total, 'currency') : formatValue(payload.total, 'number');
+
+      switch (card.id) {
+        case 'total-customers':
+          columns = [
+            text('customer_id', 'ID'),
+            text('name', 'Customer'),
+            text('phone', 'Phone'),
+            dateTime('created_at', 'Created At'),
+            totalsOnlyColumn('total_value', 'Total'),
+          ];
+          totalLabel = 'Total Customers';
+          totalKey = 'total_value';
+          totalValue = formatValue(payload.total, 'number');
+          break;
+        case 'total-employees':
+          columns = [
+            text('employee_id', 'ID'),
+            text('name', 'Employee'),
+            text('phone', 'Phone'),
+            text('position', 'Position'),
+            text('status', 'Status'),
+            totalsOnlyColumn('total_value', 'Total'),
+          ];
+          totalLabel = 'Total Employees';
+          totalKey = 'total_value';
+          totalValue = formatValue(payload.total, 'number');
+          break;
+        case 'total-products':
+          columns = [
+            text('item_id', 'ID'),
+            text('name', 'Product'),
+            num('opening_balance', 'Opening Qty'),
+            money('sale_price', 'Sale Price'),
+            text('is_active', 'Active'),
+            totalsOnlyColumn('total_value', 'Total'),
+          ];
+          totalLabel = 'Total Products';
+          totalKey = 'total_value';
+          totalValue = formatValue(payload.total, 'number');
+          break;
+        case 'inventory-stock':
+          columns = [text('item_id', 'ID'), text('item_name', 'Item'), num('quantity', 'Quantity'), num('stock_alert', 'Alert')];
+          totalLabel = 'Total Units';
+          totalKey = 'quantity';
+          totalValue = formatValue(payload.total, 'number');
+          break;
+        case 'low-stock-alert':
+          columns = [
+            text('item_id', 'ID'),
+            text('item_name', 'Item'),
+            num('quantity', 'Quantity'),
+            num('stock_alert', 'Alert'),
+            totalsOnlyColumn('total_value', 'Total'),
+          ];
+          totalLabel = 'Low Stock Items';
+          totalKey = 'total_value';
+          totalValue = formatValue(payload.total, 'number');
+          break;
+        case 'today-income':
+        case 'monthly-income':
+        case 'total-revenue':
+          columns = [text('sale_id', 'Sale #'), dateTime('sale_date', 'Date'), text('doc_type', 'Type'), text('customer_name', 'Customer'), money('total', 'Total'), text('status', 'Status')];
+          totalLabel = card.id === 'total-revenue' ? 'Total Revenue' : 'Total Income';
+          totalKey = 'total';
+          totalValue = formatValue(payload.total, 'currency');
+          break;
+        case 'today-payment':
+        case 'monthly-payment':
+          columns = [text('payment_type', 'Type'), dateTime('pay_date', 'Date'), text('name', 'Name'), text('account_name', 'Account'), money('amount_paid', 'Amount'), text('note', 'Note')];
+          totalLabel = 'Total Payments';
+          totalKey = 'amount_paid';
+          totalValue = formatValue(payload.total, 'currency');
+          break;
+        default:
+          columns = Object.keys(rows[0] || {}).map((key) => text(key, key));
+      }
+
+      setCardModalTitle(payload.title || card.title);
+      setCardModalSubtitle(card.subtitle);
+      setCardModalData(rows);
+      setCardModalColumns(columns);
+      setCardModalTotalLabel(totalLabel);
+      setCardModalTotalKey(totalKey);
+      setCardModalTotalValue(totalValue);
+      setCardModalOpen(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to open card details');
+    } finally {
+      setCardModalLoadingId(null);
+    }
+  };
+
   const orderedCharts = useMemo(() => {
     if (!data?.charts) return [];
     const order = ['income-trend-12m', 'sales-6m'];
@@ -224,17 +422,17 @@ const Dashboard = () => {
 
     const themeById: Record<string, { base: string; soft: string }> = isDark
       ? {
-          'income-trend-12m': { base: '#4de0a3', soft: '#4de0a3' },
-          'sales-6m': { base: '#75c7f3', soft: '#75c7f3' },
+        'income-trend-12m': { base: '#FFA500', soft: '#FFD08A' },
+        'sales-6m': { base: '#FFB74D', soft: '#FFE1B3' },
         }
       : {
-          'income-trend-12m': { base: '#0b7f5a', soft: '#6fc9a6' },
-          'sales-6m': { base: '#0e527b', soft: '#6aa9cd' },
+        'income-trend-12m': { base: '#FFA500', soft: '#FFD08A' },
+        'sales-6m': { base: '#FFB74D', soft: '#FFE1B3' },
         };
 
-    const axisColor = isDark ? '#d0e6f5' : '#274a61';
-    const legendColor = isDark ? '#e2f3ff' : '#173f57';
-    const gridColor = isDark ? '#2a5a78' : '#b7cede';
+    const axisColor = isDark ? '#cbd5e1' : '#334155';
+    const legendColor = isDark ? '#e2e8f0' : '#1f2937';
+    const gridColor = isDark ? '#334155' : '#e2e8f0';
 
     const base: ApexOptions = {
       chart: {
@@ -345,15 +543,15 @@ const Dashboard = () => {
 
   return (
     <div className="space-y-7">
-      <section className="relative overflow-hidden rounded-3xl border border-[#9bb3d5] bg-gradient-to-r from-[#f8fbff] via-[#eef5fb] to-[#e5eff8] p-6 shadow-sm dark:border-[#1f4a67] dark:bg-gradient-to-r dark:from-[#113751] dark:via-[#0b2448] dark:to-[#081b39]">
-        <div className="pointer-events-none absolute -right-20 top-[-60px] h-64 w-64 rounded-full bg-[#163a72]/10 blur-3xl dark:bg-[#7cc0e4]/20" />
-        <div className="pointer-events-none absolute -left-20 -bottom-28 h-64 w-64 rounded-full bg-[#7cc0e4]/10 blur-3xl dark:bg-[#c5ecff]/16" />
+      <section className="relative overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-r from-white via-slate-50 to-slate-100 p-6 shadow-sm dark:border-slate-700 dark:bg-gradient-to-r dark:from-slate-900 dark:via-slate-900 dark:to-slate-950">
+        <div className="pointer-events-none absolute -right-20 top-[-60px] h-64 w-64 rounded-full bg-primary-500/10 blur-3xl dark:bg-primary-400/20" />
+        <div className="pointer-events-none absolute -left-20 -bottom-28 h-64 w-64 rounded-full bg-primary-300/10 blur-3xl dark:bg-primary-300/20" />
 
         <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <p className="text-[11px] uppercase tracking-[0.32em] text-[#4f6f87] dark:text-[#b7d1e4]">Inventory ERP</p>
-            <h1 className="mt-2 text-4xl font-semibold tracking-tight text-[#0a1f44] dark:text-white">Dashboard</h1>
-            <p className="mt-1 text-sm text-[#38576f] dark:text-[#d3e8f7]">
+            <p className="text-[11px] uppercase tracking-[0.32em] text-slate-500 dark:text-slate-300">Inventory ERP</p>
+            <h1 className="mt-2 text-4xl font-semibold tracking-tight text-slate-900 dark:text-white">Dashboard</h1>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-200">
               {hasLoaded
                 ? `Live metrics loaded | ${lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : ''}`
                 : 'Click Display Dashboard to load live cards, charts, and activity.'}
@@ -364,7 +562,7 @@ const Dashboard = () => {
             <button
               onClick={() => void loadDashboard()}
               disabled={loading}
-              className="inline-flex items-center gap-2 rounded-xl border border-[#9fc3da] bg-[#163a72] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#0f2f62] disabled:opacity-65 dark:border-[#2d6386] dark:bg-[#e8f3fb] dark:text-[#163a72] dark:hover:bg-white"
+              className="inline-flex items-center gap-2 rounded-xl border border-primary-200 bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-65 dark:border-primary-400/40 dark:bg-primary-200 dark:text-slate-900 dark:hover:bg-primary-100"
             >
               <RefreshCcw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
               {!hasLoaded ? 'Display Dashboard' : loading ? 'Refreshing...' : 'Refresh'}
@@ -374,18 +572,18 @@ const Dashboard = () => {
       </section>
 
       {error && (
-        <div className="rounded-xl border border-[#f2c3c3] bg-[#fff2f2] px-4 py-3 text-sm font-medium text-[#b93232] dark:border-[#7d3535] dark:bg-[#3a1d1d] dark:text-[#ffb9b9]">
+        <div className="rounded-xl border border-error-200 bg-error-50 px-4 py-3 text-sm font-medium text-error-700 dark:border-error-800 dark:bg-error-900/30 dark:text-error-200">
           {error}
         </div>
       )}
 
       {!hasLoaded && !loading && (
-        <section className="rounded-3xl border border-dashed border-[#9fc3da] bg-white/95 p-12 text-center shadow-sm dark:border-[#2f6385] dark:bg-[#0b2448]/80">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#f4f7fd] text-[#163a72] dark:bg-[#154261] dark:text-[#9fd0ec]">
+        <section className="rounded-3xl border border-dashed border-slate-200 bg-white/95 p-12 text-center shadow-sm dark:border-slate-700 dark:bg-slate-900/80">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-primary-700 dark:bg-slate-800/60 dark:text-primary-300">
             <BarChart3 className="h-7 w-7" />
           </div>
-          <h2 className="mt-4 text-2xl font-semibold text-[#0a1f44] dark:text-[#f2f9ff]">Dashboard ready</h2>
-          <p className="mx-auto mt-2 max-w-xl text-sm text-[#4f6f87] dark:text-[#b2cee0]">
+          <h2 className="mt-4 text-2xl font-semibold text-slate-900 dark:text-slate-100">Dashboard ready</h2>
+          <p className="mx-auto mt-2 max-w-xl text-sm text-slate-600 dark:text-slate-300">
             Press <span className="font-semibold">Display Dashboard</span> to render live metrics and chart trends.
           </p>
         </section>
@@ -396,7 +594,7 @@ const Dashboard = () => {
           {Array.from({ length: 8 }).map((_, index) => (
             <div
               key={`dash-skeleton-${index}`}
-              className="h-28 animate-pulse rounded-2xl border border-[#c6d9e8] bg-gradient-to-br from-[#f7fbff] to-[#f4f7fd] dark:border-[#2b5b7a] dark:bg-gradient-to-br dark:from-[#123a55] dark:to-[#0a2142]"
+              className="h-28 animate-pulse rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-100 dark:border-slate-700 dark:bg-gradient-to-br dark:from-slate-900 dark:to-slate-950"
             />
           ))}
         </section>
@@ -404,44 +602,70 @@ const Dashboard = () => {
 
       {hasLoaded && data && (
         <>
-          <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-            {visibleCards.map((card, index) => {
+          <section className="relative">
+            <div className={`grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 ${loading ? 'pointer-events-none opacity-60' : ''}`}>
+              {visibleCards.map((card, index) => {
               const tone = CARD_TONES[index % CARD_TONES.length];
               const Icon = card.icon && card.icon in ICONS ? ICONS[card.icon as keyof typeof ICONS] : TrendingUp;
               return (
                 <article
                   key={card.id}
-                  className="group relative overflow-hidden rounded-2xl border border-[#9bb3d5] bg-gradient-to-br from-white via-[#f7fbff] to-[#f4f7fd] p-4 shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-md dark:border-[#1f4a67] dark:bg-gradient-to-br dark:from-[#123a55] dark:via-[#0b2448] dark:to-[#0a2142]"
+                  onClick={() => void openCardModal(card)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      void openCardModal(card);
+                    }
+                  }}
+                  className="group relative cursor-pointer overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-slate-100 p-4 shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary-500/40 dark:border-slate-700 dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-900 dark:to-slate-950"
                 >
                   <div className={`absolute left-0 top-0 h-1.5 w-full bg-gradient-to-r ${tone.stripe}`} />
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="truncate text-[11px] font-semibold uppercase tracking-[0.17em] text-[#4f6f87] dark:text-[#9fc0d7]">
+                      <p className="truncate text-[11px] font-semibold uppercase tracking-[0.17em] text-slate-500 dark:text-slate-300">
                         {card.title}
                       </p>
-                      <p className="mt-2 truncate text-[1.7rem] font-semibold leading-tight text-[#0a1f44] dark:text-[#f2f9ff]">
+                      <p className="mt-2 truncate text-[1.7rem] font-semibold leading-tight text-slate-900 dark:text-slate-100">
                         {formatValue(card.value, card.format)}
                       </p>
-                      <p className="mt-1 text-xs text-[#5d7c93] dark:text-[#b5cee0]">{card.subtitle}</p>
+                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-300">{card.subtitle}</p>
                     </div>
                     <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${tone.iconWrap}`}>
                       <Icon className="h-5 w-5" />
                     </div>
                   </div>
+                  {cardModalLoadingId === card.id && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-white/70 dark:bg-slate-900/70">
+                      <Loader2 className="h-6 w-6 animate-spin text-primary-600 dark:text-primary-300" />
+                    </div>
+                  )}
                 </article>
               );
-            })}
+              })}
+            </div>
+            {loading && (
+              <div className="pointer-events-none absolute inset-0 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+                {Array.from({ length: Math.max(visibleCards.length, 8) }).map((_, index) => (
+                  <div
+                    key={`dash-refresh-skeleton-${index}`}
+                    className="h-28 animate-pulse rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-100 dark:border-slate-700 dark:bg-gradient-to-br dark:from-slate-900 dark:to-slate-950"
+                  />
+                ))}
+              </div>
+            )}
           </section>
 
           <section className="space-y-5">
             {incomeTrendChart && chartOptions[incomeTrendChart.id] && chartHasData(incomeTrendChart) && (
-              <article className="rounded-2xl border border-[#9bb3d5] bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-[#1f4a67] dark:bg-[#0b2448]/88">
+              <article className="rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/80">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
-                    <h3 className="text-base font-semibold text-[#0a1f44] dark:text-[#e9f5ff]">
+                    <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
                       {incomeTrendChart.name}
                     </h3>
-                    <p className="text-xs text-[#335973] dark:text-[#c4def0]">
+                    <p className="text-xs text-slate-600 dark:text-slate-300">
                       {getChartSubtitle(incomeTrendChart.id)}
                     </p>
                   </div>
@@ -453,8 +677,8 @@ const Dashboard = () => {
                     const change = start === 0 ? (end > 0 ? 100 : 0) : ((end - start) / start) * 100;
                     const toneClass =
                       change >= 0
-                        ? 'border-[#9bd7bf] bg-[#e8f8f0] text-[#0f7a58] dark:border-[#2f725b] dark:bg-[#123a30] dark:text-[#8ae1bf]'
-                        : 'border-[#f2c3c3] bg-[#fff0f0] text-[#b93232] dark:border-[#7c3434] dark:bg-[#3c1d1d] dark:text-[#ffb0b0]';
+                        ? 'border-success-200 bg-success-50 text-success-700 dark:border-success-800 dark:bg-success-900/30 dark:text-success-200'
+                        : 'border-error-200 bg-error-50 text-error-700 dark:border-error-800 dark:bg-error-900/30 dark:text-error-200';
 
                     return (
                       <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${toneClass}`}>
@@ -482,13 +706,13 @@ const Dashboard = () => {
                 <>
                   {salesBottomChart && chartOptions[salesBottomChart.id] && chartHasData(salesBottomChart) && (
                     <section className="grid grid-cols-1 gap-5 xl:grid-cols-3">
-                      <article className="xl:col-span-2 rounded-2xl border border-[#9bb3d5] bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-[#1f4a67] dark:bg-[#0b2448]/88">
+                      <article className="xl:col-span-2 rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/80">
                         <div className="flex flex-wrap items-start justify-between gap-2">
                           <div>
-                            <h3 className="text-base font-semibold text-[#0a1f44] dark:text-[#e9f5ff]">
+                            <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
                               {salesBottomChart.name}
                             </h3>
-                            <p className="text-xs text-[#335973] dark:text-[#c4def0]">
+                            <p className="text-xs text-slate-600 dark:text-slate-300">
                               {getChartSubtitle(salesBottomChart.id)}
                             </p>
                           </div>
@@ -503,40 +727,40 @@ const Dashboard = () => {
                         </div>
                       </article>
 
-                      <article className="rounded-2xl border border-[#9bb3d5] bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-[#1f4a67] dark:bg-[#0b2448]/88">
+                      <article className="rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/80">
                         <div className="flex items-start justify-between gap-2">
                           <div>
-                            <h3 className="text-base font-semibold text-[#0a1f44] dark:text-[#e9f5ff]">
+                            <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
                               Low Stock Alert Items
                             </h3>
-                            <p className="text-xs text-[#335973] dark:text-[#c4def0]">
+                            <p className="text-xs text-slate-600 dark:text-slate-300">
                               Items at or below reorder level
                             </p>
                           </div>
-                          <span className="rounded-full border border-[#c7dced] bg-[#f4f7fd] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#163a72] dark:border-[#2f6385] dark:bg-[#123b56] dark:text-[#9bcde8]">
+                          <span className="rounded-full border border-primary-200 bg-primary-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-primary-700 dark:border-primary-800 dark:bg-primary-900/30 dark:text-primary-200">
                             {lowStockItems.length} items
                           </span>
                         </div>
                         <div className="mt-4 space-y-2">
                           {lowStockItems.length === 0 ? (
-                            <p className="text-sm text-[#5d7c93] dark:text-[#b5cee0]">
+                            <p className="text-sm text-slate-500 dark:text-slate-300">
                               No low stock alerts right now.
                             </p>
                           ) : (
                             lowStockItems.slice(0, 8).map((item) => (
                               <div
                                 key={item.item_id}
-                                className="flex items-center justify-between rounded-lg border border-[#d8e5ef] px-3 py-2 dark:border-[#23506d]"
+                                className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700"
                               >
                                 <div className="min-w-0">
-                                  <p className="truncate text-sm font-semibold text-[#0a1f44] dark:text-[#ecf7ff]">
+                                  <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
                                     {item.item_name}
                                   </p>
-                                  <p className="text-xs text-[#5f7f96] dark:text-[#b0cce0]">
+                                  <p className="text-xs text-slate-500 dark:text-slate-300">
                                     Stock: {item.quantity} / Alert: {item.stock_alert}
                                   </p>
                                 </div>
-                                <span className="ml-3 rounded-full border border-[#f0d6be] bg-[#fff6eb] px-2 py-0.5 text-[11px] font-semibold text-[#b8681f] dark:border-[#7c5b33] dark:bg-[#3d2d18] dark:text-[#ffc98d]">
+                                <span className="ml-3 rounded-full border border-warning-200 bg-warning-50 px-2 py-0.5 text-[11px] font-semibold text-warning-700 dark:border-warning-800 dark:bg-warning-900/30 dark:text-warning-200">
                                   Need {item.shortage}
                                 </span>
                               </div>
@@ -556,12 +780,12 @@ const Dashboard = () => {
                         return (
                           <article
                             key={chart.id}
-                            className="rounded-2xl border border-[#9bb3d5] bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-[#1f4a67] dark:bg-[#0b2448]/88"
+                            className="rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/80"
                           >
                             <div className="flex flex-wrap items-start justify-between gap-2">
                               <div>
-                                <h3 className="text-base font-semibold text-[#0a1f44] dark:text-[#e9f5ff]">{chart.name}</h3>
-                                <p className="text-xs text-[#335973] dark:text-[#c4def0]">{getChartSubtitle(chart.id)}</p>
+                                <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">{chart.name}</h3>
+                                <p className="text-xs text-slate-600 dark:text-slate-300">{getChartSubtitle(chart.id)}</p>
                               </div>
                             </div>
                             <div className="mt-4">
@@ -582,20 +806,20 @@ const Dashboard = () => {
             })()}
 
             {!hasRenderableCharts && (
-              <article className="rounded-2xl border border-dashed border-[#9bb3d5] bg-white/90 p-8 text-center text-[#5d7890] dark:border-[#2f6385] dark:bg-[#0b2448]/78 dark:text-[#b4cfe1]">
+              <article className="rounded-2xl border border-dashed border-slate-200 bg-white/90 p-8 text-center text-slate-500 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-300">
                 No charts available for your current permissions.
               </article>
             )}
           </section>
 
           <section className="grid grid-cols-1 gap-5">
-            <article className="rounded-2xl border border-[#9bb3d5] bg-white/95 p-5 shadow-sm dark:border-[#1f4a67] dark:bg-[#0b2448]/88">
+            <article className="rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900/80">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <h3 className="text-base font-semibold text-[#0a1f44] dark:text-[#e9f5ff]">Recent Activity</h3>
-                  <p className="text-xs text-[#5f7f96] dark:text-[#b0cce0]">Latest sales and purchase transactions</p>
+                  <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Recent Activity</h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-300">Latest sales and purchase transactions</p>
                 </div>
-                <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#6d8aa0] dark:text-[#9ab9cf]">
+                <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-300">
                   Last {Math.min(10, data.recent.length)} records
                 </span>
               </div>
@@ -603,7 +827,7 @@ const Dashboard = () => {
               <div className="mt-4 overflow-x-auto custom-scrollbar">
                 <table className="min-w-[680px] w-full">
                   <thead>
-                    <tr className="border-b border-[#d8e5ef] text-left text-[11px] uppercase tracking-[0.18em] text-[#5d7890] dark:border-[#23506d] dark:text-[#9ab9cf]">
+                    <tr className="border-b border-slate-200 text-left text-[11px] uppercase tracking-[0.18em] text-slate-500 dark:border-slate-700 dark:text-slate-300">
                       <th className="px-2 py-3">Type</th>
                       <th className="px-2 py-3">Reference</th>
                       <th className="px-2 py-3">Amount</th>
@@ -613,11 +837,11 @@ const Dashboard = () => {
                   </thead>
                   <tbody>
                     {data.recent.map((row) => (
-                      <tr key={row.id} className="border-b border-[#ebf2f8] dark:border-[#1b4662]">
-                        <td className="px-2 py-3 text-sm font-semibold text-[#0a1f44] dark:text-[#ecf7ff]">{row.type}</td>
-                        <td className="px-2 py-3 text-sm text-[#6f86a8] dark:text-[#b5cee0]">{row.ref}</td>
-                        <td className="px-2 py-3 text-sm text-[#2c4a62] dark:text-[#d4e6f4]">{formatValue(row.amount, 'currency')}</td>
-                        <td className="px-2 py-3 text-sm text-[#6f86a8] dark:text-[#b5cee0]">{formatDateTime(row.date)}</td>
+                      <tr key={row.id} className="border-b border-slate-200 dark:border-slate-800">
+                        <td className="px-2 py-3 text-sm font-semibold text-slate-900 dark:text-slate-100">{row.type}</td>
+                        <td className="px-2 py-3 text-sm text-slate-500 dark:text-slate-300">{row.ref}</td>
+                        <td className="px-2 py-3 text-sm text-slate-700 dark:text-slate-200">{formatValue(row.amount, 'currency')}</td>
+                        <td className="px-2 py-3 text-sm text-slate-500 dark:text-slate-300">{formatDateTime(row.date)}</td>
                         <td className="px-2 py-3 text-right">
                           <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${statusTone(row.status)}`}>
                             {row.status}
@@ -627,7 +851,7 @@ const Dashboard = () => {
                     ))}
                     {data.recent.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="px-2 py-8 text-center text-sm text-[#6b879d] dark:text-[#b0cce0]">
+                        <td colSpan={5} className="px-2 py-8 text-center text-sm text-slate-500 dark:text-slate-300">
                           No recent activity found.
                         </td>
                       </tr>
@@ -639,6 +863,23 @@ const Dashboard = () => {
           </section>
         </>
       )}
+
+      <ReportModal
+        isOpen={cardModalOpen}
+        onClose={() => setCardModalOpen(false)}
+        title={cardModalTitle || 'Dashboard'}
+        subtitle={cardModalSubtitle}
+        companyInfo={companyInfo}
+        fileName={`dashboard-${cardModalTitle || 'card'}`}
+        data={cardModalData}
+        columns={cardModalColumns}
+        tableTotals={{
+          label: cardModalTotalLabel,
+          values: {
+            [cardModalTotalKey]: cardModalTotalValue,
+          },
+        }}
+      />
     </div>
   );
 };

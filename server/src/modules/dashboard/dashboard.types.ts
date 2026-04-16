@@ -51,6 +51,14 @@ export type DashboardLowStockItem = {
   shortage: number;
 };
 
+export type DashboardCardDrilldown = {
+  cardId: string;
+  title: string;
+  format?: 'currency' | 'number';
+  total: number;
+  rows: Record<string, unknown>[];
+};
+
 export type DashboardResponse = {
   widgets: DashboardWidget[];
   cards: DashboardCard[];

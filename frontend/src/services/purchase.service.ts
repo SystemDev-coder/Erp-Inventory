@@ -37,7 +37,17 @@ export interface Purchase {
   status: 'received' | 'partial' | 'unpaid' | 'void';
   fx_rate: number;
   note?: string | null;
+  paid_amount?: number;
   items?: PurchaseItem[];
+}
+
+export interface PurchasePaymentSummary {
+  total_paid: number;
+  accounts: Array<{
+    acc_id: number;
+    account_name: string;
+    amount: number;
+  }>;
 }
 
 export interface PurchaseCreateInput {
@@ -84,7 +94,9 @@ export const purchaseService = {
   },
 
   async get(id: number) {
-    return apiClient.get<{ purchase: Purchase; items?: PurchaseItem[] }>(API.PURCHASES.ITEM(id));
+    return apiClient.get<{ purchase: Purchase; items?: PurchaseItem[]; paymentSummary?: PurchasePaymentSummary }>(
+      API.PURCHASES.ITEM(id)
+    );
   },
 
   async listItems(params?: { search?: string; supplierId?: number; productId?: number; branchId?: number; from?: string; to?: string }) {

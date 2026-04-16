@@ -50,9 +50,11 @@ const COA_SPECS: Record<CoaKey, CoaAccountSpec> = {
   retainedEarnings: { name: 'Retained Earnings', accountType: 'equity' },
   ownerDrawings: { name: 'Owner Drawings', accountType: 'equity' },
   fixedAssets: { name: 'Fixed Assets', accountType: 'asset' },
-  otherIncome: { name: 'Other Income', accountType: 'income' },
-  inventoryGain: { name: 'Inventory Gain', accountType: 'income' },
-  inventoryShrinkage: { name: 'Inventory Shrinkage', accountType: 'expense' },
+  // Some legacy databases restrict `accounts.account_type` to a smaller set that does not include 'income'.
+  // Use 'revenue' for compatibility; reporting can still distinguish via the account name.
+  otherIncome: { name: 'Other Income', accountType: 'revenue' },
+  inventoryGain: { name: 'Inventory Gain', accountType: 'revenue' },
+  inventoryShrinkage: { name: 'Inventory Loss', accountType: 'expense' },
 };
 
 const normalizeName = (name: string) => name.trim().toLowerCase();
@@ -132,18 +134,22 @@ export const ensureCoaSchema = async () => {
   // Kept lightweight: settings service also ensures this, but this is safe for module-level calls.
   await queryOne(`
     DO $$
+    DECLARE
+      r record;
     BEGIN
-      IF EXISTS (
-        SELECT 1
+      FOR r IN
+        SELECT c.conname
           FROM pg_constraint c
           JOIN pg_class t ON t.oid = c.conrelid
           JOIN pg_namespace n ON n.oid = t.relnamespace
          WHERE n.nspname = 'ims'
            AND t.relname = 'accounts'
-           AND c.conname = 'chk_accounts_account_type'
-      ) THEN
-        ALTER TABLE ims.accounts DROP CONSTRAINT chk_accounts_account_type;
-      END IF;
+           AND c.contype = 'c'
+      LOOP
+        IF r.conname ILIKE '%account_type%' THEN
+          EXECUTE format('ALTER TABLE ims.accounts DROP CONSTRAINT %I', r.conname);
+        END IF;
+      END LOOP;
 
       ALTER TABLE ims.accounts
         ADD CONSTRAINT chk_accounts_account_type

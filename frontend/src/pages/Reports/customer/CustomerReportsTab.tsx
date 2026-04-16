@@ -119,6 +119,7 @@ const customerActivityColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'net_exposure', header: 'Net Exposure', align: 'right', render: (row) => formatCurrency(row.net_exposure) },
 ];
 
+
 type Props = {
   onOpenModal: (report: ModalReportState) => void;
 };
@@ -453,22 +454,22 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
 
   const renderDateRange = (range: DateRange, onChange: (next: DateRange) => void) => (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-      <label className="space-y-1 text-xs font-semibold text-[#47657f]">
+      <label className="space-y-1 text-xs font-semibold text-slate-600">
         <span>From Date</span>
         <input
           type="date"
           value={range.fromDate}
           onChange={(event) => onChange({ ...range, fromDate: event.target.value })}
-          className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none"
+          className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"
         />
       </label>
-      <label className="space-y-1 text-xs font-semibold text-[#47657f]">
+      <label className="space-y-1 text-xs font-semibold text-slate-600">
         <span>To Date</span>
         <input
           type="date"
           value={range.toDate}
           onChange={(event) => onChange({ ...range, toDate: event.target.value })}
-          className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none"
+          className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"
         />
       </label>
     </div>
@@ -478,7 +479,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
     <select
       value={value}
       onChange={(event) => onChange(event.target.value)}
-      className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2.5 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none"
+      className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"
     >
       <option value="">{placeholder}</option>
       {customers.map((option) => (
@@ -494,14 +495,14 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
       <button
         onClick={onShow}
         disabled={loadingCardId === cardId}
-        className="inline-flex items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70"
+        className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
       >
         Show
       </button>
       <button
         onClick={onAll}
         disabled={loadingCardId === cardId}
-        className="rounded-md border border-[#9ec5df] bg-white px-4 py-2.5 text-sm font-semibold text-[#0f4f76] hover:bg-[#edf5fb] disabled:cursor-not-allowed disabled:opacity-70"
+        className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70"
       >
         All
       </button>
@@ -563,7 +564,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
           <button
             onClick={handleNewCustomers}
             disabled={loadingCardId === cardId}
-            className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70"
+            className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
           >
             Show
           </button>
@@ -583,13 +584,13 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
   const renderCard = (card: { id: CustomerCardId; title: string; hint: string }) => {
     const isOpen = expandedCardId === card.id;
     return (
-      <div key={card.id} className="self-start overflow-hidden rounded-2xl border border-[#bfd0df] bg-white shadow-[0_8px_18px_rgba(15,79,118,0.08)]">
+      <div key={card.id} className="self-start overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_8px_18px_rgba(15,23,42,0.08)]">
         <button
           onClick={() => {
             setCardErrors((prev) => ({ ...prev, [card.id]: '' }));
             setExpandedCardId((prev) => (prev === card.id ? null : card.id));
           }}
-          className="flex w-full items-center justify-between border-b border-[#d8e4ee] bg-gradient-to-r from-[#0f4f76] to-[#1f6f9f] px-5 py-4 text-left text-white"
+          className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-slate-900 to-slate-800 px-5 py-4 text-left text-white"
         >
           <div>
             <p className="text-xl font-semibold leading-tight">{card.title}</p>
@@ -598,7 +599,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
           <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
         </button>
         {isOpen && (
-          <div className="space-y-3 bg-[#f8fbff] px-5 py-4">
+          <div className="space-y-3 bg-slate-50 px-5 py-4">
             {renderCardBody(card.id)}
             {cardErrors[card.id] && <p className="text-sm font-semibold text-red-600">{cardErrors[card.id]}</p>}
           </div>
@@ -614,7 +615,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
     <div className="space-y-3">
       {optionsError && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{optionsError}</div>}
       {optionsLoading && (
-        <div className="inline-flex items-center gap-2 rounded-md border border-[#b8c8d7] bg-white px-3 py-2 text-sm text-[#38556d]">
+        <div className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
           <Loader2 className="h-4 w-4 animate-spin" />
           Loading customer options...
         </div>
@@ -633,4 +634,5 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
     </div>
   );
 }
+
 

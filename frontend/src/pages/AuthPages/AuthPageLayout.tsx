@@ -2,16 +2,31 @@ import React from "react";
 import GridShape from "../../components/common/GridShape";
 import { Link } from "react-router";
 import ThemeTogglerTwo from "../../components/common/ThemeTogglerTwo";
-import { BRAND } from "../../config/env";
+import { BRAND, env } from "../../config/env";
 
 export default function AuthLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const logoStorageKey = "erp.company.logo_img";
+  const systemLogo = "/images/logo/logo-icon.svg";
+  const resolveLogoUrl = (value?: string | null) => {
+    const raw = (value || "").trim();
+    if (!raw) return "";
+    if (/^data:/i.test(raw)) return raw;
+    if (/^https?:\/\//i.test(raw)) return raw;
+    // Frontend public assets (served by Vite)
+    if (raw.startsWith("/images/") || raw === "/favicon.png") return raw;
+    if (raw.startsWith("uploads/")) return `${env.API_URL}/${raw}`;
+    if (raw.startsWith("/")) return `${env.API_URL}${raw}`;
+    return raw;
+  };
+
+  const storedLogo =
+    typeof window !== "undefined" ? window.localStorage.getItem(logoStorageKey) : "";
   const avatar =
-    BRAND.AVATAR ||
-    `https://ui-avatars.com/api/?name=${encodeURIComponent(BRAND.NAME)}&background=0b1a4d&color=ffffff`;
+    resolveLogoUrl(storedLogo) || systemLogo || resolveLogoUrl(env.COMPANY_AVATAR) || BRAND.AVATAR;
 
   return (
     <div className="relative p-6 bg-white z-1 dark:bg-gray-900 sm:p-0">
@@ -21,19 +36,19 @@ export default function AuthLayout({
           <div className="relative flex items-center justify-center z-1">
             {/* <!-- ===== Common Grid Shape Start ===== --> */}
             <GridShape />
-            <div className="flex flex-col items-center max-w-xs">
+            <div className="flex w-full flex-col items-center max-w-sm">
               <Link to="/" className="block mb-4">
                 <div className="flex flex-col items-center gap-3">
-                  <img
-                    src={avatar}
-                    alt={BRAND.NAME}
-                    className="w-16 h-16 rounded-full border-2 border-brand-400 shadow-lg object-cover bg-white/10"
-                    onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(
-                        BRAND.NAME
-                      )}&background=0b1a4d&color=ffffff`;
-                    }}
-                  />
+                  <div className="flex w-full items-center justify-center rounded-3xl ring-1 ring-white/25 bg-white/10 px-10 py-8 shadow-xl">
+                    <img
+                      src={avatar}
+                      alt={BRAND.NAME}
+                      className="h-auto w-full object-contain"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).src = systemLogo;
+                      }}
+                    />
+                  </div>
                   <h1 className="text-3xl font-semibold tracking-tight text-white text-center">
                     {BRAND.NAME}
                   </h1>

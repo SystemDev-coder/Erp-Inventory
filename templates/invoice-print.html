@@ -228,31 +228,29 @@
         flex-direction: column;
         justify-content: flex-end;
       }
-      .sig-grid{
-        display:grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 12px;
-        margin-top: 10px;
-      }
-      .sig{
+      .sig-row{
+        display:flex;
+        align-items:center;
+        gap: 10px;
         padding-top: 18px;
       }
-      .sig .line{
-        border-top: 1px solid #94a3b8;
-        height: 1px;
-      }
-      .sig .label{
-        margin-top: 6px;
+      .sig-row .sig-label{
         color: var(--muted);
         font-size: 10px;
         letter-spacing: .08em;
         text-transform: uppercase;
+        white-space: nowrap;
+      }
+      .sig-row .sig-line{
+        flex: 1 1 auto;
+        border-top: 1px solid #94a3b8;
+        height: 1px;
       }
 
       .totals{
         border: 1px solid var(--line);
         border-radius: 14px;
-        background: #f8fafc;
+        background: transparent;
         padding: 12px;
       }
       .tot-row{
@@ -368,15 +366,9 @@
 
         <div class="bottom">
           <div class="signatures">
-            <div class="sig-grid">
-              <div class="sig">
-                <div class="line"></div>
-                <div class="label">Authorized Signature</div>
-              </div>
-              <div class="sig">
-                <div class="line"></div>
-                <div class="label">Client Signature</div>
-              </div>
+            <div class="sig-row">
+              <div class="sig-label">Authorized Sign:</div>
+              <div class="sig-line"></div>
             </div>
           </div>
 

@@ -403,7 +403,7 @@ const ClosingFinance = () => {
               type="button"
               onClick={() => void loadData()}
               disabled={loading}
-              className="inline-flex items-center gap-2 rounded-xl border border-[#9bc0e6] bg-white px-4 py-2.5 text-sm font-semibold text-[#0c3556] hover:bg-[#f0f7ff]"
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 hover:bg-slate-50"
             >
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
               {loading ? 'Loading...' : 'Display'}
@@ -411,7 +411,7 @@ const ClosingFinance = () => {
             <button
               type="button"
               onClick={runScheduled}
-              className="inline-flex items-center gap-2 rounded-xl border border-[#2b6e8c] bg-[#0f4f74] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4567]"
+              className="inline-flex items-center gap-2 rounded-xl border border-primary-500/30 bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700"
             >
               <PlayCircle className="h-4 w-4" />
               Run Scheduled
@@ -419,7 +419,7 @@ const ClosingFinance = () => {
             <button
               type="button"
               onClick={() => setCreateOpen(true)}
-              className="inline-flex items-center gap-2 rounded-xl border border-[#2e7e4f] bg-[#1f8f4d] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#16723d]"
+              className="inline-flex items-center gap-2 rounded-xl border border-success-600/40 bg-success-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-success-700"
             >
               <Plus className="h-4 w-4" />
               New Closing Period
@@ -430,55 +430,55 @@ const ClosingFinance = () => {
 
       {activeSnapshot && (
         <div className="grid gap-4 md:grid-cols-3">
-          <div className="rounded-2xl border border-[#a9d4c1] bg-[#f2fff8] p-4">
+          <div className="rounded-2xl border border-success-200 bg-success-50 p-4">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#2b7e4d]">Net Income Impact</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-success-700">Net Income Impact</p>
               {activeSnapshot.netIncome >= 0 ? (
-                <TrendingUp className="h-5 w-5 text-[#1f8f4d]" />
+                <TrendingUp className="h-5 w-5 text-success-600" />
               ) : (
-                <TrendingDown className="h-5 w-5 text-[#c53939]" />
+                <TrendingDown className="h-5 w-5 text-error-700" />
               )}
             </div>
-            <p className="mt-2 text-2xl font-bold text-[#103a22]">{formatMoney(activeSnapshot.netIncome)}</p>
-            <p className="mt-1 text-sm text-[#3b6b52]">Revenue after COGS, expense charges, payroll, and other income.</p>
+            <p className="mt-2 text-2xl font-bold text-success-800">{formatMoney(activeSnapshot.netIncome)}</p>
+            <p className="mt-1 text-sm text-success-700">Revenue after COGS, expense charges, payroll, and other income.</p>
           </div>
-          <div className="rounded-2xl border border-[#b7d2ea] bg-[#f3f9ff] p-4">
+          <div className="rounded-2xl border border-primary-200 bg-slate-50 p-4">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#2e648f]">Inventory Valuation</p>
-              <Wallet className="h-5 w-5 text-[#1a5f90]" />
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-700">Stock Value</p>
+              <Wallet className="h-5 w-5 text-primary-700" />
             </div>
-            <p className="mt-2 text-2xl font-bold text-[#14395a]">{formatMoney(activeSnapshot.stockValuation)}</p>
-            <p className="mt-1 text-sm text-[#3c6282]">Current store/item valuation integrated into closing decisions.</p>
+            <p className="mt-2 text-2xl font-bold text-slate-800">{formatMoney(activeSnapshot.stockValuation)}</p>
+            <p className="mt-1 text-sm text-slate-600">Current store/item valuation integrated into closing decisions.</p>
           </div>
-          <div className="rounded-2xl border border-[#e7c3bb] bg-[#fff6f4] p-4">
+          <div className="rounded-2xl border border-warning-200 bg-warning-50 p-4">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#8a4335]">COGS</p>
-              <CalendarCheck2 className="h-5 w-5 text-[#934637]" />
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-warning-800">COGS</p>
+              <CalendarCheck2 className="h-5 w-5 text-warning-800" />
             </div>
-            <p className="mt-2 text-2xl font-bold text-[#6b2f25]">{formatMoney(activeSnapshot.cogs)}</p>
-            <p className="mt-1 text-sm text-[#8b584d]">Calculated from inventory movements with purchase fallback logic.</p>
+            <p className="mt-2 text-2xl font-bold text-warning-900">{formatMoney(activeSnapshot.cogs)}</p>
+            <p className="mt-1 text-sm text-warning-700">Calculated from inventory movements with purchase fallback logic.</p>
           </div>
         </div>
       )}
 
       {!displayed ? (
-        <div className="rounded-2xl border border-dashed border-[#7ea5ce] bg-[#f3f9ff] p-10 text-center">
-          <p className="text-xl font-semibold text-[#0f3d62]">Closing panel ready</p>
-          <p className="mt-2 text-sm text-[#4f6f8d]">
+        <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-10 text-center">
+          <p className="text-xl font-semibold text-slate-800">Closing panel ready</p>
+          <p className="mt-2 text-sm text-slate-500">
             Click <strong>Display</strong> to load periods, rules, and finance integration data.
           </p>
         </div>
       ) : (
-        <div className="rounded-2xl border border-[#9fc1df] bg-white shadow-sm">
-          <div className="border-b border-[#d7e8f7] px-5 py-4">
-            <h3 className="text-lg font-semibold text-[#173f63]">Closing Periods</h3>
-            <p className="text-sm text-[#4e6f8f]">
+        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-5 py-4">
+            <h3 className="text-lg font-semibold text-slate-800">Closing Periods</h3>
+            <p className="text-sm text-slate-500">
               Each period locks transactions after close. Reopen is limited to authorized roles.
             </p>
           </div>
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
-              <thead className="bg-[#0d3f65] text-white">
+              <thead className="bg-slate-900 text-white">
                 <tr>
                   <th className="px-4 py-3 text-left">Period</th>
                   <th className="px-4 py-3 text-left">Mode</th>
@@ -504,24 +504,24 @@ const ClosingFinance = () => {
                         ? Number((summary as any).netIncome)
                         : null;
                     return (
-                      <tr key={period.closing_id} className="border-b border-[#ebf2f9]">
+                      <tr key={period.closing_id} className="border-b border-slate-200">
                         <td className="px-4 py-3">
-                          <div className="font-semibold text-[#173f63]">
+                          <div className="font-semibold text-slate-800">
                             {formatDateOnly(period.period_from)} to {formatDateOnly(period.period_to)}
                           </div>
-                          <div className="text-xs text-[#6b8cab]">ID #{period.closing_id}</div>
+                          <div className="text-xs text-slate-500">ID #{period.closing_id}</div>
                         </td>
-                        <td className="px-4 py-3 capitalize text-[#274d70]">{period.close_mode}</td>
-                        <td className="px-4 py-3 text-[#355b7f]">
+                        <td className="px-4 py-3 capitalize text-slate-700">{period.close_mode}</td>
+                        <td className="px-4 py-3 text-slate-600">
                           {period.operational_from && period.operational_to
                             ? `${formatDateOnly(period.operational_from)} to ${formatDateOnly(period.operational_to)}`
                             : '-'}
                         </td>
-                        <td className="px-4 py-3 text-[#355b7f]">
+                        <td className="px-4 py-3 text-slate-600">
                           {period.scheduled_at ? new Date(period.scheduled_at).toLocaleString() : '-'}
                         </td>
                         <td className="px-4 py-3">
-                          <div className="inline-flex items-center gap-1 rounded-full border border-[#d3e6f8] bg-[#f3f9ff] px-2.5 py-1 text-xs font-semibold capitalize text-[#21527b]">
+                          <div className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold capitalize text-slate-700">
                             {period.status === 'closed' ? (
                               <Lock className="h-3.5 w-3.5" />
                             ) : period.status === 'reopened' ? (
@@ -534,7 +534,7 @@ const ClosingFinance = () => {
                         </td>
                         <td
                           className={`px-4 py-3 text-right font-semibold ${
-                            netIncome === null ? 'text-[#5a7895]' : netIncome >= 0 ? 'text-[#16723d]' : 'text-[#c03939]'
+                            netIncome === null ? 'text-slate-500' : netIncome >= 0 ? 'text-success-700' : 'text-error-700'
                           }`}
                         >
                           {netIncome === null ? 'Use Summary' : formatMoney(netIncome)}
@@ -550,14 +550,14 @@ const ClosingFinance = () => {
                                 }
                                 openEditPeriod(period);
                               }}
-                              className="rounded-lg border border-[#9fc1df] bg-[#f4f9ff] px-3 py-1.5 text-xs font-semibold text-[#1c4a72] hover:bg-[#e9f4ff]"
+                              className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                             >
                               Edit
                             </button>
                             <button
                               type="button"
                               onClick={() => openSummary(period)}
-                              className="rounded-lg border border-[#9fc1df] bg-white px-3 py-1.5 text-xs font-semibold text-[#1c4a72] hover:bg-[#f5fbff]"
+                              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                             >
                               Summary
                             </button>
@@ -565,7 +565,7 @@ const ClosingFinance = () => {
                               <button
                                 type="button"
                                 onClick={() => openCloseWizard(period)}
-                                className="rounded-lg border border-[#2b6e8c] bg-[#0f4f74] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#0a4364]"
+                                className="rounded-lg border border-primary-500/30 bg-primary-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-700"
                               >
                                 Close
                               </button>
@@ -578,7 +578,7 @@ const ClosingFinance = () => {
                                   setReopenReason('');
                                   setReopenReverse(Boolean(period.closing_journal_id) && !period.closing_reversal_journal_id);
                                 }}
-                                className="rounded-lg border border-[#c58044] bg-[#fff6ed] px-3 py-1.5 text-xs font-semibold text-[#995923] hover:bg-[#ffe7d3]"
+                                className="rounded-lg border border-primary-400/60 bg-warning-50 px-3 py-1.5 text-xs font-semibold text-warning-700 hover:bg-warning-100"
                               >
                                 Reopen
                               </button>
@@ -597,16 +597,16 @@ const ClosingFinance = () => {
 
       <Modal isOpen={createOpen} onClose={() => setCreateOpen(false)} title="Create Closing Period" size="lg">
         <div className="space-y-4">
-          <div className="rounded-xl border border-[#d6e5f4] bg-[#f7fbff] p-4 text-sm text-[#395f80]">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
             Step 1: choose period dates. Step 2: optional operational period and schedule. Step 3: create period.
           </div>
           <div className="grid gap-4 md:grid-cols-2">
             <label className="space-y-1">
-              <span className="text-sm font-semibold text-[#264c70]">Close Mode</span>
+              <span className="text-sm font-semibold text-slate-700">Close Mode</span>
               <select
                 value={createForm.closeMode}
                 onChange={(e) => setCreateForm((prev) => ({ ...prev, closeMode: e.target.value as any }))}
-                className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary-500"
               >
                 <option value="monthly">Monthly</option>
                 <option value="yearly">Yearly</option>
@@ -615,57 +615,57 @@ const ClosingFinance = () => {
             </label>
             <div className="hidden md:block" />
             <label className="space-y-1">
-              <span className="text-sm font-semibold text-[#264c70]">Period From</span>
+              <span className="text-sm font-semibold text-slate-700">Period From</span>
               <input
                 type="date"
                 value={createForm.periodFrom}
                 onChange={(e) => setCreateForm((prev) => ({ ...prev, periodFrom: e.target.value }))}
-                className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-sm font-semibold text-[#264c70]">Period To</span>
+              <span className="text-sm font-semibold text-slate-700">Period To</span>
               <input
                 type="date"
                 value={createForm.periodTo}
                 onChange={(e) => setCreateForm((prev) => ({ ...prev, periodTo: e.target.value }))}
-                className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-sm font-semibold text-[#264c70]">Operational From (Optional)</span>
+              <span className="text-sm font-semibold text-slate-700">Operational From (Optional)</span>
               <input
                 type="date"
                 value={createForm.operationalFrom}
                 onChange={(e) => setCreateForm((prev) => ({ ...prev, operationalFrom: e.target.value }))}
-                className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-sm font-semibold text-[#264c70]">Operational To (Optional)</span>
+              <span className="text-sm font-semibold text-slate-700">Operational To (Optional)</span>
               <input
                 type="date"
                 value={createForm.operationalTo}
                 onChange={(e) => setCreateForm((prev) => ({ ...prev, operationalTo: e.target.value }))}
-                className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary-500"
               />
             </label>
             <label className="space-y-1 md:col-span-2">
-              <span className="text-sm font-semibold text-[#264c70]">Scheduled Auto Close (Optional)</span>
+              <span className="text-sm font-semibold text-slate-700">Scheduled Auto Close (Optional)</span>
               <input
                 type="datetime-local"
                 value={createForm.scheduledAt}
                 onChange={(e) => setCreateForm((prev) => ({ ...prev, scheduledAt: e.target.value }))}
-                className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary-500"
               />
             </label>
             <label className="space-y-1 md:col-span-2">
-              <span className="text-sm font-semibold text-[#264c70]">Note</span>
+              <span className="text-sm font-semibold text-slate-700">Note</span>
               <textarea
                 rows={2}
                 value={createForm.note}
                 onChange={(e) => setCreateForm((prev) => ({ ...prev, note: e.target.value }))}
-                className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary-500"
                 placeholder="Describe this closing period purpose..."
               />
             </label>
@@ -674,14 +674,14 @@ const ClosingFinance = () => {
             <button
               type="button"
               onClick={() => setCreateOpen(false)}
-              className="rounded-xl border border-[#aac7e2] px-4 py-2 text-sm font-semibold text-[#2f5b82] hover:bg-[#f3f9ff]"
+              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
             >
               Cancel
             </button>
             <button
               type="button"
               onClick={createPeriod}
-              className="rounded-xl border border-[#2e7e4f] bg-[#1f8f4d] px-4 py-2 text-sm font-semibold text-white hover:bg-[#16723d]"
+              className="rounded-xl border border-success-600/40 bg-success-600 px-4 py-2 text-sm font-semibold text-white hover:bg-success-700"
             >
               Create Period
             </button>
@@ -699,16 +699,16 @@ const ClosingFinance = () => {
         size="lg"
       >
         <div className="space-y-4">
-          <div className="rounded-xl border border-[#d6e5f4] bg-[#f7fbff] p-4 text-sm text-[#395f80]">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
             Update dates and scheduling. If period dates change, summary/profit values are recalculated on next close/preview.
           </div>
           <div className="grid gap-4 md:grid-cols-2">
             <label className="space-y-1">
-              <span className="text-sm font-semibold text-[#264c70]">Close Mode</span>
+              <span className="text-sm font-semibold text-slate-700">Close Mode</span>
               <select
                 value={editForm.closeMode}
                 onChange={(e) => setEditForm((prev) => ({ ...prev, closeMode: e.target.value as any }))}
-                className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary-500"
               >
                 <option value="monthly">Monthly</option>
                 <option value="yearly">Yearly</option>
@@ -717,57 +717,57 @@ const ClosingFinance = () => {
             </label>
             <div className="hidden md:block" />
             <label className="space-y-1">
-              <span className="text-sm font-semibold text-[#264c70]">Period From</span>
+              <span className="text-sm font-semibold text-slate-700">Period From</span>
               <input
                 type="date"
                 value={editForm.periodFrom}
                 onChange={(e) => setEditForm((prev) => ({ ...prev, periodFrom: e.target.value }))}
-                className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-sm font-semibold text-[#264c70]">Period To</span>
+              <span className="text-sm font-semibold text-slate-700">Period To</span>
               <input
                 type="date"
                 value={editForm.periodTo}
                 onChange={(e) => setEditForm((prev) => ({ ...prev, periodTo: e.target.value }))}
-                className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-sm font-semibold text-[#264c70]">Operational From (Optional)</span>
+              <span className="text-sm font-semibold text-slate-700">Operational From (Optional)</span>
               <input
                 type="date"
                 value={editForm.operationalFrom}
                 onChange={(e) => setEditForm((prev) => ({ ...prev, operationalFrom: e.target.value }))}
-                className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-sm font-semibold text-[#264c70]">Operational To (Optional)</span>
+              <span className="text-sm font-semibold text-slate-700">Operational To (Optional)</span>
               <input
                 type="date"
                 value={editForm.operationalTo}
                 onChange={(e) => setEditForm((prev) => ({ ...prev, operationalTo: e.target.value }))}
-                className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary-500"
               />
             </label>
             <label className="space-y-1 md:col-span-2">
-              <span className="text-sm font-semibold text-[#264c70]">Scheduled Auto Close (Optional)</span>
+              <span className="text-sm font-semibold text-slate-700">Scheduled Auto Close (Optional)</span>
               <input
                 type="datetime-local"
                 value={editForm.scheduledAt}
                 onChange={(e) => setEditForm((prev) => ({ ...prev, scheduledAt: e.target.value }))}
-                className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary-500"
               />
             </label>
             <label className="space-y-1 md:col-span-2">
-              <span className="text-sm font-semibold text-[#264c70]">Note</span>
+              <span className="text-sm font-semibold text-slate-700">Note</span>
               <textarea
                 rows={2}
                 value={editForm.note}
                 onChange={(e) => setEditForm((prev) => ({ ...prev, note: e.target.value }))}
-                className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary-500"
                 placeholder="Update closing period notes..."
               />
             </label>
@@ -779,14 +779,14 @@ const ClosingFinance = () => {
                 setEditOpen(false);
                 setEditTarget(null);
               }}
-              className="rounded-xl border border-[#aac7e2] px-4 py-2 text-sm font-semibold text-[#2f5b82] hover:bg-[#f3f9ff]"
+              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
             >
               Cancel
             </button>
             <button
               type="button"
               onClick={updatePeriod}
-              className="rounded-xl border border-[#2b6e8c] bg-[#0f4f74] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0b4567]"
+              className="rounded-xl border border-primary-500/30 bg-primary-600 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-700"
             >
               Save Changes
             </button>
@@ -804,8 +804,8 @@ const ClosingFinance = () => {
         size="2xl"
       >
         <div className="space-y-4">
-          <div className="rounded-xl border border-[#d6e5f4] bg-[#f7fbff] p-4 text-sm text-[#355d7f]">
-            <div className="font-semibold text-[#194468]">Step {closeStep} of 3</div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+            <div className="font-semibold text-slate-700">Step {closeStep} of 3</div>
             <div className="mt-1">
               {closeStep === 1 && 'Set period options and profit sharing rule.'}
               {closeStep === 2 && 'Preview calculations and verify totals before posting.'}
@@ -814,7 +814,7 @@ const ClosingFinance = () => {
           </div>
 
           {closeTarget && (
-            <div className="rounded-xl border border-[#d7e8f7] bg-white p-4 text-sm text-[#224768]">
+            <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700">
               <div className="font-semibold">Period</div>
               <div>
                 {formatDateOnly(closeTarget.period_from)} to {formatDateOnly(closeTarget.period_to)} ({closeTarget.close_mode})
@@ -826,11 +826,11 @@ const ClosingFinance = () => {
             <div className="space-y-4">
               <div className="grid gap-4 md:grid-cols-2">
                 <label className="space-y-1">
-                  <span className="text-sm font-semibold text-[#264c70]">Rule Source</span>
+                  <span className="text-sm font-semibold text-slate-700">Rule Source</span>
                   <select
                     value={ruleMode}
                     onChange={(e) => setRuleMode(e.target.value as RuleMode)}
-                    className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary-500"
                   >
                     <option value="saved">Saved Rule</option>
                     <option value="custom">Custom Rule</option>
@@ -838,11 +838,11 @@ const ClosingFinance = () => {
                 </label>
                 {ruleMode === 'saved' ? (
                   <label className="space-y-1">
-                    <span className="text-sm font-semibold text-[#264c70]">Select Rule</span>
+                    <span className="text-sm font-semibold text-slate-700">Select Rule</span>
                     <select
                       value={selectedRuleId || ''}
                       onChange={(e) => setSelectedRuleId(e.target.value ? Number(e.target.value) : undefined)}
-                      className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary-500"
                     >
                       <option value="">Default automatic</option>
                       {rules.map((rule) => (
@@ -854,12 +854,12 @@ const ClosingFinance = () => {
                   </label>
                 ) : (
                   <label className="space-y-1">
-                    <span className="text-sm font-semibold text-[#264c70]">Rule Name</span>
+                    <span className="text-sm font-semibold text-slate-700">Rule Name</span>
                     <input
                       type="text"
                       value={closeRule.ruleName}
                       onChange={(e) => setCloseRule((prev) => ({ ...prev, ruleName: e.target.value }))}
-                      className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary-500"
                       placeholder="e.g. Monthly Partner Split"
                     />
                   </label>
@@ -867,10 +867,10 @@ const ClosingFinance = () => {
               </div>
 
               {ruleMode === 'custom' && (
-                <div className="space-y-4 rounded-xl border border-[#d7e8f7] bg-[#fdfefe] p-4">
+                <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4">
                   <div className="grid gap-4 md:grid-cols-2">
                     <label className="space-y-1">
-                      <span className="text-sm font-semibold text-[#264c70]">Source Capital Account</span>
+                      <span className="text-sm font-semibold text-slate-700">Source Capital Account</span>
                       <select
                         value={closeRule.sourceAccId || ''}
                         onChange={(e) =>
@@ -879,7 +879,7 @@ const ClosingFinance = () => {
                             sourceAccId: e.target.value ? Number(e.target.value) : undefined,
                           }))
                         }
-                        className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary-500"
                       >
                         <option value="">Select source account</option>
                         {equityAccounts.map((account) => (
@@ -898,7 +898,7 @@ const ClosingFinance = () => {
                     ].map((entry) => (
                       <div key={entry.key} className="space-y-2">
                         <label className="space-y-1">
-                          <span className="text-sm font-semibold text-[#264c70]">{entry.label}</span>
+                          <span className="text-sm font-semibold text-slate-700">{entry.label}</span>
                           <input
                             type="number"
                             min={0}
@@ -911,7 +911,7 @@ const ClosingFinance = () => {
                                 [entry.key]: Number(e.target.value || 0),
                               }))
                             }
-                            className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
+                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary-500"
                           />
                         </label>
                         <select
@@ -922,7 +922,7 @@ const ClosingFinance = () => {
                               [entry.accKey]: e.target.value ? Number(e.target.value) : undefined,
                             }))
                           }
-                          className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary-500"
                         >
                           <option value="">Allocation account</option>
                           {equityAccounts.map((account) => (
@@ -937,11 +937,11 @@ const ClosingFinance = () => {
 
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <p className="text-sm font-semibold text-[#264c70]">Partners / Shareholders</p>
+                      <p className="text-sm font-semibold text-slate-700">Partners / Shareholders</p>
                       <button
                         type="button"
                         onClick={addPartner}
-                        className="rounded-lg border border-[#9fc1df] bg-[#f5fbff] px-2.5 py-1 text-xs font-semibold text-[#21527b]"
+                        className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700"
                       >
                         Add Partner
                       </button>
@@ -952,7 +952,7 @@ const ClosingFinance = () => {
                           type="text"
                           value={partner.partnerName}
                           onChange={(e) => updatePartner(index, { partnerName: e.target.value })}
-                          className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary-500"
                           placeholder="Partner name"
                         />
                         <input
@@ -962,13 +962,13 @@ const ClosingFinance = () => {
                           step="0.01"
                           value={partner.sharePct}
                           onChange={(e) => updatePartner(index, { sharePct: Number(e.target.value || 0) })}
-                          className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary-500"
                           placeholder="%"
                         />
                         <select
                           value={partner.accId || ''}
                           onChange={(e) => updatePartner(index, { accId: e.target.value ? Number(e.target.value) : null })}
-                          className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary-500"
                         >
                           <option value="">Partner account</option>
                           {equityAccounts.map((account) => (
@@ -980,7 +980,7 @@ const ClosingFinance = () => {
                         <button
                           type="button"
                           onClick={() => removePartner(index)}
-                          className="rounded-xl border border-[#f0c2c2] bg-[#fff5f5] px-3 py-2 text-xs font-semibold text-[#b94d4d]"
+                          className="rounded-xl border border-error-200 bg-error-50 px-3 py-2 text-xs font-semibold text-error-700"
                         >
                           Remove
                         </button>
@@ -991,7 +991,7 @@ const ClosingFinance = () => {
               )}
 
               <div className="grid gap-3 md:grid-cols-3">
-                <label className="inline-flex items-center gap-2 rounded-xl border border-[#d6e5f4] bg-white px-3 py-2 text-sm text-[#2a557b]">
+                <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
                   <input
                     type="checkbox"
                     checked={autoTransfer}
@@ -1000,7 +1000,7 @@ const ClosingFinance = () => {
                   />
                   Auto transfer profit
                 </label>
-                <label className="inline-flex items-center gap-2 rounded-xl border border-[#d6e5f4] bg-white px-3 py-2 text-sm text-[#2a557b]">
+                <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
                   <input
                     type="checkbox"
                     checked={saveRuleAsDefault}
@@ -1009,7 +1009,7 @@ const ClosingFinance = () => {
                   />
                   Save rule as default
                 </label>
-                <label className="inline-flex items-center gap-2 rounded-xl border border-[#f0cf9f] bg-[#fff9ef] px-3 py-2 text-sm text-[#7f4e17]">
+                <label className="inline-flex items-center gap-2 rounded-xl border border-warning-200 bg-warning-50 px-3 py-2 text-sm text-warning-800">
                   <input
                     type="checkbox"
                     checked={forceClose}
@@ -1027,14 +1027,14 @@ const ClosingFinance = () => {
                     setCloseOpen(false);
                     resetCloseWizard();
                   }}
-                  className="rounded-xl border border-[#aac7e2] px-4 py-2 text-sm font-semibold text-[#2f5b82] hover:bg-[#f3f9ff]"
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
                   onClick={generatePreview}
-                  className="rounded-xl border border-[#2b6e8c] bg-[#0f4f74] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0b4567]"
+                  className="rounded-xl border border-primary-500/30 bg-primary-600 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-700"
                 >
                   Generate Preview
                 </button>
@@ -1045,27 +1045,27 @@ const ClosingFinance = () => {
           {closeStep === 2 && previewData && (
             <div className="space-y-4">
               <div className="grid gap-3 md:grid-cols-3">
-                <div className="rounded-xl border border-[#d6e5f4] bg-white p-3">
-                  <p className="text-xs uppercase tracking-wide text-[#5b7896]">Net Revenue</p>
-                  <p className="text-lg font-semibold text-[#173f63]">{formatMoney(previewData.summary.netRevenue)}</p>
+                <div className="rounded-xl border border-slate-200 bg-white p-3">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Net Revenue</p>
+                  <p className="text-lg font-semibold text-slate-800">{formatMoney(previewData.summary.netRevenue)}</p>
                 </div>
-                <div className="rounded-xl border border-[#f0d0c7] bg-white p-3">
-                  <p className="text-xs uppercase tracking-wide text-[#8d5a4c]">COGS</p>
-                  <p className="text-lg font-semibold text-[#6b2f25]">{formatMoney(previewData.summary.cogs)}</p>
+                <div className="rounded-xl border border-warning-200 bg-white p-3">
+                  <p className="text-xs uppercase tracking-wide text-warning-700">COGS</p>
+                  <p className="text-lg font-semibold text-warning-900">{formatMoney(previewData.summary.cogs)}</p>
                 </div>
-                <div className="rounded-xl border border-[#d0e8da] bg-white p-3">
-                  <p className="text-xs uppercase tracking-wide text-[#4f7e63]">Net Income</p>
-                  <p className={`text-lg font-semibold ${previewData.summary.netIncome >= 0 ? 'text-[#1f8f4d]' : 'text-[#c53939]'}`}>
+                <div className="rounded-xl border border-success-200 bg-white p-3">
+                  <p className="text-xs uppercase tracking-wide text-success-700">Net Income</p>
+                  <p className={`text-lg font-semibold ${previewData.summary.netIncome >= 0 ? 'text-success-600' : 'text-error-700'}`}>
                     {formatMoney(previewData.summary.netIncome)}
                   </p>
                 </div>
               </div>
 
-              <div className="rounded-xl border border-[#d7e8f7] bg-white">
-                <div className="border-b border-[#e7f0f8] px-4 py-3 font-semibold text-[#234a6d]">Profit Allocation Preview</div>
+              <div className="rounded-xl border border-slate-200 bg-white">
+                <div className="border-b border-slate-200 px-4 py-3 font-semibold text-slate-700">Profit Allocation Preview</div>
                 <div className="overflow-x-auto">
                   <table className="min-w-full text-sm">
-                    <thead className="bg-[#f4f9ff] text-[#2d597e]">
+                    <thead className="bg-slate-50 text-slate-700">
                       <tr>
                         <th className="px-3 py-2 text-left">Type</th>
                         <th className="px-3 py-2 text-left">Label</th>
@@ -1082,11 +1082,11 @@ const ClosingFinance = () => {
                         </tr>
                       ) : (
                         previewData.allocations.map((row, idx) => (
-                          <tr key={`${row.label}-${idx}`} className="border-t border-[#edf4fb]">
-                            <td className="px-3 py-2 capitalize text-[#274d70]">{row.allocationType}</td>
-                            <td className="px-3 py-2 text-[#173f63]">{row.label}</td>
-                            <td className="px-3 py-2 text-right text-[#355b7f]">{row.sharePct.toFixed(2)}</td>
-                            <td className="px-3 py-2 text-right font-semibold text-[#163a5b]">{formatMoney(row.amount)}</td>
+                          <tr key={`${row.label}-${idx}`} className="border-t border-slate-200">
+                            <td className="px-3 py-2 capitalize text-slate-700">{row.allocationType}</td>
+                            <td className="px-3 py-2 text-slate-800">{row.label}</td>
+                            <td className="px-3 py-2 text-right text-slate-600">{row.sharePct.toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right font-semibold text-slate-700">{formatMoney(row.amount)}</td>
                           </tr>
                         ))
                       )}
@@ -1096,7 +1096,7 @@ const ClosingFinance = () => {
               </div>
 
               {previewData.warnings.length > 0 && (
-                <div className="space-y-2 rounded-xl border border-[#f3d8a6] bg-[#fff9ef] p-4 text-sm text-[#7f4e17]">
+                <div className="space-y-2 rounded-xl border border-warning-200 bg-warning-50 p-4 text-sm text-warning-800">
                   <div className="font-semibold">Warnings</div>
                   {previewData.warnings.map((warning, idx) => (
                     <div key={`warn-${idx}`} className="flex items-start gap-2">
@@ -1111,14 +1111,14 @@ const ClosingFinance = () => {
                 <button
                   type="button"
                   onClick={() => setCloseStep(1)}
-                  className="rounded-xl border border-[#aac7e2] px-4 py-2 text-sm font-semibold text-[#2f5b82] hover:bg-[#f3f9ff]"
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                 >
                   Back
                 </button>
                 <button
                   type="button"
                   onClick={() => setCloseStep(3)}
-                  className="rounded-xl border border-[#2b6e8c] bg-[#0f4f74] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0b4567]"
+                  className="rounded-xl border border-primary-500/30 bg-primary-600 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-700"
                 >
                   Continue
                 </button>
@@ -1128,8 +1128,8 @@ const ClosingFinance = () => {
 
           {closeStep === 3 && previewData && (
             <div className="space-y-4">
-              <div className="rounded-xl border border-[#d7e8f7] bg-white p-4 text-sm text-[#2a557b]">
-                <div className="font-semibold text-[#183f63]">Final check before submission</div>
+              <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700">
+                <div className="font-semibold text-slate-800">Final check before submission</div>
                 <p className="mt-2">
                   Closing this period will lock transactions between <strong>{formatDateOnly(closeTarget?.period_from)}</strong>{' '}
                   and <strong>{formatDateOnly(closeTarget?.period_to)}</strong>.
@@ -1138,7 +1138,7 @@ const ClosingFinance = () => {
                   Net income to finalize: <strong>{formatMoney(previewData.summary.netIncome)}</strong>
                 </p>
               </div>
-              <label className="inline-flex items-center gap-2 rounded-xl border border-[#d6e5f4] bg-white px-3 py-2 text-sm text-[#2a557b]">
+              <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
                 <input
                   type="checkbox"
                   checked={confirmClose}
@@ -1151,14 +1151,14 @@ const ClosingFinance = () => {
                 <button
                   type="button"
                   onClick={() => setCloseStep(2)}
-                  className="rounded-xl border border-[#aac7e2] px-4 py-2 text-sm font-semibold text-[#2f5b82] hover:bg-[#f3f9ff]"
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                 >
                   Back
                 </button>
                 <button
                   type="button"
                   onClick={closePeriod}
-                  className="rounded-xl border border-[#2e7e4f] bg-[#1f8f4d] px-4 py-2 text-sm font-semibold text-white hover:bg-[#16723d]"
+                  className="rounded-xl border border-success-600/40 bg-success-600 px-4 py-2 text-sm font-semibold text-white hover:bg-success-700"
                 >
                   Finalize Close
                 </button>
@@ -1173,17 +1173,17 @@ const ClosingFinance = () => {
           <div className="py-10 text-center text-slate-500">No summary loaded.</div>
         ) : (
           <div className="space-y-4">
-            <div className="rounded-xl border border-[#d7e8f7] bg-white p-4">
-              <div className="text-sm text-[#4c7194]">
+            <div className="rounded-xl border border-slate-200 bg-white p-4">
+              <div className="text-sm text-slate-500">
                 Period {formatDateOnly(summaryData.period.period_from)} to {formatDateOnly(summaryData.period.period_to)}
               </div>
-              <div className="mt-1 text-lg font-semibold text-[#173f63] capitalize">
+              <div className="mt-1 text-lg font-semibold text-slate-800 capitalize">
                 Status: {summaryData.period.status}
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#d7e8f7] bg-white p-4">
-              <div className="space-y-1 text-sm text-[#4c7194]">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4">
+              <div className="space-y-1 text-sm text-slate-500">
                 <div>
                   Profit Distribution:{' '}
                   {summaryData.period.journal_id
@@ -1194,7 +1194,7 @@ const ClosingFinance = () => {
                     ? 'Not posted (Net income <= 0)'
                     : 'Not posted'}
                 </div>
-                <div className="text-xs text-[#6a87a3]">
+                <div className="text-xs text-slate-500">
                   Retained earnings source:{' '}
                   {summaryData.profit?.rule?.sourceAccId
                     ? accounts.find((acc) => acc.acc_id === summaryData.profit?.rule?.sourceAccId)?.name ||
@@ -1209,7 +1209,7 @@ const ClosingFinance = () => {
                     type="button"
                     onClick={postProfitDistribution}
                     disabled={postTransferBusy || !summaryData.profit?.rule?.sourceAccId}
-                    className="rounded-xl border border-[#2e7e4f] bg-[#1f8f4d] px-4 py-2 text-sm font-semibold text-white hover:bg-[#16723d] disabled:cursor-not-allowed disabled:bg-[#8abf9b]"
+                    className="rounded-xl border border-success-600/40 bg-success-600 px-4 py-2 text-sm font-semibold text-white hover:bg-success-700 disabled:cursor-not-allowed disabled:bg-success-300"
                   >
                     {postTransferBusy ? 'Sharing...' : 'Share Profit'}
                   </button>
@@ -1227,19 +1227,19 @@ const ClosingFinance = () => {
                   ['Net Income', summaryData.summary.netIncome],
                   ['Stock Valuation', summaryData.summary.stockValuation],
                 ].map(([label, value]) => (
-                  <div key={String(label)} className="rounded-xl border border-[#e4eef8] bg-[#f9fcff] p-3">
-                    <p className="text-xs uppercase tracking-wide text-[#5b7896]">{label}</p>
-                    <p className="text-base font-semibold text-[#153a5a]">{formatMoney(Number(value))}</p>
+                  <div key={String(label)} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
+                    <p className="text-base font-semibold text-slate-800">{formatMoney(Number(value))}</p>
                   </div>
                 ))}
               </div>
             )}
 
-            <div className="rounded-xl border border-[#d7e8f7] bg-white">
-              <div className="border-b border-[#e7f0f8] px-4 py-3 font-semibold text-[#234a6d]">Distribution Entries</div>
+            <div className="rounded-xl border border-slate-200 bg-white">
+              <div className="border-b border-slate-200 px-4 py-3 font-semibold text-slate-700">Distribution Entries</div>
               <div className="overflow-x-auto">
                 <table className="min-w-full text-sm">
-                  <thead className="bg-[#f4f9ff] text-[#2d597e]">
+                  <thead className="bg-slate-50 text-slate-700">
                     <tr>
                       <th className="px-3 py-2 text-left">Type</th>
                       <th className="px-3 py-2 text-left">Label</th>
@@ -1256,11 +1256,11 @@ const ClosingFinance = () => {
                       </tr>
                     ) : (
                       (summaryData.profit?.allocations || []).map((row, idx) => (
-                        <tr key={`sum-alloc-${idx}`} className="border-t border-[#edf4fb]">
-                          <td className="px-3 py-2 capitalize text-[#274d70]">{row.allocationType}</td>
-                          <td className="px-3 py-2 text-[#173f63]">{row.label}</td>
-                          <td className="px-3 py-2 text-right text-[#355b7f]">{row.sharePct.toFixed(2)}</td>
-                          <td className="px-3 py-2 text-right font-semibold text-[#163a5b]">{formatMoney(row.amount)}</td>
+                        <tr key={`sum-alloc-${idx}`} className="border-t border-slate-200">
+                          <td className="px-3 py-2 capitalize text-slate-700">{row.allocationType}</td>
+                          <td className="px-3 py-2 text-slate-800">{row.label}</td>
+                          <td className="px-3 py-2 text-right text-slate-600">{row.sharePct.toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-semibold text-slate-700">{formatMoney(row.amount)}</td>
                         </tr>
                       ))
                     )}
@@ -1270,7 +1270,7 @@ const ClosingFinance = () => {
             </div>
 
             {(summaryData.profit?.warnings || []).length > 0 && (
-              <div className="space-y-2 rounded-xl border border-[#f3d8a6] bg-[#fff9ef] p-4 text-sm text-[#7f4e17]">
+              <div className="space-y-2 rounded-xl border border-warning-200 bg-warning-50 p-4 text-sm text-warning-800">
                 <div className="font-semibold">Warnings</div>
                 {(summaryData.profit?.warnings || []).map((warning, idx) => (
                   <div key={`sum-warn-${idx}`} className="flex items-start gap-2">
@@ -1295,34 +1295,34 @@ const ClosingFinance = () => {
         size="md"
       >
         <div className="space-y-4">
-          <div className="rounded-xl border border-[#f3d8a6] bg-[#fff9ef] p-3 text-sm text-[#7f4e17]">
+          <div className="rounded-xl border border-warning-200 bg-warning-50 p-3 text-sm text-warning-800">
             Reopening will unlock transactions for this period and allow edits.
           </div>
-          <div className="text-sm text-[#2a557b]">
+          <div className="text-sm text-slate-700">
             {reopenTarget ? `${formatDateOnly(reopenTarget.period_from)} to ${formatDateOnly(reopenTarget.period_to)}` : ''}
           </div>
           {reopenTarget?.closing_journal_id && (
-            <div className="rounded-xl border border-[#f0d0b1] bg-[#fff4ea] p-3 text-xs text-[#7a4a12]">
+            <div className="rounded-xl border border-warning-200 bg-warning-50 p-3 text-xs text-warning-800">
               Closing entries were posted for this period (Journal #{reopenTarget.closing_journal_id}).
               Reverse them before unlocking transactions.
             </div>
           )}
-          <label className="flex items-start gap-3 rounded-xl border border-[#dde8f5] bg-[#f7fbff] p-3 text-sm text-[#274d70]">
+          <label className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
             <input
               type="checkbox"
               checked={reopenReverse}
               onChange={(e) => setReopenReverse(e.target.checked)}
-              className="mt-1 h-4 w-4 rounded border-[#8fb3d6]"
+              className="mt-1 h-4 w-4 rounded border-slate-300"
             />
             <span>Reverse closing entries automatically when reopening.</span>
           </label>
           <label className="space-y-1">
-            <span className="text-sm font-semibold text-[#264c70]">Reason (optional)</span>
+            <span className="text-sm font-semibold text-slate-700">Reason (optional)</span>
             <textarea
               rows={3}
               value={reopenReason}
               onChange={(e) => setReopenReason(e.target.value)}
-              className="w-full rounded-xl border border-[#aac7e2] bg-white px-3 py-2 text-sm text-[#173f63] outline-none focus:border-[#4b83b4]"
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-primary-500"
               placeholder="Explain why this period is being reopened"
             />
           </label>
@@ -1333,14 +1333,14 @@ const ClosingFinance = () => {
                 setReopenTarget(null);
                 setReopenReason('');
               }}
-              className="rounded-xl border border-[#aac7e2] px-4 py-2 text-sm font-semibold text-[#2f5b82] hover:bg-[#f3f9ff]"
+              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
             >
               Cancel
             </button>
             <button
               type="button"
               onClick={reopenPeriod}
-              className="rounded-xl border border-[#c58044] bg-[#e98d3d] px-4 py-2 text-sm font-semibold text-white hover:bg-[#d67c2b]"
+              className="rounded-xl border border-primary-400/60 bg-primary-600 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-700"
             >
               Reopen Period
             </button>
@@ -1349,7 +1349,7 @@ const ClosingFinance = () => {
       </Modal>
 
       {loading && (
-        <div className="rounded-xl border border-[#d7e8f7] bg-white px-4 py-3 text-sm text-[#2a557b]">
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
           Loading finance closing data...
         </div>
       )}
@@ -1358,3 +1358,8 @@ const ClosingFinance = () => {
 };
 
 export default ClosingFinance;
+
+
+
+
+

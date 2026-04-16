@@ -119,6 +119,10 @@ export interface AccountStatementRow {
   txn_type: string;
   ref_table: string;
   ref_id: number | null;
+  txn_number?: string;
+  party_name?: string;
+  memo?: string;
+  split_account?: string;
   debit: number;
   credit: number;
   running_balance: number;
@@ -191,9 +195,10 @@ export const financialReportsService = {
     return apiClient.get<RowsResponse<IncomeStatementRow>>(`${API.REPORTS.FINANCIAL_INCOME_STATEMENT}${query}`);
   },
 
-  async getBalanceSheet(input: { asOfDate: string; branchId?: number }) {
+  async getBalanceSheet(input: { asOfDate: string; fromDate?: string; branchId?: number }) {
     const query = toQuery({
       branchId: input.branchId,
+      fromDate: input.fromDate,
       asOfDate: input.asOfDate,
     });
     return apiClient.get<BalanceSheetResponse>(`${API.REPORTS.FINANCIAL_BALANCE_SHEET}${query}`);

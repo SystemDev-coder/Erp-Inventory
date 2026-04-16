@@ -853,24 +853,54 @@ export const salesService = {
   },
 
   async getSale(id: number, scope: BranchScope): Promise<Sale | null> {
-    if (scope.isAdmin) {
-      return queryOne<Sale>(
-        `SELECT s.*, c.full_name AS customer_name
-           FROM ims.sales s
-           LEFT JOIN ims.customers c ON c.customer_id = s.customer_id
-          WHERE s.sale_id = $1`,
-        [id]
-      );
-    }
+    const sale = scope.isAdmin
+      ? await queryOne<Sale>(
+          `SELECT s.*, c.full_name AS customer_name
+             FROM ims.sales s
+             LEFT JOIN ims.customers c ON c.customer_id = s.customer_id
+            WHERE s.sale_id = $1`,
+          [id]
+        )
+      : await queryOne<Sale>(
+          `SELECT s.*, c.full_name AS customer_name
+             FROM ims.sales s
+             LEFT JOIN ims.customers c ON c.customer_id = s.customer_id
+            WHERE s.sale_id = $1
+              AND s.branch_id = ANY($2)`,
+          [id, scope.branchIds]
+        );
 
-    return queryOne<Sale>(
-      `SELECT s.*, c.full_name AS customer_name
-         FROM ims.sales s
-         LEFT JOIN ims.customers c ON c.customer_id = s.customer_id
-        WHERE s.sale_id = $1
-          AND s.branch_id = ANY($2)`,
-      [id, scope.branchIds]
+    if (!sale) return null;
+
+    // Keep "paid/balance" accurate even when collection happened from receipts/payment screens.
+    const paidFromSalePaymentsRow = await queryOne<{ paid: string }>(
+      `SELECT COALESCE(SUM(COALESCE(sp.amount_paid, 0)), 0)::text AS paid
+         FROM ims.sale_payments sp
+        WHERE sp.sale_id = $1
+          AND sp.branch_id = $2`,
+      [id, sale.branch_id]
     );
+    const paidFromSalePayments = Number(paidFromSalePaymentsRow?.paid || 0);
+
+    const paidFromReceiptsRow = await queryOne<{ paid: string }>(
+      `SELECT COALESCE(SUM(COALESCE(r.amount, 0)), 0)::text AS paid
+         FROM ims.customer_receipts r
+        WHERE COALESCE((to_jsonb(r)->>'sale_id')::bigint, 0) = $1
+          AND r.branch_id = $2
+          AND NOT (COALESCE(to_jsonb(r)->>'is_deleted', '0') IN ('1','true','t','TRUE','T'))`,
+      [id, sale.branch_id]
+    );
+    const paidFromReceipts = Number(paidFromReceiptsRow?.paid || 0);
+
+    const paidFromSale = Number((sale as any).paid_amount || 0);
+    const paidCombined = paidFromSalePayments + paidFromReceipts;
+    const total = roundMoney((sale as any).total || 0);
+    const effectivePaid = roundMoney(Math.min(Math.max(paidCombined > 0.005 ? paidCombined : paidFromSale, 0), total));
+
+    (sale as any).paid_amount = effectivePaid;
+    (sale as any).outstanding_amount = roundMoney(Math.max(total - effectivePaid, 0));
+
+    return sale;
   },
 
   async listItems(saleId: number): Promise<SaleItem[]> {

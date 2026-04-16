@@ -565,7 +565,8 @@ const applyPurchasePayment = async (
     note?: string | null;
   }
 ) => {
-  if (params.amount <= 0) return;
+  const amountRounded = roundMoney(params.amount);
+  if (amountRounded <= 0) return;
   await ensurePaymentAccount(client, { branchId: params.branchId, accId: params.accId });
 
   const alreadyPaidRes = await client.query<{ amount: string }>(
@@ -575,24 +576,17 @@ const applyPurchasePayment = async (
         AND purchase_id = $2`,
     [params.branchId, params.purchaseId]
   );
-  const alreadyReceiptRes = await client.query<{ amount: string }>(
-    `SELECT COALESCE(SUM(amount), 0)::text AS amount
-       FROM ims.supplier_receipts
-      WHERE branch_id = $1
-        AND purchase_id = $2`,
-    [params.branchId, params.purchaseId]
-  );
-  const alreadyPaid = roundMoney(Number(alreadyPaidRes.rows[0]?.amount || 0) + Number(alreadyReceiptRes.rows[0]?.amount || 0));
+  const alreadyPaid = roundMoney(Number(alreadyPaidRes.rows[0]?.amount || 0));
   const remaining = Math.max(roundMoney(params.purchaseTotal) - alreadyPaid, 0);
-  const payableDebit = roundMoney(Math.min(params.amount, remaining));
-  const advanceDebit = roundMoney(params.amount - payableDebit);
+  const payableDebit = roundMoney(Math.min(amountRounded, remaining));
+  const advanceDebit = roundMoney(amountRounded - payableDebit);
 
   const accountResult = await client.query(
     `UPDATE ims.accounts
         SET balance = balance - $1
       WHERE acc_id = $2
         AND branch_id = $3`,
-    [params.amount, params.accId, params.branchId]
+    [amountRounded, params.accId, params.branchId]
   );
   if ((accountResult.rowCount ?? 0) === 0) {
     throw ApiError.badRequest('Payment account is not allowed for this branch');
@@ -608,7 +602,7 @@ const applyPurchasePayment = async (
       params.purchaseId,
       params.userId,
       params.accId,
-      params.amount,
+      amountRounded,
       null,
       `${AUTO_PURCHASE_NOTE_PREFIX} Supplier payment${params.note ? ` - ${params.note}` : ''}`,
     ]
@@ -628,7 +622,7 @@ const applyPurchasePayment = async (
     lines: [
       ...(payableDebit > 0 ? [{ accId: coa.accountsPayable, debit: payableDebit, credit: 0 }] : []),
       ...(advanceDebit > 0 ? [{ accId: coa.supplierAdvances, debit: advanceDebit, credit: 0 }] : []),
-      { accId: params.accId, debit: 0, credit: params.amount },
+      { accId: params.accId, debit: 0, credit: amountRounded },
     ],
   });
 
@@ -642,14 +636,14 @@ const applyPurchasePayment = async (
         params.supplierId,
         params.purchaseId,
         params.accId,
-        params.amount,
+        amountRounded,
         `${AUTO_PURCHASE_NOTE_PREFIX} Supplier payment`,
       ]
     );
     await adjustSupplierBalance(client, {
       branchId: params.branchId,
       supplierId: params.supplierId,
-      delta: -params.amount,
+      delta: -amountRounded,
     });
   }
 };
@@ -722,7 +716,23 @@ export const purchasesService = {
 
   async listItems(purchaseId: number): Promise<PurchaseItem[]> {
     return queryMany<PurchaseItem>(
-      `SELECT * FROM ims.purchase_items WHERE purchase_id = $1 ORDER BY purchase_item_id`,
+      `SELECT
+          pi.purchase_item_id,
+          pi.purchase_id,
+          pi.item_id AS product_id,
+          COALESCE(pr.name, '') AS product_name,
+          pi.quantity,
+          pi.unit_cost,
+          pi.sale_price,
+          pi.line_total,
+          pi.batch_no,
+          pi.expiry_date,
+          pi.description,
+          pi.discount
+         FROM ims.purchase_items pi
+         LEFT JOIN ims.items pr ON pr.item_id = pi.item_id
+        WHERE pi.purchase_id = $1
+        ORDER BY pi.purchase_item_id`,
       [purchaseId]
     );
   },
@@ -899,10 +909,10 @@ export const purchasesService = {
         await rewritePurchaseGl(client, { branchId: context.branchId, purchaseId: purchase.purchase_id });
       }
 
-      const paidAmountRaw = Number(input.paidAmount || 0);
+      const paidAmountRaw = roundMoney(Number(input.paidAmount || 0));
       const payFromAccId = input.payFromAccId;
       if (payFromAccId && paidAmountRaw > 0 && status !== 'void' && purchaseType !== 'credit') {
-        const paidAmount = Math.min(paidAmountRaw, total);
+        const paidAmount = roundMoney(Math.min(paidAmountRaw, total));
         if (paidAmount > 0) {
            await applyPurchasePayment(client, {
              branchId: context.branchId,
@@ -1142,10 +1152,22 @@ export const purchasesService = {
         });
       }
 
-      const paidAmountRaw = Number(input.paidAmount || 0);
+      const paidAmountRaw = roundMoney(Number(input.paidAmount || 0));
       if (input.payFromAccId && paidAmountRaw > 0 && nextStatus !== 'void' && nextPurchaseType !== 'credit') {
-        const paidAmount = Math.min(paidAmountRaw, nextTotal);
-        if (paidAmount > 0) {
+        const alreadyPaidRes = await client.query<{ amount: string }>(
+          `SELECT COALESCE(SUM(amount_paid), 0)::text AS amount
+             FROM ims.supplier_payments
+            WHERE branch_id = $1
+              AND purchase_id = $2`,
+          [currentBranchId, id]
+        );
+        const alreadyPaid = roundMoney(Number(alreadyPaidRes.rows[0]?.amount || 0));
+        const desiredPaid = roundMoney(Math.min(paidAmountRaw, nextTotal));
+        const delta = roundMoney(desiredPaid - alreadyPaid);
+        if (delta < -0.005) {
+          throw ApiError.badRequest('Paid amount is less than already paid. Please issue a refund instead of reducing payment.');
+        }
+        if (delta > 0.005) {
           await applyPurchasePayment(client, {
             branchId: currentBranchId,
             purchaseId: id,
@@ -1153,7 +1175,7 @@ export const purchasesService = {
             userId: Number(current.user_id || 1),
             supplierId: nextSupplierId,
             accId: input.payFromAccId,
-            amount: paidAmount,
+            amount: delta,
             note: input.note ?? current.note ?? null,
           });
         }

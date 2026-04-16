@@ -85,6 +85,7 @@ const AppSidebar: React.FC = () => {
   );
 
   const groups = useMemo(() => {
+    const isDeveloper = (user?.role_name || '').toLowerCase() === 'developer';
     const base: { title: string; items: SidebarItem[] }[] = [
       {
         title: 'Main',
@@ -142,12 +143,12 @@ const AppSidebar: React.FC = () => {
           { id: 'system', label: 'System', icon: Settings, to: '/system', permissionAny: ['users.view', 'roles.view', 'permissions.view', 'system.users.manage', 'system.roles.manage', 'system.permissions.manage'] },
           { id: 'setting', label: 'Setting', icon: Cog, to: '/settings', permissionAny: ['system.settings'] },
           { id: 'reports', label: 'Reports', icon: FileText, to: '/reports', permissionAny: ['reports.all'] },
-          { id: 'trash', label: 'Trash', icon: Trash2, to: '/trash', permissionAny: ['trash.view'] },
+          ...(isDeveloper ? [{ id: 'trash', label: 'Trash', icon: Trash2, to: '/trash', permissionAny: ['trash.view'] }] : []),
         ],
       },
     ];
     return base;
-  }, []);
+  }, [user?.role_name]);
 
   const visibleGroups = useMemo(
     () =>
@@ -306,7 +307,7 @@ const AppSidebar: React.FC = () => {
             <LockIcon className="h-4 w-4" /> Lock
           </button>
           <p className="text-xs text-slate-500 text-center dark:text-white/50">
-            (c) 2026 {user?.branch_name || 'KeydMaal ERP'} | All rights reserved
+            © 2026 {user?.branch_name || 'KeydMaal ERP'}. All rights reserved.
           </p>
         </div>
       )}

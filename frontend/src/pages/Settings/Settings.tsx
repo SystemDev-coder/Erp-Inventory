@@ -197,7 +197,9 @@ const Settings = () => {
   const resolveImageUrl = (value?: string | null) => {
     const raw = (value || '').trim();
     if (!raw) return '';
+    if (/^data:/i.test(raw)) return raw;
     if (/^https?:\/\//i.test(raw)) return raw;
+    if (raw.startsWith('/images/') || raw === '/favicon.png') return raw;
     if (raw.startsWith('uploads/')) return `${env.API_URL}/${raw}`;
     if (raw.startsWith('/')) return `${env.API_URL}${raw}`;
     return raw;
@@ -231,6 +233,7 @@ const Settings = () => {
   const [cleanupTarget, setCleanupTarget] = useState<'retained' | 'capital'>('retained');
   const [cleanupDate, setCleanupDate] = useState(today());
   const [cleanupNote, setCleanupNote] = useState('');
+  const [cleanupModalOpen, setCleanupModalOpen] = useState(false);
 
   const [capitalModalOpen, setCapitalModalOpen] = useState(false);
   const [capitalSaving, setCapitalSaving] = useState(false);
@@ -268,6 +271,7 @@ const Settings = () => {
   const [closingFinalizeTarget, setClosingFinalizeTarget] = useState<SettingsClosingPeriod | null>(null);
   const [closingFinalizing, setClosingFinalizing] = useState(false);
   const [closingEditingRow, setClosingEditingRow] = useState<SettingsClosingPeriod | null>(null);
+  const [closingEditConfirmTarget, setClosingEditConfirmTarget] = useState<SettingsClosingPeriod | null>(null);
   const [closingForm, setClosingForm] = useState({
     closeMode: 'monthly' as 'monthly' | 'quarterly' | 'yearly' | 'custom',
     periodFrom: today(),
@@ -310,6 +314,9 @@ const Settings = () => {
   });
   const [currentAssetModalOpen, setCurrentAssetModalOpen] = useState(false);
   const [currentAssetSaving, setCurrentAssetSaving] = useState(false);
+  const [editingCurrentAssetId, setEditingCurrentAssetId] = useState<number | null>(null);
+  const [currentAssetDeleteTarget, setCurrentAssetDeleteTarget] = useState<{ asset_id: number; asset_name: string } | null>(null);
+  const [currentAssetDeleting, setCurrentAssetDeleting] = useState(false);
   const [currentAssetForm, setCurrentAssetForm] = useState<{
     assetName: string;
     purchasedDate: string;
@@ -476,6 +483,15 @@ const Settings = () => {
     if (result.info) setCleanupInfo(result.info);
     else await loadCleanup();
   };
+
+  const openCleanupModal = () => {
+    setCleanupModalOpen(true);
+    if (!cleanupDisplayed) {
+      void loadCleanup();
+    }
+  };
+
+  const closeCleanupModal = () => setCleanupModalOpen(false);
 
   const handleDisplayCompany = async () => {
     setCompanyDisplayed(true);
@@ -802,11 +818,7 @@ const Settings = () => {
     setClosingModalOpen(true);
   };
 
-  const openEditClosingModal = (row: SettingsClosingPeriod) => {
-    if (row.status === 'closed') {
-      showToast('warning', 'Closing Finance', 'This period is closed. Reopen first to edit dates.');
-      return;
-    }
+  const openEditClosingModalInternal = (row: SettingsClosingPeriod) => {
     setClosingEditingRow(row);
     setClosingForm({
       closeMode: row.close_mode || 'monthly',
@@ -815,6 +827,14 @@ const Settings = () => {
       note: row.note || '',
     });
     setClosingModalOpen(true);
+  };
+
+  const openEditClosingModal = (row: SettingsClosingPeriod) => {
+    if (row.status === 'closed') {
+      setClosingEditConfirmTarget(row);
+      return;
+    }
+    openEditClosingModalInternal(row);
   };
 
   const openClosingSummary = async (closingId: number) => {
@@ -900,6 +920,7 @@ const Settings = () => {
   };
 
   const resetCurrentAssetModal = () => {
+    setEditingCurrentAssetId(null);
     setCurrentAssetForm({
       assetName: '',
       purchasedDate: today(),
@@ -910,6 +931,23 @@ const Settings = () => {
 
   const openCreateCurrentAssetModal = () => {
     resetCurrentAssetModal();
+    setCurrentAssetModalOpen(true);
+  };
+
+  const openEditCurrentAssetModal = (asset: {
+    asset_id: number;
+    asset_name: string;
+    purchased_date: string;
+    amount: number;
+    state: string;
+  }) => {
+    setEditingCurrentAssetId(asset.asset_id);
+    setCurrentAssetForm({
+      assetName: asset.asset_name || '',
+      purchasedDate: formatDateOnly(asset.purchased_date) || today(),
+      amount: String(Number(asset.amount || 0)),
+      state: coerceAssetState(asset.state),
+    });
     setCurrentAssetModalOpen(true);
   };
 
@@ -929,24 +967,43 @@ const Settings = () => {
     }
 
     setCurrentAssetSaving(true);
-    const res = await assetsService.create({
+    const payload = {
       assetName: currentAssetForm.assetName.trim(),
-      type: 'current',
+      type: 'current' as const,
       purchasedDate: currentAssetForm.purchasedDate,
       amount,
       state: currentAssetForm.state,
-    });
+    };
+    const res = editingCurrentAssetId
+      ? await assetsService.update(editingCurrentAssetId, payload)
+      : await assetsService.create(payload);
     setCurrentAssetSaving(false);
 
-    if (!res.success || !res.data?.asset) {
-      showToast('error', 'Assets', res.error || 'Failed to create asset');
+    if (!res.success) {
+      showToast('error', 'Assets', res.error || `Failed to ${editingCurrentAssetId ? 'update' : 'create'} asset`);
       return;
     }
 
-    showToast('success', 'Assets', 'Current asset created');
+    showToast('success', 'Assets', editingCurrentAssetId ? 'Current asset updated' : 'Current asset created');
     setCurrentAssetModalOpen(false);
     resetCurrentAssetModal();
     await loadAssetAccounts();
+  };
+
+  const deleteCurrentAsset = async () => {
+    if (!currentAssetDeleteTarget) return;
+    setCurrentAssetDeleting(true);
+    const res = await assetsService.delete(currentAssetDeleteTarget.asset_id);
+    setCurrentAssetDeleting(false);
+    if (!res.success) {
+      showToast('error', 'Assets', res.error || 'Failed to delete current asset');
+      return;
+    }
+    setCurrentAssetDeleteTarget(null);
+    showToast('success', 'Assets', 'Current asset deleted');
+    if (assetAccountsDisplayed) {
+      await loadAssetAccounts();
+    }
   };
 
   const resetFixedAssetModal = () => {
@@ -1174,7 +1231,11 @@ const Settings = () => {
                       className="h-10 w-10 rounded object-cover border border-slate-200"
                     />
                   ) : (
-                    '-'
+                    <img
+                      src={`https://ui-avatars.com/api/?name=${encodeURIComponent(company.company_name || 'Company')}&background=0b1a4d&color=ffffff&bold=true&size=64`}
+                      alt="Company avatar"
+                      className="h-10 w-10 rounded object-cover border border-slate-200"
+                    />
                   )}
                 </td>
                 <td className="py-2 pr-4">
@@ -1185,7 +1246,9 @@ const Settings = () => {
                       className="h-10 w-24 rounded object-cover border border-slate-200"
                     />
                   ) : (
-                    '-'
+                    <div className="h-10 w-24 rounded border border-slate-200 bg-slate-50 flex items-center justify-center text-[10px] font-semibold text-slate-500">
+                      No banner
+                    </div>
                   )}
                 </td>
                 <td className="py-2 pr-4">{company.updated_at ? new Date(company.updated_at).toLocaleString() : '-'}</td>
@@ -1349,7 +1412,24 @@ const Settings = () => {
                           <td className="py-2 pr-3">{row.purchased_date}</td>
                           <td className="py-2 pr-3 capitalize">{row.state || 'active'}</td>
                           <td className="py-2 pr-0 text-right">{formatMoney(row.amount)}</td>
-                          <td className="py-2 pl-3" />
+                          <td className="py-2 pl-3">
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                onClick={() => openEditCurrentAssetModal(row)}
+                                className="p-1.5 rounded border border-zinc-400 text-zinc-700 hover:bg-zinc-100"
+                                title="Edit current asset"
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => setCurrentAssetDeleteTarget({ asset_id: row.asset_id, asset_name: row.asset_name })}
+                                className="p-1.5 rounded border border-red-300 text-red-600 hover:bg-red-50"
+                                title="Delete current asset"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </td>
                         </tr>
                       ))}
                       {fixedAssetRows.map((row) => (
@@ -1405,7 +1485,7 @@ const Settings = () => {
           setCurrentAssetModalOpen(false);
           resetCurrentAssetModal();
         }}
-        title="New Current Asset"
+        title={editingCurrentAssetId ? 'Edit Current Asset' : 'New Current Asset'}
         size="lg"
       >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1464,7 +1544,7 @@ const Settings = () => {
             Cancel
           </button>
           <button className={modalBtnPrimaryClass} onClick={() => void saveCurrentAsset()} disabled={currentAssetSaving}>
-            {currentAssetSaving ? 'Saving...' : 'Create'}
+            {currentAssetSaving ? 'Saving...' : editingCurrentAssetId ? 'Update' : 'Create'}
           </button>
         </div>
       </Modal>
@@ -1541,6 +1621,19 @@ const Settings = () => {
           </button>
         </div>
       </Modal>
+
+      <ConfirmDialog
+        isOpen={!!currentAssetDeleteTarget}
+        onClose={() => setCurrentAssetDeleteTarget(null)}
+        onConfirm={deleteCurrentAsset}
+        title="Delete Current Asset?"
+        highlightedName={currentAssetDeleteTarget?.asset_name}
+        message="This action permanently removes the current asset."
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="danger"
+        isLoading={currentAssetDeleting}
+      />
 
       <ConfirmDialog
         isOpen={!!fixedAssetDeleteTarget}
@@ -1963,108 +2056,158 @@ const Settings = () => {
   );
 
   const cleanupContent = (
-    <div className="space-y-4 text-black">
-      <div className="bg-white border border-black rounded-xl p-4">
-        <div className="flex flex-wrap items-end gap-2 justify-between">
-          <div>
-            <h3 className="text-base font-semibold">Accounting Cleanup</h3>
-            <p className="text-xs text-zinc-600">
+    <div className="space-y-4">
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="space-y-1">
+            <h3 className="text-base font-semibold text-slate-900 dark:text-white">Accounting Cleanup</h3>
+            <p className="text-sm text-slate-600 dark:text-slate-300">
               Move <span className="font-semibold">Opening Balance Equity</span> into{' '}
               <span className="font-semibold">Retained Earnings</span> or <span className="font-semibold">Owner Capital</span> so
-              Opening Balance Equity becomes <span className="font-semibold">0</span>.
+              it becomes <span className="font-semibold">0</span>.
             </p>
           </div>
-          <button
-            onClick={() => void loadCleanup()}
-            className="px-3 py-2 rounded border border-black bg-white text-black text-sm"
-            disabled={cleanupLoading}
-          >
-            {cleanupLoading ? 'Loading...' : cleanupDisplayed ? 'Refresh' : 'Display'}
+          <button className={modalBtnPrimaryClass} onClick={openCleanupModal}>
+            Open Cleanup
           </button>
         </div>
+
+        {cleanupDisplayed && cleanupInfo && (
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/60">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-300">
+                Opening Balance Equity
+              </p>
+              <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">
+                {formatMoney(cleanupInfo.openingBalanceEquity.balance)}
+              </p>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/60">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-300">
+                Retained Earnings
+              </p>
+              <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">
+                {formatMoney(cleanupInfo.retainedEarnings.balance)}
+              </p>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/60">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-300">
+                Owner Capital
+              </p>
+              <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">
+                {formatMoney(cleanupInfo.ownerCapital.balance)}
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
-      {!cleanupDisplayed && (
-        <div className="bg-white border border-black rounded-xl p-4">
-          <p className="text-sm">Click Display to load the cleanup balances for your branch.</p>
-        </div>
-      )}
-
-      {cleanupDisplayed && cleanupInfo && (
-        <div className="bg-white border border-black rounded-xl p-4 space-y-4">
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead>
-                <tr className="text-left border-b border-black">
-                  <th className="py-2 pr-4">Account</th>
-                  <th className="py-2 pr-0 text-right">Balance</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr className="border-b border-zinc-200">
-                  <td className="py-2 pr-4">{cleanupInfo.openingBalanceEquity.name}</td>
-                  <td className="py-2 pr-0 text-right font-semibold">{formatMoney(cleanupInfo.openingBalanceEquity.balance)}</td>
-                </tr>
-                <tr className="border-b border-zinc-200">
-                  <td className="py-2 pr-4">{cleanupInfo.retainedEarnings.name}</td>
-                  <td className="py-2 pr-0 text-right">{formatMoney(cleanupInfo.retainedEarnings.balance)}</td>
-                </tr>
-                <tr className="border-b border-zinc-200">
-                  <td className="py-2 pr-4">{cleanupInfo.ownerCapital.name}</td>
-                  <td className="py-2 pr-0 text-right">{formatMoney(cleanupInfo.ownerCapital.balance)}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <label className="text-sm font-medium flex flex-col gap-1">
-              Transfer To *
-              <select
-                className="rounded border border-black px-3 py-2"
-                value={cleanupTarget}
-                onChange={(e) => setCleanupTarget(e.target.value === 'capital' ? 'capital' : 'retained')}
-              >
-                <option value="retained">Retained Earnings</option>
-                <option value="capital">Owner Capital</option>
-              </select>
-            </label>
-
-            <label className="text-sm font-medium flex flex-col gap-1">
-              Date
-              <input
-                type="date"
-                className="rounded border border-black px-3 py-2"
-                value={cleanupDate}
-                onChange={(e) => setCleanupDate(e.target.value)}
-              />
-            </label>
-
-            <label className="text-sm font-medium flex flex-col gap-1">
-              Note
-              <input
-                className="rounded border border-black px-3 py-2"
-                value={cleanupNote}
-                onChange={(e) => setCleanupNote(e.target.value)}
-                placeholder="Optional"
-              />
-            </label>
-          </div>
-
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-xs text-zinc-600">
-              This posts a balanced GL entry and records it under Account Reclassifications.
-            </div>
+      <Modal isOpen={cleanupModalOpen} onClose={closeCleanupModal} title="Accounting Cleanup" size="xl">
+        <div className="space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-slate-600 dark:text-slate-300">
+              Posts a balanced GL entry to move Opening Balance Equity into Retained Earnings or Owner Capital.
+            </p>
             <button
-              onClick={() => void submitCleanupTransfer()}
-              className="px-4 py-2 rounded border border-black bg-black text-white text-sm disabled:opacity-50"
-              disabled={cleanupSaving || Math.abs(Number(cleanupInfo.openingBalanceEquity.balance || 0)) <= 0.005}
+              onClick={() => void loadCleanup()}
+              className={modalBtnSecondaryClass}
+              disabled={cleanupLoading}
             >
-              {cleanupSaving ? 'Posting...' : 'Transfer Full Balance'}
+              {cleanupLoading ? 'Loading...' : cleanupDisplayed ? 'Refresh' : 'Load'}
             </button>
           </div>
+
+          {!cleanupDisplayed && !cleanupLoading && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+              Click <span className="font-semibold">Load</span> to preview balances for your branch.
+            </div>
+          )}
+
+          {cleanupDisplayed && cleanupInfo && (
+            <>
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr className="text-left border-b border-slate-200 dark:border-slate-700">
+                        <th className="py-2 pr-4 text-slate-700 dark:text-slate-200">Account</th>
+                        <th className="py-2 pr-0 text-right text-slate-700 dark:text-slate-200">Balance</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="border-b border-slate-100 dark:border-slate-800">
+                        <td className="py-2 pr-4 text-slate-900 dark:text-slate-100">{cleanupInfo.openingBalanceEquity.name}</td>
+                        <td className="py-2 pr-0 text-right font-semibold text-slate-900 dark:text-slate-100">
+                          {formatMoney(cleanupInfo.openingBalanceEquity.balance)}
+                        </td>
+                      </tr>
+                      <tr className="border-b border-slate-100 dark:border-slate-800">
+                        <td className="py-2 pr-4 text-slate-900 dark:text-slate-100">{cleanupInfo.retainedEarnings.name}</td>
+                        <td className="py-2 pr-0 text-right text-slate-900 dark:text-slate-100">
+                          {formatMoney(cleanupInfo.retainedEarnings.balance)}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="py-2 pr-4 text-slate-900 dark:text-slate-100">{cleanupInfo.ownerCapital.name}</td>
+                        <td className="py-2 pr-0 text-right text-slate-900 dark:text-slate-100">
+                          {formatMoney(cleanupInfo.ownerCapital.balance)}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <label className={modalLabelClass}>
+                  Transfer To *
+                  <select
+                    className={modalInputClass}
+                    value={cleanupTarget}
+                    onChange={(e) => setCleanupTarget(e.target.value === 'capital' ? 'capital' : 'retained')}
+                  >
+                    <option value="retained">Retained Earnings</option>
+                    <option value="capital">Owner Capital</option>
+                  </select>
+                </label>
+
+                <label className={modalLabelClass}>
+                  Date
+                  <input
+                    type="date"
+                    className={modalInputClass}
+                    value={cleanupDate}
+                    onChange={(e) => setCleanupDate(e.target.value)}
+                  />
+                </label>
+
+                <label className={modalLabelClass}>
+                  Note
+                  <input
+                    className={modalInputClass}
+                    value={cleanupNote}
+                    onChange={(e) => setCleanupNote(e.target.value)}
+                    placeholder="Optional"
+                  />
+                </label>
+              </div>
+
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-xs text-slate-600 dark:text-slate-300">
+                  This records the entry under <span className="font-semibold">Account Reclassifications</span>.
+                </div>
+                <button
+                  onClick={() => void submitCleanupTransfer()}
+                  className={modalBtnPrimaryClass}
+                  disabled={cleanupSaving || Math.abs(Number(cleanupInfo.openingBalanceEquity.balance || 0)) <= 0.005}
+                >
+                  {cleanupSaving ? 'Posting...' : 'Transfer Full Balance'}
+                </button>
+              </div>
+            </>
+          )}
         </div>
-      )}
+      </Modal>
     </div>
   );
 
@@ -2222,6 +2365,32 @@ const Settings = () => {
           </div>
         </div>
       </Modal>
+
+      <ConfirmDialog
+        isOpen={Boolean(closingEditConfirmTarget)}
+        onClose={() => setClosingEditConfirmTarget(null)}
+        onConfirm={() => {
+          if (!closingEditConfirmTarget) return;
+          const target = closingEditConfirmTarget;
+          setClosingEditConfirmTarget(null);
+          showToast(
+            'warning',
+            'Closing Finance',
+            'Editing a closed period will auto-reopen it. Finalize again after changes.'
+          );
+          openEditClosingModalInternal(target);
+        }}
+        title="Edit closed period?"
+        highlightedName={
+          closingEditConfirmTarget
+            ? `${formatDateOnly(closingEditConfirmTarget.period_from)} to ${formatDateOnly(closingEditConfirmTarget.period_to)}`
+            : undefined
+        }
+        message="This period is closed. Editing it will auto-reopen/unlock it until you finalize again."
+        confirmText="Reopen & Edit"
+        cancelText="Cancel"
+        variant="warning"
+      />
 
       <Modal isOpen={closingSummaryOpen} onClose={() => setClosingSummaryOpen(false)} title="Closing Summary" size="lg">
         {closingSummaryLoading ? (

@@ -3,6 +3,7 @@ import { ThemeToggleButton } from "../common/ThemeToggleButton";
 import NotificationDropdown from "./NotificationDropdown";
 import UserDropdown from "./UserDropdown";
 import { Link } from "react-router";
+import { env } from "../../config/env";
 
 // Define the interface for the props
 interface HeaderProps {
@@ -11,6 +12,27 @@ interface HeaderProps {
 }
 const Header: React.FC<HeaderProps> = ({ onClick, onToggle }) => {
   const [isApplicationMenuOpen, setApplicationMenuOpen] = useState(false);
+
+  const logoStorageKey = "erp.company.logo_img";
+  const systemLogoLight = "/images/logo/logo.svg";
+  const systemLogoDark = "/images/logo/logo-dark.svg";
+
+  const resolveLogoUrl = (value?: string | null) => {
+    const raw = (value || "").trim();
+    if (!raw) return "";
+    if (/^data:/i.test(raw)) return raw;
+    if (/^https?:\/\//i.test(raw)) return raw;
+    if (raw.startsWith("/images/") || raw === "/favicon.png") return raw;
+    if (raw.startsWith("uploads/")) return `${env.API_URL}/${raw}`;
+    if (raw.startsWith("/")) return `${env.API_URL}${raw}`;
+    return raw;
+  };
+
+  const storedLogo =
+    typeof window !== "undefined" ? window.localStorage.getItem(logoStorageKey) : "";
+  const customLogo = resolveLogoUrl(storedLogo);
+  const headerLogoLight = customLogo || systemLogoLight || resolveLogoUrl(env.COMPANY_AVATAR);
+  const headerLogoDark = customLogo || systemLogoDark || resolveLogoUrl(env.COMPANY_AVATAR);
 
   const toggleApplicationMenu = () => {
     setApplicationMenuOpen(!isApplicationMenuOpen);
@@ -81,12 +103,12 @@ const Header: React.FC<HeaderProps> = ({ onClick, onToggle }) => {
           <Link to="/" className="lg:hidden">
             <img
               className="dark:hidden"
-              src="./images/logo/logo.svg"
+              src={headerLogoLight}
               alt="Logo"
             />
             <img
               className="hidden dark:block"
-              src="./images/logo/logo-dark.svg"
+              src={headerLogoDark}
               alt="Logo"
             />
           </Link>

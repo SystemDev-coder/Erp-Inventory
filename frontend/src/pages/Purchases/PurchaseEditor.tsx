@@ -186,7 +186,12 @@ const PurchaseEditor = () => {
     const res = await purchaseService.get(pid);
     if (res.success && res.data?.purchase) {
       const p = res.data.purchase;
-        setForm({
+      const paymentSummary = res.data.paymentSummary;
+      const paymentAccounts = paymentSummary?.accounts || [];
+      const primaryPaymentAcc =
+        paymentAccounts.length === 1 ? Number(paymentAccounts[0].acc_id || 0) : 0;
+      const totalPaid = Number(paymentSummary?.total_paid ?? p.paid_amount ?? 0);
+      setForm({
           supplier_id: p.supplier_id ?? '',
           purchase_type: (p.purchase_type as 'cash' | 'credit') || 'cash',
           purchase_date: p.purchase_date.slice(0, 10),
@@ -195,12 +200,12 @@ const PurchaseEditor = () => {
           total: Number(p.total || 0),
         status: p.status as any,
         note: p.note || '',
-        acc_id: '',
-        paid_amount: Number(p.total || 0),
+        acc_id: primaryPaymentAcc || '',
+        paid_amount: totalPaid,
       });
       const fetchedItems = (res.data.items || []).map((it: PurchaseItem) => ({
         product_id: it.product_id,
-        name: it.description || '',
+        name: it.product_name || it.description || '',
         description: it.description || '',
         quantity: Number(it.quantity || 1),
         unit_cost: Number(it.unit_cost || 0),
@@ -246,6 +251,9 @@ const PurchaseEditor = () => {
   const effectiveStatus: 'received' | 'partial' | 'unpaid' | 'void' =
     effectivePurchaseType === 'credit' && form.status !== 'void' ? 'unpaid' : form.status;
   const shouldShowPaymentAccount = effectiveStatus !== 'void' && effectiveStatus !== 'unpaid' && effectivePurchaseType !== 'credit';
+  const totalValue = Number(form.total || 0);
+  const paidValue = Number(form.paid_amount || 0);
+  const remainingValue = Math.max(0, totalValue - paidValue);
 
   useEffect(() => {
     // Keep paid_amount consistent with the chosen status + current total.
@@ -485,7 +493,7 @@ const PurchaseEditor = () => {
 	          </label>
 
           <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-            Date
+            Purchase Date
             <input
               type="date"
               className={fieldCls}
@@ -591,26 +599,27 @@ const PurchaseEditor = () => {
           </select>
         </label>
 
-	        {shouldShowPaymentAccount ? (
-	          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-	            Pay from Account
-	            <SearchableCombobox<number>
-	              value={form.acc_id}
-	              options={accounts.map((a) => ({
-	                value: a.acc_id,
-	                label: `${a.name}${a.institution ? ` (${a.institution})` : ''}`,
-	              }))}
-	              placeholder="Select account"
-	              disabled={loading}
-	              onChange={(nextValue) => setForm({ ...form, acc_id: nextValue === '' ? '' : Number(nextValue) })}
-	            />
-	          </label>
-	        ) : (
-	          <div className="hidden md:block" />
-	        )}
+        {shouldShowPaymentAccount ? (
+          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+            Pay from Account
+            <SearchableCombobox<number>
+              value={form.acc_id}
+              options={accounts.map((a) => ({
+                value: a.acc_id,
+                label: `${a.name}${a.institution ? ` (${a.institution})` : ''}`,
+              }))}
+              placeholder="Select account"
+              disabled={loading}
+              onChange={(nextValue) => setForm({ ...form, acc_id: nextValue === '' ? '' : Number(nextValue) })}
+            />
+            <span className="text-xs text-slate-500">Required for cash/partial payments.</span>
+          </label>
+        ) : (
+          <div className="hidden md:block" />
+        )}
 
         <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-          Status
+          Purchase Status
           <select
             className={fieldCls}
             value={effectiveStatus}
@@ -630,6 +639,7 @@ const PurchaseEditor = () => {
             <option value="unpaid">Unpaid</option>
             <option value="void">Cancelled</option>
           </select>
+          <span className="text-xs text-slate-500">Status controls how payment is recorded.</span>
         </label>
 
         {effectivePurchaseType !== 'credit' && effectiveStatus !== 'void' && (
@@ -641,6 +651,8 @@ const PurchaseEditor = () => {
               value={form.paid_amount}
               min={0}
               max={form.total}
+              step="0.01"
+              inputMode="decimal"
               onChange={(e) => {
                 const raw = Number(e.target.value || 0);
                 setForm((prev) => {
@@ -663,6 +675,9 @@ const PurchaseEditor = () => {
               placeholder="0.00"
               disabled={loading}
             />
+            <span className="text-xs text-slate-500">
+              Max ${totalValue.toFixed(2)} • Remaining ${remainingValue.toFixed(2)}
+            </span>
           </label>
         )}
 

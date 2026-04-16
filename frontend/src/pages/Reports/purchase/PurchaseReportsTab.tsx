@@ -9,7 +9,6 @@ type PurchaseCardId =
   | 'orders-summary'
   | 'purchase-returns'
   | 'payment-status'
-  | 'supplier-ledger'
   | 'supplier-wise'
   | 'best-suppliers'
   | 'price-variance';
@@ -18,7 +17,6 @@ const purchaseCards: Array<{ id: PurchaseCardId; title: string; hint: string }> 
   { id: 'orders-summary', title: 'Purchase Orders Summary', hint: 'Between two dates' },
   { id: 'purchase-returns', title: 'Purchase Returns', hint: 'Between two dates' },
   { id: 'payment-status', title: 'Purchase Payment Status', hint: 'Between two dates' },
-  { id: 'supplier-ledger', title: 'Supplier Ledger', hint: 'Dropdown + Show / All' },
   { id: 'supplier-wise', title: 'Supplier Wise Purchases', hint: 'Dropdown + Show / All' },
   { id: 'best-suppliers', title: 'Best Suppliers', hint: 'Between two dates' },
   { id: 'price-variance', title: 'Purchase Price Variance', hint: 'Date range + product selection' },
@@ -58,39 +56,6 @@ const paymentStatusColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'outstanding_amount', header: 'Outstanding', align: 'right', render: (row) => formatCurrency(row.outstanding_amount) },
   { key: 'payment_status', header: 'Payment Status' },
   { key: 'status', header: 'Status' },
-];
-
-const formatSupplierLedgerType = (value: unknown) => {
-  const key = String(value || '').toLowerCase();
-  if (key === 'opening') return 'Opening Balance';
-  if (key === 'purchase') return 'Purchase';
-  if (key === 'payment' || key === 'receipt') return 'Payment';
-  if (key === 'return') return 'Return';
-  if (key === 'adjustment') return 'Adjustment';
-  return key ? key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : '-';
-};
-
-const formatSupplierLedgerRef = (row: Record<string, unknown>) => {
-  const table = String(row.ref_table || '').toLowerCase();
-  const id = row.ref_id ? `#${row.ref_id}` : '';
-  if (table === 'suppliers') return 'Opening Balance';
-  if (table === 'purchases') return `Purchase ${id}`.trim();
-  if (table === 'supplier_receipts' || table === 'supplier_payments') return `Payment ${id}`.trim();
-  if (table === 'purchase_returns') return `Return ${id}`.trim();
-  if (!table && !id) return '-';
-  return `${table.replace(/_/g, ' ')} ${id}`.trim();
-};
-
-const supplierLedgerColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'sup_ledger_id', header: 'Entry #' },
-  { key: 'entry_date', header: 'Date', render: (row) => formatDateTime(row.entry_date) },
-  { key: 'supplier_name', header: 'Supplier' },
-  { key: 'entry_type', header: 'Type', render: (row) => formatSupplierLedgerType(row.entry_type) },
-  { key: 'reference', header: 'Reference', render: (row) => formatSupplierLedgerRef(row) },
-  { key: 'note', header: 'Note' },
-  { key: 'debit', header: 'Debit', align: 'right', render: (row) => formatCurrency(row.debit) },
-  { key: 'credit', header: 'Credit', align: 'right', render: (row) => formatCurrency(row.credit) },
-  { key: 'running_balance', header: 'Balance', align: 'right', render: (row) => formatCurrency(row.running_balance) },
 ];
 
 const supplierWiseColumns: ReportColumn<Record<string, unknown>>[] = [
@@ -137,12 +102,10 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
 
   const [selectedVarianceProductId, setSelectedVarianceProductId] = useState('');
   const [selectedWiseSupplierId, setSelectedWiseSupplierId] = useState('');
-  const [selectedLedgerSupplierId, setSelectedLedgerSupplierId] = useState('');
 
   const [ordersRange, setOrdersRange] = useState<DateRange>(defaultReportRange());
   const [returnsRange, setReturnsRange] = useState<DateRange>(defaultReportRange());
   const [paymentRange, setPaymentRange] = useState<DateRange>(defaultReportRange());
-  const [ledgerRange, setLedgerRange] = useState<DateRange>(defaultReportRange());
   const [bestSuppliersRange, setBestSuppliersRange] = useState<DateRange>(defaultReportRange());
   const [priceVarianceRange, setPriceVarianceRange] = useState<DateRange>(defaultReportRange());
 
@@ -188,11 +151,6 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
   const selectedWiseSupplierLabel = useMemo(
     () => suppliers.find((option) => String(option.id) === selectedWiseSupplierId)?.label || '',
     [suppliers, selectedWiseSupplierId]
-  );
-
-  const selectedLedgerSupplierLabel = useMemo(
-    () => suppliers.find((option) => String(option.id) === selectedLedgerSupplierId)?.label || '',
-    [suppliers, selectedLedgerSupplierId]
   );
 
   const runCardAction = async (cardId: PurchaseCardId, action: () => Promise<void>) => {
@@ -287,29 +245,6 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
       });
     });
 
-  const handleSupplierLedger = (mode: 'show' | 'all') =>
-    runCardAction('supplier-ledger', async () => {
-      ensureRangeValid(ledgerRange, 'Supplier Ledger');
-      const supplierId = mode === 'show' ? Number(selectedLedgerSupplierId || 0) : undefined;
-      if (mode === 'show' && !supplierId) throw new Error('Select a supplier first');
-      const response = await purchaseReportsService.getSupplierLedger({ mode, supplierId });
-      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load supplier ledger');
-      const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
-        title: 'Supplier Ledger',
-        subtitle: mode === 'show' ? selectedLedgerSupplierLabel || 'Selected Supplier' : 'All Suppliers',
-        fileName: 'supplier-ledger',
-        data: rows,
-        columns: supplierLedgerColumns,
-        filters: {
-          'From Date': ledgerRange.fromDate,
-          'To Date': ledgerRange.toDate,
-          Mode: mode === 'show' ? 'Show' : 'All',
-          Supplier: mode === 'show' ? selectedLedgerSupplierLabel || 'Selected Supplier' : 'All Suppliers',
-        },
-      });
-    });
-
   const handleSupplierWisePurchases = (mode: 'show' | 'all') =>
     runCardAction('supplier-wise', async () => {
       const supplierId = mode === 'show' ? Number(selectedWiseSupplierId || 0) : undefined;
@@ -400,13 +335,13 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
 
   const renderDateRange = (range: DateRange, onChange: (next: DateRange) => void) => (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-      <label className="space-y-1 text-xs font-semibold text-[#47657f]">
+      <label className="space-y-1 text-xs font-semibold text-slate-600">
         <span>From Date</span>
-        <input type="date" value={range.fromDate} onChange={(event) => onChange({ ...range, fromDate: event.target.value })} className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none" />
+        <input type="date" value={range.fromDate} onChange={(event) => onChange({ ...range, fromDate: event.target.value })} className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-primary-500 focus:outline-none" />
       </label>
-      <label className="space-y-1 text-xs font-semibold text-[#47657f]">
+      <label className="space-y-1 text-xs font-semibold text-slate-600">
         <span>To Date</span>
-        <input type="date" value={range.toDate} onChange={(event) => onChange({ ...range, toDate: event.target.value })} className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none" />
+        <input type="date" value={range.toDate} onChange={(event) => onChange({ ...range, toDate: event.target.value })} className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-primary-500 focus:outline-none" />
       </label>
     </div>
   );
@@ -415,7 +350,7 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
     <select
       value={value}
       onChange={(event) => onChange(event.target.value)}
-      className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2.5 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none"
+      className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"
       disabled={optionsLoading}
     >
       <option value="">{placeholder}</option>
@@ -432,14 +367,14 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
       <button
         onClick={onShow}
         disabled={loadingCardId === cardId}
-        className="inline-flex items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70"
+        className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
       >
         Show
       </button>
       <button
         onClick={onAll}
         disabled={loadingCardId === cardId}
-        className="rounded-md border border-[#9ec5df] bg-white px-4 py-2.5 text-sm font-semibold text-[#0f4f76] hover:bg-[#edf5fb] disabled:cursor-not-allowed disabled:opacity-70"
+        className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70"
       >
         All
       </button>
@@ -447,26 +382,25 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
   );
 
   const renderCardBody = (cardId: PurchaseCardId) => {
-    if (cardId === 'orders-summary') return <div className="space-y-3">{renderDateRange(ordersRange, setOrdersRange)}<button onClick={handleOrdersSummary} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
-    if (cardId === 'purchase-returns') return <div className="space-y-3">{renderDateRange(returnsRange, setReturnsRange)}<button onClick={handlePurchaseReturns} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
-    if (cardId === 'payment-status') return <div className="space-y-3">{renderDateRange(paymentRange, setPaymentRange)}<button onClick={handlePaymentStatus} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
-    if (cardId === 'supplier-ledger') return <div className="space-y-3">{renderDateRange(ledgerRange, setLedgerRange)}{renderSupplierSelector(selectedLedgerSupplierId, setSelectedLedgerSupplierId)}{renderShowAllButtons(() => handleSupplierLedger('show'), () => handleSupplierLedger('all'), cardId)}</div>;
+    if (cardId === 'orders-summary') return <div className="space-y-3">{renderDateRange(ordersRange, setOrdersRange)}<button onClick={handleOrdersSummary} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
+    if (cardId === 'purchase-returns') return <div className="space-y-3">{renderDateRange(returnsRange, setReturnsRange)}<button onClick={handlePurchaseReturns} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
+    if (cardId === 'payment-status') return <div className="space-y-3">{renderDateRange(paymentRange, setPaymentRange)}<button onClick={handlePaymentStatus} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
     if (cardId === 'supplier-wise') return <div className="space-y-3">{renderSupplierSelector(selectedWiseSupplierId, setSelectedWiseSupplierId)}{renderShowAllButtons(() => handleSupplierWisePurchases('show'), () => handleSupplierWisePurchases('all'), cardId)}</div>;
-    if (cardId === 'best-suppliers') return <div className="space-y-3">{renderDateRange(bestSuppliersRange, setBestSuppliersRange)}<button onClick={handleBestSuppliers} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
+    if (cardId === 'best-suppliers') return <div className="space-y-3">{renderDateRange(bestSuppliersRange, setBestSuppliersRange)}<button onClick={handleBestSuppliers} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
 
-    return <div className="space-y-3">{renderDateRange(priceVarianceRange, setPriceVarianceRange)}<select value={selectedVarianceProductId} onChange={(event) => setSelectedVarianceProductId(event.target.value)} className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2.5 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none"><option value="">Select Product</option>{products.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select><div className="grid grid-cols-2 gap-3"><button onClick={() => handlePriceVariance('show')} disabled={loadingCardId === cardId} className="inline-flex items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show</button><button onClick={() => handlePriceVariance('all')} disabled={loadingCardId === cardId} className="rounded-md border border-[#9ec5df] bg-white px-4 py-2.5 text-sm font-semibold text-[#0f4f76] hover:bg-[#edf5fb] disabled:cursor-not-allowed disabled:opacity-70">All</button></div></div>;
+    return <div className="space-y-3">{renderDateRange(priceVarianceRange, setPriceVarianceRange)}<select value={selectedVarianceProductId} onChange={(event) => setSelectedVarianceProductId(event.target.value)} className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"><option value="">Select Product</option>{products.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select><div className="grid grid-cols-2 gap-3"><button onClick={() => handlePriceVariance('show')} disabled={loadingCardId === cardId} className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button><button onClick={() => handlePriceVariance('all')} disabled={loadingCardId === cardId} className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70">All</button></div></div>;
   };
 
   const renderCard = (card: { id: PurchaseCardId; title: string; hint: string }) => {
     const isOpen = expandedCardId === card.id;
     return (
-      <div key={card.id} className="self-start overflow-hidden rounded-2xl border border-[#bfd0df] bg-white shadow-[0_8px_18px_rgba(15,79,118,0.08)]">
+      <div key={card.id} className="self-start overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_8px_18px_rgba(15,23,42,0.08)]">
         <button
           onClick={() => {
             setCardErrors((prev) => ({ ...prev, [card.id]: '' }));
             setExpandedCardId((prev) => (prev === card.id ? null : card.id));
           }}
-          className="flex w-full items-center justify-between border-b border-[#d8e4ee] bg-gradient-to-r from-[#0f4f76] to-[#1f6f9f] px-5 py-4 text-left text-white"
+          className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-slate-900 to-slate-800 px-5 py-4 text-left text-white"
         >
           <div>
             <p className="text-xl font-semibold leading-tight">{card.title}</p>
@@ -475,7 +409,7 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
           <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
         </button>
         {isOpen && (
-          <div className="space-y-3 bg-[#f8fbff] px-5 py-4">
+          <div className="space-y-3 bg-slate-50 px-5 py-4">
             {renderCardBody(card.id)}
             {cardErrors[card.id] && <p className="text-sm font-semibold text-red-600">{cardErrors[card.id]}</p>}
           </div>
@@ -490,7 +424,7 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
   return (
     <div className="space-y-3">
       {optionsError && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{optionsError}</div>}
-      {optionsLoading && <div className="inline-flex items-center gap-2 rounded-md border border-[#b8c8d7] bg-white px-3 py-2 text-sm text-[#38556d]"><Loader2 className="h-4 w-4 animate-spin" />Loading product options...</div>}
+      {optionsLoading && <div className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600"><Loader2 className="h-4 w-4 animate-spin" />Loading product options...</div>}
       <div className="space-y-3 lg:hidden">
         {purchaseCards.map(renderCard)}
       </div>
@@ -505,4 +439,5 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
     </div>
   );
 }
+
 

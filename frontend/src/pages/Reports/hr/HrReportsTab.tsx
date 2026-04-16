@@ -9,19 +9,13 @@ type HrCardId =
   | 'employee-list'
   | 'payroll-summary'
   | 'salary-payments'
-  | 'loan-balances'
-  | 'employee-ledger'
-  | 'payroll-by-month'
-  | 'employee-count-by-department';
+  | 'payroll-by-month';
 
 const hrCards: Array<{ id: HrCardId; title: string; hint: string }> = [
   { id: 'employee-list', title: 'Employee List', hint: 'Dropdown + Show / All' },
   { id: 'payroll-summary', title: 'Payroll Summary', hint: 'Between two dates' },
   { id: 'salary-payments', title: 'Salary Payments', hint: 'Date range + Show / All' },
-  { id: 'loan-balances', title: 'Loan Balances', hint: 'Dropdown + Show / All' },
-  { id: 'employee-ledger', title: 'Employee Ledger', hint: 'Date range + Show / All' },
   { id: 'payroll-by-month', title: 'Payroll by Month', hint: 'Between two dates' },
-  { id: 'employee-count-by-department', title: 'Employee Count by Department', hint: 'Single action report' },
 ];
 
 const employeeListColumns: ReportColumn<Record<string, unknown>>[] = [
@@ -64,29 +58,6 @@ const salaryPaymentsColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'note', header: 'Note' },
 ];
 
-const loanBalancesColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'loan_id', header: 'Loan #' },
-  { key: 'loan_date', header: 'Loan Date' },
-  { key: 'employee_name', header: 'Employee' },
-  { key: 'amount', header: 'Loan Amount', align: 'right', render: (row) => formatCurrency(row.amount) },
-  { key: 'paid_amount', header: 'Paid Amount', align: 'right', render: (row) => formatCurrency(row.paid_amount) },
-  { key: 'outstanding_amount', header: 'Outstanding', align: 'right', render: (row) => formatCurrency(row.outstanding_amount) },
-  { key: 'loan_status', header: 'Status' },
-  { key: 'note', header: 'Note' },
-];
-
-const employeeLedgerColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'entry_no', header: 'Entry #' },
-  { key: 'entry_date', header: 'Date', render: (row) => formatDateTime(row.entry_date) },
-  { key: 'employee_name', header: 'Employee' },
-  { key: 'entry_type', header: 'Type' },
-  { key: 'amount_in', header: 'In', align: 'right', render: (row) => formatCurrency(row.amount_in) },
-  { key: 'amount_out', header: 'Out', align: 'right', render: (row) => formatCurrency(row.amount_out) },
-  { key: 'net_amount', header: 'Net', align: 'right', render: (row) => formatCurrency(row.net_amount) },
-  { key: 'running_balance', header: 'Running', align: 'right', render: (row) => formatCurrency(row.running_balance) },
-  { key: 'note', header: 'Note' },
-];
-
 const payrollByMonthColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'period_year', header: 'Year', align: 'right' },
   { key: 'period_month', header: 'Month', align: 'right' },
@@ -95,14 +66,6 @@ const payrollByMonthColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'total_net', header: 'Total Net', align: 'right', render: (row) => formatCurrency(row.total_net) },
   { key: 'total_paid', header: 'Total Paid', align: 'right', render: (row) => formatCurrency(row.total_paid) },
   { key: 'outstanding_amount', header: 'Outstanding', align: 'right', render: (row) => formatCurrency(row.outstanding_amount) },
-];
-
-const employeeCountByDepartmentColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'department', header: 'Department' },
-  { key: 'total_employees', header: 'Total Employees', align: 'right' },
-  { key: 'active_employees', header: 'Active', align: 'right' },
-  { key: 'inactive_employees', header: 'Inactive', align: 'right' },
-  { key: 'total_salary_amount', header: 'Total Salary Amount', align: 'right', render: (row) => formatCurrency(row.total_salary_amount) },
 ];
 
 type Props = {
@@ -120,12 +83,9 @@ export function HrReportsTab({ onOpenModal }: Props) {
 
   const [selectedEmployeeListId, setSelectedEmployeeListId] = useState('');
   const [selectedSalaryEmployeeId, setSelectedSalaryEmployeeId] = useState('');
-  const [selectedLoanEmployeeId, setSelectedLoanEmployeeId] = useState('');
-  const [selectedLedgerEmployeeId, setSelectedLedgerEmployeeId] = useState('');
 
   const [payrollSummaryRange, setPayrollSummaryRange] = useState<DateRange>(defaultReportRange());
   const [salaryPaymentsRange, setSalaryPaymentsRange] = useState<DateRange>(defaultReportRange());
-  const [ledgerRange, setLedgerRange] = useState<DateRange>(defaultReportRange());
   const [payrollByMonthRange, setPayrollByMonthRange] = useState<DateRange>(defaultReportRange());
 
   useEffect(() => {
@@ -163,14 +123,6 @@ export function HrReportsTab({ onOpenModal }: Props) {
   const selectedSalaryEmployeeLabel = useMemo(
     () => employees.find((option) => String(option.id) === selectedSalaryEmployeeId)?.label || '',
     [employees, selectedSalaryEmployeeId]
-  );
-  const selectedLoanEmployeeLabel = useMemo(
-    () => employees.find((option) => String(option.id) === selectedLoanEmployeeId)?.label || '',
-    [employees, selectedLoanEmployeeId]
-  );
-  const selectedLedgerEmployeeLabel = useMemo(
-    () => employees.find((option) => String(option.id) === selectedLedgerEmployeeId)?.label || '',
-    [employees, selectedLedgerEmployeeId]
   );
 
   const runCardAction = async (cardId: HrCardId, action: () => Promise<void>) => {
@@ -281,72 +233,6 @@ export function HrReportsTab({ onOpenModal }: Props) {
       });
     });
 
-  const handleLoanBalances = (mode: 'show' | 'all') =>
-    runCardAction('loan-balances', async () => {
-      const employeeId = mode === 'show' ? Number(selectedLoanEmployeeId || 0) : undefined;
-      if (mode === 'show' && !employeeId) throw new Error('Select an employee first');
-      const response = await hrReportsService.getLoanBalances({ mode, employeeId });
-      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load loan balances');
-      const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
-        title: 'Loan Balances',
-        subtitle: mode === 'show' ? selectedLoanEmployeeLabel || 'Selected Employee' : 'All Employees',
-        fileName: 'loan-balances',
-        data: rows,
-        columns: loanBalancesColumns,
-        filters: {
-          Mode: mode === 'show' ? 'Show' : 'All',
-          Employee: mode === 'show' ? selectedLoanEmployeeLabel || 'Selected Employee' : 'All Employees',
-        },
-        tableTotals: {
-          label: 'Total',
-          values: {
-            amount: formatCurrency(sumNumericField(rows, 'amount')),
-            paid_amount: formatCurrency(sumNumericField(rows, 'paid_amount')),
-            outstanding_amount: formatCurrency(sumNumericField(rows, 'outstanding_amount')),
-          },
-        },
-      });
-    });
-
-  const handleEmployeeLedger = (mode: 'show' | 'all') =>
-    runCardAction('employee-ledger', async () => {
-      ensureRangeValid(ledgerRange, 'Employee Ledger');
-      const employeeId = mode === 'show' ? Number(selectedLedgerEmployeeId || 0) : undefined;
-      if (mode === 'show' && !employeeId) throw new Error('Select an employee first');
-      const response = await hrReportsService.getEmployeeLedger({
-        fromDate: ledgerRange.fromDate,
-        toDate: ledgerRange.toDate,
-        mode,
-        employeeId,
-      });
-      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load employee ledger');
-      const rows = toRecordRows(response.data.rows || []);
-      const closingBalance = rows.length > 0 ? Number(rows[rows.length - 1].running_balance || 0) : 0;
-      onOpenModal({
-        title: 'Employee Ledger',
-        subtitle: `${formatDateOnly(ledgerRange.fromDate)} - ${formatDateOnly(ledgerRange.toDate)}`,
-        fileName: 'employee-ledger',
-        data: rows,
-        columns: employeeLedgerColumns,
-        filters: {
-          'From Date': ledgerRange.fromDate,
-          'To Date': ledgerRange.toDate,
-          Mode: mode === 'show' ? 'Show' : 'All',
-          Employee: mode === 'show' ? selectedLedgerEmployeeLabel || 'Selected Employee' : 'All Employees',
-        },
-        tableTotals: {
-          label: 'Total',
-          values: {
-            amount_in: formatCurrency(sumNumericField(rows, 'amount_in')),
-            amount_out: formatCurrency(sumNumericField(rows, 'amount_out')),
-            net_amount: formatCurrency(sumNumericField(rows, 'net_amount')),
-            running_balance: formatCurrency(closingBalance),
-          },
-        },
-      });
-    });
-
   const handlePayrollByMonth = () =>
     runCardAction('payroll-by-month', async () => {
       ensureRangeValid(payrollByMonthRange, 'Payroll by Month');
@@ -373,48 +259,24 @@ export function HrReportsTab({ onOpenModal }: Props) {
       });
     });
 
-  const handleEmployeeCountByDepartment = () =>
-    runCardAction('employee-count-by-department', async () => {
-      const response = await hrReportsService.getEmployeeCountByDepartment();
-      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load employee count by department');
-      const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
-        title: 'Employee Count by Department',
-        subtitle: 'Current distribution by role/department',
-        fileName: 'employee-count-by-department',
-        data: rows,
-        columns: employeeCountByDepartmentColumns,
-        filters: { Scope: 'All Employees' },
-        tableTotals: {
-          label: 'Total',
-          values: {
-            total_employees: sumNumericField(rows, 'total_employees').toLocaleString(),
-            active_employees: sumNumericField(rows, 'active_employees').toLocaleString(),
-            inactive_employees: sumNumericField(rows, 'inactive_employees').toLocaleString(),
-            total_salary_amount: formatCurrency(sumNumericField(rows, 'total_salary_amount')),
-          },
-        },
-      });
-    });
-
   const renderDateRange = (range: DateRange, onChange: (next: DateRange) => void) => (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-      <label className="space-y-1 text-xs font-semibold text-[#47657f]">
+      <label className="space-y-1 text-xs font-semibold text-slate-600">
         <span>From Date</span>
         <input
           type="date"
           value={range.fromDate}
           onChange={(event) => onChange({ ...range, fromDate: event.target.value })}
-          className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none"
+          className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"
         />
       </label>
-      <label className="space-y-1 text-xs font-semibold text-[#47657f]">
+      <label className="space-y-1 text-xs font-semibold text-slate-600">
         <span>To Date</span>
         <input
           type="date"
           value={range.toDate}
           onChange={(event) => onChange({ ...range, toDate: event.target.value })}
-          className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none"
+          className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"
         />
       </label>
     </div>
@@ -428,7 +290,7 @@ export function HrReportsTab({ onOpenModal }: Props) {
     <select
       value={value}
       onChange={(event) => onChange(event.target.value)}
-      className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2.5 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none"
+      className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"
     >
       <option value="">{placeholder}</option>
       {employees.map((option) => (
@@ -444,14 +306,14 @@ export function HrReportsTab({ onOpenModal }: Props) {
       <button
         onClick={onShow}
         disabled={loadingCardId === cardId}
-        className="inline-flex items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70"
+        className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
       >
         Show
       </button>
       <button
         onClick={onAll}
         disabled={loadingCardId === cardId}
-        className="rounded-md border border-[#9ec5df] bg-white px-4 py-2.5 text-sm font-semibold text-[#0f4f76] hover:bg-[#edf5fb] disabled:cursor-not-allowed disabled:opacity-70"
+        className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70"
       >
         All
       </button>
@@ -475,7 +337,7 @@ export function HrReportsTab({ onOpenModal }: Props) {
           <button
             onClick={handlePayrollSummary}
             disabled={loadingCardId === cardId}
-            className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70"
+            className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
           >
             Show
           </button>
@@ -493,25 +355,6 @@ export function HrReportsTab({ onOpenModal }: Props) {
       );
     }
 
-    if (cardId === 'loan-balances') {
-      return (
-        <div className="space-y-3">
-          {renderEmployeeSelector(selectedLoanEmployeeId, setSelectedLoanEmployeeId)}
-          {renderShowAllButtons(() => handleLoanBalances('show'), () => handleLoanBalances('all'), cardId)}
-        </div>
-      );
-    }
-
-    if (cardId === 'employee-ledger') {
-      return (
-        <div className="space-y-3">
-          {renderDateRange(ledgerRange, setLedgerRange)}
-          {renderEmployeeSelector(selectedLedgerEmployeeId, setSelectedLedgerEmployeeId)}
-          {renderShowAllButtons(() => handleEmployeeLedger('show'), () => handleEmployeeLedger('all'), cardId)}
-        </div>
-      );
-    }
-
     if (cardId === 'payroll-by-month') {
       return (
         <div className="space-y-3">
@@ -519,7 +362,7 @@ export function HrReportsTab({ onOpenModal }: Props) {
           <button
             onClick={handlePayrollByMonth}
             disabled={loadingCardId === cardId}
-            className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70"
+            className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
           >
             Show
           </button>
@@ -527,28 +370,20 @@ export function HrReportsTab({ onOpenModal }: Props) {
       );
     }
 
-    return (
-      <button
-        onClick={handleEmployeeCountByDepartment}
-        disabled={loadingCardId === cardId}
-        className="inline-flex min-w-[220px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70"
-      >
-        Show Department Count
-      </button>
-    );
+    return null;
   };
 
   const renderCard = (card: { id: HrCardId; title: string; hint: string }, index: number) => {
     const cardKey = `${card.id}::${index}`;
     const isOpen = expandedCardKey === cardKey;
     return (
-      <div key={cardKey} className="self-start overflow-hidden rounded-2xl border border-[#bfd0df] bg-white shadow-[0_8px_18px_rgba(15,79,118,0.08)]">
+      <div key={cardKey} className="self-start overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_8px_18px_rgba(15,23,42,0.08)]">
         <button
           onClick={() => {
             setCardErrors((prev) => ({ ...prev, [card.id]: '' }));
             setExpandedCardKey((prev) => (prev === cardKey ? null : cardKey));
           }}
-          className="flex w-full items-center justify-between border-b border-[#d8e4ee] bg-gradient-to-r from-[#0f4f76] to-[#1f6f9f] px-5 py-4 text-left text-white"
+          className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-slate-900 to-slate-800 px-5 py-4 text-left text-white"
         >
           <div>
             <p className="text-xl font-semibold leading-tight">{card.title}</p>
@@ -557,7 +392,7 @@ export function HrReportsTab({ onOpenModal }: Props) {
           <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
         </button>
         {isOpen && (
-          <div className="space-y-3 bg-[#f8fbff] px-5 py-4">
+          <div className="space-y-3 bg-slate-50 px-5 py-4">
             {renderCardBody(card.id)}
             {cardErrors[card.id] && <p className="text-sm font-semibold text-red-600">{cardErrors[card.id]}</p>}
           </div>
@@ -574,7 +409,7 @@ export function HrReportsTab({ onOpenModal }: Props) {
     <div className="space-y-3">
       {optionsError && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{optionsError}</div>}
       {optionsLoading && (
-        <div className="inline-flex items-center gap-2 rounded-md border border-[#b8c8d7] bg-white px-3 py-2 text-sm text-[#38556d]">
+        <div className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
           <Loader2 className="h-4 w-4 animate-spin" />
           Loading employee options...
         </div>
@@ -593,4 +428,5 @@ export function HrReportsTab({ onOpenModal }: Props) {
     </div>
   );
 }
+
 

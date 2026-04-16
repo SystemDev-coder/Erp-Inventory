@@ -164,11 +164,59 @@ const ensureAssetAccountsSchema = async (): Promise<void> => {
     ALTER TABLE ims.accounts
       ADD COLUMN IF NOT EXISTS account_type VARCHAR(20) NOT NULL DEFAULT 'asset'
   `);
+  // Remove legacy/narrow account_type checks (for example, only asset/equity),
+  // then enforce the full accounting type set.
+  await adminQueryMany(`
+    DO $$
+    DECLARE
+      r record;
+    BEGIN
+      FOR r IN
+        SELECT c.conname
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+         WHERE n.nspname = 'ims'
+           AND t.relname = 'accounts'
+           AND c.contype = 'c'
+      LOOP
+        IF r.conname ILIKE '%account_type%' THEN
+          EXECUTE format('ALTER TABLE ims.accounts DROP CONSTRAINT %I', r.conname);
+        END IF;
+      END LOOP;
+
+      IF NOT EXISTS (
+        SELECT 1
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+         WHERE n.nspname = 'ims'
+           AND t.relname = 'accounts'
+           AND c.conname = 'chk_accounts_account_type'
+      ) THEN
+        ALTER TABLE ims.accounts
+          ADD CONSTRAINT chk_accounts_account_type
+          CHECK (
+            account_type IN (
+              'asset',
+              'liability',
+              'equity',
+              'revenue',
+              'income',
+              'expense',
+              'cost'
+            )
+          );
+      END IF;
+    END
+    $$;
+  `);
   await adminQueryMany(`
     UPDATE ims.accounts
        SET account_type = 'asset'
      WHERE account_type IS NULL
-        OR account_type NOT IN ('asset', 'equity')
+       OR BTRIM(account_type) = ''
+       OR account_type NOT IN ('asset', 'liability', 'equity', 'revenue', 'income', 'expense', 'cost')
   `);
   assetAccountsSchemaReady = true;
 };
@@ -191,18 +239,22 @@ const ensureCapitalSchema = async (): Promise<void> => {
   // Allow standard COA types used across reports.
   await adminQueryMany(`
     DO $$
+    DECLARE
+      r record;
     BEGIN
-      IF EXISTS (
-        SELECT 1
+      FOR r IN
+        SELECT c.conname
           FROM pg_constraint c
           JOIN pg_class t ON t.oid = c.conrelid
           JOIN pg_namespace n ON n.oid = t.relnamespace
          WHERE n.nspname = 'ims'
            AND t.relname = 'accounts'
-           AND c.conname = 'chk_accounts_account_type'
-      ) THEN
-        ALTER TABLE ims.accounts DROP CONSTRAINT chk_accounts_account_type;
-      END IF;
+           AND c.contype = 'c'
+      LOOP
+        IF r.conname ILIKE '%account_type%' THEN
+          EXECUTE format('ALTER TABLE ims.accounts DROP CONSTRAINT %I', r.conname);
+        END IF;
+      END LOOP;
 
       ALTER TABLE ims.accounts
         ADD CONSTRAINT chk_accounts_account_type

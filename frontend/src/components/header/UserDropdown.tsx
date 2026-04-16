@@ -72,23 +72,23 @@ export default function UserDropdown() {
       <Dropdown
         isOpen={isOpen}
         onClose={closeDropdown}
-        className="absolute right-0 mt-[17px] flex w-[260px] flex-col rounded-2xl border border-[#9bb3d5] bg-[#fbfcff] p-3 shadow-theme-lg dark:border-[#264676] dark:bg-[#10233f]"
+        className="absolute right-0 mt-[17px] flex w-[260px] flex-col rounded-2xl border border-slate-200 bg-white p-3 shadow-theme-lg dark:border-slate-700 dark:bg-slate-900"
       >
-        <div className="border-b border-[#d5e0f0] pb-3 dark:border-[#264676]">
-          <span className="block text-theme-sm font-medium text-[#0a1f44] dark:text-[#f4f8ff]">
+        <div className="border-b border-slate-200 pb-3 dark:border-slate-700">
+          <span className="block text-theme-sm font-medium text-slate-900 dark:text-slate-100">
             {displayName}
           </span>
-          <span className="mt-0.5 block text-theme-xs text-[#6f86a8] dark:text-[#9fc3da]">
+          <span className="mt-0.5 block text-theme-xs text-slate-500 dark:text-slate-300">
             {displaySub}
           </span>
           {user?.role_name && (
-            <span className="mt-1 inline-block rounded-md bg-[#edf2fa] px-2 py-0.5 text-theme-xs text-[#163a72] dark:bg-[#102b59]/35 dark:text-[#9fc3da]">
+            <span className="mt-1 inline-block rounded-md bg-slate-100 px-2 py-0.5 text-theme-xs text-primary-700 dark:bg-slate-800/60 dark:text-slate-200">
               {user.role_name}
             </span>
           )}
         </div>
 
-        <ul className="flex flex-col gap-1 border-b border-[#d5e0f0] pb-3 pt-4 dark:border-[#264676]">
+        <ul className="flex flex-col gap-1 border-b border-slate-200 pb-3 pt-4 dark:border-slate-700">
           <li>
             <DropdownItem
               onItemClick={() => {
@@ -96,9 +96,9 @@ export default function UserDropdown() {
                 setProfileOpen(true);
               }}
               tag="button"
-              className="group flex items-center gap-3 rounded-lg px-3 py-2 text-theme-sm font-medium text-[#2b4558] hover:bg-[#f4f7fd] dark:text-[#dde7f7] dark:hover:bg-[#102b59]/35"
+              className="group flex items-center gap-3 rounded-lg px-3 py-2 text-theme-sm font-medium text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800/60"
             >
-              <User className="h-5 w-5 text-[#6f86a8] group-hover:text-[#0a1f44] dark:text-[#9fc3da] dark:group-hover:text-[#f4f8ff]" />
+              <User className="h-5 w-5 text-slate-500 group-hover:text-slate-900 dark:text-slate-300 dark:group-hover:text-slate-100" />
               Edit profile
             </DropdownItem>
           </li>
@@ -110,9 +110,9 @@ export default function UserDropdown() {
                   navigate("/settings");
                 }}
                 tag="button"
-                className="group flex items-center gap-3 rounded-lg px-3 py-2 text-theme-sm font-medium text-[#2b4558] hover:bg-[#f4f7fd] dark:text-[#dde7f7] dark:hover:bg-[#102b59]/35"
+                className="group flex items-center gap-3 rounded-lg px-3 py-2 text-theme-sm font-medium text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800/60"
               >
-                <Settings className="h-5 w-5 text-[#6f86a8] group-hover:text-[#0a1f44] dark:text-[#9fc3da] dark:group-hover:text-[#f4f8ff]" />
+                <Settings className="h-5 w-5 text-slate-500 group-hover:text-slate-900 dark:text-slate-300 dark:group-hover:text-slate-100" />
                 Account settings
               </DropdownItem>
             )}
@@ -124,9 +124,9 @@ export default function UserDropdown() {
                 navigate("/support");
               }}
               tag="button"
-              className="group flex items-center gap-3 rounded-lg px-3 py-2 text-theme-sm font-medium text-[#2b4558] hover:bg-[#f4f7fd] dark:text-[#dde7f7] dark:hover:bg-[#102b59]/35"
+              className="group flex items-center gap-3 rounded-lg px-3 py-2 text-theme-sm font-medium text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800/60"
             >
-              <HelpCircle className="h-5 w-5 text-[#6f86a8] group-hover:text-[#0a1f44] dark:text-[#9fc3da] dark:group-hover:text-[#f4f8ff]" />
+              <HelpCircle className="h-5 w-5 text-slate-500 group-hover:text-slate-900 dark:text-slate-300 dark:group-hover:text-slate-100" />
               Support
             </DropdownItem>
           </li>
@@ -134,9 +134,9 @@ export default function UserDropdown() {
         <button
           type="button"
           onClick={handleSignOut}
-          className="group mt-3 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-theme-sm font-medium text-[#2b4558] hover:bg-[#f4f7fd] dark:text-[#dde7f7] dark:hover:bg-[#102b59]/35"
+          className="group mt-3 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-theme-sm font-medium text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800/60"
         >
-          <LogOut className="h-5 w-5 text-[#6f86a8] group-hover:text-[#0a1f44] dark:text-[#9fc3da] dark:group-hover:text-[#f4f8ff]" />
+          <LogOut className="h-5 w-5 text-slate-500 group-hover:text-slate-900 dark:text-slate-300 dark:group-hover:text-slate-100" />
           Sign out
         </button>
       </Dropdown>

@@ -114,3 +114,54 @@ export const getStoreWiseStockReport = asyncHandler(async (req: AuthRequest, res
     rows,
   });
 });
+
+export const getStoreMovementSummaryReport = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const branchId = await resolveBranchIdForReports(req);
+  const mode = parseSelectionMode(req.query.mode);
+  const { fromDate, toDate } = parseDateRange(req);
+  const storeId = mode === 'show' ? parseNumericId(req.query.storeId, 'storeId') : undefined;
+
+  const rows = await inventoryReportsService.getStoreMovementSummary(branchId, fromDate, toDate, storeId);
+  return ApiResponse.success(res, {
+    branchId,
+    reportKey: 'store-movement-summary',
+    fromDate,
+    toDate,
+    mode,
+    storeId: storeId ?? null,
+    rows,
+  });
+});
+
+export const getStoreMovementDetailReport = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const branchId = await resolveBranchIdForReports(req);
+  const mode = parseSelectionMode(req.query.mode);
+  const { fromDate, toDate } = parseDateRange(req);
+  const storeId = mode === 'show' ? parseNumericId(req.query.storeId, 'storeId') : undefined;
+  const itemId = req.query.itemId ? parseNumericId(req.query.itemId, 'itemId') : undefined;
+
+  const rows = await inventoryReportsService.getStoreMovementDetails(branchId, fromDate, toDate, storeId, itemId);
+  return ApiResponse.success(res, {
+    branchId,
+    reportKey: 'store-movement-detail',
+    fromDate,
+    toDate,
+    mode,
+    storeId: storeId ?? null,
+    itemId: itemId ?? null,
+    rows,
+  });
+});
+
+export const getInventoryFoundReport = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const branchId = await resolveBranchIdForReports(req);
+  const { fromDate, toDate } = parseDateRange(req);
+  const rows = await inventoryReportsService.getInventoryFound(branchId, fromDate, toDate);
+  return ApiResponse.success(res, {
+    branchId,
+    reportKey: 'inventory-found',
+    fromDate,
+    toDate,
+    rows,
+  });
+});

@@ -48,7 +48,16 @@ const StockPage = () => {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [branches, setBranches] = useState<InventoryBranch[]>([]);
   const [warehouses, setWarehouses] = useState<InventoryWarehouse[]>([]);
-  const [adjustForm, setAdjustForm] = useState({ branchId: '', whId: '', productId: '', qty: 0, unitCost: 0, salePrice: 0, note: '' });
+  const [adjustForm, setAdjustForm] = useState({
+    branchId: '',
+    whId: '',
+    productId: '',
+    qty: 0,
+    unitCost: 0,
+    salePrice: 0,
+    increaseOffset: 'gain' as 'gain' | 'opening',
+    note: '',
+  });
   const [transferForm, setTransferForm] = useState({
     fromType: 'warehouse' as 'warehouse' | 'branch',
     toType: 'warehouse' as 'warehouse' | 'branch',
@@ -375,12 +384,22 @@ const StockPage = () => {
       productId: Number(adjustForm.productId),
       qty: Number(adjustForm.qty),
       unitCost: Number(adjustForm.unitCost || 0),
+      increaseOffset: adjustForm.increaseOffset,
       note: adjustForm.note || undefined,
     });
     if (res.success) {
       showToast('success', 'Adjust', 'Stock adjusted');
       setShowAdjust(false);
-      setAdjustForm({ branchId: '', whId: '', productId: '', qty: 0, unitCost: 0, salePrice: 0, note: '' });
+      setAdjustForm({
+        branchId: '',
+        whId: '',
+        productId: '',
+        qty: 0,
+        unitCost: 0,
+        salePrice: 0,
+        increaseOffset: 'gain',
+        note: '',
+      });
       await Promise.all([loadStock(), loadMovements()]);
     } else showToast('error', 'Adjust', res.error || 'Failed');
   };
@@ -608,6 +627,18 @@ const StockPage = () => {
           <div><label className={labelClass}>Cost Price</label><input type="number" className={inputClass} value={adjustForm.unitCost} onChange={(e) => setAdjustForm({ ...adjustForm, unitCost: Number(e.target.value) })} placeholder="0.00" /></div>
           <div><label className={labelClass}>Sale Price</label><input type="number" className={inputClass} value={adjustForm.salePrice} readOnly /></div>
           <div><label className={labelClass}>Auto Value (Qty x Cost)</label><input type="number" className={inputClass} value={adjustAutoValue} readOnly /></div>
+          <div>
+            <label className={labelClass}>Increase Offset</label>
+            <select
+              className={inputClass}
+              value={adjustForm.increaseOffset}
+              onChange={(e) => setAdjustForm({ ...adjustForm, increaseOffset: e.target.value as 'gain' | 'opening' })}
+            >
+              <option value="gain">Inventory Gain</option>
+              <option value="opening">Opening Balance Equity</option>
+            </select>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Used only when quantity is positive.</p>
+          </div>
           <div><label className={labelClass}>Note</label><input className={inputClass} value={adjustForm.note} onChange={(e) => setAdjustForm({ ...adjustForm, note: e.target.value })} placeholder="Optional note" /></div>
         </div>
         <div className="mt-4 flex justify-end gap-2 border-t border-slate-200 pt-3 dark:border-slate-700"><button className="rounded-lg border px-4 py-2 text-sm" onClick={() => setShowAdjust(false)}>Cancel</button><button className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60" onClick={handleAdjust} disabled={isAdjustDecreaseInsufficient}>Save</button></div>

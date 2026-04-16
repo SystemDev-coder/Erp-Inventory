@@ -65,6 +65,19 @@ export interface InventoryLossRow {
   created_by: string;
 }
 
+export interface InventoryFoundRow {
+  found_id: number;
+  found_date: string;
+  item_id: number;
+  item_name: string;
+  quantity: number;
+  unit_cost: number;
+  total_found: number;
+  reason: string;
+  status: string;
+  created_by: string;
+}
+
 export interface StoreStockSummaryRow {
   store_id: number;
   store_name: string;
@@ -83,6 +96,58 @@ export interface StoreWiseStockRow {
   cost_price: number;
   sell_price: number;
   stock_value: number;
+}
+
+export interface StoreMovementSummaryRow {
+  store_id: number;
+  store_name: string;
+  begin_qty: number;
+  purchase_qty: number;
+  sales_qty: number;
+  sales_return_qty: number;
+  purchase_return_qty: number;
+  adjustment_in_qty: number;
+  adjustment_out_qty: number;
+  net_movement_qty: number;
+  item_count: number;
+  ending_qty: number;
+}
+
+export interface StoreMovementDetailRow {
+  txn_id: number;
+  txn_date: string;
+  store_id: number;
+  store_name: string;
+  item_id: number;
+  item_name: string;
+  txn_type: string;
+  ref_table: string;
+  ref_id: number | null;
+  txn_number: string;
+  party_name: string;
+  memo: string;
+  split_account: string;
+  debit: number;
+  credit: number;
+  running_balance: number;
+}
+
+export interface InventoryTransactionLedgerRow {
+  txn_id: number;
+  txn_date: string;
+  account_id: number;
+  account_name: string;
+  txn_type: string;
+  ref_table: string;
+  ref_id: number | null;
+  txn_number: string;
+  party_name: string;
+  memo: string;
+  split_account: string;
+  debit: number;
+  credit: number;
+  running_balance: number;
+  note: string;
 }
 
 interface InventoryOptionsResponse {
@@ -155,6 +220,38 @@ export const inventoryReportsService = {
       storeId: input.mode === 'show' ? input.storeId : undefined,
     });
     return apiClient.get<RowsResponse<StoreWiseStockRow>>(`${API.REPORTS.INVENTORY_STORE_WISE}${query}`);
+  },
+
+  async getStoreMovementSummary(input: { mode: ReportSelectionMode; fromDate: string; toDate: string; storeId?: number; branchId?: number }) {
+    const query = toQuery({
+      branchId: input.branchId,
+      mode: input.mode,
+      fromDate: input.fromDate,
+      toDate: input.toDate,
+      storeId: input.mode === 'show' ? input.storeId : undefined,
+    });
+    return apiClient.get<RowsResponse<StoreMovementSummaryRow>>(`${API.REPORTS.INVENTORY_STORE_MOVEMENT_SUMMARY}${query}`);
+  },
+
+  async getStoreMovementDetail(input: { mode: ReportSelectionMode; fromDate: string; toDate: string; storeId?: number; itemId?: number; branchId?: number }) {
+    const query = toQuery({
+      branchId: input.branchId,
+      mode: input.mode,
+      fromDate: input.fromDate,
+      toDate: input.toDate,
+      storeId: input.mode === 'show' ? input.storeId : undefined,
+      itemId: input.itemId,
+    });
+    return apiClient.get<RowsResponse<StoreMovementDetailRow>>(`${API.REPORTS.INVENTORY_STORE_MOVEMENT_DETAIL}${query}`);
+  },
+
+  async getInventoryFound(input: { fromDate: string; toDate: string; branchId?: number }) {
+    const query = toQuery({
+      branchId: input.branchId,
+      fromDate: input.fromDate,
+      toDate: input.toDate,
+    });
+    return apiClient.get<RowsResponse<InventoryFoundRow>>(`${API.REPORTS.INVENTORY_FOUND}${query}`);
   },
 };
 

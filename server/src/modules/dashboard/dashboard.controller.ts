@@ -58,6 +58,29 @@ export class DashboardController {
       },
     });
   });
+
+  /**
+   * GET /api/dashboard/cards/:cardId - Drilldown rows for a dashboard card
+   */
+  getDashboardCardDrilldown = asyncHandler(async (req: AuthRequest, res: Response) => {
+    if (!req.user) {
+      return ApiResponse.unauthorized(res, 'Authentication required');
+    }
+
+    let permissions: string[];
+    const cached = await sessionService.getCachedPermissions(req.user.userId);
+    if (cached) {
+      permissions = cached;
+    } else {
+      const data = await authService.getUserWithPermissions(req.user.userId);
+      permissions = data?.permissions ?? [];
+      await sessionService.cachePermissions(req.user.userId, permissions);
+    }
+
+    const cardId = String(req.params.cardId || '').trim();
+    const payload = await dashboardService.getDashboardCardDrilldown(req.user.branchId, permissions, cardId);
+    return ApiResponse.success(res, payload);
+  });
 }
 
 export const dashboardController = new DashboardController();

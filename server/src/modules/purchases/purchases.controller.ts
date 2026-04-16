@@ -7,6 +7,7 @@ import { purchaseSchema } from './purchases.schemas';
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { assertBranchAccess, pickBranchForWrite, resolveBranchScope } from '../../utils/branchScope';
 import { logAudit } from '../../utils/audit';
+import { queryMany, queryOne } from '../../db/query';
 
 const loadSheetJs = () => {
   try {
@@ -96,7 +97,42 @@ export const getPurchase = asyncHandler(async (req: AuthRequest, res: Response) 
     throw ApiError.notFound('Purchase not found');
   }
   const items = await purchasesService.listItems(id);
-  return ApiResponse.success(res, { purchase, items });
+  const branchId = Number((purchase as any).branch_id || 0);
+
+  const paidFromPayments = await queryOne<{ amount: string }>(
+    `SELECT COALESCE(SUM(amount_paid), 0)::text AS amount
+       FROM ims.supplier_payments
+      WHERE branch_id = $1
+        AND purchase_id = $2`,
+    [branchId, id]
+  );
+  const totalPaid = Number(paidFromPayments?.amount || 0);
+
+  const paymentAccounts = await queryMany<{ acc_id: number; account_name: string; amount: number }>(
+    `SELECT
+        p.acc_id::bigint AS acc_id,
+        COALESCE(a.name, 'Account') AS account_name,
+        COALESCE(SUM(p.amount_paid), 0)::double precision AS amount
+       FROM ims.supplier_payments p
+       LEFT JOIN ims.accounts a ON a.acc_id = p.acc_id
+      WHERE p.branch_id = $1
+        AND p.purchase_id = $2
+      GROUP BY p.acc_id, a.name
+      ORDER BY p.acc_id ASC`,
+    [branchId, id]
+  );
+
+  return ApiResponse.success(res, {
+    purchase: {
+      ...purchase,
+      paid_amount: totalPaid,
+    },
+    items,
+    paymentSummary: {
+      total_paid: totalPaid,
+      accounts: paymentAccounts || [],
+    },
+  });
 });
 
 export const createPurchase = asyncHandler(async (req: AuthRequest, res: Response) => {

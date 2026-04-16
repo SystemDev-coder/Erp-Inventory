@@ -23,18 +23,22 @@ export const ensureRuntimeFinanceSchema = async (): Promise<void> => {
 
   await adminQueryMany(`
     DO $$
+    DECLARE
+      r record;
     BEGIN
-      IF EXISTS (
-        SELECT 1
+      FOR r IN
+        SELECT c.conname
           FROM pg_constraint c
           JOIN pg_class t ON t.oid = c.conrelid
           JOIN pg_namespace n ON n.oid = t.relnamespace
          WHERE n.nspname = 'ims'
            AND t.relname = 'accounts'
-           AND c.conname = 'chk_accounts_account_type'
-      ) THEN
-        ALTER TABLE ims.accounts DROP CONSTRAINT chk_accounts_account_type;
-      END IF;
+           AND c.contype = 'c'
+      LOOP
+        IF r.conname ILIKE '%account_type%' THEN
+          EXECUTE format('ALTER TABLE ims.accounts DROP CONSTRAINT %I', r.conname);
+        END IF;
+      END LOOP;
 
       ALTER TABLE ims.accounts
         ADD CONSTRAINT chk_accounts_account_type

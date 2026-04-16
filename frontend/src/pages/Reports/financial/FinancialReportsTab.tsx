@@ -74,14 +74,52 @@ const accountsPayableColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'status', header: 'Status' },
 ];
 
-const accountStatementColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'txn_id', header: 'Txn #' },
-  { key: 'txn_date', header: 'Date', render: (row) => formatDateTime(row.txn_date) },
-  { key: 'account_name', header: 'Account' },
-  { key: 'txn_type', header: 'Type' },
+const formatAccountStatementType = (txnType: unknown, refTable: unknown) => {
+  const t = String(txnType || '').toLowerCase();
+  const r = String(refTable || '').toLowerCase();
+  if (t === 'opening') return 'Opening Balance';
+  if (r === 'sales' && t === 'sale_payment') return 'Payment';
+  if (r === 'sales') return 'Invoice';
+  if (r === 'purchases') return 'Bill';
+  if (r === 'sales_returns') return 'Credit Memo';
+  if (r === 'purchase_returns') return 'Vendor Credit';
+  if (r === 'customer_receipts') return 'Receipt';
+  if (r === 'supplier_receipts') return 'Payment';
+  if (r === 'journal_entries' || t === 'journal') return 'Journal';
+  if (r === 'adjustments' || t === 'adjustment' || t === 'inventory_adjust') return 'Inventory Adjust';
+  if (t === 'expense_payment') return 'Expense Payment';
+  if (t === 'payroll_payment') return 'Payroll Payment';
+  if (t === 'other') return 'Other';
+  if (!t) return '—';
+  return t
+    .split(/[_\s]+/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+};
+
+const accountStatementShowColumns: ReportColumn<Record<string, unknown>>[] = [
+  { key: 'type_display', header: 'Type' },
+  { key: 'txn_date', header: 'Date', render: (row) => formatDateOnly(row.txn_date) },
+  { key: 'num', header: 'Num' },
+  { key: 'name_display', header: 'Name' },
+  { key: 'memo_display', header: 'Memo' },
+  { key: 'split_display', header: 'Split' },
   { key: 'debit', header: 'Debit', align: 'right', render: (row) => formatCurrency(row.debit) },
   { key: 'credit', header: 'Credit', align: 'right', render: (row) => formatCurrency(row.credit) },
-  { key: 'running_balance', header: 'Running Balance', align: 'right', render: (row) => formatCurrency(row.running_balance) },
+  { key: 'closing_balance', header: 'Balance', align: 'right', render: (row) => formatCurrency(row.closing_balance) },
+];
+
+const accountStatementAllColumns: ReportColumn<Record<string, unknown>>[] = [
+  { key: 'type_display', header: 'Type' },
+  { key: 'txn_date', header: 'Date', render: (row) => formatDateTime(row.txn_date) },
+  { key: 'account_name', header: 'Account' },
+  { key: 'num', header: 'Num' },
+  { key: 'name_display', header: 'Name' },
+  { key: 'memo_display', header: 'Memo' },
+  { key: 'split_display', header: 'Split' },
+  { key: 'debit', header: 'Debit', align: 'right', render: (row) => formatCurrency(row.debit) },
+  { key: 'credit', header: 'Credit', align: 'right', render: (row) => formatCurrency(row.credit) },
+  { key: 'closing_balance', header: 'Balance', align: 'right', render: (row) => formatCurrency(row.closing_balance) },
 ];
 
 const trialBalanceColumns: ReportColumn<Record<string, unknown>>[] = [
@@ -180,7 +218,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
     runCardAction('balance-sheet', async () => {
       ensureRangeValid(balanceRange, 'Balance Sheet');
       const asOfDate = balanceRange.toDate;
-      const response = await financialReportsService.getBalanceSheet({ asOfDate });
+      const response = await financialReportsService.getBalanceSheet({ asOfDate, fromDate: balanceRange.fromDate });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load balance sheet');
       onOpenModal({
         title: 'Balance Sheet',
@@ -298,22 +336,30 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
         accountId,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load account statement');
-      const rows = toRecordRows(response.data.rows || []);
+      const rows = toRecordRows(response.data.rows || []).map((row) => ({
+        ...row,
+        type_display: formatAccountStatementType(row.txn_type, row.ref_table),
+        num: String(row.txn_number || row.ref_id || ''),
+        name_display: String(row.party_name || ''),
+        memo_display: String(row.memo || row.note || ''),
+        split_display: String(row.split_account || ''),
+        closing_balance: Number(row.running_balance || 0),
+      }));
       const totalDebit = sumNumericField(rows, 'debit');
       const totalCredit = sumNumericField(rows, 'credit');
-      const closingBalance = mode === 'show' && rows.length > 0 ? Number(rows[rows.length - 1].running_balance || 0) : null;
+      const closingBalance = mode === 'show' && rows.length > 0 ? Number(rows[rows.length - 1].closing_balance || 0) : null;
       onOpenModal({
         title: 'Account Statement',
         subtitle: `${formatDateOnly(statementRange.fromDate)} - ${formatDateOnly(statementRange.toDate)}`,
         fileName: 'account-statement',
         data: rows,
-        columns: accountStatementColumns,
+        columns: mode === 'show' ? accountStatementShowColumns : accountStatementAllColumns,
         tableTotals: {
           label: 'Total',
           values: {
             debit: formatCurrency(totalDebit),
             credit: formatCurrency(totalCredit),
-            running_balance: closingBalance === null ? '—' : formatCurrency(closingBalance),
+            closing_balance: closingBalance === null ? '\u2014' : formatCurrency(closingBalance),
           },
         },
         filters: {
@@ -412,22 +458,22 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
 
   const renderDateRange = (range: DateRange, onChange: (next: DateRange) => void) => (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-      <label className="space-y-1 text-xs font-semibold text-[#47657f]">
+      <label className="space-y-1 text-xs font-semibold text-slate-600">
         <span>From Date</span>
         <input
           type="date"
           value={range.fromDate}
           onChange={(event) => onChange({ ...range, fromDate: event.target.value })}
-          className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none"
+          className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"
         />
       </label>
-      <label className="space-y-1 text-xs font-semibold text-[#47657f]">
+      <label className="space-y-1 text-xs font-semibold text-slate-600">
         <span>To Date</span>
         <input
           type="date"
           value={range.toDate}
           onChange={(event) => onChange({ ...range, toDate: event.target.value })}
-          className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none"
+          className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"
         />
       </label>
     </div>
@@ -441,7 +487,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
           <button
             onClick={handleBalanceSheet}
             disabled={loadingCardId === cardId}
-            className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70"
+            className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
           >
             Show
           </button>
@@ -456,7 +502,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
           <button
             onClick={handleCashFlow}
             disabled={loadingCardId === cardId}
-            className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70"
+            className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
           >
             Show
           </button>
@@ -471,7 +517,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
             value={selectedAccountBalanceId}
             onChange={(event) => setSelectedAccountBalanceId(event.target.value)}
             disabled={optionsLoading}
-            className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2.5 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none"
+            className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"
           >
             <option value="">Select Account</option>
             {accounts.map((option) => (
@@ -484,14 +530,14 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
             <button
               onClick={() => handleAccountBalances('show')}
               disabled={loadingCardId === cardId}
-              className="inline-flex items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70"
+              className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
             >
               Show
             </button>
             <button
               onClick={() => handleAccountBalances('all')}
               disabled={loadingCardId === cardId}
-              className="rounded-md border border-[#9ec5df] bg-white px-4 py-2.5 text-sm font-semibold text-[#0f4f76] hover:bg-[#edf5fb] disabled:cursor-not-allowed disabled:opacity-70"
+              className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70"
             >
               All
             </button>
@@ -507,7 +553,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
           <button
             onClick={handleExpenseSummary}
             disabled={loadingCardId === cardId}
-            className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70"
+            className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
           >
             Show
           </button>
@@ -524,7 +570,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
             value={selectedAccountStatementId}
             onChange={(event) => setSelectedAccountStatementId(event.target.value)}
             disabled={optionsLoading}
-            className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2.5 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none"
+            className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"
           >
             <option value="">Select Account</option>
             {accounts.map((option) => (
@@ -537,14 +583,14 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
             <button
               onClick={() => handleAccountStatement('show')}
               disabled={loadingCardId === cardId}
-              className="inline-flex items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70"
+              className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
             >
               Show
             </button>
             <button
               onClick={() => handleAccountStatement('all')}
               disabled={loadingCardId === cardId}
-              className="rounded-md border border-[#9ec5df] bg-white px-4 py-2.5 text-sm font-semibold text-[#0f4f76] hover:bg-[#edf5fb] disabled:cursor-not-allowed disabled:opacity-70"
+              className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70"
             >
               All
             </button>
@@ -560,7 +606,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
           <button
             onClick={handleAccountsReceivable}
             disabled={loadingCardId === cardId}
-            className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70"
+            className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
           >
             Show
           </button>
@@ -575,7 +621,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
           <button
             onClick={handleAccountsPayable}
             disabled={loadingCardId === cardId}
-            className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70"
+            className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
           >
             Show
           </button>
@@ -589,7 +635,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
         <button
           onClick={handleTrialBalance}
           disabled={loadingCardId === cardId}
-          className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70"
+          className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
         >
           Show
         </button>
@@ -601,13 +647,13 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
     const cardKey = `${card.id}::${index}`;
     const isOpen = expandedCardKey === cardKey;
     return (
-      <div key={cardKey} className="self-start overflow-hidden rounded-2xl border border-[#bfd0df] bg-white shadow-[0_8px_18px_rgba(15,79,118,0.08)]">
+      <div key={cardKey} className="self-start overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_8px_18px_rgba(15,23,42,0.08)]">
         <button
           onClick={() => {
             setCardErrors((prev) => ({ ...prev, [card.id]: '' }));
             setExpandedCardKey((prev) => (prev === cardKey ? null : cardKey));
           }}
-          className="flex w-full items-center justify-between border-b border-[#d8e4ee] bg-gradient-to-r from-[#0f4f76] to-[#1f6f9f] px-5 py-4 text-left text-white"
+          className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-slate-900 to-slate-800 px-5 py-4 text-left text-white"
         >
           <div>
             <p className="text-xl font-semibold leading-tight">{card.title}</p>
@@ -615,7 +661,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
           <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
         </button>
         {isOpen && (
-          <div className="space-y-3 bg-[#f8fbff] px-5 py-4">
+          <div className="space-y-3 bg-slate-50 px-5 py-4">
             {renderCardBody(card.id)}
             {cardErrors[card.id] && <p className="text-sm font-semibold text-red-600">{cardErrors[card.id]}</p>}
           </div>
@@ -632,7 +678,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
     <div className="space-y-3">
       {optionsError && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{optionsError}</div>}
       {optionsLoading && (
-        <div className="inline-flex items-center gap-2 rounded-md border border-[#b8c8d7] bg-white px-3 py-2 text-sm text-[#38556d]">
+        <div className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
           <Loader2 className="h-4 w-4 animate-spin" />
           Loading financial options...
         </div>
@@ -651,4 +697,5 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
     </div>
   );
 }
+
 

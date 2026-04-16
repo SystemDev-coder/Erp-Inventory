@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, Loader2 } from 'lucide-react';
 import type { ReportColumn } from '../../../components/reports/ReportModal';
 import { salesReportsService } from '../../../services/reports/salesReports.service';
+import { salesService, type Sale } from '../../../services/sales.service';
 import type { DateRange, ModalReportState } from '../types';
 import { formatCurrency, formatDateOnly, formatDateTime, formatQuantity, toRecordRows, defaultReportRange } from '../reportUtils';
 
@@ -42,6 +43,31 @@ const salesSummaryColumns: ReportColumn<Record<string, unknown>>[] = [
     align: 'right',
     render: (row) => (row.kind === 'money' ? formatCurrency(row.value) : Number(row.value || 0).toLocaleString()),
   },
+];
+
+const salesSummaryDrilldownColumns: ReportColumn<Record<string, unknown>>[] = [
+  { key: 'doc_ref', header: 'Doc #', getHref: (row) => (row.sale_id ? `/sales/${row.sale_id}/edit` : null) },
+  { key: 'sale_date', header: 'Date', render: (row) => formatDateTime(row.sale_date) },
+  { key: 'doc_type', header: 'Document' },
+  { key: 'customer_name', header: 'Customer' },
+  { key: 'sale_type', header: 'Payment' },
+  { key: 'subtotal', header: 'Subtotal', align: 'right', render: (row) => formatCurrency(row.subtotal) },
+  { key: 'discount', header: 'Discount', align: 'right', render: (row) => formatCurrency(row.discount) },
+  { key: 'tax_amount', header: 'Tax', align: 'right', render: (row) => formatCurrency(row.tax_amount) },
+  { key: 'net_sales', header: 'Net Sales', align: 'right', render: (row) => formatCurrency(row.net_sales) },
+  { key: 'total', header: 'Total', align: 'right', render: (row) => formatCurrency(row.total) },
+  { key: 'paid_amount', header: 'Paid', align: 'right', render: (row) => formatCurrency(row.paid_amount) },
+  { key: 'balance', header: 'Balance', align: 'right', render: (row) => formatCurrency(row.balance) },
+  { key: 'status', header: 'Status' },
+];
+
+const netAfterReturnsColumns: ReportColumn<Record<string, unknown>>[] = [
+  { key: 'entry_type', header: 'Type' },
+  { key: 'entry_date', header: 'Date', render: (row) => formatDateTime(row.entry_date) },
+  { key: 'ref', header: 'Reference' },
+  { key: 'name', header: 'Name' },
+  { key: 'amount', header: 'Amount', align: 'right', render: (row) => formatCurrency(row.amount) },
+  { key: 'running_balance', header: 'Balance', align: 'right', render: (row) => formatCurrency(row.running_balance) },
 ];
 
 const invoiceStatusColumns: ReportColumn<Record<string, unknown>>[] = [
@@ -251,6 +277,266 @@ export function SalesReportsTab({ onOpenModal }: Props) {
   const sumNumericField = (rows: Record<string, unknown>[], field: string) =>
     rows.reduce((sum, row) => sum + Number(row[field] || 0), 0);
 
+  const normalizeMetric = (value: unknown) =>
+    String(value || '')
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const getDocRef = (sale: Pick<Sale, 'sale_id' | 'doc_type'>) => {
+    const docType = sale.doc_type || 'sale';
+    if (docType === 'quotation') return `Q-${sale.sale_id}`;
+    if (docType === 'invoice') return `INV-${sale.sale_id}`;
+    return `S-${sale.sale_id}`;
+  };
+
+  const openSalesSummaryDrilldown = async (metricRow: Record<string, unknown>) => {
+    const metric = String(metricRow.metric || '');
+    const metricKey = normalizeMetric(metric);
+
+    const range = summaryRange;
+    ensureRangeValid(range, 'Sales Summary');
+
+    const openError = (message: string) => {
+      onOpenModal({
+        title: `Sales Summary: ${metric}`,
+        subtitle: message,
+        fileName: 'sales-summary-drilldown-error',
+        data: [{ message }],
+        columns: [{ key: 'message', header: 'Message' }],
+        filters: { Metric: metric, 'From Date': range.fromDate, 'To Date': range.toDate },
+      });
+    };
+
+    try {
+      if (metricKey === 'invoices') {
+        const response = await salesReportsService.getInvoiceStatus({ ...range, status: 'all' });
+        if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load invoice status');
+        const rows = toRecordRows(response.data.rows || []);
+        onOpenModal({
+          title: `Sales Summary: ${metric}`,
+          subtitle: `${formatDateOnly(range.fromDate)} - ${formatDateOnly(range.toDate)}`,
+          fileName: 'sales-summary-invoices',
+          data: rows,
+          columns: invoiceStatusColumns,
+          filters: { Metric: metric, Status: 'all', 'From Date': range.fromDate, 'To Date': range.toDate },
+          tableTotals: {
+            label: 'Total',
+            values: {
+              total: formatCurrency(sumNumericField(rows, 'total')),
+              paid: formatCurrency(sumNumericField(rows, 'paid')),
+              balance: formatCurrency(sumNumericField(rows, 'balance')),
+            },
+          },
+        });
+        return;
+      }
+
+      if (metricKey === 'paid invoices' || metricKey === 'partial invoices' || metricKey === 'unpaid invoices') {
+        const status = metricKey.startsWith('paid') ? 'paid' : metricKey.startsWith('partial') ? 'partial' : 'unpaid';
+        const response = await salesReportsService.getInvoiceStatus({ ...range, status });
+        if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load invoice status');
+        const rows = toRecordRows(response.data.rows || []);
+        onOpenModal({
+          title: `Sales Summary: ${metric}`,
+          subtitle: `${formatDateOnly(range.fromDate)} - ${formatDateOnly(range.toDate)}`,
+          fileName: `sales-summary-invoices-${status}`,
+          data: rows,
+          columns: invoiceStatusColumns,
+          filters: { Metric: metric, Status: status, 'From Date': range.fromDate, 'To Date': range.toDate },
+          tableTotals: {
+            label: 'Total',
+            values: {
+              total: formatCurrency(sumNumericField(rows, 'total')),
+              paid: formatCurrency(sumNumericField(rows, 'paid')),
+              balance: formatCurrency(sumNumericField(rows, 'balance')),
+            },
+          },
+        });
+        return;
+      }
+
+      if (metricKey === 'sales returns' || metricKey === 'returns count') {
+        const response = await salesReportsService.getSalesReturns(range);
+        if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load sales returns');
+        const rows = toRecordRows(response.data.rows || []);
+        onOpenModal({
+          title: `Sales Summary: ${metric}`,
+          subtitle: `${formatDateOnly(range.fromDate)} - ${formatDateOnly(range.toDate)}`,
+          fileName: 'sales-summary-returns',
+          data: rows,
+          columns: salesReturnsColumns,
+          filters: { Metric: metric, 'From Date': range.fromDate, 'To Date': range.toDate },
+          tableTotals: {
+            label: 'Total',
+            values: {
+              subtotal: formatCurrency(sumNumericField(rows, 'subtotal')),
+              total: formatCurrency(sumNumericField(rows, 'total')),
+            },
+          },
+        });
+        return;
+      }
+
+      // Default drilldown: list sales documents (invoice + sale) so you can reconcile totals directly from DB fields.
+      const docsRes = await salesService.list({
+        fromDate: range.fromDate,
+        toDate: range.toDate,
+        docType: 'all',
+        status: 'all',
+        includeVoided: false,
+      });
+      if (!docsRes.success || !docsRes.data?.sales) throw new Error(docsRes.error || 'Failed to load sales documents');
+
+      const sales = (docsRes.data.sales || [])
+        .filter((sale) => (sale.doc_type || 'sale') !== 'quotation')
+        .filter((sale) => (sale.status || 'unpaid') !== 'void' && !sale.voided_at);
+
+      const baseRows = sales.map((sale) => {
+        const subtotal = Number(sale.subtotal || 0);
+        const discount = Number(sale.discount || 0);
+        const taxAmount = Number(sale.tax_amount || 0);
+        const netSales = subtotal - discount + taxAmount;
+        const paid = Number(sale.paid_amount || 0);
+        const total = Number(sale.total || 0);
+        const balance = Math.max(total - paid, 0);
+        return {
+          sale_id: sale.sale_id,
+          doc_ref: getDocRef(sale),
+          sale_date: sale.sale_date,
+          doc_type: sale.doc_type || 'sale',
+          customer_name: sale.customer_name || 'Walking Customer',
+          sale_type: sale.sale_type || 'cash',
+          subtotal,
+          discount,
+          tax_amount: taxAmount,
+          net_sales: netSales,
+          total,
+          paid_amount: paid,
+          balance,
+          status: sale.status,
+        };
+      });
+
+      if (metricKey === 'net after returns') {
+        const returnsRes = await salesReportsService.getSalesReturns(range);
+        if (!returnsRes.success || !returnsRes.data) throw new Error(returnsRes.error || returnsRes.message || 'Failed to load sales returns');
+
+        const saleEntries = baseRows.map((row) => ({
+          entry_type: 'Sale',
+          entry_date: row.sale_date,
+          ref: row.doc_ref,
+          name: row.customer_name,
+          amount: Number(row.net_sales || 0),
+        }));
+
+        const returnRows = toRecordRows(returnsRes.data.rows || []);
+        const returnEntries = returnRows.map((row) => ({
+          entry_type: 'Return',
+          entry_date: row.return_date,
+          ref: row.return_id ? `SR-${row.return_id}` : '-',
+          name: String(row.customer_name || ''),
+          amount: -Math.abs(Number(row.total || 0)),
+        }));
+
+        const entries = [...saleEntries, ...returnEntries].sort((a, b) => {
+          const da = new Date(String(a.entry_date)).getTime();
+          const db = new Date(String(b.entry_date)).getTime();
+          return da - db;
+        });
+
+        let running = 0;
+        const rows = entries.map((entry) => {
+          running += Number(entry.amount || 0);
+          return { ...entry, running_balance: running };
+        });
+
+        onOpenModal({
+          title: `Sales Summary: ${metric}`,
+          subtitle: `${formatDateOnly(range.fromDate)} - ${formatDateOnly(range.toDate)}`,
+          fileName: 'sales-summary-net-after-returns',
+          data: rows,
+          columns: netAfterReturnsColumns,
+          filters: { Metric: metric, 'From Date': range.fromDate, 'To Date': range.toDate },
+          tableTotals: {
+            label: 'Net After Returns',
+            values: {
+              amount: formatCurrency(sumNumericField(rows, 'amount')),
+              running_balance: formatCurrency(running),
+            },
+          },
+        });
+        return;
+      }
+
+      const filtered =
+        metricKey === 'cash sales'
+          ? baseRows.filter((row) => (row.sale_type || 'cash') === 'cash')
+          : metricKey === 'credit sales'
+            ? baseRows.filter((row) => (row.sale_type || 'cash') === 'credit')
+            : baseRows;
+
+      const rows = filtered;
+
+      const totalsForMetric = (): Record<string, string | number> => {
+        const values: Record<string, string | number> = {};
+        if (metricKey === 'gross sales (subtotal)') {
+          values.subtotal = formatCurrency(sumNumericField(rows, 'subtotal'));
+          return values;
+        }
+        if (metricKey === 'discount') {
+          values.discount = formatCurrency(sumNumericField(rows, 'discount'));
+          return values;
+        }
+        if (metricKey === 'tax') {
+          values.tax_amount = formatCurrency(sumNumericField(rows, 'tax_amount'));
+          return values;
+        }
+        if (metricKey === 'net sales' || metricKey === 'cash sales' || metricKey === 'credit sales') {
+          values.net_sales = formatCurrency(sumNumericField(rows, 'net_sales'));
+          return values;
+        }
+        if (metricKey === 'average invoice') {
+          const invoiceCount = baseRows.filter((row) => row.doc_type === 'invoice').length || 0;
+          const netSales = sumNumericField(baseRows, 'net_sales');
+          values.net_sales = formatCurrency(netSales);
+          values.invoices = invoiceCount;
+          values.average = invoiceCount ? formatCurrency(netSales / invoiceCount) : '\u2014';
+          return values;
+        }
+        values.subtotal = formatCurrency(sumNumericField(rows, 'subtotal'));
+        values.discount = formatCurrency(sumNumericField(rows, 'discount'));
+        values.tax_amount = formatCurrency(sumNumericField(rows, 'tax_amount'));
+        values.net_sales = formatCurrency(sumNumericField(rows, 'net_sales'));
+        values.total = formatCurrency(sumNumericField(rows, 'total'));
+        values.paid_amount = formatCurrency(sumNumericField(rows, 'paid_amount'));
+        values.balance = formatCurrency(sumNumericField(rows, 'balance'));
+        return values;
+      };
+
+      onOpenModal({
+        title: `Sales Summary: ${metric}`,
+        subtitle: `${formatDateOnly(range.fromDate)} - ${formatDateOnly(range.toDate)}`,
+        fileName: 'sales-summary-documents',
+        data: rows,
+        columns: salesSummaryDrilldownColumns,
+        filters: {
+          Metric: metric,
+          'From Date': range.fromDate,
+          'To Date': range.toDate,
+          ...(metricKey === 'cash sales' ? { 'Payment Type': 'cash' } : {}),
+          ...(metricKey === 'credit sales' ? { 'Payment Type': 'credit' } : {}),
+        },
+        tableTotals: {
+          label: 'Total',
+          values: totalsForMetric(),
+        },
+      });
+    } catch (error: unknown) {
+      openError(error instanceof Error ? error.message : 'Unable to load drilldown report');
+    }
+  };
+
   const handleDailySales = () =>
     runCardAction('daily-sales', async () => {
       const response = await salesReportsService.getDailySales();
@@ -278,12 +564,23 @@ export function SalesReportsTab({ onOpenModal }: Props) {
       const response = await salesReportsService.getSalesSummary(summaryRange);
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load sales summary');
       const rows = toRecordRows(response.data.rows || []);
+      const clickableColumns = salesSummaryColumns.map((col) => {
+        if (col.key === 'value') {
+          return {
+            ...col,
+            onClick: (row: Record<string, unknown>) => {
+              void openSalesSummaryDrilldown(row);
+            },
+          } satisfies ReportColumn<Record<string, unknown>>;
+        }
+        return col;
+      });
       onOpenModal({
         title: 'Sales Summary',
         subtitle: `${formatDateOnly(summaryRange.fromDate)} - ${formatDateOnly(summaryRange.toDate)}`,
         fileName: 'sales-summary',
         data: rows,
-        columns: salesSummaryColumns,
+        columns: clickableColumns,
         filters: { 'From Date': summaryRange.fromDate, 'To Date': summaryRange.toDate },
       });
     });
@@ -547,54 +844,54 @@ export function SalesReportsTab({ onOpenModal }: Props) {
     onChange: (next: DateRange) => void
   ) => (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-      <label className="space-y-1 text-xs font-semibold text-[#47657f]">
+      <label className="space-y-1 text-xs font-semibold text-slate-600">
         <span>From Date</span>
-        <input type="date" value={range.fromDate} onChange={(event) => onChange({ ...range, fromDate: event.target.value })} className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none" />
+        <input type="date" value={range.fromDate} onChange={(event) => onChange({ ...range, fromDate: event.target.value })} className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-primary-500 focus:outline-none" />
       </label>
-      <label className="space-y-1 text-xs font-semibold text-[#47657f]">
+      <label className="space-y-1 text-xs font-semibold text-slate-600">
         <span>To Date</span>
-        <input type="date" value={range.toDate} onChange={(event) => onChange({ ...range, toDate: event.target.value })} className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none" />
+        <input type="date" value={range.toDate} onChange={(event) => onChange({ ...range, toDate: event.target.value })} className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-primary-500 focus:outline-none" />
       </label>
     </div>
   );
 
   const renderCardBody = (cardId: SalesCardId) => {
     if (cardId === 'sales-summary') {
-      return <div className="space-y-3">{renderDateRange(summaryRange, setSummaryRange)}<button onClick={handleSalesSummary} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
+      return <div className="space-y-3">{renderDateRange(summaryRange, setSummaryRange)}<button onClick={handleSalesSummary} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
     }
 
     if (cardId === 'invoice-status') {
       return (
         <div className="space-y-3">
           {renderDateRange(invoiceStatusRange, setInvoiceStatusRange)}
-          <label className="space-y-1 text-xs font-semibold text-[#47657f]">
+          <label className="space-y-1 text-xs font-semibold text-slate-600">
             <span>Status</span>
-            <select value={invoiceStatusFilter} onChange={(event) => setInvoiceStatusFilter(event.target.value as any)} className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2.5 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none">
+            <select value={invoiceStatusFilter} onChange={(event) => setInvoiceStatusFilter(event.target.value as any)} className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none">
               <option value="all">All</option>
               <option value="paid">Paid</option>
               <option value="partial">Partial</option>
               <option value="unpaid">Unpaid</option>
             </select>
           </label>
-          <button onClick={handleInvoiceStatus} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show</button>
+          <button onClick={handleInvoiceStatus} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button>
         </div>
       );
     }
 
     if (cardId === 'daily-sales') {
-      return <button onClick={handleDailySales} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">{loadingCardId === cardId && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}All Daily Sale</button>;
+      return <button onClick={handleDailySales} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">{loadingCardId === cardId && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}All Daily Sale</button>;
     }
 
     if (cardId === 'sales-by-customer') {
       return (
         <div className="space-y-3">
-          <select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)} className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2.5 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none">
+          <select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)} className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none">
             <option value="">Select Customer</option>
             {salesOptions.customers.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
           <div className="grid grid-cols-2 gap-3">
-            <button onClick={() => handleSalesByCustomer('show')} disabled={loadingCardId === cardId} className="inline-flex items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show</button>
-            <button onClick={() => handleSalesByCustomer('all')} disabled={loadingCardId === cardId} className="rounded-md border border-[#9ec5df] bg-white px-4 py-2.5 text-sm font-semibold text-[#0f4f76] hover:bg-[#edf5fb] disabled:cursor-not-allowed disabled:opacity-70">All</button>
+            <button onClick={() => handleSalesByCustomer('show')} disabled={loadingCardId === cardId} className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button>
+            <button onClick={() => handleSalesByCustomer('all')} disabled={loadingCardId === cardId} className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70">All</button>
           </div>
         </div>
       );
@@ -603,13 +900,13 @@ export function SalesReportsTab({ onOpenModal }: Props) {
     if (cardId === 'sales-by-product') {
       return (
         <div className="space-y-3">
-          <select value={selectedProductId} onChange={(event) => setSelectedProductId(event.target.value)} className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2.5 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none">
+          <select value={selectedProductId} onChange={(event) => setSelectedProductId(event.target.value)} className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none">
             <option value="">Select Product</option>
             {salesOptions.products.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
           <div className="grid grid-cols-2 gap-3">
-            <button onClick={() => handleSalesByProduct('show')} disabled={loadingCardId === cardId} className="inline-flex items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show</button>
-            <button onClick={() => handleSalesByProduct('all')} disabled={loadingCardId === cardId} className="rounded-md border border-[#9ec5df] bg-white px-4 py-2.5 text-sm font-semibold text-[#0f4f76] hover:bg-[#edf5fb] disabled:cursor-not-allowed disabled:opacity-70">All</button>
+            <button onClick={() => handleSalesByProduct('show')} disabled={loadingCardId === cardId} className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button>
+            <button onClick={() => handleSalesByProduct('all')} disabled={loadingCardId === cardId} className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70">All</button>
           </div>
         </div>
       );
@@ -619,51 +916,51 @@ export function SalesReportsTab({ onOpenModal }: Props) {
       return (
         <div className="space-y-3">
           {renderDateRange(salesByStoreRange, setSalesByStoreRange)}
-          <select value={selectedStoreId} onChange={(event) => setSelectedStoreId(event.target.value)} className="w-full rounded-md border border-[#b6c9da] bg-white px-3 py-2.5 text-sm text-[#14344c] focus:border-[#0f4f76] focus:outline-none">
+          <select value={selectedStoreId} onChange={(event) => setSelectedStoreId(event.target.value)} className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none">
             <option value="">Select Store</option>
             {salesOptions.stores.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
           <div className="grid grid-cols-2 gap-3">
-            <button onClick={() => handleSalesByStore('show')} disabled={loadingCardId === cardId} className="inline-flex items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show</button>
-            <button onClick={() => handleSalesByStore('all')} disabled={loadingCardId === cardId} className="rounded-md border border-[#9ec5df] bg-white px-4 py-2.5 text-sm font-semibold text-[#0f4f76] hover:bg-[#edf5fb] disabled:cursor-not-allowed disabled:opacity-70">All</button>
+            <button onClick={() => handleSalesByStore('show')} disabled={loadingCardId === cardId} className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button>
+            <button onClick={() => handleSalesByStore('all')} disabled={loadingCardId === cardId} className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70">All</button>
           </div>
         </div>
       );
     }
 
     if (cardId === 'top-selling-items') {
-      return <div className="space-y-3">{renderDateRange(topSellingRange, setTopSellingRange)}<button onClick={handleTopSellingItems} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
+      return <div className="space-y-3">{renderDateRange(topSellingRange, setTopSellingRange)}<button onClick={handleTopSellingItems} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
     }
 
     if (cardId === 'top-customers') {
-      return <div className="space-y-3">{renderDateRange(topCustomersRange, setTopCustomersRange)}<button onClick={handleTopCustomers} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
+      return <div className="space-y-3">{renderDateRange(topCustomersRange, setTopCustomersRange)}<button onClick={handleTopCustomers} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
     }
 
     if (cardId === 'sales-returns') {
-      return <div className="space-y-3">{renderDateRange(returnsRange, setReturnsRange)}<button onClick={handleSalesReturns} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
+      return <div className="space-y-3">{renderDateRange(returnsRange, setReturnsRange)}<button onClick={handleSalesReturns} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
     }
 
     if (cardId === 'payments-by-account') {
-      return <div className="space-y-3">{renderDateRange(paymentsRange, setPaymentsRange)}<button onClick={handlePaymentsByAccount} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
+      return <div className="space-y-3">{renderDateRange(paymentsRange, setPaymentsRange)}<button onClick={handlePaymentsByAccount} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
     }
 
     if (cardId === 'quotations') {
-      return <div className="space-y-3">{renderDateRange(quotationsRange, setQuotationsRange)}<button onClick={handleQuotations} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
+      return <div className="space-y-3">{renderDateRange(quotationsRange, setQuotationsRange)}<button onClick={handleQuotations} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
     }
 
-    return <div className="space-y-3">{renderDateRange(cashierRange, setCashierRange)}<button onClick={handleCashierPerformance} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-[#0f4f76] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0b4061] disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
+    return <div className="space-y-3">{renderDateRange(cashierRange, setCashierRange)}<button onClick={handleCashierPerformance} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
   };
 
   const renderCard = (card: { id: SalesCardId; title: string; hint: string }) => {
     const isOpen = expandedCardId === card.id;
     return (
-      <div key={card.id} className="self-start overflow-hidden rounded-2xl border border-[#bfd0df] bg-white shadow-[0_8px_18px_rgba(15,79,118,0.08)]">
+      <div key={card.id} className="self-start overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_8px_18px_rgba(15,23,42,0.08)]">
         <button
           onClick={() => {
             setCardErrors((prev) => ({ ...prev, [card.id]: '' }));
             setExpandedCardId((prev) => (prev === card.id ? null : card.id));
           }}
-          className="flex w-full items-center justify-between border-b border-[#d8e4ee] bg-gradient-to-r from-[#0f4f76] to-[#1f6f9f] px-5 py-4 text-left text-white"
+          className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-slate-900 to-slate-800 px-5 py-4 text-left text-white"
         >
           <div>
             <p className="text-xl font-semibold leading-tight">{card.title}</p>
@@ -672,7 +969,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
           <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
         </button>
         {isOpen && (
-          <div className="space-y-3 bg-[#f8fbff] px-5 py-4">
+          <div className="space-y-3 bg-slate-50 px-5 py-4">
             {renderCardBody(card.id)}
             {cardErrors[card.id] && <p className="text-sm font-semibold text-red-600">{cardErrors[card.id]}</p>}
           </div>
@@ -687,7 +984,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
   return (
     <div className="space-y-3">
       {optionsError && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{optionsError}</div>}
-      {optionsLoading && <div className="inline-flex items-center gap-2 rounded-md border border-[#b8c8d7] bg-white px-3 py-2 text-sm text-[#38556d]"><Loader2 className="h-4 w-4 animate-spin" />Loading customers, products and stores...</div>}
+      {optionsLoading && <div className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600"><Loader2 className="h-4 w-4 animate-spin" />Loading customers, products and stores...</div>}
       <div className="space-y-3 lg:hidden">
         {salesCards.map(renderCard)}
       </div>

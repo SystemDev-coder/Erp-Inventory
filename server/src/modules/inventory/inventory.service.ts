@@ -3,6 +3,7 @@ import { withTransaction } from '../../db/withTx';
 import { ApiError } from '../../utils/ApiError';
 import { BranchScope } from '../../utils/branchScope';
 import { PoolClient } from 'pg';
+import { deleteGlByRef, ensureCoreCoa, postGl } from '../../utils/glPosting';
 
 type AuthContext = { userId?: number | null } | undefined;
 
@@ -238,6 +239,62 @@ const hasInventoryMovementSoftDelete = async (): Promise<boolean> => {
   return cachedInventoryMovementSoftDelete;
 };
 
+const replaceAdjustmentMovements = async (
+  client: PoolClient,
+  params: {
+    branchId: number;
+    whId?: number | null;
+    itemId: number;
+    refId: number;
+    qty: number;
+    unitCost: number;
+    moveDate?: string | null;
+    note?: string | null;
+  }
+) => {
+  const hasSoftDelete = await hasInventoryMovementSoftDelete();
+  if (hasSoftDelete) {
+    await client.query(
+      `UPDATE ims.inventory_movements
+          SET is_deleted = 1
+        WHERE branch_id = $1
+          AND ref_table = 'stock_adjustment'
+          AND ref_id = $2`,
+      [params.branchId, params.refId]
+    );
+  } else {
+    await client.query(
+      `DELETE FROM ims.inventory_movements
+        WHERE branch_id = $1
+          AND ref_table = 'stock_adjustment'
+          AND ref_id = $2`,
+      [params.branchId, params.refId]
+    );
+  }
+
+  const qtyRounded = Math.round(Number(params.qty || 0));
+  if (!qtyRounded) return;
+
+  const qtyIn = qtyRounded > 0 ? qtyRounded : 0;
+  const qtyOut = qtyRounded < 0 ? Math.abs(qtyRounded) : 0;
+  await client.query(
+    `INSERT INTO ims.inventory_movements
+       (branch_id, wh_id, item_id, move_type, ref_table, ref_id, qty_in, qty_out, unit_cost, move_date, note)
+     VALUES ($1, $2, $3, 'adjustment', 'stock_adjustment', $4, $5, $6, $7, COALESCE($8::timestamptz, NOW()), $9)`,
+    [
+      params.branchId,
+      params.whId ?? null,
+      params.itemId,
+      params.refId,
+      qtyIn,
+      qtyOut,
+      Number(params.unitCost || 0),
+      params.moveDate || null,
+      params.note || null,
+    ]
+  );
+};
+
 const hasItemsStockAlertColumn = async (): Promise<boolean> => {
   if (cachedItemsHasStockAlert !== null) return cachedItemsHasStockAlert;
   const row = await queryOne<{ has_column: boolean }>(
@@ -408,6 +465,7 @@ type AdjustmentSnapshot = {
   quantity: string;
   status: string | null;
   branch_id: number;
+  is_deleted?: number | null;
 };
 
 const getScopedAdjustmentSnapshot = async (
@@ -422,10 +480,12 @@ const getScopedAdjustmentSnapshot = async (
               a.adjustment_type::text AS adjustment_type,
               a.quantity::text AS quantity,
               a.status::text AS status,
-              i.branch_id
+              i.branch_id,
+              COALESCE(a.is_deleted, 0)::int AS is_deleted
          FROM ims.stock_adjustment a
          JOIN ims.items i ON i.item_id = a.item_id
         WHERE a.adjustment_id = $1
+          AND COALESCE(a.is_deleted, 0)::int = 0
         LIMIT 1
         FOR UPDATE`,
       [adjustmentId]
@@ -439,11 +499,13 @@ const getScopedAdjustmentSnapshot = async (
             a.adjustment_type::text AS adjustment_type,
             a.quantity::text AS quantity,
             a.status::text AS status,
-            i.branch_id
+            i.branch_id,
+            COALESCE(a.is_deleted, 0)::int AS is_deleted
        FROM ims.stock_adjustment a
        JOIN ims.items i ON i.item_id = a.item_id
       WHERE a.adjustment_id = $1
         AND i.branch_id = ANY($2)
+        AND COALESCE(a.is_deleted, 0)::int = 0
       LIMIT 1
       FOR UPDATE`,
     [adjustmentId, scope.branchIds]
@@ -474,6 +536,7 @@ const createAdjustmentEntry = async (
     reason: string;
     adjustmentDate?: string;
     status?: 'POSTED' | 'CANCELLED';
+    increaseOffset?: 'gain' | 'opening';
     userId?: number | null;
   }
 ) => {
@@ -488,6 +551,17 @@ const createAdjustmentEntry = async (
 
   const status = String(payload.status || 'POSTED').toUpperCase();
   const appliedQty = status === 'POSTED' ? Number(payload.qty) : 0;
+
+  const itemMeta = await client.query<{ name: string; cost_price: string }>(
+    `SELECT name, COALESCE(cost_price, 0)::text AS cost_price
+       FROM ims.items
+      WHERE item_id = $1
+        AND branch_id = $2
+      LIMIT 1`,
+    [payload.productId, payload.branchId]
+  );
+  const itemName = String(itemMeta.rows[0]?.name || 'Item');
+  const fallbackUnitCost = Number(itemMeta.rows[0]?.cost_price || '0');
 
   if (payload.whId) {
     if (payload.qty > 0) {
@@ -562,13 +636,74 @@ const createAdjustmentEntry = async (
     `INSERT INTO ims.stock_adjustment
        (${columns.join(', ')})
      VALUES
-       (${values.map((_, i) => `$${i + 1}`).join(', ')})
+     (${values.map((_, i) => `$${i + 1}`).join(', ')})
      RETURNING adjustment_id, ${stockAdjustmentCols.hasBranchId ? 'branch_id,' : ''} item_id, adjustment_date, reason, created_by`,
     values
   );
 
+  const adjId = Number(adjustment.rows[0]?.adjustment_id || 0);
+  if (!adjId) {
+    throw ApiError.badRequest('Failed to create stock adjustment');
+  }
+
+  // Accounting logic (QuickBooks-style):
+  // - DECREASE: Dr Inventory Loss, Cr Inventory
+  // - INCREASE: Dr Inventory, Cr Inventory Gain (or Opening Balance Equity)
+  await deleteGlByRef(client, { branchId: payload.branchId, refTable: 'stock_adjustment', refId: adjId });
+  if (status === 'POSTED') {
+    const unitCost = Number(payload.unitCost || 0) > 0 ? Number(payload.unitCost || 0) : fallbackUnitCost;
+    const value = Math.round(Math.abs(Number(payload.qty || 0)) * unitCost * 100) / 100;
+    if (value > 0) {
+      const coa = await ensureCoreCoa(client, payload.branchId, [
+        'inventory',
+        'inventoryGain',
+        'inventoryShrinkage',
+        'openingBalanceEquity',
+      ]);
+
+      const offsetAccId =
+        Number(payload.qty || 0) > 0 && String(payload.increaseOffset || 'gain') === 'opening'
+          ? coa.openingBalanceEquity
+          : coa.inventoryGain;
+
+      const lines =
+        Number(payload.qty || 0) > 0
+          ? [
+              { accId: coa.inventory, debit: value, credit: 0 },
+              { accId: offsetAccId, debit: 0, credit: value },
+            ]
+          : [
+              { accId: coa.inventoryShrinkage, debit: value, credit: 0 },
+              { accId: coa.inventory, debit: 0, credit: value },
+            ];
+
+      await postGl(client, {
+        branchId: payload.branchId,
+        txnDate: payload.adjustmentDate || adjustment.rows[0]?.adjustment_date || null,
+        txnType: 'other',
+        refTable: 'stock_adjustment',
+        refId: adjId,
+        note: `Stock adjustment: ${itemName} (${Number(payload.qty || 0) >= 0 ? 'INCREASE' : 'DECREASE'} ${Math.abs(
+          Number(payload.qty || 0)
+        )})`,
+        lines,
+      });
+    }
+  }
+
+  await replaceAdjustmentMovements(client, {
+    branchId: payload.branchId,
+    whId: payload.whId ?? null,
+    itemId: payload.productId,
+    refId: adjId,
+    qty: appliedQty,
+    unitCost: Number(payload.unitCost || 0) > 0 ? Number(payload.unitCost || 0) : fallbackUnitCost,
+    moveDate: payload.adjustmentDate || adjustment.rows[0]?.adjustment_date || null,
+    note: payload.note || payload.reason || null,
+  });
+
   return {
-    adj_id: adjustment.rows[0].adjustment_id,
+    adj_id: adjId,
     branch_id: Number(adjustment.rows[0].branch_id ?? payload.branchId),
     wh_id: payload.whId ?? null,
     user_id: adjustment.rows[0].created_by,
@@ -1773,6 +1908,7 @@ export const inventoryService = {
         reason: input.reason || 'Manual Adjustment',
         adjustmentDate: input.adjustmentDate,
         status: input.status || 'POSTED',
+        increaseOffset: input.increaseOffset || 'gain',
         userId: user?.userId ?? null,
       });
     });
@@ -1927,6 +2063,49 @@ export const inventoryService = {
       const unitCost = Number(itemMeta.rows[0]?.cost_price || '0');
       const sign = String(row.adjustment_type || '').toUpperCase() === 'DECREASE' ? -1 : 1;
       const qtyDelta = sign * Number(row.quantity || '0');
+      const applied = String(row.status || 'POSTED').toUpperCase() === 'POSTED' ? qtyDelta : 0;
+
+      // Rewrite GL for this adjustment based on current DB values.
+      await deleteGlByRef(client, { branchId, refTable: 'stock_adjustment', refId: Number(row.adjustment_id) });
+      const value = Math.round(Math.abs(applied) * unitCost * 100) / 100;
+      if (value > 0 && applied !== 0) {
+        const itemNameRes = await client.query<{ name: string }>(
+          `SELECT name FROM ims.items WHERE item_id = $1 LIMIT 1`,
+          [row.item_id]
+        );
+        const itemName = String(itemNameRes.rows[0]?.name || 'Item');
+        const coa = await ensureCoreCoa(client, branchId, ['inventory', 'inventoryGain', 'inventoryShrinkage']);
+        const lines =
+          applied > 0
+            ? [
+                { accId: coa.inventory, debit: value, credit: 0 },
+                { accId: coa.inventoryGain, debit: 0, credit: value },
+              ]
+            : [
+                { accId: coa.inventoryShrinkage, debit: value, credit: 0 },
+                { accId: coa.inventory, debit: 0, credit: value },
+              ];
+        await postGl(client, {
+          branchId,
+          txnDate: row.adjustment_date || null,
+          txnType: 'other',
+          refTable: 'stock_adjustment',
+          refId: Number(row.adjustment_id),
+          note: `Stock adjustment: ${itemName} (${applied >= 0 ? 'INCREASE' : 'DECREASE'} ${Math.abs(applied)})`,
+          lines,
+        });
+      }
+
+      await replaceAdjustmentMovements(client, {
+        branchId,
+        whId: null,
+        itemId: Number(row.item_id),
+        refId: Number(row.adjustment_id),
+        qty: applied,
+        unitCost,
+        moveDate: row.adjustment_date || null,
+        note: row.reason || null,
+      });
 
       return {
         adj_id: row.adjustment_id,
@@ -1951,6 +2130,11 @@ export const inventoryService = {
     return withTransaction(async (client) => {
       const current = await getScopedAdjustmentSnapshot(client, id, scope);
       if (!current) return false;
+      await deleteGlByRef(client, {
+        branchId: Number(current.branch_id),
+        refTable: 'stock_adjustment',
+        refId: Number(current.adjustment_id),
+      });
       const appliedQty = getSignedAdjustmentQty(current);
       if (appliedQty !== 0) {
         await applyStoreItemDelta(client, {
@@ -1964,11 +2148,136 @@ export const inventoryService = {
           delta: -appliedQty,
         });
       }
-      const deleted = await client.query(
-        `DELETE FROM ims.stock_adjustment WHERE adjustment_id = $1 RETURNING adjustment_id`,
+      await replaceAdjustmentMovements(client, {
+        branchId: Number(current.branch_id),
+        whId: null,
+        itemId: Number(current.item_id),
+        refId: Number(current.adjustment_id),
+        qty: 0,
+        unitCost: 0,
+        moveDate: null,
+        note: null,
+      });
+      // The database enforces soft-delete (RLS + trigger). Use an explicit soft delete here
+      // so the API returns a consistent success signal and doesn't depend on trigger behavior.
+      const softDeleted = await client.query(
+        `UPDATE ims.stock_adjustment
+            SET status = 'CANCELLED',
+                is_deleted = 1,
+                deleted_at = NOW(),
+                updated_at = NOW()
+          WHERE adjustment_id = $1
+            AND COALESCE(is_deleted, 0)::int = 0
+          RETURNING adjustment_id`,
         [id]
       );
-      return Boolean(deleted.rows[0]);
+      return Boolean(softDeleted.rows[0]);
+    });
+  },
+
+  async restoreAdjustment(id: number, userId?: number | null) {
+    if (!(await hasStockAdjustmentTable())) {
+      throw ApiError.badRequest('Stock adjustment table is not available');
+    }
+    if (!userId) {
+      throw ApiError.unauthorized('Authentication required');
+    }
+
+    return withTransaction(async (client) => {
+      await client.query(`SET LOCAL app.include_deleted = '1'`);
+      const rowRes = await client.query<{
+        adjustment_id: number;
+        item_id: number;
+        adjustment_type: string;
+        quantity: number;
+        status: string;
+        is_deleted: number;
+        adjustment_date: string | null;
+        branch_id: number;
+        cost_price: string;
+        item_name: string;
+        reason?: string | null;
+      }>(
+        `SELECT a.adjustment_id,
+                a.item_id,
+                a.adjustment_type::text AS adjustment_type,
+                a.quantity::int AS quantity,
+                a.status::text AS status,
+                COALESCE(a.is_deleted, 0)::int AS is_deleted,
+                a.adjustment_date::text AS adjustment_date,
+                COALESCE(a.reason, '')::text AS reason,
+                i.branch_id,
+                COALESCE(i.cost_price, 0)::text AS cost_price,
+                COALESCE(i.name, 'Item')::text AS item_name
+           FROM ims.stock_adjustment a
+           JOIN ims.items i ON i.item_id = a.item_id
+          WHERE a.adjustment_id = $1
+          LIMIT 1
+          FOR UPDATE`,
+        [id]
+      );
+      const row = rowRes.rows[0];
+      if (!row) return false;
+      if (Number(row.is_deleted || 0) !== 1) return false;
+
+      const sign = String(row.adjustment_type || '').toUpperCase() === 'DECREASE' ? -1 : 1;
+      const qtyDelta = sign * Number(row.quantity || 0);
+      if (qtyDelta !== 0) {
+        await applyStoreItemDelta(client, { branchId: Number(row.branch_id), itemId: Number(row.item_id), delta: qtyDelta });
+        await applyItemQuantityDelta(client, { branchId: Number(row.branch_id), itemId: Number(row.item_id), delta: qtyDelta });
+      }
+
+      const restored = await client.query(
+        `UPDATE ims.stock_adjustment
+            SET is_deleted = 0,
+                deleted_at = NULL,
+                status = 'POSTED',
+                updated_at = NOW()
+          WHERE adjustment_id = $1
+            AND COALESCE(is_deleted, 0)::int = 1
+          RETURNING adjustment_id`,
+        [id]
+      );
+      if (restored.rowCount === 0) return false;
+
+      const unitCost = Number(row.cost_price || '0');
+      const value = Math.round(Math.abs(qtyDelta) * unitCost * 100) / 100;
+      await deleteGlByRef(client, { branchId: Number(row.branch_id), refTable: 'stock_adjustment', refId: id });
+      if (value > 0 && qtyDelta !== 0) {
+        const coa = await ensureCoreCoa(client, Number(row.branch_id), ['inventory', 'inventoryGain', 'inventoryShrinkage']);
+        const lines =
+          qtyDelta > 0
+            ? [
+                { accId: coa.inventory, debit: value, credit: 0 },
+                { accId: coa.inventoryGain, debit: 0, credit: value },
+              ]
+            : [
+                { accId: coa.inventoryShrinkage, debit: value, credit: 0 },
+                { accId: coa.inventory, debit: 0, credit: value },
+              ];
+        await postGl(client, {
+          branchId: Number(row.branch_id),
+          txnDate: row.adjustment_date || null,
+          txnType: 'other',
+          refTable: 'stock_adjustment',
+          refId: id,
+          note: `Stock adjustment restored: ${row.item_name} (${qtyDelta >= 0 ? 'INCREASE' : 'DECREASE'} ${Math.abs(qtyDelta)})`,
+          lines,
+        });
+      }
+
+      await replaceAdjustmentMovements(client, {
+        branchId: Number(row.branch_id),
+        whId: null,
+        itemId: Number(row.item_id),
+        refId: Number(row.adjustment_id),
+        qty: qtyDelta,
+        unitCost,
+        moveDate: row.adjustment_date || null,
+        note: row.reason || null,
+      });
+
+      return true;
     });
   },
 

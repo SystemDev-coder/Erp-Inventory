@@ -1,6 +1,7 @@
 import { pool } from '../../db/pool';
 import { queryMany, queryOne } from '../../db/query';
 import { ApiError } from '../../utils/ApiError';
+import { inventoryService } from '../inventory/inventory.service';
 
 const SCHEMA = 'ims';
 
@@ -30,6 +31,8 @@ type AuditLogColumns = {
   entityColumn: string;
   entityIdColumn: string;
   createdAtColumn: string;
+  oldValueColumn: string;
+  newValueColumn: string;
 };
 
 let auditLogColumnsCache: AuditLogColumns | null = null;
@@ -92,9 +95,47 @@ const detectAuditLogColumns = async (): Promise<AuditLogColumns | null> => {
     entityColumn: names.has('table_name') ? 'table_name' : 'entity',
     entityIdColumn: names.has('record_id') ? 'record_id' : 'entity_id',
     createdAtColumn: 'created_at',
+    oldValueColumn: names.has('old_values') ? 'old_values' : 'old_value',
+    newValueColumn: names.has('new_values') ? 'new_values' : 'new_value',
   };
 
   return auditLogColumnsCache;
+};
+
+const toIsDeletedPredicate = (expr: string) =>
+  `(COALESCE(${expr}, '0') IN ('1','true','t','TRUE','T'))`;
+
+const buildAuditJoinSql = (args: {
+  auditCols: AuditLogColumns | null;
+  auditEntityParamSql: string;
+  pkCol: string;
+  includeSoftDeleteUpdate?: boolean;
+}) => {
+  const { auditCols, auditEntityParamSql, pkCol, includeSoftDeleteUpdate } = args;
+  if (!auditCols) {
+    return `LEFT JOIN LATERAL (`
+      + ` SELECT NULL::bigint AS deleted_by_id, NULL::text AS deleted_by, NULL::text AS deleted_logged_at`
+      + ` ) aud ON TRUE`;
+  }
+
+  const actionExpr = `LOWER(COALESCE(al.${auditCols.actionColumn}::text, ''))`;
+  const isDeletedFromNew = toIsDeletedPredicate(`(al.${auditCols.newValueColumn}::jsonb ->> 'is_deleted')`);
+  const actionWhere = includeSoftDeleteUpdate
+    ? `(${actionExpr} = 'delete' OR (${actionExpr} = 'update' AND ${isDeletedFromNew}))`
+    : `(${actionExpr} = 'delete')`;
+
+  return `LEFT JOIN LATERAL (`
+    + ` SELECT al.user_id::bigint AS deleted_by_id,`
+    + `        u.username::text AS deleted_by,`
+    + `        al.${auditCols.createdAtColumn}::text AS deleted_logged_at`
+    + `   FROM ${SCHEMA}.audit_logs al`
+    + `   LEFT JOIN ${SCHEMA}.users u ON u.user_id = al.user_id`
+    + `  WHERE ${actionWhere}`
+    + `    AND COALESCE(al.${auditCols.entityColumn}::text, '') = ${auditEntityParamSql}::text`
+    + `    AND al.${auditCols.entityIdColumn}::bigint = t.${pkCol}::bigint`
+    + `  ORDER BY al.${auditCols.createdAtColumn} DESC`
+    + `  LIMIT 1`
+    + ` ) aud ON TRUE`;
 };
 
 const getTableColumns = async (table: string) => {
@@ -273,26 +314,27 @@ export const trashService = {
       const auditEntityParamIndex = params.length + 1;
       params.push(module.auditEntity || module.key);
 
-      const labelExpr = labelCol ? `t.${labelCol}::text` : `t.${pkCol}::text`;
+      const labelExpr =
+        module.table === 'stock_adjustment' && columns.has('item_id')
+          ? `CONCAT(
+              COALESCE((SELECT i.name FROM ${SCHEMA}.items i WHERE i.item_id = t.item_id LIMIT 1), 'Adjustment'),
+              ' (',
+              UPPER(COALESCE(t.adjustment_type::text, '')),
+              ' ',
+              COALESCE(t.quantity, 0)::text,
+              ') #',
+              t.${pkCol}::text
+            )`
+          : (labelCol ? `t.${labelCol}::text` : `t.${pkCol}::text`);
       const deletedExpr = dateCol ? `t.${dateCol}::text` : 'NULL::text';
       const createdExpr = columns.has('created_at') ? 't.created_at::text' : 'NULL::text';
 
-      const auditJoinSql = auditCols
-        ? `LEFT JOIN LATERAL (`
-            + ` SELECT al.user_id::bigint AS deleted_by_id,`
-            + `        u.username::text AS deleted_by,`
-            + `        al.${auditCols.createdAtColumn}::text AS deleted_logged_at`
-            + `   FROM ${SCHEMA}.audit_logs al`
-            + `   LEFT JOIN ${SCHEMA}.users u ON u.user_id = al.user_id`
-            + `  WHERE LOWER(COALESCE(al.${auditCols.actionColumn}::text, '')) = 'delete'`
-            + `    AND COALESCE(al.${auditCols.entityColumn}::text, '') = $${auditEntityParamIndex}::text`
-            + `    AND al.${auditCols.entityIdColumn}::bigint = t.${pkCol}::bigint`
-            + `  ORDER BY al.${auditCols.createdAtColumn} DESC`
-            + `  LIMIT 1`
-            + ` ) aud ON TRUE`
-        : `LEFT JOIN LATERAL (`
-            + ` SELECT NULL::bigint AS deleted_by_id, NULL::text AS deleted_by, NULL::text AS deleted_logged_at`
-            + ` ) aud ON TRUE`;
+      const auditJoinSql = buildAuditJoinSql({
+        auditCols,
+        auditEntityParamSql: `$${auditEntityParamIndex}`,
+        pkCol,
+        includeSoftDeleteUpdate: true,
+      });
       const auditSelectSql = `, aud.deleted_by_id, aud.deleted_by, aud.deleted_logged_at`;
 
       const client = await pool.connect();
@@ -383,7 +425,18 @@ export const trashService = {
       if (!dateCol) continue;
 
       const labelCol = pickLabelColumn(columns);
-      const labelExpr = labelCol ? `t.${labelCol}::text` : `t.${pkCol}::text`;
+      const labelExpr =
+        module.table === 'stock_adjustment' && columns.has('item_id')
+          ? `CONCAT(
+              COALESCE((SELECT i.name FROM ${SCHEMA}.items i WHERE i.item_id = t.item_id LIMIT 1), 'Adjustment'),
+              ' (',
+              UPPER(COALESCE(t.adjustment_type::text, '')),
+              ' ',
+              COALESCE(t.quantity, 0)::text,
+              ') #',
+              t.${pkCol}::text
+            )`
+          : (labelCol ? `t.${labelCol}::text` : `t.${pkCol}::text`);
       const createdExpr = columns.has('created_at') ? 't.created_at::text' : 'NULL::text';
 
       const wherePartsData: string[] = [
@@ -417,22 +470,12 @@ export const trashService = {
       const auditEntityParam = `$${dataParams.length + 1}`;
       dataParams.push(module.auditEntity || module.key);
 
-      const auditJoinSql = auditCols
-        ? `LEFT JOIN LATERAL (`
-            + ` SELECT al.user_id::bigint AS deleted_by_id,`
-            + `        u.username::text AS deleted_by,`
-            + `        al.${auditCols.createdAtColumn}::text AS deleted_logged_at`
-            + `   FROM ${SCHEMA}.audit_logs al`
-            + `   LEFT JOIN ${SCHEMA}.users u ON u.user_id = al.user_id`
-            + `  WHERE LOWER(COALESCE(al.${auditCols.actionColumn}::text, '')) = 'delete'`
-            + `    AND COALESCE(al.${auditCols.entityColumn}::text, '') = ${auditEntityParam}::text`
-            + `    AND al.${auditCols.entityIdColumn}::bigint = t.${pkCol}::bigint`
-            + `  ORDER BY al.${auditCols.createdAtColumn} DESC`
-            + `  LIMIT 1`
-            + ` ) aud ON TRUE`
-        : `LEFT JOIN LATERAL (`
-            + ` SELECT NULL::bigint AS deleted_by_id, NULL::text AS deleted_by, NULL::text AS deleted_logged_at`
-            + ` ) aud ON TRUE`;
+      const auditJoinSql = buildAuditJoinSql({
+        auditCols,
+        auditEntityParamSql: auditEntityParam,
+        pkCol,
+        includeSoftDeleteUpdate: true,
+      });
 
 	      dataSelects.push(
 	        `SELECT t.${pkCol}::bigint AS id,
@@ -515,6 +558,17 @@ export const trashService = {
   async restore(table: string, id: number, userId?: number | null) {
     const module = resolveModule(table);
     await ensureTrashTable(module.table);
+
+    // Stock adjustments have side-effects (they change on-hand stock and may post GL).
+    // Restoring them must re-apply the qty impact and re-post GL.
+    if (module.table === 'stock_adjustment') {
+      const restored = await inventoryService.restoreAdjustment(id, userId ?? null);
+      if (!restored) {
+        throw ApiError.badRequest('Failed to restore record');
+      }
+      return { success: true, message: 'Restored' } as any;
+    }
+
     if (module.filter) {
       const columns = await getTableColumns(module.table);
       const pkCol = await getPkColumn(module.table);

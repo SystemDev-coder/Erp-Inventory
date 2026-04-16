@@ -44,7 +44,7 @@ const RadioSm: React.FC<RadioProps> = ({
           {/* Inner Dot */}
           <span
             className={`h-1.5 w-1.5 rounded-full ${
-              checked ? "bg-white" : "bg-white dark:bg-[#1e2636]"
+              checked ? "bg-white" : "bg-white dark:bg-slate-800"
             }`}
           ></span>
         </span>

@@ -5,6 +5,7 @@ import { adminQueryOne } from '../../db/adminQuery';
 import { ApiError } from '../../utils/ApiError';
 import { assertBranchAccess, BranchScope, pickBranchForWrite } from '../../utils/branchScope';
 import { logAudit } from '../../utils/audit';
+import { financialReportsService } from '../reports/financial/financialReports.service';
 import {
   ClosingActionInput,
   ClosingPeriodCreateInput,
@@ -150,6 +151,59 @@ const isEmptyObject = (value: unknown) =>
 const queryAmount = async (runner: SqlRunner, sql: string, params: Array<number | string>) => {
   const result = await runner.query(sql, params);
   return toMoney(result.rows[0]?.amount);
+};
+
+type IncomeStatementRowLite = {
+  section?: string | null;
+  line_item?: string | null;
+  row_type?: string | null;
+  amount?: unknown;
+};
+
+const buildSnapshotFromIncomeRows = (rows: IncomeStatementRowLite[]): Partial<ClosingSnapshot> => {
+  const normalize = (value: unknown) => String(value ?? '').trim().toLowerCase();
+  const amountOf = (row: IncomeStatementRowLite | undefined) => toMoney(row?.amount);
+  const findRow = (lineItemRegex: RegExp, rowType?: string) =>
+    rows.find((row) => {
+      const lineItem = String(row.line_item || '');
+      if (!lineItemRegex.test(lineItem)) return false;
+      if (!rowType) return true;
+      return normalize(row.row_type) === rowType.toLowerCase();
+    });
+
+  // Normalize to "magnitudes" for summary cards:
+  // - Revenue/COGS/Expenses/Payroll are positive magnitudes
+  // - Net Income can be positive (profit) or negative (loss)
+  const salesRevenue = Math.abs(amountOf(findRow(/^sales revenue$/i)));
+  const salesReturns = Math.abs(amountOf(findRow(/^sales returns$/i)));
+  const netRevenue = roundMoney(salesRevenue - salesReturns);
+
+  const totalCogsRow = findRow(/^total cost of goods sold$/i, 'total') ?? findRow(/^cost of goods sold$/i);
+  const cogs = Math.abs(amountOf(totalCogsRow));
+
+  const isDetailRow = (row: IncomeStatementRowLite) => normalize(row.row_type) === 'detail';
+  const operatingDetails = rows.filter((row) => normalize(row.section) === 'operating expenses').filter(isDetailRow);
+  const sumAbs = (list: IncomeStatementRowLite[]) =>
+    roundMoney(list.reduce((sum, row) => sum + Math.abs(toMoney(row.amount)), 0));
+  const payrollRows = operatingDetails.filter((row) => /payroll|salary|wage/i.test(String(row.line_item || '')));
+  const payrollExpense = sumAbs(payrollRows);
+  const expenseCharges = sumAbs(
+    operatingDetails.filter((row) => !/payroll|salary|wage/i.test(String(row.line_item || '')))
+  );
+
+  const grossProfit = roundMoney(netRevenue - cogs);
+  const netIncome = roundMoney(grossProfit - expenseCharges - payrollExpense);
+
+  return {
+    salesRevenue,
+    salesReturns,
+    netRevenue,
+    cogs,
+    grossProfit,
+    expenseCharges,
+    payrollExpense,
+    netIncome,
+  };
 };
 
 const nowIso = () => new Date().toISOString();
@@ -753,7 +807,7 @@ const computeClosingSnapshot = async (
   const effectivePayroll = Math.max(payrollExpense, payrollPaid, payrollLedger);
   const netIncome = roundMoney(grossProfit - effectiveExpense - effectivePayroll);
 
-  return {
+  const snapshot: ClosingSnapshot = {
     salesRevenue: grossSales,
     salesReturns,
     netRevenue,
@@ -766,6 +820,27 @@ const computeClosingSnapshot = async (
     cashBalance,
     capitalBalance,
   };
+
+  // Keep finance closing summary in sync with the Income Statement report.
+  // Income statement is considered the source of truth for Net Income in the UI.
+  try {
+    const statementRows = await financialReportsService.getIncomeStatement(branchId, fromDate, toDate);
+    const derived = buildSnapshotFromIncomeRows(statementRows as unknown as IncomeStatementRowLite[]);
+    if (derived && Number.isFinite(Number(derived.netIncome))) {
+      snapshot.salesRevenue = Number.isFinite(Number(derived.salesRevenue)) ? toMoney(derived.salesRevenue) : snapshot.salesRevenue;
+      snapshot.salesReturns = Number.isFinite(Number(derived.salesReturns)) ? toMoney(derived.salesReturns) : snapshot.salesReturns;
+      snapshot.netRevenue = Number.isFinite(Number(derived.netRevenue)) ? toMoney(derived.netRevenue) : snapshot.netRevenue;
+      snapshot.cogs = Number.isFinite(Number(derived.cogs)) ? toMoney(derived.cogs) : snapshot.cogs;
+      snapshot.grossProfit = Number.isFinite(Number(derived.grossProfit)) ? toMoney(derived.grossProfit) : snapshot.grossProfit;
+      snapshot.expenseCharges = Number.isFinite(Number(derived.expenseCharges)) ? toMoney(derived.expenseCharges) : snapshot.expenseCharges;
+      snapshot.payrollExpense = Number.isFinite(Number(derived.payrollExpense)) ? toMoney(derived.payrollExpense) : snapshot.payrollExpense;
+      snapshot.netIncome = toMoney(derived.netIncome);
+    }
+  } catch {
+    // Ignore and keep computed snapshot.
+  }
+
+  return snapshot;
 };
 
 const resolveRetainedEarningsAccount = async (

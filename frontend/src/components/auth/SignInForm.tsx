@@ -1,6 +1,5 @@
 import { useState, FormEvent } from "react";
 import { useNavigate } from "react-router";
-import { ShoppingCart } from "lucide-react";
 import { EyeCloseIcon, EyeIcon } from "../../icons";
 import Label from "../form/Label";
 import Input from "../form/input/InputField";
@@ -49,9 +48,6 @@ export default function SignInForm() {
         <div>
           <div className="mb-5 sm:mb-8">
             <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 rounded-full border border-slate-200 dark:border-slate-700 bg-primary-600 text-white flex items-center justify-center">
-                <ShoppingCart className="w-5 h-5" />
-              </div>
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{BRAND.NAME}</p>
                 <h1 className="font-semibold text-slate-800 text-title-sm dark:text-slate-100 sm:text-title-md">

@@ -1,10 +1,17 @@
 import { useState } from 'react';
-import { Plus, RefreshCw, RotateCcw, ShoppingBag } from 'lucide-react';
+import { Eye, Plus, RefreshCw, RotateCcw, ShoppingBag } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { PageHeader } from '../../components/ui/layout';
 import { Tabs } from '../../components/ui/tabs';
 import { useToast } from '../../components/ui/toast/Toast';
-import { returnsService, PurchaseReturn, SalesReturn } from '../../services/returns.service';
+import { Modal } from '../../components/ui/modal/Modal';
+import {
+  returnsService,
+  PurchaseReturn,
+  PurchaseReturnItem,
+  SalesReturn,
+  SalesReturnItem,
+} from '../../services/returns.service';
 import DeleteConfirmModal from '../../components/ui/modal/DeleteConfirmModal';
 import { defaultDateRange } from '../../utils/dateRange';
 
@@ -33,6 +40,11 @@ const Returns = () => {
   const [dateRange, setDateRange] = useState(() => defaultDateRange());
   const [deleteTarget, setDeleteTarget] = useState<DeleteReturnTarget | null>(null);
   const [deletingReturn, setDeletingReturn] = useState(false);
+  const [viewOpen, setViewOpen] = useState(false);
+  const [viewLoading, setViewLoading] = useState(false);
+  const [viewKind, setViewKind] = useState<'sales' | 'purchase' | null>(null);
+  const [viewHeader, setViewHeader] = useState<SalesReturn | PurchaseReturn | null>(null);
+  const [viewItems, setViewItems] = useState<Array<SalesReturnItem | PurchaseReturnItem>>([]);
 
   const loadSalesReturns = async () => {
     setLoading(true);
@@ -114,6 +126,56 @@ const Returns = () => {
     } finally {
       setDeletingReturn(false);
       setDeleteTarget(null);
+    }
+  };
+
+  const openViewSalesReturn = async (id: number) => {
+    setViewKind('sales');
+    setViewOpen(true);
+    setViewLoading(true);
+    try {
+      const [headerRes, itemsRes] = await Promise.all([
+        returnsService.getSalesReturn(id),
+        returnsService.getSalesReturnItems(id),
+      ]);
+      if (!headerRes.success || !headerRes.data?.return) {
+        throw new Error(headerRes.error || 'Failed to load sales return');
+      }
+      if (!itemsRes.success || !itemsRes.data?.items) {
+        throw new Error(itemsRes.error || 'Failed to load return items');
+      }
+      setViewHeader(headerRes.data.return);
+      setViewItems(itemsRes.data.items);
+    } catch (error) {
+      showToast('error', 'Sales Return', error instanceof Error ? error.message : 'Failed to load return details');
+      setViewOpen(false);
+    } finally {
+      setViewLoading(false);
+    }
+  };
+
+  const openViewPurchaseReturn = async (id: number) => {
+    setViewKind('purchase');
+    setViewOpen(true);
+    setViewLoading(true);
+    try {
+      const [headerRes, itemsRes] = await Promise.all([
+        returnsService.getPurchaseReturn(id),
+        returnsService.getPurchaseReturnItems(id),
+      ]);
+      if (!headerRes.success || !headerRes.data?.return) {
+        throw new Error(headerRes.error || 'Failed to load purchase return');
+      }
+      if (!itemsRes.success || !itemsRes.data?.items) {
+        throw new Error(itemsRes.error || 'Failed to load return items');
+      }
+      setViewHeader(headerRes.data.return);
+      setViewItems(itemsRes.data.items);
+    } catch (error) {
+      showToast('error', 'Purchase Return', error instanceof Error ? error.message : 'Failed to load return details');
+      setViewOpen(false);
+    } finally {
+      setViewLoading(false);
     }
   };
 
@@ -219,6 +281,15 @@ const Returns = () => {
                       <td className={tableCellCls}>{row.note || '-'}</td>
                       <td className={tableCellCls}>
                         <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void openViewSalesReturn(row.sr_id)}
+                            className="inline-flex items-center gap-1 rounded border border-blue-200 px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-900/30"
+                            title="View"
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                            View
+                          </button>
                           <button type="button" onClick={() => navigate(`/returns/sales/${row.sr_id}/edit`)} className="rounded border px-2 py-1 text-xs">Edit</button>
                           <button type="button" onClick={() => requestDeleteSalesReturn(row)} className="rounded border border-red-300 px-2 py-1 text-xs text-red-600">Delete</button>
                         </div>
@@ -333,6 +404,15 @@ const Returns = () => {
                       <td className={tableCellCls}>{row.note || '-'}</td>
                       <td className={tableCellCls}>
                         <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void openViewPurchaseReturn(row.pr_id)}
+                            className="inline-flex items-center gap-1 rounded border border-blue-200 px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-900/30"
+                            title="View"
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                            View
+                          </button>
                           <button type="button" onClick={() => navigate(`/returns/purchases/${row.pr_id}/edit`)} className="rounded border px-2 py-1 text-xs">Edit</button>
                           <button type="button" onClick={() => requestDeletePurchaseReturn(row)} className="rounded border border-red-300 px-2 py-1 text-xs text-red-600">Delete</button>
                         </div>
@@ -362,6 +442,104 @@ const Returns = () => {
         itemName={deleteTarget?.label}
         isDeleting={deletingReturn}
       />
+
+      <Modal
+        isOpen={viewOpen}
+        onClose={() => {
+          if (viewLoading) return;
+          setViewOpen(false);
+          setViewHeader(null);
+          setViewItems([]);
+          setViewKind(null);
+        }}
+        title={viewKind === 'purchase' ? 'Supplier Return Details' : 'Sales Return Details'}
+        size="xl"
+      >
+        {viewLoading || !viewHeader ? (
+          <div className="flex justify-center py-12">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary-600 border-t-transparent" />
+          </div>
+        ) : (
+          <div className="space-y-4 p-4">
+            <div className="grid grid-cols-1 gap-2 rounded-xl border border-slate-200 bg-white p-3 text-sm dark:border-slate-800 dark:bg-slate-900 sm:grid-cols-2 lg:grid-cols-3">
+              <div><span className="text-xs text-slate-500">Date</span><div className="font-medium">{fmtDate(viewHeader.return_date)}</div></div>
+              <div><span className="text-xs text-slate-500">Reference</span><div className="font-medium">{viewHeader.reference_no || '-'}</div></div>
+              <div><span className="text-xs text-slate-500">Status</span><div className="font-medium">{resolveStatus((viewHeader as any).status)}</div></div>
+              {'customer_name' in viewHeader ? (
+                <div><span className="text-xs text-slate-500">Customer</span><div className="font-medium">{viewHeader.customer_name || '-'}</div></div>
+              ) : (
+                <div><span className="text-xs text-slate-500">Supplier</span><div className="font-medium">{viewHeader.supplier_name || '-'}</div></div>
+              )}
+              <div><span className="text-xs text-slate-500">Subtotal</span><div className="font-medium">{fmtCurrency(viewHeader.subtotal)}</div></div>
+              <div><span className="text-xs text-slate-500">Total</span><div className="font-medium">{fmtCurrency(viewHeader.total)}</div></div>
+              <div className="sm:col-span-2 lg:col-span-3">
+                <span className="text-xs text-slate-500">Note</span>
+                <div className="font-medium">{viewHeader.note || '-'}</div>
+              </div>
+              <div className="sm:col-span-2 lg:col-span-3">
+                <span className="text-xs text-slate-500">Refund</span>
+                <div className="font-medium">
+                  {(viewHeader.refund_account_name || '-')}
+                  {' · '}
+                  {viewHeader.refund_amount ? fmtCurrency(Number(viewHeader.refund_amount)) : '-'}
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
+              {viewItems.length === 0 ? (
+                <div className="py-10 text-center text-slate-500 text-sm">No items found.</div>
+              ) : (
+                <table className="min-w-full">
+                  <thead className="bg-slate-50 dark:bg-slate-800">
+                    <tr>
+                      <th className={tableHeadCls}>Item</th>
+                      <th className={tableHeadCls}>Qty</th>
+                      <th className={tableHeadCls}>{viewKind === 'purchase' ? 'Unit Cost' : 'Unit Price'}</th>
+                      <th className={tableHeadCls}>Line Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {viewItems.map((item) => (
+                      <tr key={'sr_item_id' in item ? item.sr_item_id : item.pr_item_id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                        <td className={tableCellCls}>{item.item_name || `Item #${item.item_id}`}</td>
+                        <td className={tableCellCls}>{Number(item.quantity || 0)}</td>
+                        <td className={tableCellCls}>
+                          {'unit_price' in item ? fmtCurrency(item.unit_price) : fmtCurrency((item as PurchaseReturnItem).unit_cost)}
+                        </td>
+                        <td className={tableCellCls}>{fmtCurrency(item.line_total)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50"
+                onClick={() => setViewOpen(false)}
+                disabled={viewLoading}
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                className="rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-white hover:bg-primary-700"
+                onClick={() => {
+                  if (!viewKind || !viewHeader) return;
+                  const id = viewKind === 'purchase' ? (viewHeader as PurchaseReturn).pr_id : (viewHeader as SalesReturn).sr_id;
+                  navigate(viewKind === 'purchase' ? `/returns/purchases/${id}/edit` : `/returns/sales/${id}/edit`);
+                }}
+                disabled={viewLoading}
+              >
+                Edit
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 };

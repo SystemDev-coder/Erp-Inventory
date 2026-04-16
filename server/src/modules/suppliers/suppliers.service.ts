@@ -82,6 +82,44 @@ const hasSupplierNonOpeningLedger = async (
   return Boolean(result.rows[0]?.exists);
 };
 
+const findSupplierDeleteBlockReason = async (
+  client: PoolClient,
+  branchId: number,
+  supplierId: number
+): Promise<string | null> => {
+  const purchaseLinked = await client.query<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM ims.purchases
+        WHERE branch_id = $1
+          AND supplier_id = $2
+     ) AS exists`,
+    [branchId, supplierId]
+  );
+  if (Boolean(purchaseLinked.rows[0]?.exists)) {
+    return 'Cannot delete supplier because it has purchase transactions';
+  }
+
+  const purchaseReturnLinked = await client.query<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM ims.purchase_returns
+        WHERE branch_id = $1
+          AND supplier_id = $2
+     ) AS exists`,
+    [branchId, supplierId]
+  );
+  if (Boolean(purchaseReturnLinked.rows[0]?.exists)) {
+    return 'Cannot delete supplier because it has purchase return transactions';
+  }
+
+  if (await hasSupplierNonOpeningLedger(client, branchId, supplierId)) {
+    return 'Cannot delete supplier because it has supplier ledger transactions';
+  }
+
+  return null;
+};
+
 const upsertSupplierOpeningLedger = async (
   client: PoolClient,
   branchId: number,
@@ -442,16 +480,56 @@ export const suppliersService = {
   },
 
   async deleteSupplier(id: number, scope: BranchScope): Promise<void> {
-    if (scope.isAdmin) {
-      await queryOne(`DELETE FROM ims.suppliers WHERE supplier_id = $1`, [id]);
-      return;
-    }
+    await withTransaction(async (client) => {
+      const supplierRow = scope.isAdmin
+        ? await client.query<{ supplier_id: number; branch_id: number }>(
+            `SELECT supplier_id, branch_id
+               FROM ims.suppliers
+              WHERE supplier_id = $1`,
+            [id]
+          )
+        : await client.query<{ supplier_id: number; branch_id: number }>(
+            `SELECT supplier_id, branch_id
+               FROM ims.suppliers
+              WHERE supplier_id = $1
+                AND branch_id = ANY($2)`,
+            [id, scope.branchIds]
+          );
 
-    await queryOne(
-      `DELETE FROM ims.suppliers
-        WHERE supplier_id = $1
-          AND branch_id = ANY($2)`,
-      [id, scope.branchIds]
-    );
+      const supplier = supplierRow.rows[0];
+      if (!supplier) return;
+
+      const branchId = Number(supplier.branch_id || 0);
+      const reason = await findSupplierDeleteBlockReason(client, branchId, id);
+      if (reason) {
+        throw ApiError.badRequest(reason);
+      }
+
+      await client.query(
+        `DELETE FROM ims.item_suppliers
+          WHERE branch_id = $1
+            AND supplier_id = $2`,
+        [branchId, id]
+      );
+
+      await client.query(
+        `DELETE FROM ims.supplier_ledger
+          WHERE branch_id = $1
+            AND supplier_id = $2`,
+        [branchId, id]
+      );
+
+      if (scope.isAdmin) {
+        await client.query(`DELETE FROM ims.suppliers WHERE supplier_id = $1`, [id]);
+        return;
+      }
+
+      await client.query(
+        `DELETE FROM ims.suppliers
+          WHERE supplier_id = $1
+            AND branch_id = ANY($2)`,
+        [id, scope.branchIds]
+      );
+    });
   },
 };

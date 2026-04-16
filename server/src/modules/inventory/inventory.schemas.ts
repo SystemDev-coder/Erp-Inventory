@@ -85,6 +85,7 @@ export const adjustmentListQuerySchema = stockQuerySchema;
 export const recountListQuerySchema = stockQuerySchema;
 const adjustmentTypeSchema = z.enum(['INCREASE', 'DECREASE']);
 const adjustmentStatusSchema = z.enum(['POSTED', 'CANCELLED']);
+const adjustmentIncreaseOffsetSchema = z.enum(['gain', 'opening']);
 
 export const locationQuerySchema = z.object({
   branchId: optionalPositiveInt,
@@ -100,6 +101,7 @@ export const adjustmentSchema = z.object({
   quantity: optionalPositiveRoundedInt,
   qty: optionalRoundedInt,
   unitCost: z.coerce.number().nonnegative().default(0),
+  increaseOffset: adjustmentIncreaseOffsetSchema.optional().default('gain'),
   adjustmentDate: dateStringSchema.optional(),
   reason: z.string().trim().min(1).max(255).optional(),
   status: adjustmentStatusSchema.optional().default('POSTED'),
@@ -148,6 +150,7 @@ export const adjustmentSchema = z.object({
     qty: signedQty,
     reason: value.reason?.trim() || 'Manual Adjustment',
     status: value.status || 'POSTED',
+    increaseOffset: value.increaseOffset || 'gain',
   };
 });
 

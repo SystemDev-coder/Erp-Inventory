@@ -41,19 +41,19 @@ layer(base);
   --color-white: #ffffff;
   --color-black: #0b0f1f;
 
-  /* ERP primary palette (classic blue) */
-  --color-primary-25: #f6f9ff;
-  --color-primary-50: #edf3ff;
-  --color-primary-100: #d8e6ff;
-  --color-primary-200: #b8d0ff;
-  --color-primary-300: #93b6f5;
-  --color-primary-400: #6f97d8;
-  --color-primary-500: #3a6db6;
-  --color-primary-600: #163a72;
-  --color-primary-700: #0f2f62;
-  --color-primary-800: #0b244d;
-  --color-primary-900: #0a1f44;
-  --color-primary-950: #07132d;
+  /* ERP primary palette (brand orange) */
+  --color-primary-25: #fffaf0;
+  --color-primary-50: #fff3e0;
+  --color-primary-100: #ffe4b8;
+  --color-primary-200: #ffd08a;
+  --color-primary-300: #ffb957;
+  --color-primary-400: #ffa733;
+  --color-primary-500: #ffa500; /* #FFA500 */
+  --color-primary-600: #e69500;
+  --color-primary-700: #cc8400;
+  --color-primary-800: #a86800;
+  --color-primary-900: #7a4c00;
+  --color-primary-950: #3d2400;
 
   /* Brand - mirrors primary */
   --color-brand-25: var(--color-primary-25);
@@ -171,12 +171,12 @@ body {
 }
 
 *::-webkit-scrollbar-thumb {
-  background: #163a72;
+  background: var(--color-primary-600);
   border-radius: 999px;
 }
 
 *::-webkit-scrollbar-track {
-  background: #d8e2f2;
+  background: var(--color-slate-200);
 }
 
 @layer base {
@@ -286,8 +286,8 @@ body {
 .dark .erp-modal-body input:not([type='checkbox']):not([type='radio']):not([type='file']):focus,
 .dark .erp-modal-body select:focus,
 .dark .erp-modal-body textarea:focus {
-  border-color: #6f97d8 !important;
-  box-shadow: 0 0 0 3px rgba(111, 151, 216, 0.18) !important;
+  border-color: var(--color-primary-500) !important;
+  box-shadow: 0 0 0 3px rgba(255, 165, 0, 0.22) !important;
 }
 
 .erp-modal-body button {
@@ -300,7 +300,7 @@ body {
   --select-text: #14344c;
   --select-border: #b6c9da;
   --select-placeholder: #7a93ad;
-  --select-focus: rgba(15, 79, 118, 0.35);
+  --select-focus: rgba(255, 165, 0, 0.35);
   --select-option-bg: #ffffff;
   --select-option-text: #14344c;
   --select-option-hover: #eef5fb;
@@ -312,7 +312,7 @@ body {
   --header-search-border: #cbd5e1;
   --header-search-text: #0f172a;
   --header-search-placeholder: #94a3b8;
-  --header-search-focus: rgba(59, 130, 246, 0.35);
+  --header-search-focus: rgba(255, 165, 0, 0.35);
   --header-kbd-bg: #f1f5f9;
   --header-kbd-border: #cbd5e1;
   --header-kbd-text: #64748b;
@@ -323,11 +323,11 @@ body {
   --select-text: #f9fafb;
   --select-border: #374151;
   --select-placeholder: #9ca3af;
-  --select-focus: rgba(59, 130, 246, 0.45);
+  --select-focus: rgba(255, 165, 0, 0.45);
   --select-option-bg: #111827;
   --select-option-text: #f9fafb;
-  --select-option-hover: #1d4ed8;
-  --select-option-selected: #1f3b8b;
+  --select-option-hover: rgba(255, 165, 0, 0.2);
+  --select-option-selected: rgba(255, 165, 0, 0.28);
 
   --header-bg: #000000;
   --header-border: rgba(255, 255, 255, 0.12);
@@ -409,7 +409,7 @@ select option:focus {
 .dark input:focus,
 .dark textarea:focus {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.45);
+  box-shadow: 0 0 0 2px rgba(255, 165, 0, 0.45);
   border-color: #374151 !important;
 }
 

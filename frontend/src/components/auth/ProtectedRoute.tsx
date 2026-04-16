@@ -8,12 +8,14 @@ export default function ProtectedRoute({
   children,
   permission,
   permissionAny,
+  roleAny,
 }: {
   children: React.ReactNode;
   permission?: string;
   permissionAny?: string[];
+  roleAny?: string[];
 }) {
-  const { isAuthenticated, isLoading, permissions, isLocked } = useAuth();
+  const { isAuthenticated, isLoading, permissions, isLocked, user } = useAuth();
   const location = useLocation();
   const expandPermissionKeys = (permKey: string): string[] => {
     if (permKey.startsWith('items.')) {
@@ -51,6 +53,14 @@ export default function ProtectedRoute({
 
   if (requiredAny && !requiredAny.some((perm) => expandPermissionKeys(perm).some((key) => permissions.includes(key)))) {
     return <Navigate to="/" replace />; // Or to a forbidden page
+  }
+
+  if (roleAny && roleAny.length > 0) {
+    const role = (user?.role_name || '').toLowerCase();
+    const allowed = roleAny.map((r) => r.toLowerCase());
+    if (!allowed.includes(role)) {
+      return <Navigate to="/" replace />;
+    }
   }
 
   return <>{children}</>;

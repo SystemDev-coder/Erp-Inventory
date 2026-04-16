@@ -67,10 +67,9 @@ const getIncomeRowAmount = (rows: IncomeRow[], lineItemRegex: RegExp, rowType?: 
 };
 
 const buildClosingSummaryFromIncomeRows = (rows: IncomeRow[]) => {
-  const salesRevenue = getIncomeRowAmount(rows, /^sales revenue$/i);
+  const salesRevenue = Math.abs(getIncomeRowAmount(rows, /^sales revenue$/i));
   const salesReturns = Math.abs(getIncomeRowAmount(rows, /^sales returns$/i));
-  const cogs = Math.abs(getIncomeRowAmount(rows, /^cost of goods sold$/i));
-  const netIncome = getIncomeRowAmount(rows, /^net income$/i, 'total');
+  const cogs = Math.abs(getIncomeRowAmount(rows, /^total cost of goods sold$/i, 'total') || getIncomeRowAmount(rows, /^cost of goods sold$/i));
 
   const isDetailRow = (row: IncomeRow) => String(row.row_type || '').toLowerCase() === 'detail';
   const bySection = (sectionName: string) =>
@@ -83,6 +82,7 @@ const buildClosingSummaryFromIncomeRows = (rows: IncomeRow[]) => {
   const expenseCharges = sumAbs(operatingDetails.filter((row) => !/payroll|salary|wage/i.test(String(row.line_item || ''))));
   const netRevenue = salesRevenue - salesReturns;
   const grossProfit = netRevenue - cogs;
+  const netIncome = grossProfit - expenseCharges - payrollExpense;
 
   return {
     salesRevenue,
@@ -645,6 +645,13 @@ export const listSettingsClosingPeriods = asyncHandler(async (req: AuthRequest, 
         ...period,
         summary_json: {
           ...(period.summary_json || {}),
+          salesRevenue: Number(incomeSummary.salesRevenue || 0),
+          salesReturns: Number(incomeSummary.salesReturns || 0),
+          netRevenue: Number(incomeSummary.netRevenue || 0),
+          cogs: Number(incomeSummary.cogs || 0),
+          grossProfit: Number(incomeSummary.grossProfit || 0),
+          expenseCharges: Number(incomeSummary.expenseCharges || 0),
+          payrollExpense: Number(incomeSummary.payrollExpense || 0),
           netIncome: Number(incomeSummary.netIncome || 0),
         },
       };
@@ -697,20 +704,7 @@ export const getSettingsClosingSummary = asyncHandler(async (req: AuthRequest, r
   const closingId = Number(req.params.id);
   if (!Number.isFinite(closingId) || closingId <= 0) throw ApiError.badRequest('Invalid closing id');
   const summary = await financeClosingService.getSummary(scope, closingId, { live: true });
-  const incomeSummary = await getLiveIncomeSummaryForPeriod(
-    Number(summary.period.branch_id),
-    summary.period.period_from,
-    summary.period.period_to
-  );
-  return ApiResponse.success(res, {
-    summary: {
-      ...summary,
-      summary: {
-        ...(summary.summary || {}),
-        ...incomeSummary,
-      },
-    },
-  });
+  return ApiResponse.success(res, { summary });
 });
 
 export const closeSettingsClosingPeriod = asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -813,18 +807,15 @@ export const upsertSettingsProfitOwner = asyncHandler(async (req: AuthRequest, r
 });
 
 const roundMoney = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
+const calcShareAmount = (netIncome: number, sharePct: number) =>
+  roundMoney((Number(netIncome || 0) * Number(sharePct || 0)) / 100);
 
 export const previewSettingsOwnerProfit = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const input = settingsOwnerProfitPreviewSchema.parse(req.body);
 
   const summaryPack = await financeClosingService.getSummary(scope, input.closingId, { live: true });
-  const incomeSummary = await getLiveIncomeSummaryForPeriod(
-    Number(summaryPack.period.branch_id),
-    summaryPack.period.period_from,
-    summaryPack.period.period_to
-  );
-  const netIncome = Number(incomeSummary.netIncome || 0);
+  const netIncome = Number(summaryPack.summary?.netIncome || 0);
   const ownerName = input.ownerName.trim();
   const lowerOwner = ownerName.toLowerCase();
   const inputSharePct =
@@ -833,7 +824,7 @@ export const previewSettingsOwnerProfit = asyncHandler(async (req: AuthRequest, 
       : null;
 
   if (inputSharePct !== null) {
-    const shareAmount = netIncome > 0 ? roundMoney((netIncome * inputSharePct) / 100) : 0;
+    const shareAmount = calcShareAmount(netIncome, inputSharePct);
     return ApiResponse.success(res, {
       preview: {
         closingId: input.closingId,
@@ -859,7 +850,7 @@ export const previewSettingsOwnerProfit = asyncHandler(async (req: AuthRequest, 
   );
 
   let sharePct = Number(ownerAllocation?.sharePct || 0);
-  let shareAmount = netIncome > 0 ? roundMoney((netIncome * sharePct) / 100) : 0;
+  let shareAmount = calcShareAmount(netIncome, sharePct);
   let source: 'allocation' | 'rule' | 'none' = ownerAllocation ? 'allocation' : 'none';
 
   if (!ownerAllocation) {
@@ -887,7 +878,7 @@ export const previewSettingsOwnerProfit = asyncHandler(async (req: AuthRequest, 
     }
 
     sharePct = partnerPct;
-    shareAmount = netIncome > 0 ? roundMoney((netIncome * partnerPct) / 100) : 0;
+    shareAmount = calcShareAmount(netIncome, partnerPct);
   }
 
   return ApiResponse.success(res, {

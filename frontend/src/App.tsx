@@ -104,10 +104,26 @@ function AppRoutes() {
           <Route path="/reports/accounts-receivable" element={<ProtectedRoute permission="reports.all"><AccountsReceivableReportPage /></ProtectedRoute>} />
           <Route path="/reports/accounts-payable" element={<ProtectedRoute permission="reports.all"><AccountsPayableReportPage /></ProtectedRoute>} />
           <Route path="/assets" element={<ProtectedRoute permission="accounts.view"><Assets /></ProtectedRoute>} />
-          <Route path="/system" element={<ProtectedRoute><System /></ProtectedRoute>} />
+          <Route
+            path="/system"
+            element={
+              <ProtectedRoute
+                permissionAny={[
+                  'users.view',
+                  'roles.view',
+                  'permissions.view',
+                  'system.users.manage',
+                  'system.roles.manage',
+                  'system.permissions.manage',
+                ]}
+              >
+                <System />
+              </ProtectedRoute>
+            }
+          />
           <Route path="/settings" element={<ProtectedRoute permission="system.settings"><Settings /></ProtectedRoute>} />
           <Route path="/support" element={<ProtectedRoute><Support /></ProtectedRoute>} />
-          <Route path="/trash" element={<ProtectedRoute permission="trash.view"><Trash /></ProtectedRoute>} />
+          <Route path="/trash" element={<ProtectedRoute permission="trash.view" roleAny={['developer']}><Trash /></ProtectedRoute>} />
         </Route>
 
         {/* Auth Layout */}

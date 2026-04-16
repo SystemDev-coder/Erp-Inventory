@@ -1,5 +1,5 @@
-﻿import React, { useMemo, useRef } from "react";
-import { FileSpreadsheet, Printer } from "lucide-react";
+﻿import React, { useMemo, useRef, useState } from "react";
+import { FileSpreadsheet, Maximize2, Minimize2, Printer } from "lucide-react";
 import { Modal } from "../ui/modal/Modal";
 
 const REPORT_SCREEN_MAX_WIDTH = "1120px";
@@ -183,6 +183,7 @@ export function ReportModal<T extends Record<string, any>>({
   onAutoActionComplete,
 }: ReportModalProps<T>) {
   const printRef = useRef<HTMLDivElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const reportDate = useMemo(() => generatedAt ?? new Date().toISOString().slice(0, 10), [generatedAt]);
   const safeFileName =
     fileName ??
@@ -194,7 +195,7 @@ export function ReportModal<T extends Record<string, any>>({
   const isBalanceSheet = variant === "balance-sheet";
   const isCashFlowStatement = variant === "cash-flow-statement";
   const isTrialBalance = variant === "trial-balance";
-  const reportSurfaceWidth = REPORT_SCREEN_MAX_WIDTH;
+  const reportSurfaceWidth = isFullscreen ? "100%" : REPORT_SCREEN_MAX_WIDTH;
 
   const tableRows = useMemo(() => {
     if (isIncomeStatement || isBalanceSheet || isCashFlowStatement || isTrialBalance) return data;
@@ -380,6 +381,15 @@ export function ReportModal<T extends Record<string, any>>({
     const totalLiabilitiesEquity = totalLiabilitiesEquityRow?.amount ?? totalLiabilities + totalEquity;
     const netResultAmount = netResultRow?.amount ?? totalEquity;
     const retainedEarnings = retainedEarningsRow?.amount ?? netResultAmount;
+    const isRetainedRow = (row: { lineItem: string }) =>
+      /(retained earnings|accumulated loss|opening retained|opening accumulated)/i.test(row.lineItem);
+    const isNetIncomeRow = (row: { lineItem: string }) =>
+      /(net income|net loss|net profit)/i.test(row.lineItem);
+    const equityDisplay = equity.filter((row) => !isRetainedRow(row) && !isNetIncomeRow(row));
+    const netIncomeAmount = netResultRow?.amount ?? retainedEarnings;
+    if (Math.abs(netIncomeAmount) > 0.005) {
+      equityDisplay.push({ section: "Equity", lineItem: "Net Income", amount: netIncomeAmount, rowType: "detail" });
+    }
     const balanceDelta = totalAssets - totalLiabilitiesEquity;
 
     return {
@@ -397,6 +407,8 @@ export function ReportModal<T extends Record<string, any>>({
       totalEquity,
       totalLiabilitiesEquity,
       retainedEarnings,
+      netIncomeAmount,
+      equityDisplay,
       balanceDelta,
     };
   }, [isBalanceSheet, data]);
@@ -589,7 +601,25 @@ export function ReportModal<T extends Record<string, any>>({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Report Preview" size="2xl" resizable centerTitle>
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Report Preview"
+      size="2xl"
+      resizable
+      centerTitle
+      isFullscreen={isFullscreen}
+      headerActions={
+        <button
+          type="button"
+          onClick={() => setIsFullscreen((prev) => !prev)}
+          className="inline-flex items-center gap-2 rounded-md border border-white/25 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/15"
+        >
+          {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+          {isFullscreen ? "Exit" : "Full"}
+        </button>
+      }
+    >
       <div className="space-y-4">
         {/* Screen controls (hidden on print) */}
         <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3 rounded-2xl border border-slate-200 bg-white px-6 py-4 text-black shadow-sm print:hidden dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100">
@@ -619,7 +649,7 @@ export function ReportModal<T extends Record<string, any>>({
         <div
           ref={printRef}
           id="report-print-area"
-          className="mx-auto overflow-hidden rounded-2xl border border-zinc-200 bg-white text-black shadow-sm"
+          className={isFullscreen ? "overflow-hidden bg-white text-black" : "mx-auto overflow-hidden rounded-2xl border border-zinc-200 bg-white text-black shadow-sm"}
           style={{ width: "100%", maxWidth: reportSurfaceWidth }}
         >
           <div className="border-b border-zinc-300" style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}>
@@ -634,7 +664,7 @@ export function ReportModal<T extends Record<string, any>>({
                 <div
                   aria-hidden="true"
                   className="h-[2px]"
-                  style={{ background: "#1e40af" }}
+                  style={{ background: "#FFA500" }}
                 />
               </div>
             ) : null}
@@ -642,8 +672,16 @@ export function ReportModal<T extends Record<string, any>>({
             <div className="px-6 pb-5 pt-4">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="flex min-w-[220px] items-center gap-3">
-                  {!companyInfo?.bannerUrl && companyInfo?.logoUrl ? (
-                    <img src={companyInfo.logoUrl} alt="Logo" className="h-10 w-10 object-contain" />
+                  {!companyInfo?.bannerUrl ? (
+                    companyInfo?.logoUrl ? (
+                      <img src={companyInfo.logoUrl} alt="Logo" className="h-10 w-10 object-contain" />
+                    ) : (
+                      <img
+                        src={`https://ui-avatars.com/api/?name=${encodeURIComponent(cleanText(companyInfo?.name) || "Company")}&background=0b1a4d&color=ffffff&bold=true&size=64`}
+                        alt="Company avatar"
+                        className="h-10 w-10 rounded object-cover"
+                      />
+                    )
                   ) : null}
                   <div className="space-y-0.5">
                     <div className="text-[16px] font-semibold leading-tight">{cleanText(companyInfo?.name) || "Business Name"}</div>
@@ -739,7 +777,7 @@ export function ReportModal<T extends Record<string, any>>({
                     </tr>
                   </thead>
                   <tbody>
-                    <tr className="bg-[#f3d1b5] font-semibold text-slate-900">
+                    <tr className="bg-primary-100 font-semibold text-slate-900">
                       <td className="border-b border-slate-200 px-2 py-2">Current Assets</td>
                       <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">{EMPTY_CELL}</td>
                     </tr>
@@ -786,7 +824,7 @@ export function ReportModal<T extends Record<string, any>>({
 
                     {balanceSheetData.nonCurrentAssets.length > 0 && (
                       <>
-                        <tr className="bg-[#f3d1b5] font-semibold text-slate-900">
+                        <tr className="bg-primary-100 font-semibold text-slate-900">
                           <td className="border-b border-slate-200 px-2 py-2">Fixed Assets</td>
                           <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">{EMPTY_CELL}</td>
                         </tr>
@@ -829,7 +867,7 @@ export function ReportModal<T extends Record<string, any>>({
                       <td className="border-t border-slate-900 px-2 py-2 text-right tabular-nums">{formatStatementCurrency(balanceSheetData.totalAssets)}</td>
                     </tr>
 
-                    <tr className="bg-[#f3d1b5] font-semibold text-slate-900">
+                    <tr className="bg-primary-100 font-semibold text-slate-900">
                       <td className="border-b border-slate-200 px-2 py-2">Liabilities &amp; Owner's Equity</td>
                       <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">{EMPTY_CELL}</td>
                     </tr>
@@ -862,7 +900,7 @@ export function ReportModal<T extends Record<string, any>>({
                           const order = ["Long-term Loans", "Bonds Payable", "Lease Liabilities", "Other Non-Current Liabilities"] as const;
                           const groups = order.map((group) => ({
                             group,
-                            rows: balanceSheetData.nonCurrentLiabilities.filter((row) => classify(row.lineItem) === group),
+                            rows: balanceSheetData!.nonCurrentLiabilities.filter((row) => classify(row.lineItem) === group),
                           }));
 
                           let rowIndex = 0;
@@ -888,7 +926,7 @@ export function ReportModal<T extends Record<string, any>>({
                         })()}
                         <tr className="font-semibold text-slate-900">
                           <td className="border-t border-slate-300 px-2 py-2">Total Non-Current Liabilities</td>
-                          <td className="border-t border-slate-300 px-2 py-2 text-right tabular-nums">{formatStatementCurrency(balanceSheetData.nonCurrentLiabilitiesTotal)}</td>
+                          <td className="border-t border-slate-300 px-2 py-2 text-right tabular-nums">{formatStatementCurrency(balanceSheetData!.nonCurrentLiabilitiesTotal)}</td>
                         </tr>
                       </>
                     )}
@@ -898,13 +936,13 @@ export function ReportModal<T extends Record<string, any>>({
                       <td className="border-t border-slate-900 px-2 py-2 text-right tabular-nums">{formatStatementCurrency(balanceSheetData.totalLiabilities)}</td>
                     </tr>
 
-                    <tr className="bg-[#f3d1b5] font-semibold text-slate-900">
+                    <tr className="bg-primary-100 font-semibold text-slate-900">
                       <td className="border-b border-slate-200 px-2 py-2">Equities</td>
                       <td className="border-b border-slate-200 px-2 py-2 text-right tabular-nums">{EMPTY_CELL}</td>
                     </tr>
                     {(() => {
-                      const rows = balanceSheetData.equity.length
-                        ? balanceSheetData.equity
+                      const rows = balanceSheetData.equityDisplay.length
+                        ? balanceSheetData.equityDisplay
                         : [{ lineItem: "Equity", amount: balanceSheetData.totalEquity }];
 
                       return rows.map((row, index) => (

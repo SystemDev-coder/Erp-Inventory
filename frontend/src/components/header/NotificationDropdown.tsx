@@ -189,14 +189,14 @@ export default function NotificationDropdown() {
       <Dropdown
         isOpen={isOpen}
         onClose={closeDropdown}
-        className="absolute -right-[240px] mt-[17px] flex h-[480px] w-[350px] flex-col rounded-2xl border border-[#9bb3d5] bg-[#fbfcff] p-3 shadow-theme-lg dark:border-[#264676] dark:bg-[#10233f] sm:w-[361px] lg:right-0"
+        className="absolute -right-[240px] mt-[17px] flex h-[480px] w-[350px] flex-col rounded-2xl border border-slate-200 bg-white p-3 shadow-theme-lg dark:border-slate-700 dark:bg-slate-900 sm:w-[361px] lg:right-0"
       >
-        <div className="mb-3 flex items-center justify-between border-b border-[#d5e0f0] pb-3 dark:border-[#264676]">
+        <div className="mb-3 flex items-center justify-between border-b border-slate-200 pb-3 dark:border-slate-700">
           <div>
-            <h5 className="text-lg font-semibold text-[#0a1f44] dark:text-[#f4f8ff]">
+            <h5 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
               Notification
             </h5>
-            <p className="text-xs text-[#6f86a8] dark:text-[#9fc3da]">
+            <p className="text-xs text-slate-500 dark:text-slate-300">
               {unreadCount} unread
             </p>
           </div>
@@ -206,14 +206,14 @@ export default function NotificationDropdown() {
                 type="button"
                 onClick={() => void handleMarkAllRead()}
                 disabled={busy}
-                className="text-xs font-medium text-[#163a72] hover:text-[#0f2f62] disabled:opacity-60 dark:text-[#9fc3da]"
+                className="text-xs font-medium text-primary-700 hover:text-primary-800 disabled:opacity-60 dark:text-slate-200"
               >
                 Mark all read
               </button>
             )}
             <button
               onClick={toggleDropdown}
-              className="text-[#5b7890] transition hover:text-[#0a1f44] dark:text-[#9fc3da] dark:hover:text-[#f4f8ff]"
+              className="text-slate-500 transition hover:text-slate-900 dark:text-slate-300 dark:hover:text-slate-100"
             >
               <svg
                 className="fill-current"
@@ -235,11 +235,11 @@ export default function NotificationDropdown() {
 
         <ul className="flex flex-col h-auto overflow-y-auto custom-scrollbar">
           {loading ? (
-            <li className="px-4 py-8 text-center text-sm text-[#6f86a8] dark:text-[#9fc3da]">
+            <li className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-300">
               Loading notifications...
             </li>
           ) : notifications.length === 0 ? (
-            <li className="px-4 py-8 text-center text-sm text-[#6f86a8] dark:text-[#9fc3da]">
+            <li className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-300">
               No notifications yet.
             </li>
           ) : (
@@ -248,16 +248,16 @@ export default function NotificationDropdown() {
                 <button
                   type="button"
                   onClick={() => void handleNotificationClick(notification)}
-                  className={`flex w-full gap-3 rounded-lg border-b border-[#e2e9f5] px-4 py-3 text-left hover:bg-[#f4f7fd] dark:border-[#264676] dark:hover:bg-[#102b59]/40 ${
-                    notification.is_read ? '' : 'bg-[#eaf5fb] dark:bg-[#102b59]/30'
+                  className={`flex w-full gap-3 rounded-lg border-b border-slate-200 px-4 py-3 text-left hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800/60 ${
+                    notification.is_read ? '' : 'bg-slate-50 dark:bg-slate-800/50'
                   }`}
                 >
-                  <span className="relative block h-10 w-10 shrink-0 rounded-full bg-[#dce9f4] dark:bg-[#102b59]">
-                    <span className="flex h-10 w-10 items-center justify-center text-xs font-semibold text-[#0a1f44] dark:text-[#f4f8ff]">
+                  <span className="relative block h-10 w-10 shrink-0 rounded-full bg-slate-100 dark:bg-slate-800/60">
+                    <span className="flex h-10 w-10 items-center justify-center text-xs font-semibold text-slate-900 dark:text-slate-100">
                       {initialsFromText(notification.created_by_name || notification.title)}
                     </span>
                     <span
-                      className={`absolute bottom-0 right-0 z-10 h-2.5 w-2.5 rounded-full border-[1.5px] border-white dark:border-[#10233f] ${categoryDotClass(
+                      className={`absolute bottom-0 right-0 z-10 h-2.5 w-2.5 rounded-full border-[1.5px] border-white dark:border-slate-900 ${categoryDotClass(
                         notification.category,
                         notification.is_read
                       )}`}
@@ -265,17 +265,17 @@ export default function NotificationDropdown() {
                   </span>
 
                   <span className="block">
-                    <span className="mb-1 block text-theme-sm text-[#2b4558] dark:text-[#dde7f7]">
-                      <span className="font-semibold text-[#0a1f44] dark:text-[#f4f8ff]">
+                    <span className="mb-1 block text-theme-sm text-slate-700 dark:text-slate-200">
+                      <span className="font-semibold text-slate-900 dark:text-slate-100">
                         {notification.title}
                       </span>
                     </span>
-                    <span className="mb-1 block text-xs text-[#6f86a8] dark:text-[#9fc3da]">
+                    <span className="mb-1 block text-xs text-slate-500 dark:text-slate-300">
                       {notification.message}
                     </span>
-                    <span className="flex items-center gap-2 text-xs text-[#6f86a8] dark:text-[#9fc3da]">
+                    <span className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-300">
                       <span className="capitalize">{notification.category}</span>
-                      <span className="h-1 w-1 rounded-full bg-[#738fac]"></span>
+                      <span className="h-1 w-1 rounded-full bg-slate-400"></span>
                       <span>{formatTimeAgo(notification.created_at)}</span>
                     </span>
                   </span>
@@ -288,7 +288,7 @@ export default function NotificationDropdown() {
         <Link
           to="/settings"
           onClick={closeDropdown}
-          className="mt-3 block rounded-lg border border-[#9bb3d5] bg-white px-4 py-2 text-center text-sm font-medium text-[#0a1f44] hover:bg-[#f4f7fd] dark:border-[#264676] dark:bg-[#102b59]/30 dark:text-[#f4f8ff] dark:hover:bg-[#102b59]/45"
+          className="mt-3 block rounded-lg border border-slate-200 bg-white px-4 py-2 text-center text-sm font-medium text-slate-800 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-100 dark:hover:bg-slate-800/60"
         >
           View All Notifications
         </Link>
