@@ -28,14 +28,12 @@ services:
   server:
     build:
       context: ./server
-      dockerfile: Dockerfile.nomount
-    command: ["sh", "/app/docker/entrypoint.sh"]
+      dockerfile: Dockerfile
     restart: unless-stopped
     env_file:
       - server/.env.docker
     environment:
-      CHOKIDAR_USEPOLLING: "1"
-      NODE_ENV: development
+      NODE_ENV: production
       # Ensure DB vars exist even if the platform ignores `env_file`.
       PGHOST: ${PGHOST:-db}
       PGPORT: ${PGPORT:-5432}
@@ -50,7 +48,8 @@ services:
         condition: service_healthy
     ports:
       - "5000:5000"
-    # No bind mounts in deploy environments (prevents hiding /app contents)
+    volumes:
+      - server_uploads:/app/uploads
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:5000/api/health || exit 1"]
       interval: 10s
@@ -62,21 +61,15 @@ services:
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile.nomount
-    command: ["npm","run","dev","--","--host","0.0.0.0","--port","5173"]
+      dockerfile: Dockerfile
     restart: unless-stopped
-    env_file:
-      - frontend/.env.docker
-    environment:
-      CHOKIDAR_USEPOLLING: "1"
     depends_on:
       server:
         condition: service_started
     ports:
-      - "5173:5173"
-    # No bind mounts in deploy environments (prevents hiding /app contents)
+      - "80:80"
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:5173 || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:80 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -85,6 +78,7 @@ services:
 
 volumes:
   pgdata:
+  server_uploads:
 
 networks:
   inventory_net:
