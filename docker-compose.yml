@@ -66,8 +66,10 @@ services:
     depends_on:
       server:
         condition: service_started
-    ports:
-      - "${FRONTEND_PORT:-8080}:80"
+    # Coolify proxies traffic to the container port; avoid binding a host port
+    # to prevent "port is already allocated" failures on shared hosts.
+    expose:
+      - "80"
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:80 || exit 1"]
       interval: 10s
