@@ -10,13 +10,15 @@ services:
       # Ensure Postgres always receives a non-empty superuser password.
       # Override via Coolify env: `POSTGRES_PASSWORD=...`
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-erp_inventory}
     ports:
       - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-postgres}"]
       interval: 5s
       timeout: 5s
       retries: 60
@@ -26,8 +28,7 @@ services:
   server:
     build:
       context: ./server
-      dockerfile: Dockerfile.prod
-    command: ["node", "dist/server.js"]
+      dockerfile: Dockerfile
     restart: unless-stopped
     env_file:
       - server/.env.docker
@@ -38,6 +39,8 @@ services:
         condition: service_healthy
     ports:
       - "5000:5000"
+    volumes:
+      - server_uploads:/app/uploads
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:5000/api/health || exit 1"]
       interval: 10s
@@ -49,7 +52,7 @@ services:
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile.prod
+      dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
       server:
@@ -66,6 +69,7 @@ services:
 
 volumes:
   pgdata:
+  server_uploads:
 
 networks:
   inventory_net:

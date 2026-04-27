@@ -10,13 +10,15 @@ services:
       # Coolify/CI deployments might not load `env_file` as expected.
       # Ensure Postgres always receives a non-empty superuser password.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-erp_inventory}
     ports:
       - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-postgres}"]
       interval: 5s
       timeout: 5s
       retries: 60
@@ -26,7 +28,7 @@ services:
   server:
     build:
       context: ./server
-      dockerfile: Dockerfile.dev
+      dockerfile: Dockerfile.nomount
     command: ["sh", "/app/docker/entrypoint.sh"]
     restart: unless-stopped
     env_file:
@@ -39,9 +41,7 @@ services:
         condition: service_healthy
     ports:
       - "5000:5000"
-    volumes:
-      - ./server:/app
-      - /app/node_modules
+    # No bind mounts in deploy environments (prevents hiding /app contents)
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:5000/api/health || exit 1"]
       interval: 10s
@@ -53,7 +53,7 @@ services:
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile.dev
+      dockerfile: Dockerfile.nomount
     command: ["npm","run","dev","--","--host","0.0.0.0","--port","5173"]
     restart: unless-stopped
     env_file:
@@ -65,9 +65,7 @@ services:
         condition: service_started
     ports:
       - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
+    # No bind mounts in deploy environments (prevents hiding /app contents)
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:5173 || exit 1"]
       interval: 10s
