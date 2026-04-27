@@ -6,6 +6,10 @@ services:
     restart: unless-stopped
     env_file:
       - server/.env.docker
+    environment:
+      # Coolify/CI deployments might not load `env_file` as expected.
+      # Ensure Postgres always receives a non-empty superuser password.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123}
     ports:
       - "5433:5432"
     volumes:
