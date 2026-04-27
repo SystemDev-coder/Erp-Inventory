@@ -18,7 +18,7 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-postgres}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d postgres"]
       interval: 5s
       timeout: 5s
       retries: 60
@@ -36,6 +36,15 @@ services:
     environment:
       CHOKIDAR_USEPOLLING: "1"
       NODE_ENV: development
+      # Ensure DB vars exist even if the platform ignores `env_file`.
+      PGHOST: ${PGHOST:-db}
+      PGPORT: ${PGPORT:-5432}
+      PGDATABASE: ${POSTGRES_DB:-erp_inventory}
+      PGSCHEMA: ${PGSCHEMA:-ims}
+      PGUSER: ${PGUSER:-ims_app}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-123}
+      ADMIN_PGUSER: ${ADMIN_PGUSER:-postgres}
+      ADMIN_PGPASSWORD: ${POSTGRES_PASSWORD:-123}
     depends_on:
       db:
         condition: service_healthy

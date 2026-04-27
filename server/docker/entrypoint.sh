@@ -1,15 +1,16 @@
 #!/bin/sh
 set -e
 
+NODE_ENV="${NODE_ENV:-development}"
 DB_HOST="${PGHOST:-db}"
 DB_PORT="${PGPORT:-5432}"
 DB_USER="${PGUSER:-postgres}"
 DB_NAME="${PGDATABASE:-erp_inventory}"
 DB_SCHEMA="${PGSCHEMA:-ims}"
 DB_ADMIN_USER="${ADMIN_PGUSER:-${DB_USER}}"
-DB_ADMIN_PASSWORD="${ADMIN_PGPASSWORD:-${PGPASSWORD}}"
+DB_ADMIN_PASSWORD="${ADMIN_PGPASSWORD:-${PGPASSWORD:-${POSTGRES_PASSWORD:-}}}"
 APP_DB_USER="${DB_USER}"
-APP_DB_PASSWORD="${PGPASSWORD}"
+APP_DB_PASSWORD="${PGPASSWORD:-${POSTGRES_PASSWORD:-}}"
 MIGRATIONS_DIR="${MIGRATIONS_DIR:-/app/sql}"
 BASE_SCHEMA_FILE="${BASE_SCHEMA_FILE:-Full_complete_scheme.sql}"
 DEMO_SEED_FILE="${DEMO_SEED_FILE:-seed_demo_data.sql}"
@@ -18,6 +19,12 @@ AUTO_RESET_ON_SCHEMA_MISMATCH="${AUTO_RESET_ON_SCHEMA_MISMATCH:-false}"
 NODE_MODULES_DIR="/app/node_modules"
 LOCKFILE_PATH="/app/package-lock.json"
 LOCKFILE_HASH_PATH="${NODE_MODULES_DIR}/.package-lock.sha256"
+
+if [ -z "${DB_ADMIN_PASSWORD:-}" ]; then
+  echo "ERROR: Database admin password is empty."
+  echo "Set ADMIN_PGPASSWORD (recommended) or PGPASSWORD / POSTGRES_PASSWORD in the server container environment."
+  exit 1
+fi
 
 lockfile_checksum() {
   file_path="$1"
@@ -31,6 +38,11 @@ lockfile_checksum() {
 }
 
 ensure_node_dependencies() {
+  # In production images we already ship node_modules; avoid runtime installs.
+  if [ "$NODE_ENV" = "production" ]; then
+    return
+  fi
+
   need_install=false
   reason=""
 
@@ -64,14 +76,38 @@ ensure_node_dependencies() {
 
 ensure_node_dependencies
 
+psql_admin_db() {
+  target_db="$1"
+  shift
+  PGPASSWORD="$DB_ADMIN_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_ADMIN_USER" -d "$target_db" "$@"
+}
+
 psql_admin() {
-  PGPASSWORD="$DB_ADMIN_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_ADMIN_USER" -d "$DB_NAME" "$@"
+  psql_admin_db "$DB_NAME" "$@"
 }
 
 echo "Waiting for postgres at ${DB_HOST}:${DB_PORT}..."
 until pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_ADMIN_USER" >/dev/null 2>&1; do
   sleep 1
 done
+
+ensure_database_exists() {
+  echo "Ensuring database '${DB_NAME}' exists..."
+
+  # If auth fails here, it's usually because the Postgres volume was initialized
+  # earlier with a different POSTGRES_PASSWORD. Changing env vars later does not
+  # update the existing DB user's password.
+  if ! psql_admin_db postgres -tAc "SELECT 1" >/dev/null 2>&1; then
+    echo "ERROR: Cannot connect to Postgres as '${DB_ADMIN_USER}'."
+    echo "Fix by setting the correct ADMIN_PGPASSWORD, or delete/reset the Postgres volume to re-initialize."
+    exit 1
+  fi
+
+  db_exists="$(psql_admin_db postgres -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | tr -d '[:space:]' || true)"
+  if [ "$db_exists" != "1" ]; then
+    PGPASSWORD="$DB_ADMIN_PASSWORD" createdb -h "$DB_HOST" -p "$DB_PORT" -U "$DB_ADMIN_USER" "$DB_NAME"
+  fi
+}
 
 ensure_schema_tracking() {
 psql_admin -v ON_ERROR_STOP=1 <<SQL
@@ -137,6 +173,7 @@ reset_schema_if_incompatible() {
   fi
 }
 
+ensure_database_exists
 ensure_schema_tracking
 reset_schema_if_incompatible
 
@@ -713,6 +750,16 @@ if [ "$RUN_DEMO_SEED" = "true" ]; then
   else
     echo "Skipping demo seed: file not found at ${DEMO_SEED_PATH}"
   fi
+fi
+
+if [ "$#" -gt 0 ]; then
+  echo "Starting app: $*"
+  exec "$@"
+fi
+
+if [ "$NODE_ENV" = "production" ]; then
+  echo "Starting production server..."
+  exec node dist/server.js
 fi
 
 echo "Starting dev server..."
