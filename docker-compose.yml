@@ -43,6 +43,9 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD:-123}
       ADMIN_PGUSER: ${ADMIN_PGUSER:-postgres}
       ADMIN_PGPASSWORD: ${POSTGRES_PASSWORD:-123}
+      # JWT secrets (set these in Coolify; defaults are for bootstrapping only).
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-change-me-access-secret-at-least-32-chars}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change-me-refresh-secret-at-least-32-chars}
     depends_on:
       db:
         condition: service_healthy
