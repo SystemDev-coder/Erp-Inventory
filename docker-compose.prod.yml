@@ -52,6 +52,8 @@ services:
         condition: service_healthy
     ports:
       - "5000:5000"
+    expose:
+      - "5000"
     volumes:
       - server_uploads:/app/uploads
     healthcheck:
@@ -72,6 +74,8 @@ services:
         condition: service_started
     ports:
       - "5173:80"
+    expose:
+      - "80"
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:80 || exit 1"]
       interval: 10s
