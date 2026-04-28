@@ -77,7 +77,7 @@ services:
     expose:
       - "80"
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:80 || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost/ >/dev/null || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
