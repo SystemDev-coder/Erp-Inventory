@@ -177,6 +177,19 @@ ensure_database_exists
 ensure_schema_tracking
 reset_schema_if_incompatible
 
+core_schema_ready() {
+  # If these core tables don't exist, the base schema hasn't been applied yet (or was interrupted).
+  # In that case, force a re-apply of the base schema even if schema_migrations has a checksum stored.
+  branches_exists=$(psql_admin -tAc "SELECT to_regclass('${DB_SCHEMA}.branches') IS NOT NULL" | tr -d '[:space:]' || true)
+  accounts_exists=$(psql_admin -tAc "SELECT to_regclass('${DB_SCHEMA}.accounts') IS NOT NULL" | tr -d '[:space:]' || true)
+
+  if [ "$branches_exists" = "t" ] && [ "$accounts_exists" = "t" ]; then
+    return 0
+  fi
+
+  return 1
+}
+
 ensure_app_role() {
   if [ -z "$APP_DB_USER" ] || [ "$APP_DB_USER" = "$DB_ADMIN_USER" ]; then
     return
@@ -457,6 +470,11 @@ SQL
 
 BASE_SCHEMA_PATH="${MIGRATIONS_DIR}/${BASE_SCHEMA_FILE}"
 DEMO_SEED_PATH="${MIGRATIONS_DIR}/${DEMO_SEED_FILE}"
+
+if ! core_schema_ready; then
+  echo "Core schema tables missing; forcing base schema apply (${BASE_SCHEMA_FILE})."
+  psql_admin -v ON_ERROR_STOP=1 -c "DELETE FROM ${DB_SCHEMA}.schema_migrations WHERE filename='${BASE_SCHEMA_FILE}';" || true
+fi
 
 if [ -f "${BASE_SCHEMA_PATH}" ]; then
   apply_base_schema "${BASE_SCHEMA_PATH}"
