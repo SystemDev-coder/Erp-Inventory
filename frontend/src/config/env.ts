@@ -13,8 +13,14 @@ interface Env {
 }
 
 const getEnv = (): Env => {
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-  const env = import.meta.env.VITE_ENV || 'development';
+  const env = import.meta.env.VITE_ENV || import.meta.env.MODE || 'development';
+  const viteApiUrl = import.meta.env.VITE_API_URL;
+
+  const apiUrl =
+    viteApiUrl ||
+    (typeof window !== 'undefined' && (env === 'production' || import.meta.env.PROD)
+      ? window.location.origin
+      : 'http://localhost:5000');
   const companyName = import.meta.env.VITE_COMPANY_NAME || 'KeydMaal MS';
   const companyAvatar = import.meta.env.VITE_COMPANY_AVATAR || '';
 
