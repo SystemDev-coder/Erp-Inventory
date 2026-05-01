@@ -622,24 +622,24 @@ export function ReportModal<T extends Record<string, any>>({
     >
       <div className="space-y-4">
         {/* Screen controls (hidden on print) */}
-        <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3 rounded-2xl border border-slate-200 bg-white px-6 py-4 text-black shadow-sm print:hidden dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100">
+        <div className="flex flex-col gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-black shadow-sm print:hidden dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end sm:gap-3 sm:px-6 sm:py-4">
             {enablePdf && !isIncomeStatement && !isBalanceSheet && (
               <button
                 onClick={handlePrint}
-                className="inline-flex items-center gap-2 rounded-xl border border-black bg-white px-4 py-2 text-sm font-semibold text-black transition dark:border-slate-200 dark:bg-slate-900 dark:text-slate-100"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-black bg-white px-4 py-2 text-sm font-semibold text-black transition dark:border-slate-200 dark:bg-slate-900 dark:text-slate-100 sm:w-auto"
               >
                 <Printer className="h-4 w-4" /> Export PDF
               </button>
             )}
             <button
               onClick={handlePrint}
-              className="inline-flex items-center gap-2 rounded-xl border border-black bg-black px-4 py-2 text-sm font-semibold text-white transition"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-black bg-black px-4 py-2 text-sm font-semibold text-white transition sm:w-auto"
             >
               <Printer className="h-4 w-4" /> Print
             </button>
             <button
               onClick={handleExportExcel}
-              className="inline-flex items-center gap-2 rounded-xl border border-black bg-white px-4 py-2 text-sm font-semibold text-black transition dark:border-slate-200 dark:bg-slate-900 dark:text-slate-100"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-black bg-white px-4 py-2 text-sm font-semibold text-black transition dark:border-slate-200 dark:bg-slate-900 dark:text-slate-100 sm:w-auto"
             >
               <FileSpreadsheet className="h-4 w-4" /> Export Excel
             </button>

@@ -1,0 +1,16 @@
+version: "3.9"
+
+services:
+  # On AWS, keep Postgres private (do not expose to the internet).
+  db:
+    ports: []
+
+  # Frontend Nginx proxies to backend on the compose network,
+  # so the API doesn't need to be exposed publicly.
+  server:
+    ports: []
+
+  # Serve the frontend on standard HTTP port 80.
+  frontend:
+    ports:
+      - "80:80"

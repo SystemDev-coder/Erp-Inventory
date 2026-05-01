@@ -63,7 +63,7 @@ const Support = () => {
     setPendingFiles((prev) => [...prev, ...Array.from(files)]);
   };
 
-  const handleSend = () => {
+  const persistLocalMessage = () => {
     const trimmed = message.trim();
     if (!trimmed && pendingFiles.length === 0) return;
 
@@ -88,7 +88,9 @@ const Support = () => {
   };
 
   const handleSendWhatsApp = () => {
-    const base = `Support Chat\n${composedHeader}\n---\n${message.trim() || '[No message]'}`;
+    const textForWhatsapp = message.trim();
+    persistLocalMessage();
+    const base = `Support Chat\n${composedHeader}\n---\n${textForWhatsapp || '[No message]'}`;
     const url = `https://wa.me/${WHATSAPP_E164}?text=${encodeURIComponent(base)}`;
     window.open(url, '_blank', 'noopener,noreferrer');
   };
@@ -234,7 +236,8 @@ const Support = () => {
                 </div>
               )}
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-2">
+                <div className="flex items-center gap-2">
                 <label className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800/60 cursor-pointer">
                   <Paperclip className="h-4 w-4" />
                   <input
@@ -256,24 +259,24 @@ const Support = () => {
                 >
                   <Mic className="h-4 w-4" />
                 </button>
+                </div>
 
                 <input
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
-                  className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-primary-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendWhatsApp();
+                    }
+                  }}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-primary-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 sm:flex-1"
                   placeholder="Type a message..."
                 />
 
                 <button
-                  onClick={handleSend}
-                  className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary-600 px-4 text-sm font-semibold text-white hover:bg-primary-700"
-                >
-                  <Send className="h-4 w-4" />
-                  Send
-                </button>
-                <button
                   onClick={handleSendWhatsApp}
-                  className="inline-flex h-10 items-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-sm font-semibold text-primary-700 hover:bg-primary-100"
+                  className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-sm font-semibold text-white hover:bg-primary-700 sm:w-auto"
                 >
                   <Send className="h-4 w-4" />
                   Send on WhatsApp
