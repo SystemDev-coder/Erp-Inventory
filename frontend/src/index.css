@@ -39,21 +39,31 @@ layer(base);
   --color-current: currentColor;
   --color-transparent: transparent;
   --color-white: #ffffff;
-  --color-black: #0b0f1f;
+  --color-black: #0b0b0f;
 
-  /* ERP primary palette (brand orange) */
-  --color-primary-25: #fffaf0;
-  --color-primary-50: #fff3e0;
-  --color-primary-100: #ffe4b8;
-  --color-primary-200: #ffd08a;
-  --color-primary-300: #ffb957;
-  --color-primary-400: #ffa733;
-  --color-primary-500: #ffa500; /* #FFA500 */
-  --color-primary-600: #e69500;
-  --color-primary-700: #cc8400;
-  --color-primary-800: #a86800;
-  --color-primary-900: #7a4c00;
-  --color-primary-950: #3d2400;
+  /*
+    Theme colors (3 only):
+    - white
+    - black
+    - brand orange (accent)
+
+    The rest of the palette maps back to these via color-mix() so the existing
+    Tailwind utility usage keeps working without introducing new colors.
+  */
+  --color-primary-500: #ff8a00;
+
+  /* Primary (derived from accent + white/black) */
+  --color-primary-25: color-mix(in srgb, var(--color-primary-500) 4%, var(--color-white));
+  --color-primary-50: color-mix(in srgb, var(--color-primary-500) 8%, var(--color-white));
+  --color-primary-100: color-mix(in srgb, var(--color-primary-500) 16%, var(--color-white));
+  --color-primary-200: color-mix(in srgb, var(--color-primary-500) 28%, var(--color-white));
+  --color-primary-300: color-mix(in srgb, var(--color-primary-500) 44%, var(--color-white));
+  --color-primary-400: color-mix(in srgb, var(--color-primary-500) 68%, var(--color-white));
+  --color-primary-600: color-mix(in srgb, var(--color-primary-500) 88%, var(--color-black));
+  --color-primary-700: color-mix(in srgb, var(--color-primary-500) 74%, var(--color-black));
+  --color-primary-800: color-mix(in srgb, var(--color-primary-500) 58%, var(--color-black));
+  --color-primary-900: color-mix(in srgb, var(--color-primary-500) 42%, var(--color-black));
+  --color-primary-950: color-mix(in srgb, var(--color-primary-500) 28%, var(--color-black));
 
   /* Brand - mirrors primary */
   --color-brand-25: var(--color-primary-25);
@@ -69,75 +79,72 @@ layer(base);
   --color-brand-900: var(--color-primary-900);
   --color-brand-950: var(--color-primary-950);
 
-  /* Secondary - navy slate */
-  --color-slate-25: #f9fbff;
-  --color-slate-50: #eef3fb;
-  --color-slate-100: #dde6f3;
-  --color-slate-200: #c6d4e6;
-  --color-slate-300: #9fb4ce;
-  --color-slate-400: #738fac;
-  --color-slate-500: #55708f;
-  --color-slate-600: #3e5674;
-  --color-slate-700: #2b405d;
-  --color-slate-800: #1a2d4b;
-  --color-slate-900: #0f1f3e;
-  --color-slate-950: #071330;
+  /* Slate (grayscale derived from black/white only) */
+  --color-slate-25: color-mix(in srgb, var(--color-black) 2%, var(--color-white));
+  --color-slate-50: color-mix(in srgb, var(--color-black) 4%, var(--color-white));
+  --color-slate-100: color-mix(in srgb, var(--color-black) 8%, var(--color-white));
+  --color-slate-200: color-mix(in srgb, var(--color-black) 14%, var(--color-white));
+  --color-slate-300: color-mix(in srgb, var(--color-black) 22%, var(--color-white));
+  --color-slate-400: color-mix(in srgb, var(--color-black) 34%, var(--color-white));
+  --color-slate-500: color-mix(in srgb, var(--color-black) 48%, var(--color-white));
+  --color-slate-600: color-mix(in srgb, var(--color-black) 62%, var(--color-white));
+  --color-slate-700: color-mix(in srgb, var(--color-black) 74%, var(--color-white));
+  --color-slate-800: color-mix(in srgb, var(--color-black) 84%, var(--color-white));
+  --color-slate-900: color-mix(in srgb, var(--color-black) 92%, var(--color-white));
+  --color-slate-950: color-mix(in srgb, var(--color-black) 96%, var(--color-white));
 
-  /* Success - Emerald */
-  --color-success-25: #f0fdf4;
-  --color-success-50: #ecfdf5;
-  --color-success-100: #d1fae5;
-  --color-success-200: #a7f3d0;
-  --color-success-300: #6ee7b7;
-  --color-success-400: #34d399;
-  --color-success-500: #10b981;
-  --color-success-600: #059669;
-  --color-success-700: #047857;
-  --color-success-800: #065f46;
-  --color-success-900: #064e3b;
-  --color-success-950: #022c22;
+  /* Status colors: map to accent (keeps UI consistent with 3-color rule) */
+  --color-success-25: var(--color-primary-25);
+  --color-success-50: var(--color-primary-50);
+  --color-success-100: var(--color-primary-100);
+  --color-success-200: var(--color-primary-200);
+  --color-success-300: var(--color-primary-300);
+  --color-success-400: var(--color-primary-400);
+  --color-success-500: var(--color-primary-500);
+  --color-success-600: var(--color-primary-600);
+  --color-success-700: var(--color-primary-700);
+  --color-success-800: var(--color-primary-800);
+  --color-success-900: var(--color-primary-900);
+  --color-success-950: var(--color-primary-950);
 
-  /* Warning - Amber */
-  --color-warning-25: #fffbeb;
-  --color-warning-50: #fef3c7;
-  --color-warning-100: #fde68a;
-  --color-warning-200: #fcd34d;
-  --color-warning-300: #fbbf24;
-  --color-warning-400: #f59e0b;
-  --color-warning-500: #d97706;
-  --color-warning-600: #b45309;
-  --color-warning-700: #92400e;
-  --color-warning-800: #78350f;
-  --color-warning-900: #451a03;
-  --color-warning-950: #1a0a00;
+  --color-warning-25: var(--color-primary-25);
+  --color-warning-50: var(--color-primary-50);
+  --color-warning-100: var(--color-primary-100);
+  --color-warning-200: var(--color-primary-200);
+  --color-warning-300: var(--color-primary-300);
+  --color-warning-400: var(--color-primary-400);
+  --color-warning-500: var(--color-primary-500);
+  --color-warning-600: var(--color-primary-600);
+  --color-warning-700: var(--color-primary-700);
+  --color-warning-800: var(--color-primary-800);
+  --color-warning-900: var(--color-primary-900);
+  --color-warning-950: var(--color-primary-950);
 
-  /* Error - Red */
-  --color-error-25: #fef2f2;
-  --color-error-50: #fee2e2;
-  --color-error-100: #fecaca;
-  --color-error-200: #fca5a5;
-  --color-error-300: #f87171;
-  --color-error-400: #ef4444;
-  --color-error-500: #dc2626;
-  --color-error-600: #b91c1c;
-  --color-error-700: #991b1b;
-  --color-error-800: #7f1d1d;
-  --color-error-900: #450a0a;
-  --color-error-950: #1a0000;
+  --color-error-25: var(--color-primary-25);
+  --color-error-50: var(--color-primary-50);
+  --color-error-100: var(--color-primary-100);
+  --color-error-200: var(--color-primary-200);
+  --color-error-300: var(--color-primary-300);
+  --color-error-400: var(--color-primary-400);
+  --color-error-500: var(--color-primary-500);
+  --color-error-600: var(--color-primary-600);
+  --color-error-700: var(--color-primary-700);
+  --color-error-800: var(--color-primary-800);
+  --color-error-900: var(--color-primary-900);
+  --color-error-950: var(--color-primary-950);
 
-  /* Info - Blue */
-  --color-info-25: #eff6ff;
-  --color-info-50: #dbeafe;
-  --color-info-100: #bfdbfe;
-  --color-info-200: #93c5fd;
-  --color-info-300: #60a5fa;
-  --color-info-400: #3b82f6;
-  --color-info-500: #2563eb;
-  --color-info-600: #1d4ed8;
-  --color-info-700: #1e40af;
-  --color-info-800: #1e3a8a;
-  --color-info-900: #1e293b;
-  --color-info-950: #0a1628;
+  --color-info-25: var(--color-primary-25);
+  --color-info-50: var(--color-primary-50);
+  --color-info-100: var(--color-primary-100);
+  --color-info-200: var(--color-primary-200);
+  --color-info-300: var(--color-primary-300);
+  --color-info-400: var(--color-primary-400);
+  --color-info-500: var(--color-primary-500);
+  --color-info-600: var(--color-primary-600);
+  --color-info-700: var(--color-primary-700);
+  --color-info-800: var(--color-primary-800);
+  --color-info-900: var(--color-primary-900);
+  --color-info-950: var(--color-primary-950);
 
   --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
@@ -156,13 +163,13 @@ layer(base);
 
 /* Light & Dark base surfaces */
 body {
-  background: #f4f7fd;
-  color: #10233f;
+  background: var(--color-white);
+  color: var(--color-black);
 }
 
 .dark body {
-  background: #081b39;
-  color: #f4f8ff;
+  background: var(--color-black);
+  color: var(--color-white);
 }
 
 *::-webkit-scrollbar {
@@ -451,13 +458,13 @@ select option:focus {
 
 @layer components {
   .erp-main-shell {
-    background: linear-gradient(180deg, #f4f7fd 0%, #eef3fb 45%, #e8eef9 100%);
-    color: #10233f;
+    background: var(--color-white);
+    color: var(--color-black);
   }
 
   .dark .erp-main-shell {
-    background: linear-gradient(180deg, #0b2448 0%, #0a2142 45%, #081b39 100%);
-    color: #f4f8ff;
+    background: var(--color-black);
+    color: var(--color-white);
   }
 }
 
