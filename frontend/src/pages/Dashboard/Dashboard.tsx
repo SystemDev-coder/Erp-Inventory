@@ -543,15 +543,15 @@ const Dashboard = () => {
 
   return (
     <div className="space-y-7">
-      <section className="relative overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-r from-white via-slate-50 to-slate-100 p-6 shadow-sm dark:border-slate-700 dark:bg-gradient-to-r dark:from-slate-900 dark:via-slate-900 dark:to-slate-950">
+      <section className="relative overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-r from-white via-slate-50 to-slate-100 p-6 shadow-sm dark:border-slate-800 dark:bg-gradient-to-r dark:from-black dark:via-black dark:to-black">
         <div className="pointer-events-none absolute -right-20 top-[-60px] h-64 w-64 rounded-full bg-primary-500/10 blur-3xl dark:bg-primary-400/20" />
         <div className="pointer-events-none absolute -left-20 -bottom-28 h-64 w-64 rounded-full bg-primary-300/10 blur-3xl dark:bg-primary-300/20" />
 
         <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <p className="text-[11px] uppercase tracking-[0.32em] text-slate-500 dark:text-slate-300">Inventory ERP</p>
+            <p className="text-[11px] uppercase tracking-[0.32em] text-primary-700 dark:text-primary-200">Inventory ERP</p>
             <h1 className="mt-2 text-4xl font-semibold tracking-tight text-slate-900 dark:text-white">Dashboard</h1>
-            <p className="mt-1 text-sm text-slate-600 dark:text-slate-200">
+            <p className="mt-1 text-sm text-slate-700 dark:text-white/80">
               {hasLoaded
                 ? `Live metrics loaded | ${lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : ''}`
                 : 'Click Display Dashboard to load live cards, charts, and activity.'}
@@ -562,7 +562,7 @@ const Dashboard = () => {
             <button
               onClick={() => void loadDashboard()}
               disabled={loading}
-              className="inline-flex items-center gap-2 rounded-xl border border-primary-200 bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-65 dark:border-primary-400/40 dark:bg-primary-200 dark:text-slate-900 dark:hover:bg-primary-100"
+              className="inline-flex items-center gap-2 rounded-xl border border-primary-400 bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-65 dark:border-primary-400 dark:bg-primary-600 dark:text-white dark:hover:bg-primary-700"
             >
               <RefreshCcw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
               {!hasLoaded ? 'Display Dashboard' : loading ? 'Refreshing...' : 'Refresh'}
