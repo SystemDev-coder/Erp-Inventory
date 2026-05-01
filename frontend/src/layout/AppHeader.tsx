@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
-import { Lock, LockOpen, ShoppingCart } from "lucide-react";
+import { Lock, Menu, ShoppingCart, X } from "lucide-react";
 import { useSidebar } from "../context/SidebarContext";
 import { ThemeToggleButton } from "../components/common/ThemeToggleButton";
 import NotificationDropdown from "../components/header/NotificationDropdown";
@@ -39,7 +39,7 @@ const AppHeader: React.FC = () => {
   const [activeIndex, setActiveIndex] = useState(0);
 
   const { isMobileOpen, toggleSidebar, toggleMobileSidebar } = useSidebar();
-  const { permissions } = useAuth();
+  const { permissions, lock } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -132,12 +132,12 @@ const AppHeader: React.FC = () => {
             <button
               className="z-99999 flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition-colors hover:bg-slate-100 hover:text-slate-900 lg:h-11 lg:w-11 dark:border-white/10 dark:bg-black dark:text-white/80 dark:hover:bg-white/10 dark:hover:text-white"
               onClick={handleToggle}
-              aria-label="Toggle Sidebar"
+              aria-label="Toggle Menu"
             >
               {isMobileOpen ? (
-                <LockOpen className="h-5 w-5" aria-hidden="true" />
+                <X className="h-5 w-5" aria-hidden="true" />
               ) : (
-                <Lock className="h-5 w-5" aria-hidden="true" />
+                <Menu className="h-5 w-5" aria-hidden="true" />
               )}
             </button>
 
@@ -152,8 +152,11 @@ const AppHeader: React.FC = () => {
             </Link>
 
             <button
-              onClick={toggleApplicationMenu}
-              aria-label="Open Application Menu"
+              onClick={() => {
+                lock();
+                navigate("/lock");
+              }}
+              aria-label="Lock Screen"
               className="z-99999 flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition-colors hover:bg-slate-100 hover:text-slate-900 lg:hidden dark:border-white/10 dark:bg-black dark:text-white/80 dark:hover:bg-white/10 dark:hover:text-white"
             >
               <Lock className="h-5 w-5" aria-hidden="true" />
