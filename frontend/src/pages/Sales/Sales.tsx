@@ -500,43 +500,43 @@ const Sales = () => {
         size="xl"
       >
         {viewLoading ? (
-          <div className="py-10 text-center text-sm text-slate-500">Loading document details...</div>
+          <div className="py-10 text-center text-sm text-slate-500 dark:text-slate-400">Loading document details...</div>
         ) : !viewSale ? (
-          <div className="py-10 text-center text-sm text-slate-500">No details to display.</div>
+          <div className="py-10 text-center text-sm text-slate-500 dark:text-slate-400">No details to display.</div>
         ) : (
           <div className="space-y-4 text-sm">
-            <div className="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/40 sm:grid-cols-2 lg:grid-cols-4">
               <div>
-                <p className="text-xs text-slate-500">Document #</p>
-                <p className="font-semibold text-slate-900">{getDocRef(viewSale)}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Document #</p>
+                <p className="font-semibold text-slate-900 dark:text-slate-100">{getDocRef(viewSale)}</p>
               </div>
               <div>
-                <p className="text-xs text-slate-500">Type</p>
-                <p className="font-semibold text-slate-900 capitalize">{viewSale.doc_type || 'sale'}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Type</p>
+                <p className="font-semibold text-slate-900 dark:text-slate-100 capitalize">{viewSale.doc_type || 'sale'}</p>
               </div>
               <div>
-                <p className="text-xs text-slate-500">Date & Time</p>
-                <p className="font-semibold text-slate-900">{new Date(viewSale.sale_date).toLocaleString()}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Date & Time</p>
+                <p className="font-semibold text-slate-900 dark:text-slate-100">{new Date(viewSale.sale_date).toLocaleString()}</p>
               </div>
               <div>
-                <p className="text-xs text-slate-500">Customer</p>
-                <p className="font-semibold text-slate-900">{viewSale.customer_name || 'Walking Customer'}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Customer</p>
+                <p className="font-semibold text-slate-900 dark:text-slate-100">{viewSale.customer_name || 'Walking Customer'}</p>
               </div>
               <div>
-                <p className="text-xs text-slate-500">Status</p>
-                <p className="font-semibold text-slate-900 capitalize">{viewSale.status}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Status</p>
+                <p className="font-semibold text-slate-900 dark:text-slate-100 capitalize">{viewSale.status}</p>
               </div>
               <div>
-                <p className="text-xs text-slate-500">Payment Type</p>
-                <p className="font-semibold text-slate-900 capitalize">{viewSale.sale_type || 'cash'}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Payment Type</p>
+                <p className="font-semibold text-slate-900 dark:text-slate-100 capitalize">{viewSale.sale_type || 'cash'}</p>
               </div>
               <div>
-                <p className="text-xs text-slate-500">Paid Amount</p>
-                <p className="font-semibold text-slate-900">{formatMoney(Number(viewSale.paid_amount || 0))}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Paid Amount</p>
+                <p className="font-semibold text-slate-900 dark:text-slate-100">{formatMoney(Number(viewSale.paid_amount || 0))}</p>
               </div>
               <div>
-                <p className="text-xs text-slate-500">Balance</p>
-                <p className="font-semibold text-slate-900">
+                <p className="text-xs text-slate-500 dark:text-slate-400">Balance</p>
+                <p className="font-semibold text-slate-900 dark:text-slate-100">
                   {formatMoney(
                     Number((viewSale as any).outstanding_amount ?? Math.max(Number(viewSale.total || 0) - Number(viewSale.paid_amount || 0), 0))
                   )}
@@ -544,9 +544,9 @@ const Sales = () => {
               </div>
             </div>
 
-            <div className="overflow-x-auto rounded-lg border border-slate-200">
+            <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
               <table className="min-w-full text-sm">
-                <thead className="bg-slate-100 text-left text-slate-600">
+                <thead className="bg-slate-100 text-left text-slate-600 dark:bg-slate-800 dark:text-slate-200">
                   <tr>
                     <th className="px-3 py-2">Item</th>
                     <th className="px-3 py-2 text-right">Qty</th>
@@ -557,17 +557,17 @@ const Sales = () => {
                 <tbody>
                   {viewItems.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
+                      <td colSpan={4} className="px-3 py-6 text-center text-slate-500 dark:text-slate-400">
                         No items found.
                       </td>
                     </tr>
                   ) : (
                     viewItems.map((item, index) => (
-                      <tr key={`${item.sale_item_id || item.item_id || index}`} className="border-t border-slate-200">
-                        <td className="px-3 py-2 text-slate-900">{item.item_name || `Item #${item.item_id}`}</td>
-                        <td className="px-3 py-2 text-right text-slate-900">{Number(item.quantity || 0)}</td>
-                        <td className="px-3 py-2 text-right text-slate-900">{formatMoney(Number(item.unit_price || 0))}</td>
-                        <td className="px-3 py-2 text-right font-medium text-slate-900">
+                      <tr key={`${item.sale_item_id || item.item_id || index}`} className="border-t border-slate-200 dark:border-slate-700">
+                        <td className="px-3 py-2 text-slate-900 dark:text-slate-100">{item.item_name || `Item #${item.item_id}`}</td>
+                        <td className="px-3 py-2 text-right text-slate-900 dark:text-slate-100">{Number(item.quantity || 0)}</td>
+                        <td className="px-3 py-2 text-right text-slate-900 dark:text-slate-100">{formatMoney(Number(item.unit_price || 0))}</td>
+                        <td className="px-3 py-2 text-right font-medium text-slate-900 dark:text-slate-100">
                           {formatMoney(Number(item.line_total ?? Number(item.quantity || 0) * Number(item.unit_price || 0)))}
                         </td>
                       </tr>
@@ -579,20 +579,20 @@ const Sales = () => {
 
             <div className="ml-auto grid w-full max-w-xs gap-2 text-sm">
               <div className="flex items-center justify-between">
-                <span className="text-slate-600">Subtotal</span>
-                <span className="font-semibold text-slate-900">{formatMoney(Number(viewSale.subtotal || 0))}</span>
+                <span className="text-slate-600 dark:text-slate-300">Subtotal</span>
+                <span className="font-semibold text-slate-900 dark:text-slate-100">{formatMoney(Number(viewSale.subtotal || 0))}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-slate-600">Discount</span>
-                <span className="font-semibold text-slate-900">{formatMoney(Number(viewSale.discount || 0))}</span>
+                <span className="text-slate-600 dark:text-slate-300">Discount</span>
+                <span className="font-semibold text-slate-900 dark:text-slate-100">{formatMoney(Number(viewSale.discount || 0))}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-slate-600">Tax</span>
-                <span className="font-semibold text-slate-900">{formatMoney(Number(viewSale.tax_amount || 0))}</span>
+                <span className="text-slate-600 dark:text-slate-300">Tax</span>
+                <span className="font-semibold text-slate-900 dark:text-slate-100">{formatMoney(Number(viewSale.tax_amount || 0))}</span>
               </div>
-              <div className="flex items-center justify-between border-t border-slate-300 pt-2">
-                <span className="text-slate-700">Total</span>
-                <span className="font-bold text-slate-900">{formatMoney(Number(viewSale.total || 0))}</span>
+              <div className="flex items-center justify-between border-t border-slate-300 pt-2 dark:border-slate-700">
+                <span className="text-slate-700 dark:text-slate-200">Total</span>
+                <span className="font-bold text-slate-900 dark:text-slate-50">{formatMoney(Number(viewSale.total || 0))}</span>
               </div>
             </div>
           </div>

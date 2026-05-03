@@ -61,40 +61,28 @@ const formatQty = (value: unknown) => {
 
 let cachedTemplatesDir: string | null = null;
 
-const resolveTemplatesDir = async () => {
-  if (cachedTemplatesDir) return cachedTemplatesDir;
-
-  const candidates = [
+const templateCandidates = () =>
+  ([
     process.env.PRINT_TEMPLATES_DIR,
     path.join(process.cwd(), 'templates'),
     // When the server runs with cwd = /app/server
     path.join(process.cwd(), '..', 'templates'),
     // Works for built output: dist/modules/sales -> repoRoot/templates
     path.resolve(__dirname, '..', '..', '..', '..', 'templates'),
-  ].filter(Boolean) as string[];
+  ].filter(Boolean) as string[]);
 
-  for (const dir of candidates) {
+const readTemplate = async (fileName: string) => {
+  const tryDirs = cachedTemplatesDir ? [cachedTemplatesDir, ...templateCandidates()] : templateCandidates();
+  for (const dir of tryDirs) {
     try {
-      await fs.access(path.join(dir, 'quotation-print.html'));
+      const content = await fs.readFile(path.join(dir, fileName), 'utf8');
       cachedTemplatesDir = dir;
-      return dir;
+      return content;
     } catch {
       // try next candidate
     }
   }
-
-  // Final fallback: will still throw a clean error when reading.
-  cachedTemplatesDir = path.join(process.cwd(), 'templates');
-  return cachedTemplatesDir;
-};
-
-const readTemplate = async (fileName: string) => {
-  const dir = await resolveTemplatesDir();
-  try {
-    return await fs.readFile(path.join(dir, fileName), 'utf8');
-  } catch {
-    throw ApiError.internal(`Print template missing: ${fileName}`);
-  }
+  throw ApiError.internal(`Print template missing: ${fileName}`);
 };
 
 export const salesPrintService = {
