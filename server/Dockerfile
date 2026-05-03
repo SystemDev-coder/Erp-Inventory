@@ -13,6 +13,7 @@ COPY --from=build /app/package*.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/sql ./sql
+COPY --from=build /app/templates ./templates
 COPY --from=build /app/docker/entrypoint.sh ./docker/entrypoint.sh
 RUN chmod +x ./docker/entrypoint.sh
 EXPOSE 5000

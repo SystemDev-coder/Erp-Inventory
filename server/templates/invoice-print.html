@@ -6,312 +6,387 @@
     <title>Invoice {{docNo}}</title>
     <style>
       :root{
-        --navy:#1f3a8a;
-        --navy-2:#0f2b66;
-        --accent:#f59e0b;
-        --bg:#f3f4f6;
+        --bg:#f1f5f9;
         --paper:#ffffff;
         --ink:#0f172a;
-        --muted:#64748b;
-        --line:#dbe5ff;
-        --soft:#eef2ff;
-        --ok:#16a34a;
-        --warn:#b45309;
-        --bad:#b91c1c;
+        --muted:#475569;
+        --line:#e2e8f0;
+        --soft:#f8fafc;
+        --accent:#1d4ed8;
+        --accent2:#0ea5e9;
+        --paid:#16a34a;
+        --partial:#f59e0b;
+        --unpaid:#ef4444;
       }
-      *{ box-sizing:border-box; }
+
+      *{box-sizing:border-box}
+      html,body{height:100%}
       body{
         margin:0;
-        background:#ffffff;
+        background:var(--bg);
         color:var(--ink);
-        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, "Noto Sans", "Liberation Sans", sans-serif;
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
+        font: 12px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
       }
-      @page{ margin: 12mm; }
-      .sheet{ width:100%; }
-      .banner{ width:100%; height:110px; object-fit:cover; object-position:center; display:block; }
 
-      .top{
+      .page{
+        width: 210mm;
+        min-height: 297mm;
+        margin: 18px auto;
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        overflow: hidden;
+        box-shadow: 0 14px 35px rgba(15, 23, 42, .12);
         display:flex;
-        align-items:flex-start;
-        justify-content:space-between;
-        gap:16px;
-        padding:14px 16px 10px;
-        background: var(--bg);
+        flex-direction: column;
       }
-      .brand{
+
+      .banner{
+        display:block;
+        width:100%;
+        height: 92px;
+        object-fit: cover;
+      }
+
+      .top-accent{
+        height:4px;
+        background: linear-gradient(90deg, var(--accent), var(--accent2));
+      }
+
+      .content{
+        padding: 22px 24px 18px;
+        flex: 1 1 auto;
         display:flex;
-        align-items:center;
-        gap:12px;
+        flex-direction: column;
+      }
+
+      .header{
+        display:flex;
+        gap: 16px;
+        justify-content: space-between;
+        align-items:flex-start;
+      }
+
+      .company{
+        display:flex;
+        gap: 12px;
+        align-items:flex-start;
         min-width: 260px;
       }
+
       .logo{
-        width:58px;
-        height:58px;
-        object-fit:contain;
-        border-radius:12px;
+        width: 44px;
+        height: 44px;
+        object-fit: contain;
+        border-radius: 10px;
+        border: 1px solid var(--line);
         background: var(--paper);
-        border: 1px solid rgba(15, 23, 42, 0.08);
-        padding:6px;
-      }
-      .brand-name{
-        font-weight:900;
-        font-size:22px;
-        line-height:1.05;
-        letter-spacing:0.18em;
-        text-transform:uppercase;
-        color: var(--navy);
-      }
-      .brand-meta{
-        font-size:10.5px;
-        color:var(--muted);
-        margin-top:3px;
       }
 
-      .doc-card{
-        border:1px solid rgba(31, 58, 138, 0.18);
-        border-radius:14px;
-        padding:12px 12px;
-        min-width:220px;
-        background: #e8eeff;
+      .company h1{
+        margin:0;
+        font-size: 14px;
+        letter-spacing: .16em;
+        text-transform: uppercase;
+        color: var(--accent);
       }
-      .doc-type{
+      .company .meta{
+        margin-top: 6px;
+        color: var(--muted);
+      }
+      .company .meta div{margin:2px 0}
+
+      .doc{
+        width: 280px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 14px 14px 12px;
+        background: linear-gradient(180deg, #eff6ff, #ffffff 60%);
+      }
+
+      .doc-top{
+        display:flex;
+        align-items:center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 8px;
+      }
+      .pill{
         display:inline-flex;
         align-items:center;
-        gap:8px;
-        padding:4px 10px;
-        border-radius:999px;
-        border:1px solid rgba(31, 58, 138, 0.22);
-        background: rgba(255,255,255,0.65);
-        color:var(--navy);
-        font-size:9px;
-        font-weight:800;
-        letter-spacing:0.18em;
-        text-transform:uppercase;
+        gap: 8px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(29, 78, 216, .18);
+        background: rgba(29, 78, 216, .08);
+        color: var(--accent);
+        font-weight: 700;
+        letter-spacing: .14em;
+        text-transform: uppercase;
+        font-size: 10px;
       }
+
       .doc-no{
-        font-size:20px;
-        font-weight:900;
-        color:var(--navy);
-        margin-top:10px;
+        font-size: 20px;
+        font-weight: 800;
+        letter-spacing: .02em;
+        margin: 2px 0 6px;
       }
+
       .doc-grid{
-        margin-top:10px;
         display:grid;
         grid-template-columns: 1fr 1fr;
-        gap:6px;
-        font-size:10.5px;
-        color:var(--muted);
+        gap: 6px 10px;
+        color: var(--muted);
+        font-size: 11px;
       }
-      .doc-grid b{ color:var(--ink); }
+      .doc-grid b{color: var(--ink)}
+
       .status{
         display:inline-flex;
         align-items:center;
-        padding:4px 10px;
-        border-radius:999px;
-        border:1px solid rgba(15, 23, 42, 0.12);
-        background:#ffffff;
-        font-size:9px;
-        letter-spacing:0.12em;
-        text-transform:uppercase;
-        font-weight:900;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: .12em;
+        border: 1px solid transparent;
       }
-      .status.paid{ color:var(--ok); border-color: rgba(22,163,74,0.25); background: rgba(22,163,74,0.08); }
-      .status.partial{ color:var(--warn); border-color: rgba(180,83,9,0.25); background: rgba(180,83,9,0.08); }
-      .status.unpaid{ color:var(--bad); border-color: rgba(185,28,28,0.25); background: rgba(185,28,28,0.08); }
-      .rule{
-        height:3px;
-        background: linear-gradient(90deg, var(--navy), var(--accent));
-      }
+      .status.paid{background: rgba(22,163,74,.12); color: var(--paid); border-color: rgba(22,163,74,.25)}
+      .status.partial{background: rgba(245,158,11,.12); color: var(--partial); border-color: rgba(245,158,11,.25)}
+      .status.unpaid{background: rgba(239,68,68,.10); color: var(--unpaid); border-color: rgba(239,68,68,.22)}
 
-      .row{
+      .cards{
+        margin-top: 18px;
         display:grid;
         grid-template-columns: 1fr 1fr;
-        gap:12px;
-        padding:12px 16px 0;
+        gap: 12px;
       }
       .card{
-        border:none;
-        border-radius:14px;
-        padding:10px 12px;
-        background:transparent;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 14px;
+        background: var(--paper);
       }
-      .card h4{
-        margin:0 0 6px;
-        font-size:9px;
-        font-weight:800;
-        letter-spacing:0.2em;
-        text-transform:uppercase;
-        color:var(--muted);
+      .card h3{
+        margin:0 0 8px;
+        font-size: 10px;
+        letter-spacing: .14em;
+        text-transform: uppercase;
+        color: var(--muted);
       }
-      .card p{ margin:2px 0; font-size:10.5px; color:var(--muted); }
-      .card .name{ font-weight:700; color:var(--ink); }
+      .card .name{font-weight: 800; margin-bottom: 4px}
+      .card .small{color: var(--muted); font-size: 11px}
+      .card .small div{margin:2px 0}
+
+      .table-wrap{
+        margin-top: 16px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        overflow:hidden;
+      }
 
       table{
         width:100%;
-        border-collapse:collapse;
-        margin-top:12px;
+        border-collapse: collapse;
+        font-size: 11px;
       }
       thead th{
-        background:var(--navy);
-        border-bottom:1px solid rgba(31, 58, 138, 0.35);
-        padding:9px 10px;
-        font-size:9px;
-        letter-spacing:0.14em;
-        text-transform:uppercase;
-        color:#ffffff;
         text-align:left;
+        padding: 10px 12px;
+        background: var(--accent);
+        color: #fff;
+        font-size: 10px;
+        letter-spacing: .14em;
+        text-transform: uppercase;
       }
-      thead th.num, tbody td.num{ text-align:right; }
       tbody td{
-        border-bottom:1px solid rgba(31, 58, 138, 0.12);
-        padding:9px 10px;
-        font-size:10.5px;
-        color:var(--ink);
+        padding: 10px 12px;
+        border-top: 1px solid var(--line);
+        vertical-align: top;
       }
-      tbody tr:nth-child(even){ background:#f7f9ff; }
+      tbody tr:nth-child(even) td{background: var(--soft)}
+      .num{text-align:right; white-space: nowrap}
 
       .bottom{
+        margin-top: 16px;
         display:grid;
-        grid-template-columns: 1.2fr 0.8fr;
-        gap:12px;
-        padding:12px 16px 16px;
-        align-items:stretch;
+        grid-template-columns: 1.25fr .75fr;
+        gap: 12px;
+        align-items: stretch;
+        padding-top: 12px;
+        border-top: 1px solid var(--line);
       }
-      .totals{
-        border:none;
-        border-radius:14px;
-        background:transparent;
-        padding:10px 12px;
-      }
-      .tot-row{
-        display:flex;
-        justify-content:space-between;
-        gap:10px;
-        padding:6px 0;
-        font-size:10.5px;
-        color:var(--muted);
-      }
-      .tot-row strong{ color:var(--ink); }
-      .tot-final{
-        border-top:1px solid rgba(31, 58, 138, 0.22);
-        margin-top:8px;
-        padding-top:8px;
-        font-weight:900;
-        color:var(--ink);
-      }
-      .tot-final strong{ color:var(--navy); }
 
-      .sig{
-        border:none;
-        background:transparent;
-        padding:0;
-        min-height: 130px;
-        display:flex;
-        flex-direction:column;
-        justify-content:flex-end;
-        gap:10px;
+      .signatures{
+        padding: 0;
+        border: none;
+        background: transparent;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
       }
       .sig-row{
         display:flex;
         align-items:center;
-        justify-content:space-between;
-        gap:10px;
-        font-size:10px;
+        gap: 10px;
+        padding-top: 18px;
+      }
+      .sig-row .sig-label{
         color: var(--muted);
+        font-size: 10px;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+        white-space: nowrap;
       }
-      .sig-line{
-        flex: 1;
-        border-bottom: 1px solid rgba(31, 58, 138, 0.35);
-        height: 0;
+      .sig-row .sig-line{
+        flex: 1 1 auto;
+        border-top: 1px solid #94a3b8;
+        height: 1px;
       }
-      .footer{
-        padding:0 16px 12px;
-        font-size:9px;
-        color:#94a3b8;
+
+      .totals{
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: transparent;
+        padding: 12px;
+      }
+      .tot-row{
         display:flex;
-        justify-content:space-between;
-        border-top:1px solid rgba(31, 58, 138, 0.22);
-        padding-top:8px;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 6px 0;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .tot-row strong{color: var(--ink)}
+      .tot-row.total{
+        margin-top: 6px;
+        padding-top: 10px;
+        border-top: 1px solid var(--line);
+        font-size: 12px;
+        font-weight: 900;
+        color: var(--ink);
+      }
+
+      .footer{
+        display:flex;
+        justify-content: space-between;
+        align-items:center;
+        gap: 10px;
+        margin-top: auto;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      @media print{
+        body{background:#fff}
+        .page{
+          margin:0;
+          border:none;
+          border-radius: 0;
+          box-shadow:none;
+          width:auto;
+          min-height:auto;
+        }
+        .top-accent{height:3px}
+        a{color:inherit;text-decoration:none}
+        thead{display: table-header-group}
+        tfoot{display: table-footer-group}
       }
     </style>
   </head>
   <body>
-    <div class="sheet">
+    <div class="page">
       {{{bannerBlock}}}
+      <div class="top-accent"></div>
 
-      <div class="top">
-        <div class="brand">
-          {{{logoBlock}}}
-          <div>
-            <div class="brand-name">{{companyName}}</div>
-            <div class="brand-meta">{{companyPhone}}</div>
+      <div class="content">
+        <div class="header">
+          <div class="company">
+            {{{logoBlock}}}
+            <div>
+              <h1>{{companyName}}</h1>
+              <div class="meta">
+                <div>{{companyPhone}}</div>
+                <div>{{companyManager}}</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="doc">
+            <div class="doc-top">
+              <span class="pill">Invoice</span>
+              {{{statusBadge}}}
+            </div>
+            <div class="doc-no">{{docNo}}</div>
+            <div class="doc-grid">
+              <div>Date</div><div><b>{{docDate}}</b></div>
+              <div>Due</div><div><b>{{dueDate}}</b></div>
+            </div>
           </div>
         </div>
 
-        <div class="doc-card">
-          <div class="doc-type">INVOICE</div>
-          <div class="doc-no">{{docNo}}</div>
-          <div class="doc-grid">
-            <div>Date</div><div><b>{{docDate}}</b></div>
-            <div>Due</div><div><b>{{dueDate}}</b></div>
-<div>Status</div><div>{{{statusBadge}}}</div>
+        <div class="cards">
+          <div class="card">
+            <h3>Bill To</h3>
+            <div class="name">{{customerName}}</div>
+            <div class="small">
+              <div>{{customerAddress}}</div>
+              <div>{{customerPhone}}</div>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Company</h3>
+            <div class="name">{{companyName}}</div>
+            <div class="small">
+              <div>{{companyManager}}</div>
+              <div>{{companyPhone}}</div>
+            </div>
           </div>
         </div>
-      </div>
-      <div class="rule"></div>
 
-      <div class="row">
-        <div class="card">
-          <h4>Bill To</h4>
-          <p class="name">{{customerName}}</p>
-          <p>{{customerAddress}}</p>
-          <p>{{customerPhone}}</p>
-        </div>
-        <div class="card">
-          <h4>Company</h4>
-          <p class="name">{{companyName}}</p>
-          <p>{{companyManager}}</p>
-          <p>{{companyPhone}}</p>
-        </div>
-      </div>
-
-      <div style="padding:0 16px;">
-        <table>
-          <thead>
-            <tr>
-              <th>Item</th>
-              <th class="num" style="width:90px;">QTY</th>
-              <th class="num" style="width:110px;">Price</th>
-              <th class="num" style="width:130px;">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {{{itemsRows}}}
-          </tbody>
-        </table>
-      </div>
-
-      <div class="bottom">
-        <div class="sig">
-          <div class="sig-row"><span>Authorized Sign:</span><span class="sig-line"></span></div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:55%">Item</th>
+                <th class="num" style="width:15%">Qty</th>
+                <th class="num" style="width:15%">Price</th>
+                <th class="num" style="width:15%">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{{itemsRows}}}
+            </tbody>
+          </table>
         </div>
 
-        <div class="totals">
-          <div class="tot-row"><span>Subtotal</span><strong>{{subtotal}}</strong></div>
-          <div class="tot-row"><span>Discount</span><strong>{{discount}}</strong></div>
-          <div class="tot-row"><span>Tax</span><strong>{{tax}}</strong></div>
-          {{{paidBlock}}}
-          {{{balanceBlock}}}
-          <div class="tot-row tot-final"><span>Total</span><strong>{{total}}</strong></div>
-        </div>
-      </div>
+        <div class="bottom">
+          <div class="signatures">
+            <div class="sig-row">
+              <div class="sig-label">Authorized Sign:</div>
+              <div class="sig-line"></div>
+            </div>
+          </div>
 
-      <div class="footer">
-        <div>{{companyName}}</div>
-        <div>Printed: {{printDate}}</div>
+          <div class="totals">
+            <div class="tot-row"><span>Subtotal</span><strong>{{subtotal}}</strong></div>
+            <div class="tot-row"><span>Discount</span><strong>{{discount}}</strong></div>
+            <div class="tot-row"><span>Tax</span><strong>{{tax}}</strong></div>
+            {{{paidBlock}}}
+            {{{balanceBlock}}}
+            <div class="tot-row total"><span>Total</span><strong>{{total}}</strong></div>
+          </div>
+        </div>
+
+        <div class="footer">
+          <div>{{companyName}}</div>
+          <div>Printed: {{printDate}}</div>
+        </div>
       </div>
     </div>
   </body>
-</html>
+  </html>
