@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckSquare, Save, Search, XSquare } from 'lucide-react';
 import { useToast } from '../../components/ui/toast/Toast';
 import { systemService, type RolePermission, type SystemPermission, type SystemRole } from '../../services/system.service';
@@ -9,6 +9,8 @@ type Props = {
   canUpdateRolePermissions: boolean;
   loadRoles: () => Promise<SystemRole[]>;
   loadPermissions: () => Promise<SystemPermission[]>;
+  initialRoleId?: number | null;
+  onRoleSelected?: (roleId: number | null) => void;
 };
 
 // NEW: Role privileges editor (loads data only when user selects a role)
@@ -18,6 +20,8 @@ export const RolePrivilegesTab = ({
   canUpdateRolePermissions,
   loadRoles,
   loadPermissions,
+  initialRoleId,
+  onRoleSelected,
 }: Props) => {
   const { showToast } = useToast();
   const [roleId, setRoleId] = useState<number | null>(null);
@@ -46,6 +50,14 @@ export const RolePrivilegesTab = ({
     },
     [loadPermissions, loadRoles, permissions.length, roles.length, showToast]
   );
+
+  // NEW: Allow parent to preselect a role (e.g. after creating a role or clicking a row action)
+  useEffect(() => {
+    if (!initialRoleId) return;
+    if (roleId === initialRoleId) return;
+    setRoleId(initialRoleId);
+    void loadRolePermissions(initialRoleId);
+  }, [initialRoleId, loadRolePermissions, roleId]);
 
   // NEW: Toggle permission in local state
   const togglePermission = (permId: number) => {
@@ -115,6 +127,7 @@ export const RolePrivilegesTab = ({
               onChange={async (e) => {
                 const next = Number(e.target.value || 0) || null;
                 setRoleId(next);
+                onRoleSelected?.(next);
                 if (next) await loadRolePermissions(next);
               }}
             >
@@ -219,4 +232,3 @@ export const RolePrivilegesTab = ({
     </div>
   );
 };
-

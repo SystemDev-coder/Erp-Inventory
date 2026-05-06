@@ -29,6 +29,9 @@ type ConfirmTarget =
 const System = () => {
   const { showToast } = useToast();
   const { permissions: currentPermissions } = useAuth();
+  const [activeTabId, setActiveTabId] = useState('users');
+  const [tabsKey, setTabsKey] = useState(0);
+  const [privilegesPrefillRoleId, setPrivilegesPrefillRoleId] = useState<number | null>(null);
   const [users, setUsers] = useState<SystemUser[]>([]);
   const [roles, setRoles] = useState<SystemRole[]>([]);
   const [permissions, setPermissions] = useState<SystemPermission[]>([]);
@@ -95,6 +98,12 @@ const System = () => {
 
   const canViewPrivileges = canViewRoles && hasAnyPerm(['system.permissions.manage', 'permissions.view']);
   const canUpdateRolePermissions = hasAnyPerm(['system.roles.manage', 'roles.update']);
+
+  // NEW: Programmatic tab switch helper (Tabs is uncontrolled)
+  const goToTab = (tabId: string) => {
+    setActiveTabId(tabId);
+    setTabsKey((k) => k + 1);
+  };
 
   const loadUsers = async () => {
     const res = await systemService.getUsers();
@@ -284,7 +293,20 @@ const System = () => {
     if (!res.success) return showToast('error', 'Roles', res.error || 'Save failed');
     setRoleModalOpen(false);
     showToast('success', 'Roles', editingRole ? 'Role updated' : 'Role created');
-    await loadRoles();
+    const nextRoles = await loadRoles();
+
+    // NEW: After creating a role, jump to Privileges so admin can assign permissions immediately
+    if (!editingRole && canViewPrivileges) {
+      const createdRoleId = (res as any).data?.role?.role_id as number | undefined;
+      if (createdRoleId) {
+        setPrivilegesPrefillRoleId(createdRoleId);
+      } else {
+        // fallback: try to find by name/code
+        const found = nextRoles.find((r) => (r.role_name || '').toLowerCase() === roleName.toLowerCase());
+        setPrivilegesPrefillRoleId(found?.role_id ?? null);
+      }
+      goToTab('privileges');
+    }
   };
 
   const requestDeleteRole = (role: SystemRole) => setConfirmTarget({ type: 'role', payload: role });
@@ -523,16 +545,29 @@ const System = () => {
                     <th>Code</th>
                     <th>Name</th>
                     <th>Description</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {roles.map((r) => (
-                    <tr key={r.role_id} className="border-t border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200">
+	                    <th>Actions</th>
+	                  </tr>
+	                </thead>
+	                <tbody>
+	                  {roles.map((r) => (
+	                    <tr key={r.role_id} className="border-t border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200">
 	                      <td className="font-mono text-xs">{r.role_code}</td>
 	                      <td>{r.role_name}</td>
 	                      <td>{r.description || '-'}</td>
 	                      <td className="space-x-2 py-2">
+	                        {/* NEW: Jump to privileges editor for this role */}
+	                        {canViewPrivileges && (
+	                          <button
+	                            onClick={() => {
+	                              setPrivilegesPrefillRoleId(r.role_id);
+	                              goToTab('privileges');
+	                            }}
+	                            className="px-2 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+	                            title="Edit privileges"
+	                          >
+	                            <CheckSquare className="w-3 h-3 inline" />
+	                          </button>
+	                        )}
 	                        {/* UPDATED: Only show actions user is allowed to perform */}
 	                        {canUpdateRoles && (
 	                          <button onClick={() => openEditRole(r)} className="px-2 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"><Pencil className="w-3 h-3 inline" /></button>
@@ -576,6 +611,8 @@ const System = () => {
 	                  canUpdateRolePermissions={canUpdateRolePermissions}
 	                  loadRoles={loadRoles}
 	                  loadPermissions={loadPermissions}
+	                  initialRoleId={privilegesPrefillRoleId}
+	                  onRoleSelected={(id) => setPrivilegesPrefillRoleId(id)}
 	                />
 	              </Suspense>
 	            ),
@@ -618,7 +655,8 @@ const System = () => {
   return (
     <div>
       <PageHeader title="System & Security" description="CRUD for users, roles, and logs." />
-      <Tabs tabs={tabs} defaultTab="users" />
+      {/* UPDATED: Use a keyed Tabs instance so we can programmatically switch tabs (e.g. Roles -> Privileges) */}
+      <Tabs key={tabsKey} tabs={tabs} defaultTab={activeTabId} onChange={(id) => setActiveTabId(id)} />
 
       <Modal
         isOpen={userModalOpen}
