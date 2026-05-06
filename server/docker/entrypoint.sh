@@ -11,6 +11,7 @@ DB_ADMIN_USER="${ADMIN_PGUSER:-${DB_USER}}"
 DB_ADMIN_PASSWORD="${ADMIN_PGPASSWORD:-${PGPASSWORD:-${POSTGRES_PASSWORD:-}}}"
 APP_DB_USER="${DB_USER}"
 APP_DB_PASSWORD="${PGPASSWORD:-${POSTGRES_PASSWORD:-}}"
+APP_RUNTIME_ROLE="${APP_RUNTIME_ROLE:-ims_app}"
 MIGRATIONS_DIR="${MIGRATIONS_DIR:-/app/sql}"
 BASE_SCHEMA_FILE="${BASE_SCHEMA_FILE:-Full_complete_scheme.sql}"
 DEMO_SEED_FILE="${DEMO_SEED_FILE:-seed_demo_data.sql}"
@@ -232,6 +233,30 @@ SQL
 }
 
 ensure_app_role
+
+ensure_runtime_role() {
+  # NEW: Always create a non-superuser runtime role and grant membership to the login role.
+  # This lets the app `SET ROLE` on connect so RLS (soft-delete filtering) is enforced even if the login user is postgres.
+  echo "Ensuring runtime role ${APP_RUNTIME_ROLE} exists..."
+  psql_admin -v ON_ERROR_STOP=1 <<SQL
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${APP_RUNTIME_ROLE}') THEN
+    EXECUTE format('CREATE ROLE %I NOLOGIN', '${APP_RUNTIME_ROLE}');
+  END IF;
+END
+\$\$;
+
+GRANT USAGE ON SCHEMA "${DB_SCHEMA}" TO "${APP_RUNTIME_ROLE}";
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "${DB_SCHEMA}" TO "${APP_RUNTIME_ROLE}";
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA "${DB_SCHEMA}" TO "${APP_RUNTIME_ROLE}";
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA "${DB_SCHEMA}" TO "${APP_RUNTIME_ROLE}";
+ALTER ROLE "${APP_RUNTIME_ROLE}" NOBYPASSRLS;
+
+-- Allow the login role to assume the runtime role.
+GRANT "${APP_RUNTIME_ROLE}" TO "${APP_DB_USER}";
+SQL
+}
 
 compute_checksum() {
   file_path="$1"
@@ -778,6 +803,7 @@ END
 SQL
 
 grant_app_privileges
+ensure_runtime_role
 
 if [ "$RUN_DEMO_SEED" = "true" ]; then
   if [ -f "${DEMO_SEED_PATH}" ]; then
