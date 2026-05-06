@@ -1,6 +1,7 @@
 import { queryMany, queryOne } from '../../db/query';
 import { BranchScope } from '../../utils/branchScope';
 import { ApiError } from '../../utils/ApiError';
+import { softDeleteById } from '../../db/softDelete';
 import {
   StoreCreateInput,
   StoreUpdateInput,
@@ -41,6 +42,9 @@ export const storesService = {
   async list(scope: BranchScope, filters: StoreListQueryInput): Promise<Paged<Store>> {
     const params: unknown[] = [];
     const where: string[] = [];
+
+    // UPDATED: Explicitly hide soft-deleted rows even when DB user bypasses RLS (e.g., postgres/superuser).
+    where.push('COALESCE(s.is_deleted, 0)::int = 0');
 
     if (filters.branchId) {
       if (!scope.isAdmin && !scope.branchIds.includes(filters.branchId)) {
@@ -94,7 +98,11 @@ export const storesService = {
   },
 
   async get(id: number, scope: BranchScope): Promise<Store | null> {
-    const row = await queryOne<Store>(`SELECT * FROM ims.stores WHERE store_id = $1`, [id]);
+    // UPDATED: Explicitly hide soft-deleted rows even when DB user bypasses RLS (e.g., postgres/superuser).
+    const row = await queryOne<Store>(
+      `SELECT * FROM ims.stores WHERE store_id = $1 AND COALESCE(is_deleted, 0)::int = 0`,
+      [id]
+    );
     if (!row) return null;
     if (!scope.isAdmin && !scope.branchIds.includes(Number(row.branch_id))) {
       throw ApiError.forbidden('Access denied to this store');
@@ -135,8 +143,20 @@ export const storesService = {
   async delete(id: number, scope: BranchScope): Promise<void> {
     const existing = await this.get(id, scope);
     if (!existing) return;
-    await queryOne(`DELETE FROM ims.store_items WHERE store_id = $1`, [id]);
-    await queryOne(`DELETE FROM ims.stores WHERE store_id = $1`, [id]);
+
+    // UPDATED: Soft-delete related rows first, then the store (prevents FK checks from blocking soft delete).
+    const storeItems = await queryMany<{ store_item_id: number }>(
+      `SELECT store_item_id
+         FROM ims.store_items
+        WHERE store_id = $1
+          AND COALESCE(is_deleted, 0)::int = 0`,
+      [id]
+    );
+    for (const row of storeItems) {
+      await softDeleteById('store_items', Number(row.store_item_id));
+    }
+
+    await softDeleteById('stores', id);
   },
 
   async listItems(
@@ -147,7 +167,8 @@ export const storesService = {
     await this.get(storeId, scope);
 
     const params: unknown[] = [storeId];
-    let whereSql = 'WHERE si.store_id = $1';
+    // UPDATED: Explicitly hide soft-deleted rows even when DB user bypasses RLS (e.g., postgres/superuser).
+    let whereSql = "WHERE si.store_id = $1 AND COALESCE(si.is_deleted, 0)::int = 0";
 
     if (filters.search?.trim()) {
       params.push(`%${filters.search.trim()}%`);

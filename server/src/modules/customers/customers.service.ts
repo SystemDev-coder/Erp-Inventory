@@ -104,7 +104,8 @@ const scopedCustomer = async (
       }>(
         `SELECT customer_id, full_name, phone, sex::text AS sex, address, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect()}, ${balanceColumn}::text AS balance_value
            FROM ims.customers
-          WHERE customer_id = $1`,
+          WHERE customer_id = $1
+            AND COALESCE(is_deleted, 0)::int = 0`,
         [id]
       )
     : await queryOne<{
@@ -122,7 +123,8 @@ const scopedCustomer = async (
         `SELECT customer_id, full_name, phone, sex::text AS sex, address, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect()}, ${balanceColumn}::text AS balance_value
            FROM ims.customers
           WHERE customer_id = $1
-            AND branch_id = ANY($2)`,
+            AND branch_id = ANY($2)
+            AND COALESCE(is_deleted, 0)::int = 0`,
         [id, scope.branchIds]
       );
 
@@ -240,6 +242,9 @@ export const customersService = {
       const params: unknown[] = [];
       const where: string[] = [];
 
+      // UPDATED: Explicitly hide soft-deleted rows even when DB user bypasses RLS (e.g., postgres/superuser).
+      where.push(`COALESCE(is_deleted, 0)::int = 0`);
+
       if (!scope.isAdmin) {
         params.push(scope.branchIds);
         where.push(`branch_id = ANY($${params.length})`);
@@ -300,7 +305,9 @@ export const customersService = {
 
     const safeLimit = Math.max(1, Math.min(200, Math.floor(Number(limit) || 50)));
     const params: unknown[] = [scope.branchIds];
-    const where: string[] = [`branch_id = ANY($1)`, `is_active = TRUE`];
+
+    // UPDATED: Explicitly hide soft-deleted rows even when DB user bypasses RLS (e.g., postgres/superuser).
+    const where: string[] = [`branch_id = ANY($1)`, `is_active = TRUE`, `COALESCE(is_deleted, 0)::int = 0`];
 
     const q = String(search || '').trim();
     if (q) {

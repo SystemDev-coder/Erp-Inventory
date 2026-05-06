@@ -232,6 +232,9 @@ export const suppliersService = {
     const params: unknown[] = [];
     const where: string[] = [];
 
+    // UPDATED: Explicitly hide soft-deleted rows even when DB user bypasses RLS (e.g., postgres/superuser).
+    where.push(`COALESCE(is_deleted, 0)::int = 0`);
+
     if (!scope.isAdmin) {
       params.push(scope.branchIds);
       where.push(`branch_id = ANY($${params.length})`);
@@ -283,7 +286,9 @@ export const suppliersService = {
     const safeLimit = Math.max(1, Math.min(200, Math.floor(Number(limit) || 50)));
 
     const params: unknown[] = [scope.branchIds];
-    const where: string[] = [`branch_id = ANY($1)`, `is_active = TRUE`];
+
+    // UPDATED: Explicitly hide soft-deleted rows even when DB user bypasses RLS (e.g., postgres/superuser).
+    const where: string[] = [`branch_id = ANY($1)`, `is_active = TRUE`, `COALESCE(is_deleted, 0)::int = 0`];
 
     const q = String(search || '').trim();
     if (q) {
