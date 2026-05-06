@@ -3,6 +3,7 @@ import {
   ArrowLeftRight,
   BriefcaseBusiness,
   CircleDollarSign,
+  Eye,
   History,
   Home,
   Percent,
@@ -336,6 +337,8 @@ const Settings = () => {
   const [logsLoading, setLogsLoading] = useState(false);
   const [logsPage, setLogsPage] = useState(1);
   const [logsTotal, setLogsTotal] = useState(0);
+  // NEW: Selected audit log entry for details view.
+  const [selectedLog, setSelectedLog] = useState<SystemAuditLog | null>(null);
 
   const totalCapitalPages = Math.max(1, Math.ceil(capitalTotal / capitalLimit));
   const totalDrawingPages = Math.max(1, Math.ceil(drawingTotal / drawingLimit));
@@ -2662,6 +2665,7 @@ const Settings = () => {
                 <th>Entity</th>
                 <th>User</th>
                 <th>Date</th>
+                <th className="w-20">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -2671,6 +2675,18 @@ const Settings = () => {
                   <td>{l.entity || '-'}</td>
                   <td>{l.username || l.user_id || '-'}</td>
                   <td>{new Date(l.created_at).toLocaleString()}</td>
+                  <td>
+                    {/* NEW: View details for this activity log row */}
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                      onClick={() => setSelectedLog(l)}
+                      title="View details"
+                    >
+                      <Eye className="h-4 w-4" />
+                      View
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -2698,6 +2714,79 @@ const Settings = () => {
         </div>
       </div>
     </div>
+  );
+
+  // NEW: Pretty JSON formatter for audit log details viewer.
+  const formatAuditJson = (value: unknown) => {
+    if (value === null || value === undefined) return '-';
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  };
+
+  const auditLogDetailsModal = (
+    <Modal isOpen={!!selectedLog} onClose={() => setSelectedLog(null)} title="Audit Log Details" size="xl">
+      {/* NEW: Show what happened (old/new/meta) for the selected audit log */}
+      {selectedLog ? (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-800 sm:grid-cols-2">
+            <div>
+              <div className="text-xs font-semibold text-slate-500">Action</div>
+              <div>{selectedLog.action}</div>
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-slate-500">Entity</div>
+              <div>{selectedLog.entity || '-'}</div>
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-slate-500">User</div>
+              <div>{selectedLog.username || selectedLog.user_id || '-'}</div>
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-slate-500">Date</div>
+              <div>{new Date(selectedLog.created_at).toLocaleString()}</div>
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-slate-500">IP</div>
+              <div className="break-all">{selectedLog.ip_address || '-'}</div>
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-slate-500">User Agent</div>
+              <div className="break-all">{selectedLog.user_agent || '-'}</div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div className="rounded-lg border border-slate-200 bg-white">
+              <div className="border-b border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">
+                Old Values
+              </div>
+              <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap break-words px-3 py-2 text-xs text-slate-800">
+                {formatAuditJson(selectedLog.old_value)}
+              </pre>
+            </div>
+
+            <div className="rounded-lg border border-slate-200 bg-white">
+              <div className="border-b border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">
+                New Values
+              </div>
+              <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap break-words px-3 py-2 text-xs text-slate-800">
+                {formatAuditJson(selectedLog.new_value)}
+              </pre>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-slate-200 bg-white">
+            <div className="border-b border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">Meta</div>
+            <pre className="max-h-[30vh] overflow-auto whitespace-pre-wrap break-words px-3 py-2 text-xs text-slate-800">
+              {formatAuditJson(selectedLog.meta)}
+            </pre>
+          </div>
+        </div>
+      ) : null}
+    </Modal>
   );
 
   const tabs = useMemo(() => {
@@ -2738,6 +2827,8 @@ const Settings = () => {
         description="Configure company info, assets, capital, closing period, and profit sharing."
       />
       <Tabs tabs={tabs} defaultTab="company" />
+      {/* NEW: Audit log details modal */}
+      {auditLogDetailsModal}
     </div>
   );
 };
