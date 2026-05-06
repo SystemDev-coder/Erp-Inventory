@@ -10,6 +10,7 @@ import {
   resolveBranchIdForReports,
 } from '../reports.helpers';
 import { salesReportsService } from './salesReports.service';
+import { cogsReportsService } from '../common/cogsReports.service';
 
 export const getSalesReportOptions = asyncHandler(async (req: AuthRequest, res: Response) => {
   const branchId = await resolveBranchIdForReports(req);
@@ -24,6 +25,19 @@ export const getSalesSummaryReport = asyncHandler(async (req: AuthRequest, res: 
   return ApiResponse.success(res, {
     branchId,
     reportKey: 'sales-summary',
+    fromDate,
+    toDate,
+    rows,
+  });
+});
+
+export const getCogsByInvoiceReport = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const branchId = await resolveBranchIdForReports(req);
+  const { fromDate, toDate } = parseDateRange(req);
+  const rows = await cogsReportsService.getCogsByInvoice(branchId, fromDate, toDate);
+  return ApiResponse.success(res, {
+    branchId,
+    reportKey: 'cogs-by-invoice',
     fromDate,
     toDate,
     rows,

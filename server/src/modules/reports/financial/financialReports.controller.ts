@@ -10,6 +10,7 @@ import {
   resolveBranchIdForReports,
 } from '../reports.helpers';
 import { financialReportsService } from './financialReports.service';
+import { cogsReportsService } from '../common/cogsReports.service';
 
 export const getFinancialReportOptions = asyncHandler(async (req: AuthRequest, res: Response) => {
   const branchId = await resolveBranchIdForReports(req);
@@ -53,6 +54,19 @@ export const getCashFlowReport = asyncHandler(async (req: AuthRequest, res: Resp
   return ApiResponse.success(res, {
     branchId,
     reportKey: 'cash-flow-statement',
+    fromDate,
+    toDate,
+    rows,
+  });
+});
+
+export const getCogsByInvoiceReport = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const branchId = await resolveBranchIdForReports(req);
+  const { fromDate, toDate } = parseDateRange(req);
+  const rows = await cogsReportsService.getCogsByInvoice(branchId, fromDate, toDate);
+  return ApiResponse.success(res, {
+    branchId,
+    reportKey: 'cogs-by-invoice',
     fromDate,
     toDate,
     rows,

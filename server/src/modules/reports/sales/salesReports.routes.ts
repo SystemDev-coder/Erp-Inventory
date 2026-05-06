@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   getCashierPerformanceReport,
+  getCogsByInvoiceReport,
   getDailySalesReport,
   getInvoiceStatusReport,
   getQuotationsReport,
@@ -20,6 +21,7 @@ const router = Router();
 router.get('/options', getSalesReportOptions);
 router.get('/daily', getDailySalesReport);
 router.get('/summary', getSalesSummaryReport);
+router.get('/cogs', getCogsByInvoiceReport);
 router.get('/invoice-status', getInvoiceStatusReport);
 router.get('/by-customer', getSalesByCustomerReport);
 router.get('/by-product', getSalesByProductReport);

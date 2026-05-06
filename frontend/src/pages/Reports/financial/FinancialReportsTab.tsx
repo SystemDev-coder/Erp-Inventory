@@ -8,6 +8,7 @@ import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultRe
 type FinancialCardId =
   | 'balance-sheet'
   | 'cash-flow'
+  | 'cogs-by-invoice'
   | 'account-balances'
   | 'expense-summary'
   | 'accounts-receivable'
@@ -18,6 +19,7 @@ type FinancialCardId =
 const financialCards: Array<{ id: FinancialCardId; title: string }> = [
   { id: 'balance-sheet', title: 'Balance Sheet' },
   { id: 'cash-flow', title: 'Cash Flow Statement' },
+  { id: 'cogs-by-invoice', title: 'COGS (Cost of Goods Sold)' },
   { id: 'account-balances', title: 'Account Balances' },
   { id: 'expense-summary', title: 'Expense Summary' },
   { id: 'accounts-receivable', title: 'Accounts Receivable' },
@@ -109,6 +111,16 @@ const accountStatementShowColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'closing_balance', header: 'Balance', align: 'right', render: (row) => formatCurrency(row.closing_balance) },
 ];
 
+const cogsByInvoiceColumns: ReportColumn<Record<string, unknown>>[] = [
+  { key: 'sale_id', header: 'Invoice #', getHref: (row) => (row.sale_id ? `/sales/${row.sale_id}/edit` : null) },
+  { key: 'sale_date', header: 'Date', render: (row) => formatDateTime(row.sale_date) },
+  { key: 'doc_type', header: 'Document' },
+  { key: 'customer_name', header: 'Customer' },
+  { key: 'total', header: 'Sales Total', align: 'right', render: (row) => formatCurrency(row.total) },
+  { key: 'cogs', header: 'COGS', align: 'right', render: (row) => formatCurrency(row.cogs) },
+  { key: 'gross_profit', header: 'Gross Profit', align: 'right', render: (row) => formatCurrency(row.gross_profit) },
+];
+
 const accountStatementAllColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'type_display', header: 'Type' },
   { key: 'txn_date', header: 'Date', render: (row) => formatDateTime(row.txn_date) },
@@ -143,6 +155,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
 
   const [cashFlowRange, setCashFlowRange] = useState<DateRange>(defaultReportRange());
   const [balanceRange, setBalanceRange] = useState<DateRange>(defaultReportRange());
+  const [cogsRange, setCogsRange] = useState<DateRange>(defaultReportRange());
   const [expenseRange, setExpenseRange] = useState<DateRange>(defaultReportRange());
   const [receivableRange, setReceivableRange] = useState<DateRange>(defaultReportRange());
   const [payableRange, setPayableRange] = useState<DateRange>(defaultReportRange());
@@ -250,6 +263,30 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
           label: 'Total',
           values: {
             amount: formatCurrency(totalAmount),
+          },
+        },
+      });
+    });
+
+  const handleCogsByInvoice = () =>
+    runCardAction('cogs-by-invoice', async () => {
+      ensureRangeValid(cogsRange, 'COGS (Cost of Goods Sold)');
+      const response = await financialReportsService.getCogsByInvoice(cogsRange);
+      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load COGS report');
+      const rows = toRecordRows(response.data.rows || []);
+      onOpenModal({
+        title: 'COGS (Cost of Goods Sold)',
+        subtitle: `${formatDateOnly(cogsRange.fromDate)} - ${formatDateOnly(cogsRange.toDate)}`,
+        fileName: 'cogs-by-invoice',
+        data: rows,
+        columns: cogsByInvoiceColumns,
+        filters: { 'From Date': cogsRange.fromDate, 'To Date': cogsRange.toDate },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            total: formatCurrency(sumNumericField(rows, 'total')),
+            cogs: formatCurrency(sumNumericField(rows, 'cogs')),
+            gross_profit: formatCurrency(sumNumericField(rows, 'gross_profit')),
           },
         },
       });
@@ -501,6 +538,21 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
           {renderDateRange(cashFlowRange, setCashFlowRange)}
           <button
             onClick={handleCashFlow}
+            disabled={loadingCardId === cardId}
+            className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            Show
+          </button>
+        </div>
+      );
+    }
+
+    if (cardId === 'cogs-by-invoice') {
+      return (
+        <div className="space-y-3">
+          {renderDateRange(cogsRange, setCogsRange)}
+          <button
+            onClick={handleCogsByInvoice}
             disabled={loadingCardId === cardId}
             className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
           >

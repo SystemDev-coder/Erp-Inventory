@@ -140,6 +140,18 @@ export interface TrialBalanceRow {
   closing_credit: number;
 }
 
+// NEW: COGS by invoice row (shared with sales report)
+export interface FinancialCogsByInvoiceRow {
+  sale_id: number;
+  sale_date: string;
+  doc_type: string;
+  customer_name: string;
+  cashier_name: string;
+  total: number;
+  cogs: number;
+  gross_profit: number;
+}
+
 export interface AccountsReceivableRow {
   customer_name: string;
   invoice_no: number;
@@ -379,6 +391,15 @@ export const financialReportsService = {
       toDate: input.toDate,
     });
     return apiClient.get<RowsResponse<TrialBalanceRow>>(`${API.REPORTS.FINANCIAL_TRIAL_BALANCE}${query}`);
+  },
+
+  async getCogsByInvoice(input: { fromDate: string; toDate: string; branchId?: number }) {
+    const query = toQuery({
+      branchId: input.branchId,
+      fromDate: input.fromDate,
+      toDate: input.toDate,
+    });
+    return apiClient.get<RowsResponse<FinancialCogsByInvoiceRow>>(`${API.REPORTS.FINANCIAL_COGS_BY_INVOICE}${query}`);
   },
 
   async getCapitalReport(input?: { owner?: string; fromDate?: string; toDate?: string }) {

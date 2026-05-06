@@ -65,6 +65,18 @@ export interface SalesSummaryRow {
   value: number;
 }
 
+// NEW: COGS by invoice row
+export interface SalesCogsByInvoiceRow {
+  sale_id: number;
+  sale_date: string;
+  doc_type: string;
+  customer_name: string;
+  cashier_name: string;
+  total: number;
+  cogs: number;
+  gross_profit: number;
+}
+
 export interface InvoiceStatusRow {
   sale_id: number;
   sale_date: string;
@@ -139,6 +151,15 @@ export const salesReportsService = {
       toDate: input.toDate,
     });
     return apiClient.get<RowsResponse<SalesSummaryRow>>(`${API.REPORTS.SALES_SUMMARY}${query}`);
+  },
+
+  async getCogsByInvoice(input: { fromDate: string; toDate: string; branchId?: number }) {
+    const query = toQuery({
+      branchId: input.branchId,
+      fromDate: input.fromDate,
+      toDate: input.toDate,
+    });
+    return apiClient.get<RowsResponse<SalesCogsByInvoiceRow>>(`${API.REPORTS.SALES_COGS_BY_INVOICE}${query}`);
   },
 
   async getInvoiceStatus(input: { fromDate: string; toDate: string; status: 'all' | 'paid' | 'partial' | 'unpaid'; branchId?: number }) {

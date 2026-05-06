@@ -7,6 +7,7 @@ import {
   getAccountTransactionsReport,
   getBalanceSheetReport,
   getCashFlowReport,
+  getCogsByInvoiceReport,
   getCustomerReceiptsReport,
   getExpenseSummaryReport,
   getFinancialReportOptions,
@@ -24,6 +25,7 @@ router.get('/options', getFinancialReportOptions);
 router.get('/income-statement', getIncomeStatementReport);
 router.get('/balance-sheet', getBalanceSheetReport);
 router.get('/cash-flow', getCashFlowReport);
+router.get('/cogs', getCogsByInvoiceReport);
 router.get('/account-balances', getAccountBalancesReport);
 router.get('/expense-summary', getExpenseSummaryReport);
 router.get('/profit-by-item', getProfitByItemReport);

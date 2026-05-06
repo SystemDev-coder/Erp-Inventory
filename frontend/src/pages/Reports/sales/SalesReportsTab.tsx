@@ -8,6 +8,7 @@ import { formatCurrency, formatDateOnly, formatDateTime, formatQuantity, toRecor
 
 type SalesCardId =
   | 'sales-summary'
+  | 'cogs-by-invoice'
   | 'invoice-status'
   | 'daily-sales'
   | 'sales-by-customer'
@@ -22,6 +23,7 @@ type SalesCardId =
 
 const salesCards: Array<{ id: SalesCardId; title: string; hint: string }> = [
   { id: 'sales-summary', title: 'Sales Summary', hint: 'Between two dates' },
+  { id: 'cogs-by-invoice', title: 'COGS (Cost of Goods Sold)', hint: 'Between two dates' },
   { id: 'invoice-status', title: 'Invoice Status', hint: 'Between two dates + status filter' },
   { id: 'daily-sales', title: 'Daily Sales Report', hint: 'Single action report' },
   { id: 'sales-by-customer', title: 'Sales by Customer', hint: 'Dropdown + Show / All' },
@@ -59,6 +61,16 @@ const salesSummaryDrilldownColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'paid_amount', header: 'Paid', align: 'right', render: (row) => formatCurrency(row.paid_amount) },
   { key: 'balance', header: 'Balance', align: 'right', render: (row) => formatCurrency(row.balance) },
   { key: 'status', header: 'Status' },
+];
+
+const cogsByInvoiceColumns: ReportColumn<Record<string, unknown>>[] = [
+  { key: 'sale_id', header: 'Invoice #', getHref: (row) => (row.sale_id ? `/sales/${row.sale_id}/edit` : null) },
+  { key: 'sale_date', header: 'Date', render: (row) => formatDateTime(row.sale_date) },
+  { key: 'doc_type', header: 'Document' },
+  { key: 'customer_name', header: 'Customer' },
+  { key: 'total', header: 'Sales Total', align: 'right', render: (row) => formatCurrency(row.total) },
+  { key: 'cogs', header: 'COGS', align: 'right', render: (row) => formatCurrency(row.cogs) },
+  { key: 'gross_profit', header: 'Gross Profit', align: 'right', render: (row) => formatCurrency(row.gross_profit) },
 ];
 
 const netAfterReturnsColumns: ReportColumn<Record<string, unknown>>[] = [
@@ -187,6 +199,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
   const [invoiceStatusFilter, setInvoiceStatusFilter] = useState<'all' | 'paid' | 'partial' | 'unpaid'>('all');
 
   const [summaryRange, setSummaryRange] = useState<DateRange>(defaultReportRange());
+  const [cogsRange, setCogsRange] = useState<DateRange>(defaultReportRange());
   const [invoiceStatusRange, setInvoiceStatusRange] = useState<DateRange>(defaultReportRange());
   const [topSellingRange, setTopSellingRange] = useState<DateRange>(defaultReportRange());
   const [salesByStoreRange, setSalesByStoreRange] = useState<DateRange>(defaultReportRange());
@@ -585,6 +598,30 @@ export function SalesReportsTab({ onOpenModal }: Props) {
       });
     });
 
+  const handleCogsByInvoice = () =>
+    runCardAction('cogs-by-invoice', async () => {
+      ensureRangeValid(cogsRange, 'COGS (Cost of Goods Sold)');
+      const response = await salesReportsService.getCogsByInvoice(cogsRange);
+      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load COGS report');
+      const rows = toRecordRows(response.data.rows || []);
+      onOpenModal({
+        title: 'COGS (Cost of Goods Sold)',
+        subtitle: `${formatDateOnly(cogsRange.fromDate)} - ${formatDateOnly(cogsRange.toDate)}`,
+        fileName: 'cogs-by-invoice',
+        data: rows,
+        columns: cogsByInvoiceColumns,
+        filters: { 'From Date': cogsRange.fromDate, 'To Date': cogsRange.toDate },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            total: formatCurrency(sumNumericField(rows, 'total')),
+            cogs: formatCurrency(sumNumericField(rows, 'cogs')),
+            gross_profit: formatCurrency(sumNumericField(rows, 'gross_profit')),
+          },
+        },
+      });
+    });
+
   const handleInvoiceStatus = () =>
     runCardAction('invoice-status', async () => {
       ensureRangeValid(invoiceStatusRange, 'Invoice Status');
@@ -858,6 +895,10 @@ export function SalesReportsTab({ onOpenModal }: Props) {
   const renderCardBody = (cardId: SalesCardId) => {
     if (cardId === 'sales-summary') {
       return <div className="space-y-3">{renderDateRange(summaryRange, setSummaryRange)}<button onClick={handleSalesSummary} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
+    }
+
+    if (cardId === 'cogs-by-invoice') {
+      return <div className="space-y-3">{renderDateRange(cogsRange, setCogsRange)}<button onClick={handleCogsByInvoice} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
     }
 
     if (cardId === 'invoice-status') {
