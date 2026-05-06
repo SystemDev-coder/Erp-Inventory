@@ -22,7 +22,7 @@ type PurchaseForm = {
   subtotal: number;
   discount: number;
   total: number;
-  status: 'received' | 'partial' | 'unpaid' | 'void';
+  status: 'ordered' | 'received' | 'partial' | 'unpaid' | 'void';
   note?: string;
 };
 
@@ -305,7 +305,7 @@ const Purchases = () => {
     },
   ];
 
-  const statusFilters: Array<'all' | PurchaseForm['status']> = ['all', 'received', 'partial', 'unpaid', 'void'];
+  const statusFilters: Array<'all' | PurchaseForm['status']> = ['all', 'ordered', 'received', 'partial', 'unpaid', 'void'];
   const filteredPurchases = useMemo(
     () =>
       statusFilter === 'all'
@@ -459,7 +459,9 @@ const Purchases = () => {
         <div className="space-y-2">
           <TabActionToolbar
             title="Purchase Orders"
+            // UPDATED: Support Purchase Orders (planned) separate from Purchases (received).
             primaryAction={{ label: 'New Purchase', onClick: () => navigate('/purchases/new') }}
+            secondaryAction={{ label: 'New Order', onClick: () => navigate('/purchases/new?docType=order') }}
             onDisplay={() => {
               setPurchasesDisplayed(true);
               void loadPurchases(search, statusFilter);

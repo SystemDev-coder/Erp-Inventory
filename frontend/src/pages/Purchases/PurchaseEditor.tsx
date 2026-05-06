@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router';
+import { useLocation, useNavigate, useParams } from 'react-router';
 import { Plus, Trash2, ArrowLeft, Package } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
 import { useToast } from '../../components/ui/toast/Toast';
@@ -38,6 +38,7 @@ const emptyLine: LineItem = {
 
 const PurchaseEditor = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { id } = useParams();
   const isEdit = Boolean(id);
   const { showToast } = useToast();
@@ -67,7 +68,8 @@ const PurchaseEditor = () => {
     subtotal: 0,
     discount: 0,
     total: 0,
-    status: 'received' as 'received' | 'partial' | 'unpaid' | 'void',
+    status: (docType === 'order' ? 'ordered' : 'received') as 'ordered' | 'received' | 'partial' | 'unpaid' | 'void',
+    expected_date: new Date().toISOString().slice(0, 10),
     note: '',
   });
   const [lineItems, setLineItems] = useState<LineItem[]>([emptyLine]);
@@ -247,16 +249,26 @@ const PurchaseEditor = () => {
   const discountSummary = lineDiscountTotal + effectiveHeaderDiscount;
   const itemsTableColSpan = discountMode === 'per_item' ? 8 : 7;
 
-  const effectivePurchaseType: 'cash' | 'credit' = form.purchase_type;
-  const effectiveStatus: 'received' | 'partial' | 'unpaid' | 'void' =
-    effectivePurchaseType === 'credit' && form.status !== 'void' ? 'unpaid' : form.status;
-  const shouldShowPaymentAccount = effectiveStatus !== 'void' && effectiveStatus !== 'unpaid' && effectivePurchaseType !== 'credit';
+  // UPDATED: Purchase Orders are always non-posted until received; treat as credit/unpaid flow without payments.
+  const effectivePurchaseType: 'cash' | 'credit' = docType === 'order' ? 'credit' : form.purchase_type;
+  const effectiveStatus: 'ordered' | 'received' | 'partial' | 'unpaid' | 'void' =
+    docType === 'order'
+      ? 'ordered'
+      : effectivePurchaseType === 'credit' && form.status !== 'void'
+      ? 'unpaid'
+      : form.status;
+  const shouldShowPaymentAccount =
+    docType !== 'order' &&
+    effectiveStatus !== 'void' &&
+    effectiveStatus !== 'unpaid' &&
+    effectivePurchaseType !== 'credit';
   const totalValue = Number(form.total || 0);
   const paidValue = Number(form.paid_amount || 0);
   const remainingValue = Math.max(0, totalValue - paidValue);
 
   useEffect(() => {
     // Keep paid_amount consistent with the chosen status + current total.
+    if (docType === 'order') return;
     if (effectivePurchaseType === 'credit') return;
 
     if (effectiveStatus === 'received') {
@@ -379,7 +391,7 @@ const PurchaseEditor = () => {
       showToast('error', 'Account required', 'Select account for paid amount');
       return;
     }
-    if (effectiveStatus === 'partial' && Number(form.paid_amount || 0) <= 0) {
+    if (docType !== 'order' && effectiveStatus === 'partial' && Number(form.paid_amount || 0) <= 0) {
       showToast('error', 'Paid amount required', 'Enter partial amount paid');
       return;
     }
@@ -388,7 +400,9 @@ const PurchaseEditor = () => {
     setForm((prev) => ({ ...prev, subtotal: totals.subtotal, total: totals.total }));
     setLoading(true);
     const paidAmount =
-      effectiveStatus === 'void'
+      docType === 'order'
+        ? undefined
+        : effectiveStatus === 'void'
         ? undefined
         : effectiveStatus === 'unpaid' || effectivePurchaseType === 'credit'
         ? 0
@@ -397,6 +411,8 @@ const PurchaseEditor = () => {
         : totals.total;
     const payload = {
       supplierId: supplierId ? Number(supplierId) : null,
+      docType,
+      expectedDate: docType === 'order' ? form.expected_date : undefined,
       purchaseDate: form.purchase_date,
       purchaseType: effectivePurchaseType,
       subtotal: totals.subtotal,
@@ -407,7 +423,7 @@ const PurchaseEditor = () => {
       items: preparedItems,
       // Inline payment info: optional, will update supplier remaining balance and account
       payFromAccId:
-        !shouldShowPaymentAccount || !form.acc_id
+        docType === 'order' || !shouldShowPaymentAccount || !form.acc_id
           ? undefined
           : Number(form.acc_id),
       paidAmount,
@@ -437,8 +453,9 @@ const PurchaseEditor = () => {
   return (
     <div className="space-y-4 px-2 md:px-4">
       <PageHeader
-        title={isEdit ? 'Edit Purchase' : 'New Purchase'}
-        description="Create and manage purchase orders."
+        // UPDATED: Reflect purchase vs order in the header for clients.
+        title={isEdit ? (docType === 'order' ? 'Edit Purchase Order' : 'Edit Purchase') : (docType === 'order' ? 'New Purchase Order' : 'New Purchase')}
+        description={docType === 'order' ? 'Create a purchase order (no stock impact until received).' : 'Track incoming stock and supplier bills.'}
         actions={
           <div className="flex gap-2">
             <button
@@ -599,6 +616,22 @@ const PurchaseEditor = () => {
           </select>
         </label>
 
+        {docType === 'order' ? (
+          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+            Expected Date
+            <input
+              type="date"
+              className={fieldCls}
+              value={form.expected_date}
+              onChange={(e) => setForm((prev) => ({ ...prev, expected_date: e.target.value }))}
+              disabled={loading}
+            />
+            <span className="text-xs text-slate-500">Planned delivery date for this purchase order.</span>
+          </label>
+        ) : (
+          <div className="hidden md:block" />
+        )}
+
         {shouldShowPaymentAccount ? (
           <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
             Pay from Account
@@ -632,8 +665,9 @@ const PurchaseEditor = () => {
                 acc_id: nextStatus === 'void' ? '' : prev.acc_id,
               }));
             }}
-            disabled={effectivePurchaseType === 'credit'}
+            disabled={docType === 'order' || effectivePurchaseType === 'credit'}
           >
+            {docType === 'order' ? <option value="ordered">Ordered</option> : null}
             <option value="received">Received</option>
             <option value="partial">Incomplete</option>
             <option value="unpaid">Unpaid</option>
@@ -642,7 +676,7 @@ const PurchaseEditor = () => {
           <span className="text-xs text-slate-500">Status controls how payment is recorded.</span>
         </label>
 
-        {effectivePurchaseType !== 'credit' && effectiveStatus !== 'void' && (
+        {docType !== 'order' && effectivePurchaseType !== 'credit' && effectiveStatus !== 'void' && (
           <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
             Amount Paid
             <input
@@ -986,3 +1020,5 @@ const PurchaseEditor = () => {
 };
 
 export default PurchaseEditor;
+  // NEW: Purchase editor supports Purchase Orders via `?docType=order`.
+  const docType = new URLSearchParams(location.search).get('docType') === 'order' ? 'order' : 'purchase';

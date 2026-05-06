@@ -34,11 +34,13 @@ export interface Purchase {
   subtotal: number;
   discount: number;
   total: number;
-  status: 'received' | 'partial' | 'unpaid' | 'void';
+  status: 'ordered' | 'received' | 'partial' | 'unpaid' | 'void';
   fx_rate: number;
   note?: string | null;
   paid_amount?: number;
   items?: PurchaseItem[];
+  doc_type?: 'purchase' | 'order';
+  expected_date?: string | null;
 }
 
 export interface PurchasePaymentSummary {
@@ -58,7 +60,9 @@ export interface PurchaseCreateInput {
   subtotal?: number;
   discount?: number;
   total?: number;
-  status?: 'received' | 'partial' | 'unpaid' | 'void';
+  status?: 'ordered' | 'received' | 'partial' | 'unpaid' | 'void';
+  docType?: 'purchase' | 'order';
+  expectedDate?: string;
   note?: string | null;
   fxRate?: number;
   /**

@@ -50,8 +50,15 @@ export interface PurchaseItemView extends PurchaseItem {
 
 const normalizeItemName = (value: string) => value.trim().replace(/\s+/g, ' ');
 const AUTO_PURCHASE_NOTE_PREFIX = '[AUTO-PURCHASE]';
-type PurchaseStatus = 'received' | 'partial' | 'unpaid' | 'void';
+type PurchaseStatus = 'ordered' | 'received' | 'partial' | 'unpaid' | 'void';
+type PurchaseDocType = 'purchase' | 'order';
 const roundMoney = (value: unknown) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+
+// NEW: Purchase orders should not apply stock/ledger/gl until received.
+const isNonAppliedPurchaseStatus = (status: unknown) => {
+  const s = String(status || '').toLowerCase();
+  return s === 'void' || s === 'ordered';
+};
 
 interface PreparedPurchaseItem {
   productId: number;
@@ -582,7 +589,8 @@ const rewritePurchaseGl = async (client: PoolClient, params: { branchId: number;
   );
 
   const status = String(purchase.status || '').toLowerCase();
-  if (status === 'void') return;
+  // UPDATED: Purchase orders do not post GL until received.
+  if (status === 'void' || status === 'ordered') return;
 
   const total = roundMoney(purchase.total);
   if (total <= 0) return;
@@ -864,6 +872,8 @@ export const purchasesService = {
         [context.branchId]
       )).rows[0]?.fn_get_or_create_walking_supplier ?? null;
       const items: PurchaseItemInput[] = input.items || [];
+      // NEW: Purchase Order mode (no stock/ledger impact until received).
+      const docType: PurchaseDocType = (input as any).docType === 'order' ? 'order' : 'purchase';
       const preparedItems = await preparePurchaseItems(client, {
         branchId: context.branchId,
         supplierId: effectiveSupplierId,
@@ -879,7 +889,8 @@ export const purchasesService = {
       if (subtotal < 0 || discount < 0 || total < 0) {
         throw ApiError.badRequest('Purchase amounts cannot be negative');
       }
-      const requestedStatus: PurchaseStatus = (input.status || 'received') as PurchaseStatus;
+      const requestedStatus: PurchaseStatus =
+        (docType === 'order' ? 'ordered' : (input.status || 'received')) as PurchaseStatus;
       const purchaseType: 'cash' | 'credit' =
         (input.purchaseType || (requestedStatus === 'unpaid' ? 'credit' : 'cash')) as
           | 'cash'
@@ -894,8 +905,9 @@ export const purchasesService = {
       const purchaseResult = await client.query<Purchase>(
       `INSERT INTO ims.purchases (
          branch_id, store_id, user_id, supplier_id, fx_rate,
-         purchase_date, purchase_type, subtotal, discount, total, status, note
-       ) VALUES ($1, $2, $3, $4, $5, COALESCE($6, NOW()), $7, $8, $9, $10, $11, $12)
+         purchase_date, purchase_type, subtotal, discount, total, status, note,
+         doc_type, expected_date
+       ) VALUES ($1, $2, $3, $4, $5, COALESCE($6, NOW()), $7, $8, $9, $10, $11, $12, $13, $14)
        RETURNING *`,
       [
         context.branchId,
@@ -910,6 +922,8 @@ export const purchasesService = {
         total,
         status,
         input.note || null,
+        docType,
+        (input as any).expectedDate || null,
       ]
       );
 
@@ -924,7 +938,7 @@ export const purchasesService = {
         });
       }
 
-      if (status !== 'void' && preparedItems.length > 0) {
+      if (!isNonAppliedPurchaseStatus(status) && preparedItems.length > 0) {
         await applyPurchaseStockEffects(client, {
           branchId: context.branchId,
           purchaseId: purchase.purchase_id,
@@ -940,7 +954,7 @@ export const purchasesService = {
         });
       }
 
-      if (status !== 'void' && total > 0 && effectiveSupplierId) {
+      if (!isNonAppliedPurchaseStatus(status) && total > 0 && effectiveSupplierId) {
         await adjustSupplierBalance(client, {
           branchId: context.branchId,
           supplierId: effectiveSupplierId,
@@ -955,13 +969,13 @@ export const purchasesService = {
         });
       }
 
-      if (status !== 'void') {
+      if (!isNonAppliedPurchaseStatus(status)) {
         await rewritePurchaseGl(client, { branchId: context.branchId, purchaseId: purchase.purchase_id });
       }
 
       const paidAmountRaw = roundMoney(Number(input.paidAmount || 0));
       const payFromAccId = input.payFromAccId;
-      if (payFromAccId && paidAmountRaw > 0 && status !== 'void' && purchaseType !== 'credit') {
+      if (payFromAccId && paidAmountRaw > 0 && !isNonAppliedPurchaseStatus(status) && purchaseType !== 'credit') {
         const paidAmount = roundMoney(Math.min(paidAmountRaw, total));
         if (paidAmount > 0) {
            await applyPurchasePayment(client, {
@@ -977,11 +991,13 @@ export const purchasesService = {
         }
       }
 
-      await syncLowStockNotifications(client, {
-        branchId: context.branchId,
-        productIds: Array.from(affectedProductIds),
-        actorUserId: context.userId,
-      });
+      if (!isNonAppliedPurchaseStatus(status)) {
+        await syncLowStockNotifications(client, {
+          branchId: context.branchId,
+          productIds: Array.from(affectedProductIds),
+          actorUserId: context.userId,
+        });
+      }
 
       await client.query('COMMIT');
       return purchase;
@@ -1090,8 +1106,8 @@ export const purchasesService = {
           (requestedNextStatus === 'unpaid' ? 'credit' : 'cash')) as 'cash' | 'credit';
       const nextStatus: PurchaseStatus =
         nextPurchaseType === 'credit' && requestedNextStatus !== 'void' ? 'unpaid' : requestedNextStatus;
-      const oldStockApplied = current.status !== 'void';
-      const newStockApplied = nextStatus !== 'void';
+      const oldStockApplied = !isNonAppliedPurchaseStatus(current.status);
+      const newStockApplied = !isNonAppliedPurchaseStatus(nextStatus);
       let storeId = current.store_id ? Number(current.store_id) : null;
       if (input.storeId !== undefined) {
         storeId = await resolvePurchaseStoreId(client, {
@@ -1166,8 +1182,8 @@ export const purchasesService = {
       }
 
       const previousSupplierId = current.supplier_id ? Number(current.supplier_id) : null;
-      const previousBillAmount = current.status !== 'void' ? Number(current.total || 0) : 0;
-      const nextBillAmount = nextStatus !== 'void' ? nextTotal : 0;
+      const previousBillAmount = !isNonAppliedPurchaseStatus(current.status) ? Number(current.total || 0) : 0;
+      const nextBillAmount = !isNonAppliedPurchaseStatus(nextStatus) ? nextTotal : 0;
 
       if (previousSupplierId && previousBillAmount > 0) {
         await adjustSupplierBalance(client, {
@@ -1203,7 +1219,7 @@ export const purchasesService = {
       }
 
       const paidAmountRaw = roundMoney(Number(input.paidAmount || 0));
-      if (input.payFromAccId && paidAmountRaw > 0 && nextStatus !== 'void' && nextPurchaseType !== 'credit') {
+      if (input.payFromAccId && paidAmountRaw > 0 && !isNonAppliedPurchaseStatus(nextStatus) && nextPurchaseType !== 'credit') {
         const alreadyPaidRes = await client.query<{ amount: string }>(
           `SELECT COALESCE(SUM(amount_paid), 0)::text AS amount
              FROM ims.supplier_payments
@@ -1242,7 +1258,8 @@ export const purchasesService = {
                 status = $8,
                 fx_rate = $9,
                 note = $10,
-                store_id = COALESCE($11, store_id)
+                store_id = COALESCE($11, store_id),
+                expected_date = COALESCE($12::date, expected_date)
           WHERE purchase_id = $1`,
         [
           id,
@@ -1256,6 +1273,7 @@ export const purchasesService = {
           input.fxRate !== undefined ? Number(input.fxRate) : Number(current.fx_rate || 1),
           input.note !== undefined ? input.note : current.note,
           storeId,
+          (input as any).expectedDate ?? null,
         ]
       );
 
@@ -1269,13 +1287,17 @@ export const purchasesService = {
 
       const affectedProductIds = new Set<number>(oldItems.map((row) => Number(row.itemId)));
       (preparedItems || []).forEach((item) => affectedProductIds.add(Number(item.productId)));
-      await syncLowStockNotifications(client, {
-        branchId: currentBranchId,
-        productIds: Array.from(affectedProductIds),
-        actorUserId: Number(current.user_id || 1),
-      });
+      if (newStockApplied || oldStockApplied) {
+        await syncLowStockNotifications(client, {
+          branchId: currentBranchId,
+          productIds: Array.from(affectedProductIds),
+          actorUserId: Number(current.user_id || 1),
+        });
+      }
 
-      await rewritePurchaseGl(client, { branchId: currentBranchId, purchaseId: id });
+      if (newStockApplied) {
+        await rewritePurchaseGl(client, { branchId: currentBranchId, purchaseId: id });
+      }
 
       await client.query('COMMIT');
       return updated.rows[0] || null;
@@ -1332,7 +1354,8 @@ export const purchasesService = {
         unitCost: Number(row.unit_cost || 0),
       }));
 
-      if (current.status !== 'void' && stockLines.length > 0) {
+      // UPDATED: Purchase orders (ordered) do not affect stock yet.
+      if (!isNonAppliedPurchaseStatus(current.status) && stockLines.length > 0) {
         await applyPurchaseStockEffects(client, {
           branchId,
           purchaseId: id,
@@ -1370,7 +1393,8 @@ export const purchasesService = {
         });
       }
 
-      if (current.status !== 'void' && current.supplier_id && Number(current.total || 0) > 0) {
+      // UPDATED: Purchase orders (ordered) do not affect supplier balance/ledger yet.
+      if (!isNonAppliedPurchaseStatus(current.status) && current.supplier_id && Number(current.total || 0) > 0) {
         await adjustSupplierBalance(client, {
           branchId,
           supplierId: Number(current.supplier_id),
