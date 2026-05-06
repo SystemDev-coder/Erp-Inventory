@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Boxes, LineChart, ShoppingBag, TrendingUp, Truck, UserCheck, UserSquare, Wallet } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { ReportModal } from '../../components/reports/ReportModal';
@@ -13,6 +13,7 @@ import { SupplierReportsTab } from './supplier/SupplierReportsTab';
 import { ProfitReportsTab } from './profit/ProfitReportsTab';
 import type { ModalReportState, TabId } from './types';
 import { env } from '../../config/env';
+import { useAuth } from '../../context/AuthContext';
 
 const reportTabs: Array<{ id: TabId; title: string; icon: LucideIcon }> = [
   { id: 'sales', title: 'Sales', icon: LineChart },
@@ -25,7 +26,99 @@ const reportTabs: Array<{ id: TabId; title: string; icon: LucideIcon }> = [
   { id: 'supplier', title: 'Suppliers', icon: Truck },
 ];
 
+// UPDATED: Treat your DB system roles (Administrator, Viewer) as full-access for report tabs
+const isAdminLikeRole = (roleName?: string | null) => {
+  const normalized = (roleName || '').toLowerCase();
+  return normalized === 'administrator' || normalized === 'viewer';
+};
+
+// NEW: Role-based tab allowlist using your exact DB `role_name` values
+const roleTabAllowlist: Record<string, TabId[]> = {
+  administrator: ['sales', 'inventory', 'purchase', 'financial', 'profit', 'hr', 'customer', 'supplier'],
+  viewer: ['sales', 'inventory', 'purchase', 'financial', 'profit', 'hr', 'customer', 'supplier'],
+  'store manager': ['sales', 'inventory', 'purchase', 'customer', 'supplier', 'profit'],
+  'sales associate': ['sales', 'customer'],
+  'inventory clerk': ['inventory'],
+  'purchasing agent': ['purchase', 'supplier'],
+  accountant: ['financial', 'profit'],
+  'hr manager': ['hr'],
+};
+
+const expandPermissionKeys = (permKey: string): string[] => {
+  if (permKey.startsWith('items.')) {
+    return [permKey, permKey.replace('items.', 'products.')];
+  }
+  if (permKey.startsWith('products.')) {
+    return [permKey, permKey.replace('products.', 'items.')];
+  }
+  if (permKey === 'stock.view') {
+    return [permKey, 'warehouse_stock.view'];
+  }
+  if (permKey === 'warehouse_stock.view') {
+    return [permKey, 'stock.view'];
+  }
+  return [permKey];
+};
+
+const hasAnyPermission = (userPermissions: string[], required: string[]) => {
+  if (!required.length) return true;
+  const permSet = new Set(userPermissions);
+  return required.some((perm) => expandPermissionKeys(perm).some((key) => permSet.has(key)));
+};
+
+const tabPermissionAny: Record<TabId, string[]> = {
+  sales: ['reports.all', 'sales.view', 'sales.reports'],
+  inventory: ['reports.all', 'inventory.view', 'inventory.reports', 'stock.view', 'items.view'],
+  purchase: ['reports.all', 'purchases.view', 'purchases.reports', 'suppliers.view'],
+  financial: [
+    'reports.all',
+    'finance.reports',
+    'finance.balance',
+    'finance.income',
+    'finance.cashflow',
+    'ledgers.view',
+    'accounts.view',
+    'account_transactions.view',
+    'expenses.view',
+    'customer_receipts.view',
+    'supplier_payments.view',
+  ],
+  profit: [
+    'reports.all',
+    'finance.reports',
+    'finance.income',
+    'sales.view',
+    'sales.reports',
+  ],
+  hr: [
+    'reports.all',
+    'hr.reports',
+    'employees.view',
+    'employee_shift_assignments.view',
+    'employee_loans.view',
+    'loan_payments.view',
+    'payroll_runs.view',
+    'payroll_lines.view',
+    'employee_payments.view',
+  ],
+  customer: [
+    'reports.all',
+    'customers.view',
+    'customer_receipts.view',
+    'sales.view',
+    'sales_returns.view',
+    'customer_ledger.view',
+  ],
+  supplier: [
+    'reports.all',
+    'suppliers.view',
+    'purchases.view',
+    'supplier_payments.view',
+  ],
+};
+
 export default function Reports() {
+  const { user, permissions } = useAuth();
   const [activeTab, setActiveTab] = useState<TabId>('sales');
   const [companyInfo, setCompanyInfo] = useState<{
     name?: string;
@@ -67,6 +160,25 @@ export default function Reports() {
     setModalOpen(true);
   };
 
+  // UPDATED: Filter tabs by DB role first, then permissions as a safety net (prevents broken/forbidden tabs)
+  const visibleTabs = useMemo(() => {
+    const roleName = (user?.role_name || '').toLowerCase();
+    const allowedByRole = isAdminLikeRole(user?.role_name)
+      ? reportTabs
+      : reportTabs.filter((tab) => (roleTabAllowlist[roleName] || []).includes(tab.id));
+
+    return allowedByRole.filter((tab) => hasAnyPermission(permissions, tabPermissionAny[tab.id] || []));
+  }, [permissions, user?.role_name]);
+
+  // NEW: Ensure active tab is always a visible one
+  useEffect(() => {
+    if (!visibleTabs.length) return;
+    const activeStillVisible = visibleTabs.some((t) => t.id === activeTab);
+    if (!activeStillVisible) {
+      setActiveTab(visibleTabs[0].id);
+    }
+  }, [activeTab, visibleTabs]);
+
   return (
     <div className="mx-auto max-w-7xl space-y-4 px-2 lg:px-0">
       <div className="rounded-xl border border-zinc-300 bg-white px-5 py-4 text-black shadow-sm">
@@ -81,7 +193,7 @@ export default function Reports() {
 
       <div className="rounded-xl border border-zinc-300 bg-white p-4 shadow-sm">
         <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
-          {reportTabs.map((tab) => {
+          {visibleTabs.map((tab) => {
             const Icon = tab.icon;
             const active = activeTab === tab.id;
             return (
@@ -100,6 +212,14 @@ export default function Reports() {
             );
           })}
         </div>
+
+        {/* NEW: Friendly message if user has no report permissions */}
+        {visibleTabs.length === 0 && (
+          <div className="rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-8 text-center text-zinc-700">
+            <p className="text-lg font-semibold">No reports available</p>
+            <p className="mt-1 text-sm">Your role does not have access to any report tabs.</p>
+          </div>
+        )}
 
         {activeTab === 'sales' && <SalesReportsTab onOpenModal={handleOpenModal} />}
         {activeTab === 'inventory' && <InventoryReportsTab onOpenModal={handleOpenModal} />}

@@ -100,9 +100,76 @@ function AppRoutes() {
           <Route path="/employees/job" element={<ProtectedRoute permission="employees.view"><Employees /></ProtectedRoute>} />
           <Route path="/employees/state" element={<ProtectedRoute permission="employees.view"><Employees /></ProtectedRoute>} />
           <Route path="/employees/shifts" element={<ProtectedRoute permission="employees.view"><Employees /></ProtectedRoute>} />
-          <Route path="/reports" element={<ProtectedRoute permission="reports.all"><Reports /></ProtectedRoute>} />
-          <Route path="/reports/accounts-receivable" element={<ProtectedRoute permission="reports.all"><AccountsReceivableReportPage /></ProtectedRoute>} />
-          <Route path="/reports/accounts-payable" element={<ProtectedRoute permission="reports.all"><AccountsPayableReportPage /></ProtectedRoute>} />
+          {/* UPDATED: Allow access to Reports page for any user who has at least one reports-related permission (backend still enforces per-module access) */}
+          <Route
+            path="/reports"
+            element={
+              <ProtectedRoute
+                permissionAny={[
+                  'reports.all',
+                  'sales.reports',
+                  'sales.view',
+                  'inventory.reports',
+                  'inventory.view',
+                  'stock.view',
+                  'items.view',
+                  'purchases.reports',
+                  'purchases.view',
+                  'finance.reports',
+                  'finance.balance',
+                  'finance.income',
+                  'finance.cashflow',
+                  'hr.reports',
+                  'employees.view',
+                  'customers.view',
+                  'customer_ledger.view',
+                  'supplier_payments.view',
+                  'customer_receipts.view',
+                ]}
+              >
+                <Reports />
+              </ProtectedRoute>
+            }
+          />
+          {/* UPDATED: Financial detail report pages should be accessible to finance/report viewers, not only reports.all */}
+          <Route
+            path="/reports/accounts-receivable"
+            element={
+              <ProtectedRoute
+                permissionAny={[
+                  'reports.all',
+                  'finance.reports',
+                  'finance.balance',
+                  'finance.income',
+                  'finance.cashflow',
+                  'accounts.view',
+                  'ledgers.view',
+                  'account_transactions.view',
+                ]}
+              >
+                <AccountsReceivableReportPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/reports/accounts-payable"
+            element={
+              <ProtectedRoute
+                permissionAny={[
+                  'reports.all',
+                  'finance.reports',
+                  'finance.balance',
+                  'finance.income',
+                  'finance.cashflow',
+                  'accounts.view',
+                  'ledgers.view',
+                  'account_transactions.view',
+                ]}
+              >
+                <AccountsPayableReportPage />
+              </ProtectedRoute>
+            }
+          />
           <Route path="/assets" element={<ProtectedRoute permission="accounts.view"><Assets /></ProtectedRoute>} />
           <Route
             path="/system"
