@@ -587,11 +587,13 @@ BEGIN
   PERFORM set_config('app.include_deleted', '1', true);
 
   IF to_regclass(format('${DB_SCHEMA}.%I', p_table)) IS NULL THEN
-    RAISE EXCEPTION 'Table not found: %', p_table;
+    RETURN QUERY SELECT FALSE, format('Table not found: %s', p_table);
+    RETURN;
   END IF;
 
   IF NOT ims.fn_table_has_column(p_table, 'is_deleted') THEN
-    RAISE EXCEPTION 'Table % does not support soft delete', p_table;
+    RETURN QUERY SELECT FALSE, format('Soft delete not enabled for table: %s', p_table);
+    RETURN;
   END IF;
 
   v_pk := ims.fn_table_pk_column(p_table);
@@ -625,8 +627,11 @@ BEGIN
     );
     EXECUTE v_sql INTO v_exists USING p_id;
     IF v_exists IS NOT NULL THEN
-      RAISE EXCEPTION 'This record cannot be deleted because it is already used in %.',
-        replace(v_ref.ref_table, '${DB_SCHEMA}.', '');
+      RETURN QUERY SELECT FALSE, format(
+        'Cannot delete: this record is already used in %s.',
+        replace(v_ref.ref_table, '${DB_SCHEMA}.', '')
+      );
+      RETURN;
     END IF;
   END LOOP;
 
@@ -707,6 +712,7 @@ AS \$\$
 DECLARE
   v_pk TEXT;
   v_id BIGINT;
+  v_res RECORD;
 BEGIN
   v_pk := ims.fn_table_pk_column(TG_TABLE_NAME);
   IF v_pk IS NULL THEN
@@ -717,8 +723,19 @@ BEGIN
   IF v_id IS NULL THEN
     RETURN OLD;
   END IF;
-  PERFORM ims.sp_soft_delete(TG_TABLE_NAME, v_id, NULL);
-  RETURN NULL;
+  -- Only intercept tables that support soft-delete; otherwise allow real delete.
+  IF NOT ims.fn_table_has_column(TG_TABLE_NAME, 'is_deleted') THEN
+    RETURN OLD;
+  END IF;
+
+  SELECT * INTO v_res FROM ims.sp_soft_delete(TG_TABLE_NAME, v_id, NULL) LIMIT 1;
+  IF COALESCE(v_res.success, FALSE) THEN
+    -- Cancel hard delete; row already soft-deleted.
+    RETURN NULL;
+  END IF;
+
+  -- Block delete with a business-rule error (frontend should show this as a warning).
+  RAISE EXCEPTION '%', COALESCE(v_res.message, 'Cannot delete this record');
 END;
 \$\$;
 
