@@ -10,7 +10,26 @@ DECLARE
   v_role_id BIGINT;
   v_user_id BIGINT;
   v_default_branch BIGINT;
+  v_has_monthly_salary BOOLEAN;
+  v_has_is_system BOOLEAN;
 BEGIN
+  -- NEW: Detect optional columns to avoid startup failures on older schemas.
+  SELECT EXISTS (
+    SELECT 1
+      FROM information_schema.columns
+     WHERE table_schema = 'ims'
+       AND table_name = 'roles'
+       AND column_name = 'monthly_salary'
+  ) INTO v_has_monthly_salary;
+
+  SELECT EXISTS (
+    SELECT 1
+      FROM information_schema.columns
+     WHERE table_schema = 'ims'
+       AND table_name = 'roles'
+       AND column_name = 'is_system'
+  ) INTO v_has_is_system;
+
   -- Create role if missing
   SELECT role_id INTO v_role_id
     FROM ims.roles
@@ -18,9 +37,24 @@ BEGIN
    LIMIT 1;
 
   IF v_role_id IS NULL THEN
-    INSERT INTO ims.roles (role_code, role_name, description, monthly_salary, is_system)
-    VALUES ('DEVELOPER', 'Developer', 'Internal developer (full access)', 0, TRUE)
-    RETURNING role_id INTO v_role_id;
+    -- UPDATED: Insert only columns that exist in the current schema.
+    IF v_has_monthly_salary AND v_has_is_system THEN
+      INSERT INTO ims.roles (role_code, role_name, description, monthly_salary, is_system)
+      VALUES ('DEVELOPER', 'Developer', 'Internal developer (full access)', 0, TRUE)
+      RETURNING role_id INTO v_role_id;
+    ELSIF v_has_monthly_salary THEN
+      INSERT INTO ims.roles (role_code, role_name, description, monthly_salary)
+      VALUES ('DEVELOPER', 'Developer', 'Internal developer (full access)', 0)
+      RETURNING role_id INTO v_role_id;
+    ELSIF v_has_is_system THEN
+      INSERT INTO ims.roles (role_code, role_name, description, is_system)
+      VALUES ('DEVELOPER', 'Developer', 'Internal developer (full access)', TRUE)
+      RETURNING role_id INTO v_role_id;
+    ELSE
+      INSERT INTO ims.roles (role_code, role_name, description)
+      VALUES ('DEVELOPER', 'Developer', 'Internal developer (full access)')
+      RETURNING role_id INTO v_role_id;
+    END IF;
   END IF;
 
   -- Ensure DEVELOPER has all permissions
@@ -78,4 +112,3 @@ BEGIN
     DO UPDATE SET is_default = EXCLUDED.is_default;
   END IF;
 END $$;
-
