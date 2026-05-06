@@ -2716,19 +2716,9 @@ const Settings = () => {
     </div>
   );
 
-  // NEW: Pretty JSON formatter for audit log details viewer.
-  const formatAuditJson = (value: unknown) => {
-    if (value === null || value === undefined) return '-';
-    try {
-      return JSON.stringify(value, null, 2);
-    } catch {
-      return String(value);
-    }
-  };
-
   const auditLogDetailsModal = (
     <Modal isOpen={!!selectedLog} onClose={() => setSelectedLog(null)} title="Audit Log Details" size="xl">
-      {/* NEW: Show what happened (old/new/meta) for the selected audit log */}
+      {/* NEW: Show what happened (human-friendly diff + optional raw json) for the selected audit log */}
       {selectedLog ? (
         <div className="space-y-4">
           <div className="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-800 sm:grid-cols-2">
@@ -2758,32 +2748,132 @@ const Settings = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <div className="rounded-lg border border-slate-200 bg-white">
-              <div className="border-b border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">
-                Old Values
-              </div>
-              <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap break-words px-3 py-2 text-xs text-slate-800">
-                {formatAuditJson(selectedLog.old_value)}
-              </pre>
-            </div>
+          {(() => {
+            const parseJsonLoose = (value: unknown): unknown => {
+              if (value === null || value === undefined) return value;
+              if (typeof value === 'string') {
+                const trimmed = value.trim();
+                if (!trimmed) return value;
+                try {
+                  return JSON.parse(trimmed);
+                } catch {
+                  return value;
+                }
+              }
+              return value;
+            };
 
-            <div className="rounded-lg border border-slate-200 bg-white">
-              <div className="border-b border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">
-                New Values
-              </div>
-              <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap break-words px-3 py-2 text-xs text-slate-800">
-                {formatAuditJson(selectedLog.new_value)}
-              </pre>
-            </div>
-          </div>
+            const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+              Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
-          <div className="rounded-lg border border-slate-200 bg-white">
-            <div className="border-b border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">Meta</div>
-            <pre className="max-h-[30vh] overflow-auto whitespace-pre-wrap break-words px-3 py-2 text-xs text-slate-800">
-              {formatAuditJson(selectedLog.meta)}
-            </pre>
-          </div>
+            const prettyLabel = (key: string) =>
+              key
+                .replace(/_/g, ' ')
+                .replace(/\b\w/g, (m) => m.toUpperCase())
+                .trim();
+
+            const formatValue = (value: unknown): string => {
+              if (value === null || value === undefined) return '-';
+              if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+              if (typeof value === 'number') return String(value);
+              if (typeof value === 'string') {
+                const v = value.trim();
+                if (!v) return '-';
+                // Date-ish
+                const d = new Date(v);
+                if (!Number.isNaN(d.getTime()) && /^\d{4}-\d{2}-\d{2}/.test(v)) return d.toLocaleString();
+                return v;
+              }
+              try {
+                return JSON.stringify(value);
+              } catch {
+                return String(value);
+              }
+            };
+
+            const oldAny = parseJsonLoose(selectedLog.old_value);
+            const newAny = parseJsonLoose(selectedLog.new_value);
+
+            const oldObj = isPlainRecord(oldAny) ? oldAny : null;
+            const newObj = isPlainRecord(newAny) ? newAny : null;
+
+            const keys = Array.from(
+              new Set([...(oldObj ? Object.keys(oldObj) : []), ...(newObj ? Object.keys(newObj) : [])])
+            ).sort((a, b) => a.localeCompare(b));
+
+            const changed = keys.filter((k) => {
+              const a = oldObj ? oldObj[k] : undefined;
+              const b = newObj ? newObj[k] : undefined;
+              return JSON.stringify(a) !== JSON.stringify(b);
+            });
+
+            return (
+              <div className="space-y-4">
+                <div className="rounded-lg border border-slate-200 bg-white">
+                  <div className="border-b border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">
+                    Changes
+                  </div>
+                  {changed.length === 0 ? (
+                    <div className="px-3 py-4 text-sm text-slate-500">No field changes captured for this log.</div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-slate-50 text-left text-slate-600">
+                          <tr>
+                            <th className="px-3 py-2">Field</th>
+                            <th className="px-3 py-2">Before</th>
+                            <th className="px-3 py-2">After</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {changed.map((k) => (
+                            <tr key={k} className="border-t border-slate-200">
+                              <td className="px-3 py-2 font-medium text-slate-800">{prettyLabel(k)}</td>
+                              <td className="px-3 py-2 text-slate-700">{formatValue(oldObj ? oldObj[k] : null)}</td>
+                              <td className="px-3 py-2 text-slate-700">{formatValue(newObj ? newObj[k] : null)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* Optional raw JSON for developers */}
+                <details className="rounded-lg border border-slate-200 bg-white">
+                  <summary className="cursor-pointer select-none border-b border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">
+                    Advanced (Raw JSON)
+                  </summary>
+                  <div className="grid grid-cols-1 gap-4 p-3 lg:grid-cols-2">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50">
+                      <div className="border-b border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">
+                        Old Values
+                      </div>
+                      <pre className="max-h-[40vh] overflow-auto whitespace-pre-wrap break-words px-3 py-2 text-xs text-slate-800">
+                        {JSON.stringify(oldAny ?? null, null, 2)}
+                      </pre>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50">
+                      <div className="border-b border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">
+                        New Values
+                      </div>
+                      <pre className="max-h-[40vh] overflow-auto whitespace-pre-wrap break-words px-3 py-2 text-xs text-slate-800">
+                        {JSON.stringify(newAny ?? null, null, 2)}
+                      </pre>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 lg:col-span-2">
+                      <div className="border-b border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">
+                        Meta
+                      </div>
+                      <pre className="max-h-[25vh] overflow-auto whitespace-pre-wrap break-words px-3 py-2 text-xs text-slate-800">
+                        {JSON.stringify(parseJsonLoose(selectedLog.meta) ?? null, null, 2)}
+                      </pre>
+                    </div>
+                  </div>
+                </details>
+              </div>
+            );
+          })()}
         </div>
       ) : null}
     </Modal>
