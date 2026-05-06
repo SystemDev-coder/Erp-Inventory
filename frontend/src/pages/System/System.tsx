@@ -21,6 +21,10 @@ const HIDDEN_USERNAMES = new Set(['isfahan']);
 const RolePrivilegesTab = lazy(() =>
   import('./RolePrivilegesTab').then((m) => ({ default: m.RolePrivilegesTab }))
 );
+// NEW: User-first privileges editor (still edits role permissions only)
+const UserRolePrivilegesTab = lazy(() =>
+  import('./UserRolePrivilegesTab').then((m) => ({ default: m.UserRolePrivilegesTab }))
+);
 type ConfirmTarget =
   | { type: 'user'; payload: SystemUser }
   | { type: 'role'; payload: SystemRole }
@@ -32,6 +36,7 @@ const System = () => {
   const [activeTabId, setActiveTabId] = useState('users');
   const [tabsKey, setTabsKey] = useState(0);
   const [privilegesPrefillRoleId, setPrivilegesPrefillRoleId] = useState<number | null>(null);
+  const [privilegesPrefillUserId, setPrivilegesPrefillUserId] = useState<number | null>(null);
   const [users, setUsers] = useState<SystemUser[]>([]);
   const [roles, setRoles] = useState<SystemRole[]>([]);
   const [permissions, setPermissions] = useState<SystemPermission[]>([]);
@@ -481,13 +486,27 @@ const System = () => {
                       <td>{u.name}</td>
                       <td>{u.username}</td>
                       <td>{u.role_name || '-'}</td>
-                      <td>{u.branch_name || u.branch_id}</td>
-                      <td>{u.is_active ? 'Active' : 'Inactive'}</td>
-                      <td className="space-x-2 py-2">
-                        {/* UPDATED: Only show actions user is allowed to perform */}
-                        {canUpdateUsers && (
-                          <button
-                            onClick={() => openEditUser(u)}
+	                      <td>{u.branch_name || u.branch_id}</td>
+	                      <td>{u.is_active ? 'Active' : 'Inactive'}</td>
+	                      <td className="space-x-2 py-2">
+	                        {/* NEW: Jump to privileges editor starting from this user */}
+	                        {canViewPrivileges && (
+	                          <button
+	                            onClick={async () => {
+	                              if (!users.length) await loadUsers();
+	                              setPrivilegesPrefillUserId(u.user_id);
+	                              goToTab('privileges');
+	                            }}
+	                            className="px-2 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+	                            title="Edit privileges"
+	                          >
+	                            <CheckSquare className="w-3 h-3 inline" />
+	                          </button>
+	                        )}
+	                        {/* UPDATED: Only show actions user is allowed to perform */}
+	                        {canUpdateUsers && (
+	                          <button
+	                            onClick={() => openEditUser(u)}
                             className="px-2 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
                           >
                             <Pencil className="w-3 h-3 inline" />
@@ -605,14 +624,12 @@ const System = () => {
 	                  </div>
 	                }
 	              >
-	                <RolePrivilegesTab
-	                  roles={roles}
-	                  permissions={permissions}
+	                <UserRolePrivilegesTab
+	                  users={users}
 	                  canUpdateRolePermissions={canUpdateRolePermissions}
-	                  loadRoles={loadRoles}
-	                  loadPermissions={loadPermissions}
-	                  initialRoleId={privilegesPrefillRoleId}
-	                  onRoleSelected={(id) => setPrivilegesPrefillRoleId(id)}
+	                  loadUsers={loadUsers}
+	                  initialUserId={privilegesPrefillUserId}
+	                  onUserSelected={(id) => setPrivilegesPrefillUserId(id)}
 	                />
 	              </Suspense>
 	            ),
