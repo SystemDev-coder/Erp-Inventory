@@ -46,6 +46,12 @@ export interface RolePermission extends SystemPermission {
   has_permission: boolean;
 }
 
+export interface UserPermission extends SystemPermission {
+  inherited: boolean;
+  override_effect: 'allow' | 'deny' | null;
+  has_permission: boolean;
+}
+
 export interface SystemAuditLog {
   audit_id: number;
   user_id: number | null;
@@ -134,6 +140,19 @@ export const systemService = {
 
   async updateRolePermissions(id: number, permIds: number[]): Promise<ApiResponse> {
     return apiClient.put(API.SYSTEM.ROLE_PERMISSIONS(id), { permIds });
+  },
+
+  // NEW: User privileges (effective + overrides)
+  async getUserPermissions(id: number): Promise<ApiResponse<{ permissions: UserPermission[] }>> {
+    return apiClient.get<{ permissions: UserPermission[] }>(`${API.SYSTEM.USER(id)}/permissions`);
+  },
+
+  // NEW: Replace explicit user permission overrides (single-table override management)
+  async updateUserPermissionOverrides(
+    id: number,
+    overrides: Array<{ permId: number; effect: 'allow' | 'deny' }>
+  ): Promise<ApiResponse> {
+    return apiClient.put(`${API.SYSTEM.USER(id)}/permissions`, { overrides });
   },
 
   async getPermissions(): Promise<ApiResponse<{ permissions: SystemPermission[] }>> {
