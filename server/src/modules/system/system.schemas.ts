@@ -25,6 +25,16 @@ export const updateRolePermissionsSchema = z.object({
   permIds: z.array(z.coerce.number().int().positive()),
 });
 
+// NEW: User permission overrides payload (writes only ims.user_permission_overrides)
+export const updateUserPermissionOverridesSchema = z.object({
+  overrides: z.array(
+    z.object({
+      permId: z.coerce.number().int().positive(),
+      effect: z.enum(['allow', 'deny']),
+    })
+  ),
+});
+
 export const createPermissionSchema = z.object({
   permKey: z.string().trim().min(3).max(100).regex(/^[a-z0-9._:-]+$/i, 'Invalid permission key'),
   permName: z.string().trim().min(2).max(150),
@@ -95,6 +105,7 @@ export const listLogsQuerySchema = z.object({
 export type CreateRoleInput = z.infer<typeof createRoleSchema>;
 export type UpdateRoleInput = z.infer<typeof updateRoleSchema>;
 export type UpdateRolePermissionsInput = z.infer<typeof updateRolePermissionsSchema>;
+export type UpdateUserPermissionOverridesInput = z.infer<typeof updateUserPermissionOverridesSchema>;
 export type CreatePermissionInput = z.infer<typeof createPermissionSchema>;
 export type UpdatePermissionInput = z.infer<typeof updatePermissionSchema>;
 export type CreateUserInput = z.infer<typeof createUserSchema>;
