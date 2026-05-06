@@ -15,7 +15,6 @@ import {
   updateRoleSchema,
   updateUserSchema,
 } from './system.schemas';
-import { updateUserPermissionOverridesSchema } from './system.userPermissions';
 import { logAudit } from '../../utils/audit';
 
 const parseId = (value: string, label: string): number => {
@@ -258,30 +257,6 @@ export const updateRolePermissions = asyncHandler(async (req: AuthRequest, res: 
     userAgent: req.get('user-agent') || null,
   });
   return ApiResponse.success(res, null, 'Role permissions updated');
-});
-
-// NEW: Get effective permissions + overrides for a user (for Privileges UI)
-export const getUserPermissions = asyncHandler(async (req: AuthRequest, res: Response) => {
-  const userId = parseId(req.params.id, 'User ID');
-  const permissions = await systemService.listUserPermissions(userId);
-  return ApiResponse.success(res, { permissions });
-});
-
-// NEW: Replace explicit user permission overrides (writes only ims.user_permission_overrides)
-export const updateUserPermissionOverrides = asyncHandler(async (req: AuthRequest, res: Response) => {
-  const userId = parseId(req.params.id, 'User ID');
-  const input = updateUserPermissionOverridesSchema.parse(req.body);
-  await systemService.replaceUserPermissionOverrides(userId, input.overrides);
-  await logAudit({
-    userId: req.user?.userId ?? null,
-    action: 'update',
-    entity: 'user_permission_overrides',
-    entityId: userId,
-    newValue: { overrides: input.overrides },
-    ip: req.ip,
-    userAgent: req.get('user-agent') || null,
-  });
-  return ApiResponse.success(res, null, 'User privileges updated');
 });
 
 export const listPermissions = asyncHandler(async (_req: AuthRequest, res: Response) => {

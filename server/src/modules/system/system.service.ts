@@ -94,12 +94,6 @@ export interface RolePermissionRow extends PermissionRow {
   has_permission: boolean;
 }
 
-export interface UserPermissionRow extends PermissionRow {
-  inherited: boolean;
-  override_effect: 'allow' | 'deny' | null;
-  has_permission: boolean;
-}
-
 export interface AuditLogRow {
   audit_id: number;
   user_id: number | null;
@@ -1011,72 +1005,6 @@ export const systemService = {
            FROM UNNEST($2::int[]) AS x(perm_id)
          ON CONFLICT (role_id, perm_id) DO NOTHING`,
         [roleId, permIds]
-      );
-    });
-  },
-
-  // NEW: List effective permissions for a user + their explicit overrides (single-table overrides management)
-  async listUserPermissions(userId: number): Promise<UserPermissionRow[]> {
-    const user = await queryOne<{ user_id: number; role_id: number }>(
-      `SELECT user_id, role_id FROM ims.users WHERE user_id = $1`,
-      [userId]
-    );
-    if (!user) {
-      throw ApiError.notFound('User not found');
-    }
-
-    return queryMany<UserPermissionRow>(
-      `SELECT
-          p.perm_id,
-          p.perm_key,
-          p.perm_name,
-          p.module,
-          p.sub_module,
-          p.action_type,
-          p.description,
-          (rp.role_id IS NOT NULL) AS inherited,
-          uo.effect::text AS override_effect,
-          CASE
-            WHEN uo.effect = 'deny' THEN FALSE
-            WHEN uo.effect = 'allow' THEN TRUE
-            WHEN rp.role_id IS NOT NULL THEN TRUE
-            ELSE FALSE
-          END AS has_permission
-       FROM ims.permissions p
-       LEFT JOIN ims.role_permissions rp
-         ON rp.perm_id = p.perm_id
-        AND rp.role_id = $2
-       LEFT JOIN ims.user_permission_overrides uo
-         ON uo.perm_id = p.perm_id
-        AND uo.user_id = $1
-       ORDER BY p.module, p.sub_module NULLS FIRST, p.action_type NULLS FIRST, p.perm_key`,
-      [userId, user.role_id]
-    );
-  },
-
-  // NEW: Replace all explicit user permission overrides (writes only ims.user_permission_overrides)
-  async replaceUserPermissionOverrides(
-    userId: number,
-    overrides: Array<{ permId: number; effect: 'allow' | 'deny' }>
-  ): Promise<void> {
-    const user = await queryOne<{ user_id: number }>(`SELECT user_id FROM ims.users WHERE user_id = $1`, [userId]);
-    if (!user) {
-      throw ApiError.notFound('User not found');
-    }
-
-    await withTransaction(async (client) => {
-      await client.query(`DELETE FROM ims.user_permission_overrides WHERE user_id = $1`, [userId]);
-      if (!overrides.length) return;
-
-      const permIds = overrides.map((o) => o.permId);
-      const effects = overrides.map((o) => o.effect);
-      await client.query(
-        `INSERT INTO ims.user_permission_overrides (user_id, perm_id, effect)
-         SELECT $1, x.perm_id, x.effect
-           FROM UNNEST($2::int[], $3::text[]) AS x(perm_id, effect)
-         ON CONFLICT (user_id, perm_id)
-         DO UPDATE SET effect = EXCLUDED.effect, updated_at = NOW()`,
-        [userId, permIds, effects]
       );
     });
   },

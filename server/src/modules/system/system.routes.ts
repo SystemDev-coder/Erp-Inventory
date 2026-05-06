@@ -10,7 +10,6 @@ import {
   deleteLog,
   getSystemInfo,
   getRolePermissions,
-  getUserPermissions,
   listBranches,
   listLogs,
   listPermissions,
@@ -19,7 +18,6 @@ import {
   updatePermission,
   updateRole,
   updateRolePermissions,
-  updateUserPermissionOverrides,
   updateSystemInfo,
   updateUser,
   uploadLogo,
@@ -69,9 +67,6 @@ router.get('/users', requireAnyPerm(['system.users.manage', 'users.view']), list
 router.post('/users', requireAnyPerm(['system.users.manage', 'users.create']), createUser);
 router.put('/users/:id', requireAnyPerm(['system.users.manage', 'users.update']), updateUser);
 router.delete('/users/:id', requireAnyPerm(['system.users.manage', 'users.delete']), deleteUser);
-// NEW: User privileges (single-table overrides) endpoints
-router.get('/users/:id/permissions', requireAnyPerm(['system.permissions.manage', 'users.view', 'system.users.manage']), getUserPermissions);
-router.put('/users/:id/permissions', requireAnyPerm(['system.permissions.manage', 'users.update', 'system.users.manage']), updateUserPermissionOverrides);
 
 router.get('/roles', requireAnyPerm(['system.roles.manage', 'roles.view']), listRoles);
 router.post('/roles', requireAnyPerm(['system.roles.manage', 'roles.create']), createRole);
