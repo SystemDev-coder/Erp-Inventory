@@ -108,13 +108,13 @@ const resolveProductForPurchaseItem = async (
       ? Number(item.salePrice)
       : Number(existing.rows[0].current_sale || requestedCost);
 
+    // UPDATED: Do not overwrite `cost_price` here. Moving-average cost is applied when stock is received.
     await client.query(
       `UPDATE ims.items
-          SET cost_price = $2,
-              sell_price = $3,
+          SET sell_price = $2,
               is_active = TRUE
         WHERE item_id = $1`,
-      [item.productId, requestedCost, nextSale]
+      [item.productId, nextSale]
     );
     return Number(item.productId);
   }
@@ -144,13 +144,13 @@ const resolveProductForPurchaseItem = async (
     const nextSale = item.salePrice !== undefined
       ? Number(item.salePrice)
       : Number(existingByName.rows[0].current_sale || requestedCost);
+    // UPDATED: Do not overwrite `cost_price` here. Moving-average cost is applied when stock is received.
     await client.query(
       `UPDATE ims.items
-          SET cost_price = $2,
-              sell_price = $3,
+          SET sell_price = $2,
               is_active = TRUE
         WHERE item_id = $1`,
-      [productId, requestedCost, nextSale]
+      [productId, nextSale]
     );
     return productId;
   }
@@ -351,6 +351,26 @@ const applyStoreItemDelta = async (
                updated_at = NOW()`,
     [params.storeId, params.itemId, nextQty]
   );
+
+  // NEW: Return quantities so purchase logic can compute moving-average cost safely.
+  return { beforeQty: currentQty, afterQty: nextQty };
+};
+
+// NEW: Moving average (weighted average) cost calculator.
+const calcMovingAverageCost = (params: {
+  currentQty: number;
+  currentUnitCost: number;
+  inQty: number;
+  inUnitCost: number;
+}): number => {
+  const currentQty = Math.max(0, Math.round(Number(params.currentQty || 0)));
+  const inQty = Math.max(0, Math.round(Number(params.inQty || 0)));
+  const currentUnitCost = Math.max(0, Number(params.currentUnitCost || 0));
+  const inUnitCost = Math.max(0, Number(params.inUnitCost || 0));
+  const denom = currentQty + inQty;
+  if (denom <= 0) return currentUnitCost || inUnitCost || 0;
+  const avg = (currentQty * currentUnitCost + inQty * inUnitCost) / denom;
+  return Math.max(0, Number(avg.toFixed(4)));
 };
 
 const applyPurchaseStockEffects = async (
@@ -377,12 +397,42 @@ const applyPurchaseStockEffects = async (
       fallbackStoreId: params.storeId ?? null,
     });
 
-    await applyStoreItemDelta(client, {
+    const deltaRes = await applyStoreItemDelta(client, {
       storeId,
       itemId: Number(line.itemId),
       delta,
       branchId: params.branchId,
     });
+
+    // NEW: Update item cost using moving average on purchase receive (from now).
+    // We use the stock quantity BEFORE this receive line so average is correct.
+    if (params.direction === 'in' && params.moveType === 'purchase') {
+      const itemRow = await client.query<{ cost_price: string }>(
+        `SELECT COALESCE(cost_price, 0)::text AS cost_price
+           FROM ims.items
+          WHERE item_id = $1
+            AND branch_id = $2
+          LIMIT 1`,
+        [Number(line.itemId), params.branchId]
+      );
+      const currentUnitCost = Number(itemRow.rows[0]?.cost_price || 0);
+      const beforeQty = Number(deltaRes?.beforeQty ?? 0);
+      const nextAvg = calcMovingAverageCost({
+        currentQty: beforeQty,
+        currentUnitCost,
+        inQty: qty,
+        inUnitCost: Number(line.unitCost || 0),
+      });
+
+      await client.query(
+        `UPDATE ims.items
+            SET cost_price = $2,
+                is_active = TRUE
+          WHERE item_id = $1
+            AND branch_id = $3`,
+        [Number(line.itemId), nextAvg, params.branchId]
+      );
+    }
 
     const qtyIn = params.direction === 'in' ? qty : 0;
     const qtyOut = params.direction === 'out' ? qty : 0;
