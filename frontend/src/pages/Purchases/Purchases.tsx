@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+// UPDATED: Use effect for deep-linking Orders filter.
+import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { ColumnDef } from '@tanstack/react-table';
 import { RefreshCw, ShoppingBag, Users } from 'lucide-react';
@@ -36,6 +37,10 @@ const Purchases = () => {
   const [loading, setLoading] = useState(false);
   const [search] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | PurchaseForm['status']>('all');
+  // NEW: Toggle between Purchases vs Purchase Orders using the same purchases table.
+  const [docTypeFilter, setDocTypeFilter] = useState<'purchase' | 'order'>(() =>
+    new URLSearchParams(location.search).get('docType') === 'order' ? 'order' : 'purchase'
+  );
   const [dateRange, setDateRange] = useState(() => defaultDateRange());
   const [suppliersDisplayed, setSuppliersDisplayed] = useState(false);
   const [itemsDisplayed, setItemsDisplayed] = useState(false);
@@ -64,11 +69,13 @@ const Purchases = () => {
     is_active: true,
   } as Supplier);
 
-  const loadPurchases = async (term?: string, status?: string) => {
+  // UPDATED: Load purchases with docType filter so Orders list is separate from Purchases.
+  const loadPurchases = async (term?: string, status?: string, docType?: 'purchase' | 'order') => {
     setLoading(true);
     const res = await purchaseService.list({
       search: term,
       status,
+      docType,
       fromDate: dateRange.fromDate,
       toDate: dateRange.toDate,
     });
@@ -79,6 +86,14 @@ const Purchases = () => {
     }
     setLoading(false);
   };
+
+  // NEW: Allow deep-linking to Orders list (`/purchases?docType=order`).
+  useEffect(() => {
+    const next = new URLSearchParams(location.search).get('docType') === 'order' ? 'order' : 'purchase';
+    setDocTypeFilter(next);
+    // NEW: Default status for Orders view is `ordered` to avoid looking empty after creating an order.
+    setStatusFilter(next === 'order' ? 'ordered' : 'all');
+  }, [location.search]);
 
   const loadSuppliers = async (term?: string) => {
     setLoading(true);
@@ -152,7 +167,8 @@ const Purchases = () => {
   ], []);
 
   const onEdit = (row: Purchase) => {
-    navigate(`/purchases/${row.purchase_id}`);
+    // UPDATED: Preserve purchase vs order mode in editor routes.
+    navigate(row.doc_type === 'order' ? `/purchases/${row.purchase_id}?docType=order` : `/purchases/${row.purchase_id}`);
   };
 
   const onDelete = (row: Purchase) => {
@@ -195,6 +211,7 @@ const Purchases = () => {
     const res = await purchaseService.exportXlsx({
       search,
       status: statusFilter,
+      docType: docTypeFilter,
       fromDate: dateRange.fromDate,
       toDate: dateRange.toDate,
     });
@@ -277,7 +294,7 @@ const Purchases = () => {
     const res = await purchaseService.remove(purchaseToDelete.purchase_id);
     if (res.success) {
       showToast('success', 'Deleted', `Purchase #${purchaseToDelete.purchase_id} removed`);
-      if (purchasesDisplayed) loadPurchases(search, statusFilter);
+      if (purchasesDisplayed) loadPurchases(search, statusFilter, docTypeFilter);
     } else {
       showToast('error', 'Delete failed', res.error || 'Could not delete purchase');
     }
@@ -306,13 +323,12 @@ const Purchases = () => {
   ];
 
   const statusFilters: Array<'all' | PurchaseForm['status']> = ['all', 'ordered', 'received', 'partial', 'unpaid', 'void'];
-  const filteredPurchases = useMemo(
-    () =>
-      statusFilter === 'all'
-        ? purchases
-        : purchases.filter((p) => p.status === statusFilter),
-    [purchases, statusFilter]
-  );
+  // UPDATED: Filter list by docType first, then status.
+  const filteredPurchases = useMemo(() => {
+    const byDocType = purchases.filter((p) => (p.doc_type || 'purchase') === docTypeFilter);
+    if (statusFilter === 'all') return byDocType;
+    return byDocType.filter((p) => p.status === statusFilter);
+  }, [purchases, docTypeFilter, statusFilter]);
 
   const itemColumns: ColumnDef<PurchaseItemView>[] = useMemo(() => [
     {
@@ -464,7 +480,7 @@ const Purchases = () => {
             secondaryAction={{ label: 'New Order', onClick: () => navigate('/purchases/new?docType=order') }}
             onDisplay={() => {
               setPurchasesDisplayed(true);
-              void loadPurchases(search, statusFilter);
+              void loadPurchases(search, statusFilter, docTypeFilter);
             }}
             displayLoading={loading}
             onExport={downloadPurchasesXlsx}
@@ -475,12 +491,39 @@ const Purchases = () => {
               onToDateChange: (value) => setDateRange((prev) => ({ ...prev, toDate: value })),
             }}
           />
+          {/* NEW: Toggle view between Purchases and Orders */}
+          <div className="flex flex-wrap gap-2 px-1">
+            {(['purchase', 'order'] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => {
+                  const nextDocType = t;
+                  const nextStatus = nextDocType === 'order' ? 'ordered' : 'all';
+                  setDocTypeFilter(nextDocType);
+                  setStatusFilter(nextStatus);
+                  if (purchasesDisplayed) {
+                    void loadPurchases(search, nextStatus, nextDocType);
+                  }
+                }}
+                className={`px-3 py-1 rounded-full text-sm border ${
+                  docTypeFilter === t
+                    ? 'bg-primary-600 text-white border-primary-600'
+                    : 'border-slate-200 text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                {t === 'purchase' ? 'Purchases' : 'Orders'}
+              </button>
+            ))}
+          </div>
           <div className="flex flex-wrap gap-2 px-1">
             {statusFilters.map((s) => (
               <button
                 key={s}
                 onClick={() => {
                   setStatusFilter(s);
+                  if (purchasesDisplayed) {
+                    void loadPurchases(search, s, docTypeFilter);
+                  }
                 }}
                 className={`px-3 py-1 rounded-full text-sm border ${
                   statusFilter === s

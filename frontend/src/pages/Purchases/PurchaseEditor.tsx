@@ -433,8 +433,19 @@ const PurchaseEditor = () => {
       : await purchaseService.create(payload);
     setLoading(false);
     if (res.success) {
-      showToast('success', 'Saved', isEdit ? 'Purchase updated' : 'Purchase created');
-      navigate('/purchases');
+      // UPDATED: Return to the correct list (Purchases vs Orders) after save.
+      showToast(
+        'success',
+        'Saved',
+        docType === 'order'
+          ? isEdit
+            ? 'Purchase order updated'
+            : 'Purchase order created'
+          : isEdit
+          ? 'Purchase updated'
+          : 'Purchase created'
+      );
+      navigate(docType === 'order' ? '/purchases?docType=order' : '/purchases?docType=purchase');
     } else {
       showToast('error', 'Save failed', res.error || 'Check the form');
     }
@@ -461,7 +472,7 @@ const PurchaseEditor = () => {
             <button
               type="button"
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
-              onClick={() => navigate('/purchases')}
+              onClick={() => navigate(docType === 'order' ? '/purchases?docType=order' : '/purchases?docType=purchase')}
             >
               <ArrowLeft size={16} /> Back
             </button>
