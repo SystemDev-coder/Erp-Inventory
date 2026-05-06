@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Lock, Pencil, Plus, Shield, Trash2, Users } from 'lucide-react';
+import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
+import { CheckSquare, Lock, Pencil, Plus, Shield, Trash2, Users } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
 import { Tabs } from '../../components/ui/tabs';
 import { Modal } from '../../components/ui/modal/Modal';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { useToast } from '../../components/ui/toast/Toast';
+import { useAuth } from '../../context/AuthContext';
 import {
   systemService,
   SystemBranch,
@@ -15,6 +16,11 @@ import {
 
 const SHOW_PERMISSION_TAB = false;
 const HIDDEN_USERNAMES = new Set(['isfahan']);
+
+// NEW: Lazy-load the privileges editor so it can't affect initial app load/hosting stability
+const RolePrivilegesTab = lazy(() =>
+  import('./RolePrivilegesTab').then((m) => ({ default: m.RolePrivilegesTab }))
+);
 type ConfirmTarget =
   | { type: 'user'; payload: SystemUser }
   | { type: 'role'; payload: SystemRole }
@@ -22,6 +28,7 @@ type ConfirmTarget =
 
 const System = () => {
   const { showToast } = useToast();
+  const { permissions: currentPermissions } = useAuth();
   const [users, setUsers] = useState<SystemUser[]>([]);
   const [roles, setRoles] = useState<SystemRole[]>([]);
   const [permissions, setPermissions] = useState<SystemPermission[]>([]);
@@ -64,6 +71,30 @@ const System = () => {
   });
   const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget | null>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
+
+  // NEW: Permission checks for System UI (match sidebar behavior)
+  const hasAnyPerm = useCallback(
+    (required?: string[]) => {
+      if (!required || required.length === 0) return true;
+      const set = new Set(currentPermissions);
+      return required.some((perm) => set.has(perm));
+    },
+    [currentPermissions]
+  );
+
+  // NEW: Gate actions/tabs by permissions
+  const canViewUsers = hasAnyPerm(['system.users.manage', 'users.view']);
+  const canCreateUsers = hasAnyPerm(['system.users.manage', 'users.create']);
+  const canUpdateUsers = hasAnyPerm(['system.users.manage', 'users.update']);
+  const canDeleteUsers = hasAnyPerm(['system.users.manage', 'users.delete']);
+
+  const canViewRoles = hasAnyPerm(['system.roles.manage', 'roles.view']);
+  const canCreateRoles = hasAnyPerm(['system.roles.manage', 'roles.create']);
+  const canUpdateRoles = hasAnyPerm(['system.roles.manage', 'roles.update']);
+  const canDeleteRoles = hasAnyPerm(['system.roles.manage', 'roles.delete']);
+
+  const canViewPrivileges = canViewRoles && hasAnyPerm(['system.permissions.manage', 'permissions.view']);
+  const canUpdateRolePermissions = hasAnyPerm(['system.roles.manage', 'roles.update']);
 
   const loadUsers = async () => {
     const res = await systemService.getUsers();
@@ -386,17 +417,26 @@ const System = () => {
             <button
               onClick={displayUsers}
               className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
-              disabled={loadingUsers}
+              disabled={loadingUsers || !canViewUsers}
             >
               {loadingUsers ? 'Loading...' : 'Display Users'}
             </button>
-            <button
-              onClick={openCreateUser}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white text-sm"
-            >
-              <Plus className="w-4 h-4" /> Add User
-            </button>
+            {/* UPDATED: Only users with create permission see Add User */}
+            {canCreateUsers && (
+              <button
+                onClick={openCreateUser}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white text-sm"
+              >
+                <Plus className="w-4 h-4" /> Add User
+              </button>
+            )}
           </div>
+          {/* NEW: No-access hint */}
+          {!canViewUsers && (
+            <div className="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+              You do not have permission to view users.
+            </div>
+          )}
           {usersDisplayed ? (
             <div className="overflow-x-auto bg-white rounded-xl border border-slate-200 p-4 dark:bg-slate-900 dark:border-slate-800">
               <table className="min-w-full text-sm">
@@ -422,18 +462,23 @@ const System = () => {
                       <td>{u.branch_name || u.branch_id}</td>
                       <td>{u.is_active ? 'Active' : 'Inactive'}</td>
                       <td className="space-x-2 py-2">
-                        <button
-                          onClick={() => openEditUser(u)}
-                          className="px-2 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
-                        >
-                          <Pencil className="w-3 h-3 inline" />
-                        </button>
-                        <button
-                          onClick={() => requestDeleteUser(u)}
-                          className="px-2 py-1 border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-300 rounded hover:bg-rose-50 dark:hover:bg-rose-500/10"
-                        >
-                          <Trash2 className="w-3 h-3 inline" />
-                        </button>
+                        {/* UPDATED: Only show actions user is allowed to perform */}
+                        {canUpdateUsers && (
+                          <button
+                            onClick={() => openEditUser(u)}
+                            className="px-2 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+                          >
+                            <Pencil className="w-3 h-3 inline" />
+                          </button>
+                        )}
+                        {canDeleteUsers && (
+                          <button
+                            onClick={() => requestDeleteUser(u)}
+                            className="px-2 py-1 border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-300 rounded hover:bg-rose-50 dark:hover:bg-rose-500/10"
+                          >
+                            <Trash2 className="w-3 h-3 inline" />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -448,22 +493,31 @@ const System = () => {
         </div>
       ),
     },
-    {
-      id: 'roles',
-      label: 'Roles',
-      icon: Shield,
-      badge: roles.length,
-      content: (
-        <div className="space-y-3">
-          <div className="flex flex-wrap justify-end gap-2">
-            <button onClick={displayRoles} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm hover:bg-slate-50 dark:hover:bg-slate-800" disabled={loadingRoles}>
-              {loadingRoles ? 'Loading...' : 'Display Roles'}
-            </button>
-            <button onClick={openCreateRole} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white text-sm"><Plus className="w-4 h-4" /> Add Role</button>
-          </div>
-          {rolesDisplayed ? (
-            <div className="overflow-x-auto bg-white rounded-xl border border-slate-200 p-4 dark:bg-slate-900 dark:border-slate-800">
-              <table className="min-w-full text-sm">
+	    {
+	      id: 'roles',
+	      label: 'Roles',
+	      icon: Shield,
+	      badge: roles.length,
+	      content: (
+	        <div className="space-y-3">
+	          <div className="flex flex-wrap justify-end gap-2">
+	            <button onClick={displayRoles} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm hover:bg-slate-50 dark:hover:bg-slate-800" disabled={loadingRoles || !canViewRoles}>
+	              {loadingRoles ? 'Loading...' : 'Display Roles'}
+	            </button>
+	            {/* UPDATED: Only users with create permission see Add Role */}
+	            {canCreateRoles && (
+	              <button onClick={openCreateRole} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white text-sm"><Plus className="w-4 h-4" /> Add Role</button>
+	            )}
+	          </div>
+	          {/* NEW: No-access hint */}
+	          {!canViewRoles && (
+	            <div className="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+	              You do not have permission to view roles.
+	            </div>
+	          )}
+	          {rolesDisplayed ? (
+	            <div className="overflow-x-auto bg-white rounded-xl border border-slate-200 p-4 dark:bg-slate-900 dark:border-slate-800">
+	              <table className="min-w-full text-sm">
                 <thead>
                   <tr className="text-left text-slate-500 dark:text-slate-300">
                     <th>Code</th>
@@ -475,15 +529,20 @@ const System = () => {
                 <tbody>
                   {roles.map((r) => (
                     <tr key={r.role_id} className="border-t border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200">
-                      <td className="font-mono text-xs">{r.role_code}</td>
-                      <td>{r.role_name}</td>
-                      <td>{r.description || '-'}</td>
-                      <td className="space-x-2 py-2">
-                        <button onClick={() => openEditRole(r)} className="px-2 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"><Pencil className="w-3 h-3 inline" /></button>
-                        <button onClick={() => requestDeleteRole(r)} className="px-2 py-1 border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-300 rounded hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="w-3 h-3 inline" /></button>
-                      </td>
-                    </tr>
-                  ))}
+	                      <td className="font-mono text-xs">{r.role_code}</td>
+	                      <td>{r.role_name}</td>
+	                      <td>{r.description || '-'}</td>
+	                      <td className="space-x-2 py-2">
+	                        {/* UPDATED: Only show actions user is allowed to perform */}
+	                        {canUpdateRoles && (
+	                          <button onClick={() => openEditRole(r)} className="px-2 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"><Pencil className="w-3 h-3 inline" /></button>
+	                        )}
+	                        {canDeleteRoles && (
+	                          <button onClick={() => requestDeleteRole(r)} className="px-2 py-1 border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-300 rounded hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="w-3 h-3 inline" /></button>
+	                        )}
+	                      </td>
+	                    </tr>
+	                  ))}
                 </tbody>
               </table>
             </div>
@@ -494,11 +553,39 @@ const System = () => {
           )}
         </div>
       ),
-    },
-    ...(SHOW_PERMISSION_TAB
-      ? [
-          {
-            id: 'permissions',
+	    },
+	    // NEW: Privileges tab (role → permissions) is lazy-loaded for stability
+	    ...(canViewPrivileges
+	      ? [
+	          {
+	            id: 'privileges',
+	            label: 'Privileges',
+	            icon: CheckSquare,
+	            badge: 0,
+	            content: (
+	              <Suspense
+	                fallback={
+	                  <div className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+	                    Loading privileges editor...
+	                  </div>
+	                }
+	              >
+	                <RolePrivilegesTab
+	                  roles={roles}
+	                  permissions={permissions}
+	                  canUpdateRolePermissions={canUpdateRolePermissions}
+	                  loadRoles={loadRoles}
+	                  loadPermissions={loadPermissions}
+	                />
+	              </Suspense>
+	            ),
+	          },
+	        ]
+	      : []),
+	    ...(SHOW_PERMISSION_TAB
+	      ? [
+	          {
+	            id: 'permissions',
             label: 'Permissions',
             icon: Lock,
             badge: permissions.length,
