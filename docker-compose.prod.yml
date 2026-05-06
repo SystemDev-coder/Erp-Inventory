@@ -69,9 +69,8 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     restart: unless-stopped
-    depends_on:
-      server:
-        condition: service_started
+    # UPDATED: Frontend should be able to start even if backend is still booting/migrating.
+    # Nginx will serve the SPA immediately; /api requests will proxy once `server` is ready.
     ports:
       - "5173:80"
     expose:
