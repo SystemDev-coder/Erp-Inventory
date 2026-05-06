@@ -3,6 +3,7 @@ import { pool } from '../../db/pool';
 import { withTransaction } from '../../db/withTx';
 import { ApiError } from '../../utils/ApiError';
 import { BranchScope, pickBranchForWrite, assertBranchAccess } from '../../utils/branchScope';
+import { softDeleteById } from '../../db/softDelete';
 import { adjustSystemAccountBalance } from '../../utils/systemAccounts';
 import { postGl } from '../../utils/glPosting';
 import { ensureCoaAccounts } from '../../utils/coaDefaults';
@@ -2017,7 +2018,13 @@ export const financeService = {
       params.push(scope.branchIds);
       where += ` AND branch_id = ANY($${params.length})`;
     }
-    await queryOne(`DELETE FROM ims.expenses ${where} RETURNING exp_id`, params);
+
+    // UPDATED: Enforce scope, then soft-delete via DB function to avoid `DELETE ... RETURNING` returning 0 rows.
+    const exists = await queryOne<{ exp_id: number }>(`SELECT exp_id FROM ims.expenses ${where} LIMIT 1`, params);
+    if (!exists) {
+      throw ApiError.notFound('Expense not found');
+    }
+    await softDeleteById('expenses', id);
   },
 
   async listExpenseCharges(scope: BranchScope, branchId?: number, range: DateRange = {}) {

@@ -4,6 +4,7 @@ import { ApiError } from '../../utils/ApiError';
 import { BranchScope } from '../../utils/branchScope';
 import { PoolClient } from 'pg';
 import { deleteGlByRef, ensureCoreCoa, postGl } from '../../utils/glPosting';
+import { softDeleteById } from '../../db/softDelete';
 
 type AuthContext = { userId?: number | null } | undefined;
 
@@ -1257,6 +1258,15 @@ export const inventoryService = {
   },
 
   async deleteBranch(id: number) {
+    // UPDATED: Ensure branch exists so we can return a 404 instead of a generic delete error.
+    const exists = await queryOne<{ branch_id: number }>(
+      `SELECT branch_id FROM ims.branches WHERE branch_id = $1 LIMIT 1`,
+      [id]
+    );
+    if (!exists) {
+      throw ApiError.notFound('Branch not found');
+    }
+
     const hasWarehouses = await queryOne<{ total: string }>(
       `SELECT COUNT(*)::text AS total
          FROM ims.warehouses
@@ -1267,10 +1277,8 @@ export const inventoryService = {
       throw ApiError.badRequest('Delete or move warehouses first');
     }
 
-    const deleted = await queryOne(`DELETE FROM ims.branches WHERE branch_id = $1 RETURNING branch_id`, [id]);
-    if (!deleted) {
-      throw ApiError.notFound('Branch not found');
-    }
+    // UPDATED: Soft-delete via DB function so this doesn't break when triggers cancel hard deletes.
+    await softDeleteById('branches', id);
   },
 
   async listWarehouses(filters: any) {
@@ -1423,10 +1431,8 @@ export const inventoryService = {
       throw ApiError.forbidden('You can only delete warehouses in your branch');
     }
 
-    const deleted = await queryOne(`DELETE FROM ims.warehouses WHERE wh_id = $1 RETURNING wh_id`, [id]);
-    if (!deleted) {
-      throw ApiError.notFound('Warehouse not found');
-    }
+    // UPDATED: Soft-delete via DB function so this doesn't break when triggers cancel hard deletes.
+    await softDeleteById('warehouses', id);
   },
 
   async listInventoryTransactions(filters: any) {

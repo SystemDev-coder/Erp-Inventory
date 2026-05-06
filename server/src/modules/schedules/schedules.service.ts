@@ -1,4 +1,5 @@
 import { queryMany, queryOne } from '../../db/query';
+import { softDeleteById } from '../../db/softDelete';
 
 export interface Schedule {
   schedule_id: number;
@@ -160,8 +161,14 @@ export const schedulesService = {
   },
 
   async delete(id: number): Promise<boolean> {
-    const result = await queryMany(`DELETE FROM ims.employee_schedule WHERE schedule_id = $1 RETURNING schedule_id`, [id]);
-    return result.length > 0;
+    // UPDATED: Soft-delete via DB function so this doesn't break when triggers cancel hard deletes.
+    const exists = await queryOne<{ schedule_id: number }>(
+      `SELECT schedule_id FROM ims.employee_schedule WHERE schedule_id = $1 LIMIT 1`,
+      [id]
+    );
+    if (!exists) return false;
+    await softDeleteById('employee_schedule', id);
+    return true;
   },
 
   async getUpcoming(empId?: number, days: number = 30): Promise<Schedule[]> {
