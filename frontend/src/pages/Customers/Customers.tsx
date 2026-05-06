@@ -12,6 +12,7 @@ import Badge from '../../components/ui/badge/Badge';
 import { customerService, Customer } from '../../services/customer.service';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
 import { defaultDateRange } from '../../utils/dateRange';
+import { deleteToastLevel } from '../../utils/deleteWarnings';
 
 type CustomerForm = {
     customer_id?: number;
@@ -164,7 +165,8 @@ const Customers = () => {
             showToast('success', 'Deleted', `"${customerToDelete.full_name}" removed`);
             fetchCustomers();
         } else {
-            showToast('error', 'Delete failed', res.error || 'Could not delete customer');
+            const msg = res.error || 'Could not delete customer';
+            showToast(deleteToastLevel(msg), 'Delete', msg);
         }
         setLoading(false);
         setCustomerToDelete(null);

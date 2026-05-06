@@ -6,6 +6,7 @@ import { Tabs } from '../../components/ui/tabs';
 import { PageHeader } from '../../components/ui/layout';
 import { DataTable } from '../../components/ui/table/DataTable';
 import { useToast } from '../../components/ui/toast/Toast';
+import { deleteToastLevel } from '../../utils/deleteWarnings';
 import { accountService, Account } from '../../services/account.service';
 import {
   financeService,
@@ -673,7 +674,7 @@ const [deletingBudget, setDeletingBudget] = useState(false);
     setIsTransferModalOpen(true);
   };
 
-  const quickError = (msg: string) => showToast('error', 'Finance', msg);
+  const quickError = (msg: string) => showToast(deleteToastLevel(msg), 'Finance', msg);
 
   const openAccountModal = (row?: Account) => {
     if (row) {

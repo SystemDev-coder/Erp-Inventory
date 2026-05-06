@@ -5,6 +5,7 @@ import { Tabs } from '../../components/ui/tabs';
 import { PageHeader } from '../../components/ui/layout';
 import { DataTable } from '../../components/ui/table/DataTable';
 import { useToast } from '../../components/ui/toast/Toast';
+import { deleteToastLevel } from '../../utils/deleteWarnings';
 import { Modal } from '../../components/ui/modal/Modal';
 import DeleteConfirmModal from '../../components/ui/modal/DeleteConfirmModal';
 import { SearchableCombobox, ComboboxOption } from '../../components/ui/combobox/SearchableCombobox';
@@ -489,7 +490,8 @@ const Receipts = () => {
             showToast('success', 'Receipts', 'Receipt deleted');
             await loadAll();
         } else {
-            showToast('error', 'Receipts', res.error || 'Delete failed');
+        const msg = res.error || 'Delete failed';
+        showToast(deleteToastLevel(msg), 'Receipts', msg);
         }
     };
 
@@ -541,7 +543,8 @@ const Receipts = () => {
             showToast('success', 'Receipts', 'Receipt deleted');
             await loadAll();
         } else {
-            showToast('error', 'Receipts', res.error || 'Delete failed');
+        const msg = res.error || 'Delete failed';
+        showToast(deleteToastLevel(msg), 'Receipts', msg);
         }
     };
 
