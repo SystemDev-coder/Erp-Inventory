@@ -128,7 +128,8 @@ const AppSidebar: React.FC = () => {
               { id: 'finance-accounts', label: 'Accounts', to: '/finance/accounts', exact: true, permissionAny: ['accounts.view'] },
               { id: 'finance-receipts', label: 'Receipts', to: '/finance/receipts', exact: true, permissionAny: ['accounts.view', 'sales.view', 'purchases.view'] },
               { id: 'finance-expenses', label: 'Expenses', to: '/finance/expense', exact: true, permissionAny: ['expenses.view'] },
-              { id: 'finance-payroll', label: 'Payroll', to: '/finance/payroll', exact: true, permissionAny: ['payroll_lines.view', 'payroll_runs.view'] },
+              // UPDATED: Allow Accountant/Finance roles to see Payroll in Finance (supports both payroll_* and finance/account permissions)
+              { id: 'finance-payroll', label: 'Payroll', to: '/finance/payroll', exact: true, permissionAny: ['payroll_lines.view', 'payroll_runs.view', 'payroll.process', 'payroll.pay', 'finance.reports', 'accounts.view'] },
             ],
           },
         ],
