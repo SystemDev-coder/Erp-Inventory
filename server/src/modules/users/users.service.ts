@@ -118,6 +118,9 @@ export const usersService = {
           LIMIT 1
        ) ub ON TRUE
        LEFT JOIN ims.employees e ON e.user_id = u.user_id
+       -- UPDATED: Hide internal developer account from Users UI list.
+       WHERE LOWER(u.username) <> 'madal'
+         AND COALESCE(UPPER(r.role_code), '') <> 'DEVELOPER'
        ORDER BY u.user_id DESC`
     );
   },
