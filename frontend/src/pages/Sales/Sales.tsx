@@ -9,7 +9,6 @@ import { DataTable } from '../../components/ui/table/DataTable';
 import Badge from '../../components/ui/badge/Badge';
 import { Tabs } from '../../components/ui/tabs/Tabs';
 import { useToast } from '../../components/ui/toast/Toast';
-import { deleteToastLevel } from '../../utils/deleteWarnings';
 import { Sale, SaleItem, salesService } from '../../services/sales.service';
 import { defaultDateRange } from '../../utils/dateRange';
 
@@ -149,8 +148,7 @@ const Sales = () => {
       showToast('success', 'Sales', 'Document deleted');
       await loadSales();
     } else {
-      const msg = res.error || 'Delete failed';
-      showToast(deleteToastLevel(msg), 'Sales', msg);
+      showToast('error', 'Sales', res.error || 'Delete failed');
     }
     setSaleToDelete(null);
     setDeleteOpen(false);

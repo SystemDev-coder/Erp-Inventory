@@ -12,7 +12,6 @@ import {
   SystemRole,
   SystemUser,
 } from '../../services/system.service';
-import { deleteToastLevel } from '../../utils/deleteWarnings';
 
 const SHOW_PERMISSION_TAB = false;
 const HIDDEN_USERNAMES = new Set(['isfahan']);
@@ -325,8 +324,7 @@ const System = () => {
     if (confirmTarget.type === 'user') {
       const res = await systemService.deleteUser(confirmTarget.payload.user_id);
       if (!res.success) {
-        const msg = res.error || 'Delete failed';
-        showToast(deleteToastLevel(msg), 'Users', msg);
+        showToast('error', 'Users', res.error || 'Delete failed');
       } else {
         showToast('success', 'Users', 'User deleted');
         await loadUsers();
@@ -334,8 +332,7 @@ const System = () => {
     } else if (confirmTarget.type === 'role') {
       const res = await systemService.deleteRole(confirmTarget.payload.role_id);
       if (!res.success) {
-        const msg = res.error || 'Delete failed';
-        showToast(deleteToastLevel(msg), 'Roles', msg);
+        showToast('error', 'Roles', res.error || 'Delete failed');
       } else {
         showToast('success', 'Roles', 'Role deleted');
         await loadRoles();
@@ -343,8 +340,7 @@ const System = () => {
     } else if (confirmTarget.type === 'permission') {
       const res = await systemService.deletePermission(confirmTarget.payload.perm_id);
       if (!res.success) {
-        const msg = res.error || 'Delete failed';
-        showToast(deleteToastLevel(msg), 'Permissions', msg);
+        showToast('error', 'Permissions', res.error || 'Delete failed');
       } else {
         showToast('success', 'Permissions', 'Permission deleted');
         await loadPermissions();

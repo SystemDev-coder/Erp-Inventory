@@ -26,7 +26,6 @@ import {
 } from '../../services/settings.service';
 import { systemService, SystemAuditLog } from '../../services/system.service';
 import { useToast } from '../../components/ui/toast/Toast';
-import { deleteToastLevel } from '../../utils/deleteWarnings';
 import { Modal } from '../../components/ui/modal/Modal';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { useAuth } from '../../context/AuthContext';
@@ -559,8 +558,7 @@ const Settings = () => {
     const res = await settingsService.deleteCompany();
     setCompanyDeleting(false);
     if (!res.success) {
-      const msg = res.error || 'Delete failed';
-      showToast(deleteToastLevel(msg), 'Company Info', msg);
+      showToast('error', 'Company Info', res.error || 'Delete failed');
       return;
     }
     setCompany(null);
@@ -637,8 +635,7 @@ const Settings = () => {
     const res = await settingsService.deleteCapital(capitalDeleteId);
     setCapitalDeleteLoading(false);
     if (!res.success) {
-      const msg = res.error || 'Delete failed';
-      showToast(deleteToastLevel(msg), 'Capital', msg);
+      showToast('error', 'Capital', res.error || 'Delete failed');
       return;
     }
     setCapitalDeleteId(null);
@@ -736,8 +733,7 @@ const Settings = () => {
     const res = await settingsService.deleteCapitalDrawing(drawingDeleteId);
     setDrawingDeleteLoading(false);
     if (!res.success) {
-      const msg = res.error || 'Delete failed';
-      showToast(deleteToastLevel(msg), 'Capital Drawing', msg);
+      showToast('error', 'Capital Drawing', res.error || 'Delete failed');
       return;
     }
     setDrawingDeleteId(null);

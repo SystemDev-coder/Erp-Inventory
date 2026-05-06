@@ -13,7 +13,6 @@ import { PurchaseItem, purchaseService, Purchase, PurchaseItemView } from '../..
 import { supplierService, Supplier } from '../../services/supplier.service';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
 import { defaultDateRange } from '../../utils/dateRange';
-import { deleteToastLevel } from '../../utils/deleteWarnings';
 
 type PurchaseForm = {
   purchase_id?: number;
@@ -264,8 +263,7 @@ const Purchases = () => {
       showToast('success', 'Supplier deleted');
       if (suppliersDisplayed) loadSuppliers(search);
     } else {
-      const msg = res.error || 'Cannot delete supplier';
-      showToast(deleteToastLevel(msg), 'Delete', msg);
+      showToast('error', 'Delete failed', res.error || 'Cannot delete supplier');
     }
     setLoading(false);
     setSupplierDeleteOpen(false);
@@ -281,8 +279,7 @@ const Purchases = () => {
       showToast('success', 'Deleted', `Purchase #${purchaseToDelete.purchase_id} removed`);
       if (purchasesDisplayed) loadPurchases(search, statusFilter);
     } else {
-      const msg = res.error || 'Could not delete purchase';
-      showToast(deleteToastLevel(msg), 'Delete', msg);
+      showToast('error', 'Delete failed', res.error || 'Could not delete purchase');
     }
     setLoading(false);
     setPurchaseToDelete(null);
