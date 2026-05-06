@@ -11,6 +11,7 @@ type Props = {
   loadUsers: () => Promise<SystemUser[]>;
   initialUserId?: number | null;
   onUserSelected?: (userId: number | null) => void;
+  allowedPermissionKeys?: Set<string>;
 };
 
 // NEW: User privileges editor (saves to ims.user_permission_overrides only)
@@ -20,6 +21,7 @@ export const UserPrivilegesTab = ({
   loadUsers,
   initialUserId,
   onUserSelected,
+  allowedPermissionKeys,
 }: Props) => {
   const { showToast } = useToast();
   const [userId, setUserId] = useState<number | null>(null);
@@ -61,12 +63,15 @@ export const UserPrivilegesTab = ({
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return permissions;
-    return permissions.filter((p) => {
+    const base = allowedPermissionKeys
+      ? permissions.filter((p) => allowedPermissionKeys.has(p.perm_key))
+      : permissions;
+    if (!q) return base;
+    return base.filter((p) => {
       const hay = `${p.perm_key} ${p.perm_name || ''} ${p.module || ''} ${p.sub_module || ''} ${p.action_type || ''}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [permissions, search]);
+  }, [allowedPermissionKeys, permissions, search]);
 
   const grouped = useMemo(() => {
     const groups = new Map<string, UserPermission[]>();
@@ -256,4 +261,3 @@ export const UserPrivilegesTab = ({
     </div>
   );
 };
-

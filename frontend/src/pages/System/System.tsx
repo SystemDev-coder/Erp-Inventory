@@ -6,6 +6,7 @@ import { Modal } from '../../components/ui/modal/Modal';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { useToast } from '../../components/ui/toast/Toast';
 import { useAuth } from '../../context/AuthContext';
+import { SIDEBAR_PERMISSION_KEY_SET } from '../../config/sidebarPermissionKeys';
 import {
   systemService,
   SystemBranch,
@@ -631,6 +632,8 @@ const System = () => {
 	                  loadUsers={loadUsers}
 	                  initialUserId={privilegesPrefillUserId}
 	                  onUserSelected={(id) => setPrivilegesPrefillUserId(id)}
+	                  // UPDATED: Show only permissions currently used in the sidebar (v1.0)
+	                  allowedPermissionKeys={SIDEBAR_PERMISSION_KEY_SET}
 	                />
 	              </Suspense>
 	            ),
