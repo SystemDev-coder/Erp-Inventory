@@ -73,8 +73,6 @@ export const listPurchases = asyncHandler(async (req: AuthRequest, res: Response
   const scope = await resolveBranchScope(req);
   const search = (req.query.search as string) || undefined;
   const status = (req.query.status as string) || undefined;
-  // UPDATED: Allow listing purchase orders separately using the same purchases table (`docType=order|purchase`).
-  const docType = (req.query.docType as string) || undefined;
   const fromDate = normalizeDateParam(req.query.fromDate, 'fromDate');
   const toDate = normalizeDateParam(req.query.toDate, 'toDate');
   if ((fromDate && !toDate) || (!fromDate && toDate)) {
@@ -87,7 +85,7 @@ export const listPurchases = asyncHandler(async (req: AuthRequest, res: Response
   if (branchId) {
     assertBranchAccess(scope, branchId);
   }
-  const purchases = await purchasesService.listPurchases(scope, search, status, docType, branchId, fromDate, toDate);
+  const purchases = await purchasesService.listPurchases(scope, search, status, branchId, fromDate, toDate);
   return ApiResponse.success(res, { purchases });
 });
 
@@ -177,8 +175,6 @@ export const exportPurchasesXlsx = asyncHandler(async (req: AuthRequest, res: Re
   const scope = await resolveBranchScope(req);
   const search = (req.query.search as string) || undefined;
   const status = (req.query.status as string) || undefined;
-  // UPDATED: Support exporting purchase orders vs purchases (`docType=order|purchase`).
-  const docType = (req.query.docType as string) || undefined;
   const fromDate = (req.query.fromDate as string) || undefined;
   const toDate = (req.query.toDate as string) || undefined;
   if ((fromDate && !toDate) || (!fromDate && toDate)) {
@@ -192,7 +188,7 @@ export const exportPurchasesXlsx = asyncHandler(async (req: AuthRequest, res: Re
     assertBranchAccess(scope, branchId);
   }
 
-  const purchases = await purchasesService.listPurchases(scope, search, status, docType, branchId, fromDate, toDate);
+  const purchases = await purchasesService.listPurchases(scope, search, status, branchId, fromDate, toDate);
   const XLSX = loadSheetJs();
 
   const rows = purchases.map((p: any) => ({

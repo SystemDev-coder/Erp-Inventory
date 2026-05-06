@@ -86,12 +86,10 @@ export interface PurchaseCreateInput {
 }
 
 export const purchaseService = {
-  // UPDATED: Support listing purchase orders vs purchases (`docType=order|purchase|all`).
-  async list(params?: { search?: string; status?: string; docType?: 'purchase' | 'order' | 'all'; branchId?: number; fromDate?: string; toDate?: string }) {
+  async list(params?: { search?: string; status?: string; branchId?: number; fromDate?: string; toDate?: string }) {
     const qsParts: string[] = [];
     if (params?.search) qsParts.push(`search=${encodeURIComponent(params.search)}`);
     if (params?.status && params.status !== 'all') qsParts.push(`status=${encodeURIComponent(params.status)}`);
-    if (params?.docType && params.docType !== 'all') qsParts.push(`docType=${encodeURIComponent(params.docType)}`);
     if (params?.branchId) qsParts.push(`branchId=${encodeURIComponent(String(params.branchId))}`);
     if (params?.fromDate) qsParts.push(`fromDate=${encodeURIComponent(params.fromDate)}`);
     if (params?.toDate) qsParts.push(`toDate=${encodeURIComponent(params.toDate)}`);
@@ -128,12 +126,10 @@ export const purchaseService = {
     return apiClient.delete<{ message: string }>(API.PURCHASES.ITEM(id));
   },
 
-  // UPDATED: Allow exporting purchase orders separately (`docType=order|purchase|all`).
-  async exportXlsx(params?: { search?: string; status?: string; docType?: 'purchase' | 'order' | 'all'; branchId?: number; fromDate?: string; toDate?: string }) {
+  async exportXlsx(params?: { search?: string; status?: string; branchId?: number; fromDate?: string; toDate?: string }) {
     const qsParts: string[] = [];
     if (params?.search) qsParts.push(`search=${encodeURIComponent(params.search)}`);
     if (params?.status && params.status !== 'all') qsParts.push(`status=${encodeURIComponent(params.status)}`);
-    if (params?.docType && params.docType !== 'all') qsParts.push(`docType=${encodeURIComponent(params.docType)}`);
     if (params?.branchId) qsParts.push(`branchId=${encodeURIComponent(String(params.branchId))}`);
     if (params?.fromDate) qsParts.push(`fromDate=${encodeURIComponent(params.fromDate)}`);
     if (params?.toDate) qsParts.push(`toDate=${encodeURIComponent(params.toDate)}`);

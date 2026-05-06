@@ -711,7 +711,6 @@ export const purchasesService = {
     scope: BranchScope,
     search?: string,
     status?: string,
-    docType?: string,
     branchId?: number,
     fromDate?: string,
     toDate?: string
@@ -724,14 +723,6 @@ export const purchasesService = {
     } else if (!scope.isAdmin) {
       params.push(scope.branchIds);
       clauses.push(`p.branch_id = ANY($${params.length})`);
-    }
-
-    // UPDATED: Filter by doc_type using the existing purchases table.
-    // Default to `purchase` (backward compatible) unless explicitly requesting `order` or `all`.
-    const effectiveDocType = docType && ['purchase', 'order', 'all'].includes(docType) ? docType : 'purchase';
-    if (effectiveDocType !== 'all') {
-      params.push(effectiveDocType);
-      clauses.push(`p.doc_type = $${params.length}`);
     }
     if (search) {
       params.push(`%${search}%`);
