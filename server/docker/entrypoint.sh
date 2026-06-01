@@ -11,7 +11,7 @@ DB_ADMIN_USER="${ADMIN_PGUSER:-${DB_USER}}"
 DB_ADMIN_PASSWORD="${ADMIN_PGPASSWORD:-${PGPASSWORD:-${POSTGRES_PASSWORD:-}}}"
 APP_DB_USER="${DB_USER}"
 APP_DB_PASSWORD="${PGPASSWORD:-${POSTGRES_PASSWORD:-}}"
-APP_RUNTIME_ROLE="${APP_RUNTIME_ROLE:-ims_app}"
+APP_RUNTIME_ROLE="${APP_RUNTIME_ROLE:-ims_runtime}"
 MIGRATIONS_DIR="${MIGRATIONS_DIR:-/app/sql}"
 BASE_SCHEMA_FILE="${BASE_SCHEMA_FILE:-Full_complete_scheme.sql}"
 DEMO_SEED_FILE="${DEMO_SEED_FILE:-seed_demo_data.sql}"
@@ -235,6 +235,15 @@ SQL
 ensure_app_role
 
 ensure_runtime_role() {
+  if [ -z "$APP_DB_USER" ]; then
+    return
+  fi
+
+  if [ "$APP_RUNTIME_ROLE" = "$APP_DB_USER" ]; then
+    echo "Skipping runtime role membership grant because APP_RUNTIME_ROLE equals PGUSER (${APP_DB_USER})."
+    return
+  fi
+
   # NEW: Always create a non-superuser runtime role and grant membership to the login role.
   # This lets the app `SET ROLE` on connect so RLS (soft-delete filtering) is enforced even if the login user is postgres.
   echo "Ensuring runtime role ${APP_RUNTIME_ROLE} exists..."

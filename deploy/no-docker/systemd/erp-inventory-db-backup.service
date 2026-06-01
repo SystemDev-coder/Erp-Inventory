@@ -1,0 +1,11 @@
+[Unit]
+Description=ERP Inventory PostgreSQL backup
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=postgres
+Group=postgres
+EnvironmentFile=/etc/erp-inventory/server.env
+ExecStart=/bin/sh -c 'mkdir -p /var/backups/erp-inventory && pg_dump -Fc -d "$PGDATABASE" -f "/var/backups/erp-inventory/${PGDATABASE}-$(date +%%F-%%H%%M%%S).dump"'
+

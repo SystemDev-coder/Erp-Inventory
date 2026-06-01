@@ -1,0 +1,11 @@
+[Unit]
+Description=Run ERP Inventory PostgreSQL backup nightly
+
+[Timer]
+OnCalendar=*-*-* 02:15:00
+Persistent=true
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target
+

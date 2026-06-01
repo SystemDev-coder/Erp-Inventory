@@ -26,7 +26,7 @@ pool.on('connect', async (client) => {
 
     // NEW: Force a restricted runtime role so RLS (soft-delete filtering) works even if the login user is postgres.
     // If the role doesn't exist (legacy env), this will be skipped without crashing the app.
-    const runtimeRole = process.env.APP_RUNTIME_ROLE || 'ims_app';
+    const runtimeRole = process.env.APP_RUNTIME_ROLE || 'ims_runtime';
     try {
       await client.query(`SET ROLE ${quoteIdent(runtimeRole)}`);
     } catch {

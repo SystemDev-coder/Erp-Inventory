@@ -1,0 +1,20 @@
+[Unit]
+Description=ERP Inventory database bootstrap and migrations
+Wants=postgresql.service
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=erp
+Group=erp
+WorkingDirectory=/opt/erp-inventory/releases/current/server
+EnvironmentFile=/etc/erp-inventory/server.env
+Environment=NODE_ENV=production
+Environment=MIGRATIONS_DIR=/opt/erp-inventory/releases/current/server/sql
+ExecStart=/bin/sh /opt/erp-inventory/releases/current/server/docker/entrypoint.sh /bin/true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+
