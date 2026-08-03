@@ -172,6 +172,7 @@ chown -R "$APP_USER:$APP_USER" "$CLIENT_DIR"
 echo "==> Bootstrapping database '$DB_NAME' (creates DB + schema + roles if missing)..."
 set -a
 . "$ENV_FILE"
+MIGRATIONS_DIR="$REPO_DIR/server/sql"
 set +a
 sh "$REPO_DIR/server/docker/entrypoint.sh" /bin/true
 

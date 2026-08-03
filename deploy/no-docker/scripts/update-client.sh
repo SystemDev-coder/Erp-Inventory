@@ -52,6 +52,7 @@ sudo -u "$APP_USER" npm run build
 echo "==> Re-applying database schema (safe/idempotent) and restarting..."
 set -a
 . "$REPO_DIR/server/.env"
+MIGRATIONS_DIR="$REPO_DIR/server/sql"
 set +a
 sh "$REPO_DIR/server/docker/entrypoint.sh" /bin/true
 
