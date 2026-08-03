@@ -31,6 +31,7 @@ import { Modal } from '../../components/ui/modal/Modal';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { useAuth } from '../../context/AuthContext';
 import { assetsService, AssetState } from '../../services/assets.service';
+import { accountService, Account } from '../../services/account.service';
 import { ImageUpload } from '../../components/common/ImageUpload';
 import { imageService } from '../../services/image.service';
 import { env } from '../../config/env';
@@ -252,14 +253,25 @@ const Settings = () => {
     amount: '',
     sharePct: '0',
     date: today(),
+    accountId: '',
     note: '',
   });
   const [drawingForm, setDrawingForm] = useState({
     ownerName: '',
     amount: '',
     date: today(),
+    accountId: '',
     note: '',
   });
+  const [cashAccounts, setCashAccounts] = useState<Account[]>([]);
+
+  useEffect(() => {
+    accountService.list().then((res) => {
+      if (res.success && res.data?.accounts) {
+        setCashAccounts(res.data.accounts.filter((a) => (a.account_type || 'asset') === 'asset' && a.is_active));
+      }
+    });
+  }, []);
 
   const [closingRows, setClosingRows] = useState<SettingsClosingPeriod[]>([]);
   const [closingDisplayed, setClosingDisplayed] = useState(false);
@@ -572,7 +584,7 @@ const Settings = () => {
 
   const openCreateCapital = () => {
     setEditingCapital(null);
-    setCapitalForm({ ownerName: '', amount: '', sharePct: '0', date: today(), note: '' });
+    setCapitalForm({ ownerName: '', amount: '', sharePct: '0', date: today(), accountId: '', note: '' });
     setCapitalModalOpen(true);
   };
 
@@ -583,6 +595,7 @@ const Settings = () => {
       amount: String(row.amount),
       sharePct: String(row.share_pct ?? 0),
       date: row.date,
+      accountId: row.account_id ? String(row.account_id) : '',
       note: row.note || '',
     });
     setCapitalModalOpen(true);
@@ -614,6 +627,7 @@ const Settings = () => {
       amount,
       sharePct,
       date: capitalForm.date,
+      accountId: capitalForm.accountId ? Number(capitalForm.accountId) : undefined,
       note: capitalForm.note.trim(),
     };
 
@@ -665,6 +679,7 @@ const Settings = () => {
       ownerName: owners[0]?.owner_name || '',
       amount: '',
       date: today(),
+      accountId: '',
       note: '',
     });
     setDrawingModalOpen(true);
@@ -679,6 +694,7 @@ const Settings = () => {
       ownerName: row.owner_name,
       amount: String(row.amount),
       date: row.date,
+      accountId: row.account_id ? String(row.account_id) : '',
       note: row.note || '',
     });
     setDrawingModalOpen(true);
@@ -709,6 +725,7 @@ const Settings = () => {
       ownerName,
       amount,
       date: drawingForm.date,
+      accountId: drawingForm.accountId ? Number(drawingForm.accountId) : undefined,
       note: drawingForm.note.trim(),
     };
     const res = editingDrawing
@@ -1930,6 +1947,21 @@ const Settings = () => {
             />
           </label>
           <label className={`${modalLabelClass} md:col-span-2`}>
+            Deposit To (Cash/Bank)
+            <select
+              className={modalInputClass}
+              value={capitalForm.accountId}
+              onChange={(e) => setCapitalForm({ ...capitalForm, accountId: e.target.value })}
+            >
+              <option value="">Auto (first cash/bank account)</option>
+              {cashAccounts.map((acc) => (
+                <option key={acc.acc_id} value={acc.acc_id}>
+                  {acc.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className={`${modalLabelClass} md:col-span-2`}>
             Note
             <textarea
               className={modalTextareaClass}
@@ -2005,6 +2037,22 @@ const Settings = () => {
               />
             </label>
           </div>
+
+          <label className={modalLabelClass}>
+            Pay From (Cash/Bank)
+            <select
+              className={modalInputClass}
+              value={drawingForm.accountId}
+              onChange={(e) => setDrawingForm((prev) => ({ ...prev, accountId: e.target.value }))}
+            >
+              <option value="">Auto (first cash/bank account)</option>
+              {cashAccounts.map((acc) => (
+                <option key={acc.acc_id} value={acc.acc_id}>
+                  {acc.name}
+                </option>
+              ))}
+            </select>
+          </label>
 
           <label className={modalLabelClass}>
             Note
