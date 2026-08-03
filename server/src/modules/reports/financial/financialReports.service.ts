@@ -513,11 +513,27 @@ const classifyForBalanceSheet = (accountType: string, accountName: string): Bala
   if (isDrawingAccount(accountName)) return 'equity';
   if (isEquityLikeAccount(accountName) || name.includes('opening balance equity') || name.includes('share capital')) return 'equity';
 
-  // Some setups classify "Supplies" as an expense account, but the business wants it on the balance sheet as a current asset.
-  if (isSuppliesAccount(accountName) && !name.includes('expense')) return 'asset';
+  // P&L accounts that would otherwise collide with a generic keyword below must be
+  // resolved before that broad keyword matching (e.g. "Inventory Loss" contains no
+  // asset-category keyword, so it's safe to check here first regardless of order).
+  if (isInventoryLossAccountName(accountName)) return 'expense';
+
+  // Specific, well-defined asset categories take priority over the generic expense/revenue
+  // keyword matching below - otherwise "Prepaid Rent" gets caught by the word "rent" and
+  // misclassified as a Rent Expense, or "Supplies" by an "expense" heuristic meant for
+  // unrelated accounts.
+  if (
+    isCashOrBankAccount(accountName)
+    || isReceivableAccount(accountName)
+    || isInventoryAccount(accountName)
+    || isPrepaidAccount(accountName)
+    || isFixedAssetAccount(accountName)
+    || isSuppliesAccount(accountName)
+  ) {
+    return 'asset';
+  }
 
   // P&L accounts should roll into Net Income, not appear on the balance sheet detail.
-  if (isInventoryLossAccountName(accountName)) return 'expense';
   if (name.includes('revenue') || name.includes('income') || (name.includes('sales') && !name.includes('tax'))) return 'revenue';
   if (
     name.includes('expense')
@@ -532,16 +548,6 @@ const classifyForBalanceSheet = (accountType: string, accountName: string): Bala
     || name.includes('depreciation')
   ) {
     return 'expense';
-  }
-
-  if (
-    isCashOrBankAccount(accountName)
-    || isReceivableAccount(accountName)
-    || isInventoryAccount(accountName)
-    || isPrepaidAccount(accountName)
-    || isFixedAssetAccount(accountName)
-  ) {
-    return 'asset';
   }
 
   // Fallback to stored type.
