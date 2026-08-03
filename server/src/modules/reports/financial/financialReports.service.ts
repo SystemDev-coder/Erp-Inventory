@@ -2091,6 +2091,12 @@ const buildIncomeStatementFromLedger = async (
        ON a.acc_id = at.acc_id
       AND a.branch_id = $1
      WHERE at.txn_date::date BETWEEN $2::date AND $3::date
+       -- Period-closing entries sweep P&L accounts to zero and move the net into
+       -- Retained Earnings on the Balance Sheet - they are not part of this period's
+       -- actual operating activity. Including them here would cancel out the very
+       -- revenue/expenses being reported whenever the requested range includes the
+       -- closing date.
+       AND COALESCE(at.ref_table, '') <> 'finance_closing_periods'
      GROUP BY a.acc_id, a.name, a.account_type`,
     [branchId, fromDate, toDate]
   );
@@ -2111,17 +2117,22 @@ const buildIncomeStatementFromLedger = async (
     const t = normalizeAccountName(accountType);
     const n = normalizeAccountName(accountName);
 
-    // Exclude balance-sheet/control accounts that can contain keywords.
-    if (n.includes('tax') && (n.includes('payable') || n.includes('vat') || n.includes('gst'))) return 'ignore';
-    if (n.includes('sales tax') || n.includes('vat') || n.includes('gst')) return 'ignore';
-    if (n.includes('payable') || n.includes('receivable') || n.includes('inventory') || n.includes('prepaid')) return 'ignore';
-
+    // Trust an explicit, correct account_type first - the name-based "ignore" and
+    // heuristic rules below are only a fallback for mis-typed charts of accounts and
+    // must never override a real P&L account. Otherwise revenue/expense accounts that
+    // happen to contain a balance-sheet keyword (e.g. "Inventory Gain"/"Inventory Loss")
+    // get silently dropped from the Income Statement even though they are real P&L.
     if (t === 'revenue' || t === 'income') return 'revenue';
     if (t === 'cost') return 'cogs';
     if (t === 'expense') {
       if (n.includes('payroll') || n.includes('salary') || n.includes('wage')) return 'payroll';
       return 'expense';
     }
+
+    // Exclude balance-sheet/control accounts that can contain keywords.
+    if (n.includes('tax') && (n.includes('payable') || n.includes('vat') || n.includes('gst'))) return 'ignore';
+    if (n.includes('sales tax') || n.includes('vat') || n.includes('gst')) return 'ignore';
+    if (n.includes('payable') || n.includes('receivable') || n.includes('inventory') || n.includes('prepaid')) return 'ignore';
 
     // Heuristics for mis-typed charts of accounts.
     if ((n.includes('revenue') || n.includes('income') || n.includes('sale')) && !n.includes('tax')) return 'revenue';
