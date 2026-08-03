@@ -1511,6 +1511,13 @@ export const settingsService = {
         ],
       });
 
+      // Keep the cached balance in sync - payment flows (e.g. "pay expense charge") validate
+      // against ims.accounts.balance directly rather than recomputing from the ledger.
+      await client.query(
+        `UPDATE ims.accounts SET balance = COALESCE(balance, 0) + $1 WHERE branch_id = $2 AND acc_id = $3`,
+        [Number(input.amount || 0), branchId, depositAccountId]
+      );
+
       return capital_id;
     });
 
@@ -1980,6 +1987,12 @@ export const settingsService = {
         [Number(existing.branch_id), id]
       );
 
+      // Reverse the previous deposit's effect on the cached balance before applying the new one.
+      await client.query(
+        `UPDATE ims.accounts SET balance = COALESCE(balance, 0) - $1 WHERE branch_id = $2 AND acc_id = $3`,
+        [Number(existing.amount || 0), Number(existing.branch_id), Number(existing.acc_id)]
+      );
+
       await client.query(
         `UPDATE ims.capital_contributions
             SET owner_name = $2,
@@ -2008,6 +2021,11 @@ export const settingsService = {
           { accId: Number(existing.equity_acc_id), debit: 0, credit: Number(next.amount || 0), note: 'Owner capital' },
         ],
       });
+
+      await client.query(
+        `UPDATE ims.accounts SET balance = COALESCE(balance, 0) + $1 WHERE branch_id = $2 AND acc_id = $3`,
+        [Number(next.amount || 0), Number(existing.branch_id), depositAccountId]
+      );
 
       const reloaded = await this.getCapitalContributionById(id, scope);
       if (!reloaded) throw ApiError.internal('Failed to load updated capital entry');
@@ -2050,6 +2068,11 @@ export const settingsService = {
             AND ref_table = 'capital_contributions'
             AND ref_id = $2`,
         [Number(existing.branch_id), id]
+      );
+
+      await client.query(
+        `UPDATE ims.accounts SET balance = COALESCE(balance, 0) - $1 WHERE branch_id = $2 AND acc_id = $3`,
+        [Number(existing.amount || 0), Number(existing.branch_id), Number(existing.acc_id)]
       );
 
       await client.query(`DELETE FROM ims.capital_contributions WHERE capital_id = $1`, [id]);

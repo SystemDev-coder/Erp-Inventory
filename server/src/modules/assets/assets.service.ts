@@ -280,10 +280,36 @@ const ensureAssetGlAccount = async (client: PoolClient, branchId: number, assetN
 // (and any matching cash/prepaid account here) silently omits real assets the business
 // owns. Post it as an opening balance against Opening Balance Equity, additive to
 // whatever real transaction activity that account already has.
+// postGl() only writes ims.account_transactions - callers outside the normal payment/receipt
+// flows (like this one) must also keep ims.accounts.balance in sync themselves, since several
+// other code paths (e.g. the "pay expense charge"/"receive payment" account pickers) validate
+// against that cached column directly rather than recomputing from the ledger.
+const reverseAccountBalanceForRef = async (
+  client: PoolClient,
+  params: { branchId: number; refTable: string; refId: number }
+) => {
+  const previous = await client.query<{ acc_id: number; debit: string; credit: string }>(
+    `SELECT acc_id, COALESCE(debit, 0)::text AS debit, COALESCE(credit, 0)::text AS credit
+       FROM ims.account_transactions
+      WHERE branch_id = $1 AND ref_table = $2 AND ref_id = $3 AND COALESCE(is_deleted, 0) = 0`,
+    [params.branchId, params.refTable, params.refId]
+  );
+  for (const row of previous.rows) {
+    const delta = -(Number(row.debit) - Number(row.credit));
+    if (delta) {
+      await client.query(
+        `UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`,
+        [delta, Number(row.acc_id), params.branchId]
+      );
+    }
+  }
+};
+
 export const rewriteAssetOpeningGl = async (
   client: PoolClient,
   params: { branchId: number; assetId: number; assetName: string; amount: number; state: AssetState }
 ) => {
+  await reverseAccountBalanceForRef(client, { branchId: params.branchId, refTable: 'assets', refId: params.assetId });
   await deleteGlByRef(client, { branchId: params.branchId, refTable: 'assets', refId: params.assetId });
   const value = Math.round((Number(params.amount || 0) + Number.EPSILON) * 100) / 100;
   if (value <= 0 || params.state !== 'active') return;
@@ -300,6 +326,11 @@ export const rewriteAssetOpeningGl = async (
       { accId: openingBalanceEquityAccId, credit: value, note: 'Opening balance' },
     ],
   });
+  await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+    value,
+    assetAccId,
+    params.branchId,
+  ]);
 };
 
 export const assetsService = {

@@ -308,10 +308,36 @@ const roundMoney = (value: unknown) => Math.round((Number(value || 0) + Number.E
 // stock movements recorded after item creation and silently omits any starting
 // stock - understating Inventory (and Equity) by however much stock was on hand
 // when the item was set up.
+// postGl() only writes ims.account_transactions - callers outside the normal payment/receipt
+// flows (like this one) must also keep ims.accounts.balance in sync themselves, since several
+// other code paths (e.g. the "pay expense charge"/"receive payment" account pickers) validate
+// against that cached column directly rather than recomputing from the ledger.
+const reverseAccountBalanceForRef = async (
+  client: PoolClient,
+  params: { branchId: number; refTable: string; refId: number }
+) => {
+  const previous = await client.query<{ acc_id: number; debit: string; credit: string }>(
+    `SELECT acc_id, COALESCE(debit, 0)::text AS debit, COALESCE(credit, 0)::text AS credit
+       FROM ims.account_transactions
+      WHERE branch_id = $1 AND ref_table = $2 AND ref_id = $3 AND COALESCE(is_deleted, 0) = 0`,
+    [params.branchId, params.refTable, params.refId]
+  );
+  for (const row of previous.rows) {
+    const delta = -(Number(row.debit) - Number(row.credit));
+    if (delta) {
+      await client.query(
+        `UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`,
+        [delta, Number(row.acc_id), params.branchId]
+      );
+    }
+  }
+};
+
 const rewriteItemOpeningStockGl = async (
   client: PoolClient,
   params: { branchId: number; itemId: number; itemName: string; openingBalance: number; costPrice: number }
 ) => {
+  await reverseAccountBalanceForRef(client, { branchId: params.branchId, refTable: 'items', refId: params.itemId });
   await deleteGlByRef(client, { branchId: params.branchId, refTable: 'items', refId: params.itemId });
   const value = roundMoney(Number(params.openingBalance || 0) * Number(params.costPrice || 0));
   if (value <= 0) return;
@@ -326,6 +352,11 @@ const rewriteItemOpeningStockGl = async (
       { accId: coa.openingBalanceEquity, credit: value, note: 'Opening stock' },
     ],
   });
+  await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+    value,
+    coa.inventory,
+    params.branchId,
+  ]);
 };
 
 export const productsService = {
