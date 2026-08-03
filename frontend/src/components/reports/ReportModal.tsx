@@ -379,7 +379,11 @@ export function ReportModal<T extends Record<string, any>>({
       totalEquityRow?.amount ??
       (equity.length > 0 ? equityDetailTotal : (totalLiabilitiesEquityRow?.amount ?? totalAssets) - totalLiabilities);
     const totalLiabilitiesEquity = totalLiabilitiesEquityRow?.amount ?? totalLiabilities + totalEquity;
-    const netResultAmount = netResultRow?.amount ?? totalEquity;
+    // Only fall back to totalEquity when the backend gave no equity breakdown
+    // at all (equity.length === 0) - if it did (owner capital rows, etc.),
+    // a missing net-income row means net income is genuinely zero, not
+    // "whatever the equity total happens to be".
+    const netResultAmount = netResultRow?.amount ?? (equity.length === 0 ? totalEquity : 0);
     const retainedEarnings = retainedEarningsRow?.amount ?? netResultAmount;
     const isRetainedRow = (row: { lineItem: string }) =>
       /(retained earnings|accumulated loss|opening retained|opening accumulated)/i.test(row.lineItem);
