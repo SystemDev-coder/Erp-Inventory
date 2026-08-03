@@ -1807,7 +1807,18 @@ const buildBalanceSheetFromGl = async (branchId: number, asOfDate: string): Prom
        ) = a.acc_id
        AND at.txn_date::date <= $2::date
      WHERE a.branch_id = $1
-       AND a.is_active = TRUE
+       AND (
+         a.is_active = TRUE
+         OR EXISTS (
+           SELECT 1 FROM ims.account_transactions at2
+            WHERE at2.branch_id = a.branch_id
+              AND COALESCE(at2.is_deleted, 0) = 0
+              AND COALESCE(
+                NULLIF(to_jsonb(at2) ->> 'acc_id', '')::bigint,
+                NULLIF(to_jsonb(at2) ->> 'account_id', '')::bigint
+              ) = a.acc_id
+         )
+       )
      GROUP BY a.branch_id, a.acc_id, a.name, a.institution, a.account_type, a.balance
      ORDER BY a.acc_id ASC`,
     [branchId, asOfDate]
