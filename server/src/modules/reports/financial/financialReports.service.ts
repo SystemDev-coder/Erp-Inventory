@@ -1943,7 +1943,6 @@ const buildCashFlowFromLedger = async (
         ON a.acc_id = at.acc_id
       AND a.branch_id = $1
       WHERE at.txn_date::date BETWEEN $2::date AND $3::date
-        AND COALESCE(a.is_active, TRUE) = TRUE
         AND COALESCE(a.account_type::text, 'asset') = 'asset'
        AND (
          -- prefer explicit keywords
@@ -1984,7 +1983,10 @@ const buildCashFlowFromLedger = async (
   let netMovement = 0;
 
   for (const row of cashRows) {
-    const net = Number(row.credit || 0) - Number(row.debit || 0);
+    // These rows are all asset (cash/bank) accounts - assets increase on the
+    // debit side, so net must be debit - credit (matching the Balance Sheet's
+    // convention) for a positive net to mean "cash went up".
+    const net = Number(row.debit || 0) - Number(row.credit || 0);
     if (isApproxZero(net)) continue;
     netMovement += net;
 
@@ -3064,7 +3066,6 @@ export const financialReportsService = {
          'Open'::text AS status
         FROM ims.customers c
         WHERE c.branch_id = $1
-          AND c.is_active = TRUE
           AND GREATEST(COALESCE(c.${customerBalanceColumn}, 0), 0) > 0.000001
         ORDER BY c.customer_id ASC`,
        [branchId, toDate]
@@ -3196,7 +3197,6 @@ export const financialReportsService = {
            GREATEST(${supplierBalanceExpr}, 0)::double precision AS opening_balance
          FROM ims.suppliers s
         WHERE s.branch_id = $1
-          AND s.is_active = TRUE
           AND GREATEST(${supplierBalanceExpr}, 0) > 0.000001`,
         [branchId]
       ),
@@ -3212,7 +3212,6 @@ export const financialReportsService = {
           AND sr.purchase_id IS NULL
           AND sr.receipt_date::date BETWEEN $2::date AND $3::date
          WHERE s.branch_id = $1
-           AND s.is_active = TRUE
          GROUP BY s.supplier_id, s.name
          HAVING COALESCE(SUM(sr.amount), 0) > 0.000001`,
         params
@@ -3698,7 +3697,10 @@ export const financialReportsService = {
            ) AS has_any_txn
           FROM accounts_norm a
           WHERE a.branch_id = $1
-            AND a.is_active = TRUE
+            AND (
+              a.is_active = TRUE
+              OR EXISTS (SELECT 1 FROM normalized_txn atx2 WHERE atx2.branch_id = a.branch_id AND atx2.acc_id = a.acc_id)
+            )
         ),
        opening AS (
          SELECT
@@ -3894,7 +3896,7 @@ export const financialReportsService = {
          FROM accounts_norm a
          LEFT JOIN txn ON txn.acc_id = a.acc_id
           WHERE a.branch_id = $1
-            AND a.is_active = TRUE
+            AND (a.is_active = TRUE OR COALESCE(txn.txn_count, 0) > 0)
             ${filter}
         )
        SELECT
@@ -3951,13 +3953,35 @@ export const financialReportsService = {
            COALESCE((to_jsonb(si) ->> 'line_total')::numeric, 0) AS line_total
          FROM ims.sale_items si
        ),
+       sale_costs AS (
+         SELECT
+           m.ref_id AS sale_id,
+           m.item_id,
+           COALESCE(SUM(m.qty_out * m.unit_cost), 0)::double precision AS movement_cost,
+           COALESCE(SUM(m.qty_out), 0)::double precision AS movement_qty
+         FROM ims.inventory_movements m
+        WHERE m.branch_id = $1
+          AND m.move_type = 'sale'
+          AND m.ref_table = 'sales'
+        GROUP BY m.ref_id, m.item_id
+       ),
        scoped_sales AS (
          SELECT
            m.item_id,
            m.quantity,
-           m.line_total
+           m.line_total,
+           -- Use the cost actually recorded at sale time (inventory_movements),
+           -- not the item's CURRENT cost_price - that changes over time via
+           -- moving-average costing on later purchases, which would silently
+           -- re-price old, already-sold units and distort historical margins.
+           CASE
+             WHEN sco.movement_qty > 0 THEN m.quantity * (sco.movement_cost / sco.movement_qty)
+             ELSE m.quantity * COALESCE(i2.cost_price, 0)
+           END AS line_cost
          FROM sale_item_map m
          JOIN ims.sales s ON s.sale_id = m.sale_id
+         LEFT JOIN sale_costs sco ON sco.sale_id = m.sale_id AND sco.item_id = m.item_id
+         LEFT JOIN ims.items i2 ON i2.item_id = m.item_id
         WHERE s.branch_id = $1
           AND s.status <> 'void'
           AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
@@ -3969,11 +3993,11 @@ export const financialReportsService = {
          i.name AS item_name,
          COALESCE(SUM(sc.quantity), 0)::double precision AS quantity_sold,
          COALESCE(SUM(sc.line_total), 0)::double precision AS sales_amount,
-         COALESCE(SUM(sc.quantity * COALESCE(i.cost_price, 0)), 0)::double precision AS cost_amount,
-         (COALESCE(SUM(sc.line_total), 0) - COALESCE(SUM(sc.quantity * COALESCE(i.cost_price, 0)), 0))::double precision AS gross_profit,
+         COALESCE(SUM(sc.line_cost), 0)::double precision AS cost_amount,
+         (COALESCE(SUM(sc.line_total), 0) - COALESCE(SUM(sc.line_cost), 0))::double precision AS gross_profit,
          CASE
            WHEN COALESCE(SUM(sc.line_total), 0) > 0
-             THEN ((COALESCE(SUM(sc.line_total), 0) - COALESCE(SUM(sc.quantity * COALESCE(i.cost_price, 0)), 0)) / COALESCE(SUM(sc.line_total), 0) * 100)::double precision
+             THEN ((COALESCE(SUM(sc.line_total), 0) - COALESCE(SUM(sc.line_cost), 0)) / COALESCE(SUM(sc.line_total), 0) * 100)::double precision
            ELSE 0::double precision
          END AS margin_pct
        FROM scoped_sales sc
@@ -4027,16 +4051,36 @@ export const financialReportsService = {
            COALESCE((to_jsonb(si) ->> 'line_total')::numeric, 0) AS line_total
          FROM ims.sale_items si
        ),
+       sale_costs AS (
+         SELECT
+           m.ref_id AS sale_id,
+           m.item_id,
+           COALESCE(SUM(m.qty_out * m.unit_cost), 0)::double precision AS movement_cost,
+           COALESCE(SUM(m.qty_out), 0)::double precision AS movement_qty
+         FROM ims.inventory_movements m
+        WHERE m.branch_id = $1
+          AND m.move_type = 'sale'
+          AND m.ref_table = 'sales'
+        GROUP BY m.ref_id, m.item_id
+       ),
        scoped_sales AS (
          SELECT
            s.customer_id,
            COALESCE(c.full_name, 'Walk-in Customer') AS customer_name,
            m.item_id,
            m.quantity,
-           m.line_total
+           m.line_total,
+           -- See getProfitByItem: use the cost recorded at sale time, not
+           -- the item's current (possibly since-changed) cost_price.
+           CASE
+             WHEN sco.movement_qty > 0 THEN m.quantity * (sco.movement_cost / sco.movement_qty)
+             ELSE m.quantity * COALESCE(i2.cost_price, 0)
+           END AS line_cost
          FROM sale_item_map m
          JOIN ims.sales s ON s.sale_id = m.sale_id
          LEFT JOIN ims.customers c ON c.customer_id = s.customer_id
+         LEFT JOIN sale_costs sco ON sco.sale_id = m.sale_id AND sco.item_id = m.item_id
+         LEFT JOIN ims.items i2 ON i2.item_id = m.item_id
         WHERE s.branch_id = $1
           AND s.status <> 'void'
           AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
@@ -4049,11 +4093,11 @@ export const financialReportsService = {
          COALESCE(sc.customer_name, 'Walk-in Customer') AS customer_name,
          COALESCE(SUM(sc.quantity), 0)::double precision AS quantity_sold,
          COALESCE(SUM(sc.line_total), 0)::double precision AS sales_amount,
-         COALESCE(SUM(sc.quantity * COALESCE(i.cost_price, 0)), 0)::double precision AS cost_amount,
-         (COALESCE(SUM(sc.line_total), 0) - COALESCE(SUM(sc.quantity * COALESCE(i.cost_price, 0)), 0))::double precision AS gross_profit,
+         COALESCE(SUM(sc.line_cost), 0)::double precision AS cost_amount,
+         (COALESCE(SUM(sc.line_total), 0) - COALESCE(SUM(sc.line_cost), 0))::double precision AS gross_profit,
          CASE
            WHEN COALESCE(SUM(sc.line_total), 0) > 0
-             THEN ((COALESCE(SUM(sc.line_total), 0) - COALESCE(SUM(sc.quantity * COALESCE(i.cost_price, 0)), 0)) / COALESCE(SUM(sc.line_total), 0) * 100)::double precision
+             THEN ((COALESCE(SUM(sc.line_total), 0) - COALESCE(SUM(sc.line_cost), 0)) / COALESCE(SUM(sc.line_total), 0) * 100)::double precision
            ELSE 0::double precision
          END AS margin_pct
        FROM scoped_sales sc
@@ -4101,14 +4145,34 @@ export const financialReportsService = {
            COALESCE((to_jsonb(si) ->> 'line_total')::numeric, 0) AS line_total
          FROM ims.sale_items si
        ),
+       sale_costs AS (
+         SELECT
+           m.ref_id AS sale_id,
+           m.item_id,
+           COALESCE(SUM(m.qty_out * m.unit_cost), 0)::double precision AS movement_cost,
+           COALESCE(SUM(m.qty_out), 0)::double precision AS movement_qty
+         FROM ims.inventory_movements m
+        WHERE m.branch_id = $1
+          AND m.move_type = 'sale'
+          AND m.ref_table = 'sales'
+        GROUP BY m.ref_id, m.item_id
+       ),
        scoped_sales AS (
          SELECT
            s.store_id,
            m.item_id,
            m.quantity,
-           m.line_total
+           m.line_total,
+           -- See getProfitByItem: use the cost recorded at sale time, not
+           -- the item's current (possibly since-changed) cost_price.
+           CASE
+             WHEN sco.movement_qty > 0 THEN m.quantity * (sco.movement_cost / sco.movement_qty)
+             ELSE m.quantity * COALESCE(i2.cost_price, 0)
+           END AS line_cost
          FROM sale_item_map m
          JOIN ims.sales s ON s.sale_id = m.sale_id
+         LEFT JOIN sale_costs sco ON sco.sale_id = m.sale_id AND sco.item_id = m.item_id
+         LEFT JOIN ims.items i2 ON i2.item_id = m.item_id
         WHERE s.branch_id = $1
           AND s.status <> 'void'
           AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
@@ -4121,11 +4185,11 @@ export const financialReportsService = {
          COALESCE(st.store_name, 'Unassigned Store') AS store_name,
          COALESCE(SUM(sc.quantity), 0)::double precision AS quantity_sold,
          COALESCE(SUM(sc.line_total), 0)::double precision AS sales_amount,
-         COALESCE(SUM(sc.quantity * COALESCE(i.cost_price, 0)), 0)::double precision AS cost_amount,
-         (COALESCE(SUM(sc.line_total), 0) - COALESCE(SUM(sc.quantity * COALESCE(i.cost_price, 0)), 0))::double precision AS gross_profit,
+         COALESCE(SUM(sc.line_cost), 0)::double precision AS cost_amount,
+         (COALESCE(SUM(sc.line_total), 0) - COALESCE(SUM(sc.line_cost), 0))::double precision AS gross_profit,
          CASE
            WHEN COALESCE(SUM(sc.line_total), 0) > 0
-             THEN ((COALESCE(SUM(sc.line_total), 0) - COALESCE(SUM(sc.quantity * COALESCE(i.cost_price, 0)), 0)) / COALESCE(SUM(sc.line_total), 0) * 100)::double precision
+             THEN ((COALESCE(SUM(sc.line_total), 0) - COALESCE(SUM(sc.line_cost), 0)) / COALESCE(SUM(sc.line_total), 0) * 100)::double precision
            ELSE 0::double precision
          END AS margin_pct
        FROM scoped_sales sc
