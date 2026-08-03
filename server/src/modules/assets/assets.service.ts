@@ -1,8 +1,12 @@
+import { PoolClient } from 'pg';
 import { adminQueryMany } from '../../db/adminQuery';
 import { queryMany, queryOne } from '../../db/query';
 import { pool } from '../../db/pool';
+import { withTransaction } from '../../db/withTx';
 import { ApiError } from '../../utils/ApiError';
 import { BranchScope, pickBranchForWrite } from '../../utils/branchScope';
+import { ensureCoaAccount } from '../../utils/coaDefaults';
+import { postGl, deleteGlByRef } from '../../utils/glPosting';
 
 export type AssetType = 'current' | 'fixed';
 export type AssetState = 'active' | 'inactive' | 'disposed';
@@ -251,6 +255,53 @@ const mapRow = (row: {
   created_at: row.created_at,
 });
 
+const ensureAssetGlAccount = async (client: PoolClient, branchId: number, assetName: string): Promise<number> => {
+  const name = assetName.trim();
+  const existing = await client.query<{ acc_id: number }>(
+    `SELECT acc_id FROM ims.accounts WHERE branch_id = $1 AND LOWER(TRIM(name)) = LOWER($2) ORDER BY acc_id LIMIT 1`,
+    [branchId, name]
+  );
+  if (existing.rows[0]?.acc_id) return Number(existing.rows[0].acc_id);
+
+  const created = await client.query<{ acc_id: number }>(
+    `INSERT INTO ims.accounts (branch_id, name, institution, balance, account_type, is_active)
+     VALUES ($1, $2, '', 0, 'asset', TRUE)
+     ON CONFLICT (branch_id, name) DO UPDATE SET is_active = TRUE
+     RETURNING acc_id`,
+    [branchId, name]
+  );
+  const accId = Number(created.rows[0]?.acc_id || 0);
+  if (!accId) throw new Error(`Failed to create asset account: ${name}`);
+  return accId;
+};
+
+// An asset entered in this register (fixed or current) has no accounting effect until
+// its value is posted to the GL - without this, the Balance Sheet's Non-Current Assets
+// (and any matching cash/prepaid account here) silently omits real assets the business
+// owns. Post it as an opening balance against Opening Balance Equity, additive to
+// whatever real transaction activity that account already has.
+export const rewriteAssetOpeningGl = async (
+  client: PoolClient,
+  params: { branchId: number; assetId: number; assetName: string; amount: number; state: AssetState }
+) => {
+  await deleteGlByRef(client, { branchId: params.branchId, refTable: 'assets', refId: params.assetId });
+  const value = Math.round((Number(params.amount || 0) + Number.EPSILON) * 100) / 100;
+  if (value <= 0 || params.state !== 'active') return;
+
+  const assetAccId = await ensureAssetGlAccount(client, params.branchId, params.assetName);
+  const openingBalanceEquityAccId = await ensureCoaAccount(client, params.branchId, 'openingBalanceEquity');
+  await postGl(client, {
+    branchId: params.branchId,
+    refTable: 'assets',
+    refId: params.assetId,
+    note: `Opening balance: ${params.assetName}`,
+    lines: [
+      { accId: assetAccId, debit: value, note: 'Opening balance' },
+      { accId: openingBalanceEquityAccId, credit: value, note: 'Opening balance' },
+    ],
+  });
+};
+
 export const assetsService = {
   async ensureSchema(): Promise<void> {
     await ensureAssetsSchema();
@@ -329,35 +380,49 @@ export const assetsService = {
 
     const purchasedDate = input.purchasedDate || new Date().toISOString().slice(0, 10);
     const state = (input.state || 'active').toLowerCase() as AssetState;
+    const assetName = input.assetName.trim();
 
-    const row = await queryOne<{
-      asset_id: number;
-      branch_id: number;
-      asset_name: string;
-      asset_type: string;
-      purchased_date: string;
-      amount: string;
-      state: string;
-      created_by: number | null;
-      created_at: string;
-    }>(
-      `INSERT INTO ims.assets
-         (branch_id, asset_name, asset_type, purchased_date, amount, state, created_by)
-       VALUES
-         ($1, $2, $3::ims.asset_type_enum, $4::date, $5, $6::ims.asset_state_enum, $7)
-       RETURNING
-         asset_id,
-         branch_id,
-         asset_name,
-         asset_type::text AS asset_type,
-         purchased_date::text AS purchased_date,
-         amount::text AS amount,
-         state::text AS state,
-         created_by,
-         created_at::text AS created_at`,
-      [branchId, input.assetName.trim(), input.type, purchasedDate, input.amount, state, userId]
-    );
-    if (!row) throw ApiError.internal('Failed to create asset');
+    const row = await withTransaction(async (client) => {
+      const created = await client.query<{
+        asset_id: number;
+        branch_id: number;
+        asset_name: string;
+        asset_type: string;
+        purchased_date: string;
+        amount: string;
+        state: string;
+        created_by: number | null;
+        created_at: string;
+      }>(
+        `INSERT INTO ims.assets
+           (branch_id, asset_name, asset_type, purchased_date, amount, state, created_by)
+         VALUES
+           ($1, $2, $3::ims.asset_type_enum, $4::date, $5, $6::ims.asset_state_enum, $7)
+         RETURNING
+           asset_id,
+           branch_id,
+           asset_name,
+           asset_type::text AS asset_type,
+           purchased_date::text AS purchased_date,
+           amount::text AS amount,
+           state::text AS state,
+           created_by,
+           created_at::text AS created_at`,
+        [branchId, assetName, input.type, purchasedDate, input.amount, state, userId]
+      );
+      const created_row = created.rows[0];
+      if (!created_row) throw ApiError.internal('Failed to create asset');
+
+      await rewriteAssetOpeningGl(client, {
+        branchId,
+        assetId: Number(created_row.asset_id),
+        assetName,
+        amount: Number(input.amount || 0),
+        state,
+      });
+
+      return created_row;
+    });
     return mapRow(row);
   },
 
@@ -421,32 +486,46 @@ export const assetsService = {
       scopeSql = ` AND branch_id = ANY($${params.length})`;
     }
 
-    const row = await queryOne<{
-      asset_id: number;
-      branch_id: number;
-      asset_name: string;
-      asset_type: string;
-      purchased_date: string;
-      amount: string;
-      state: string;
-      created_by: number | null;
-      created_at: string;
-    }>(
-      `UPDATE ims.assets
-          SET ${updates.join(', ')}
-        WHERE asset_id = $${assetIdParam}${scopeSql}
-        RETURNING
-          asset_id,
-          branch_id,
-          asset_name,
-          asset_type::text AS asset_type,
-          purchased_date::text AS purchased_date,
-          amount::text AS amount,
-          state::text AS state,
-          created_by,
-          created_at::text AS created_at`,
-      params
-    );
+    const row = await withTransaction(async (client) => {
+      const updated = await client.query<{
+        asset_id: number;
+        branch_id: number;
+        asset_name: string;
+        asset_type: string;
+        purchased_date: string;
+        amount: string;
+        state: string;
+        created_by: number | null;
+        created_at: string;
+      }>(
+        `UPDATE ims.assets
+            SET ${updates.join(', ')}
+          WHERE asset_id = $${assetIdParam}${scopeSql}
+          RETURNING
+            asset_id,
+            branch_id,
+            asset_name,
+            asset_type::text AS asset_type,
+            purchased_date::text AS purchased_date,
+            amount::text AS amount,
+            state::text AS state,
+            created_by,
+            created_at::text AS created_at`,
+        params
+      );
+      const updated_row = updated.rows[0];
+      if (!updated_row) return null;
+
+      await rewriteAssetOpeningGl(client, {
+        branchId: Number(updated_row.branch_id),
+        assetId: Number(updated_row.asset_id),
+        assetName: updated_row.asset_name,
+        amount: Number(updated_row.amount),
+        state: updated_row.state as AssetState,
+      });
+
+      return updated_row;
+    });
 
     return row ? mapRow(row) : null;
   },
@@ -460,12 +539,17 @@ export const assetsService = {
       scopeSql = ` AND branch_id = ANY($${params.length})`;
     }
 
-    const row = await queryOne<{ asset_id: number }>(
-      `DELETE FROM ims.assets
-        WHERE asset_id = $1${scopeSql}
-        RETURNING asset_id`,
-      params
-    );
-    return Boolean(row);
+    return withTransaction(async (client) => {
+      const deleted = await client.query<{ asset_id: number; branch_id: number }>(
+        `DELETE FROM ims.assets
+          WHERE asset_id = $1${scopeSql}
+          RETURNING asset_id, branch_id`,
+        params
+      );
+      const row = deleted.rows[0];
+      if (!row) return false;
+      await deleteGlByRef(client, { branchId: Number(row.branch_id), refTable: 'assets', refId: Number(row.asset_id) });
+      return true;
+    });
   },
 };
