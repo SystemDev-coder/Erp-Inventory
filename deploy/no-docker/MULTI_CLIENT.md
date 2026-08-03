@@ -1,5 +1,68 @@
 # Hosting many clients on one VPS - each with fully separate code
 
+## Quick checklist - onboarding one new client
+
+Verified end-to-end on the live VPS (madaldb.com / demomadal). Run in order:
+
+```bash
+# 1) On your own machine: create the client's branch (once per client)
+git checkout main && git pull
+git checkout -b client/<name>
+git push -u origin client/<name>
+
+# 2) On the VPS, as root: provision it
+sudo sh /srv/ganacsikaal-erp/deploy/no-docker/scripts/new-client.sh <name> <name>.yourdomain.com <port> [demo]
+
+# 3) Point DNS: add an A record for <name>.yourdomain.com -> this VPS's IP
+#    (Cloudflare: DNS -> Add record -> Type A -> proxied)
+
+# 4) Once DNS resolves, enable HTTPS
+sudo certbot --nginx -d <name>.yourdomain.com
+```
+
+Use a fresh, unused port each time (5001, 5002, 5003, ...). Add `demo` as the
+4th argument only for a public try-it instance that should ship with demo
+users/data - real client deployments should omit it (see "Demo accounts"
+below).
+
+**Before real client #1**, confirm these are already fixed on `main` (they
+were real bugs found provisioning the first client - `git pull` on the VPS
+picks them up automatically, just noting them so you know what "working"
+depends on): `new-client.sh` chowns the client folder *before* `npm ci`,
+sets `MIGRATIONS_DIR` before calling `entrypoint.sh`, and `client-template.conf`
+points Nginx at `clients/<name>/repo/frontend/dist` (not `clients/<name>/frontend/dist`).
+
+### Demo accounts (`RUN_DEMO_SEED=true` / the `demo` flag)
+
+`Full_complete_scheme.sql` can seed 6 sample accounts (`admin`, `cabdi`,
+`deeqa`, `faarax`, `xasan`, `sahra`) that all share **one password hardcoded
+in the SQL file** (`Admin@123` - it's public, anyone reading the repo on
+GitHub can see it). `entrypoint.sh` only creates them when
+`RUN_DEMO_SEED=true`. That's correct and useful for a public demo instance
+(prospective clients need an easy login to try the product) - but a real
+paying client's instance must be created **without** the `demo` flag, and
+you should still change that client's `admin` password (or run the reset
+below) before handing it over.
+
+### Resetting an instance back to a clean slate
+
+`server/sql/20260317_reset_erp_data_keep_admin.sql` installs a function that
+wipes all business data (sales, customers, items, everything except
+company/branches/roles/permissions/users) and resets every ID sequence back
+to 1, keeping only the users you name:
+
+```bash
+sudo -u postgres psql -d <database_name> -f /srv/ganacsikaal-erp/server/sql/20260317_reset_erp_data_keep_admin.sql
+sudo -u postgres psql -d <database_name> -c "SELECT ims.fn_reset_erp_data(TRUE, ARRAY['admin']);"
+```
+
+This is genuinely destructive (no undo) - only run it on an instance you mean
+to wipe. Useful right after provisioning a client from a branch that still
+has demo data, or to reset the shared `main`/reference instance between
+tests.
+
+## Full docs
+
 Goal: sell/host this same ERP to many separate businesses (clients), each on
 their own subdomain (`demomadal.madalict.com`, `dubaicollection.madalict.com`, ...),
 where:
