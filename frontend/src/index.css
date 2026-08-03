@@ -45,25 +45,27 @@ layer(base);
     Theme colors (3 only):
     - white
     - black
-    - brand orange (accent)
+    - brand blue (accent)
 
-    The rest of the palette maps back to these via color-mix() so the existing
-    Tailwind utility usage keeps working without introducing new colors.
+    Primary-50..900 map directly to the 10-step blue palette (Deep Space Blue
+    -> Light Blue), light to dark. Only the two extreme outliers (25, 950) are
+    derived via color-mix() so the existing Tailwind utility usage keeps
+    working without introducing new colors.
   */
-  --color-primary-500: #ff8a00;
+  --color-primary-500: #2a6f97;
 
-  /* Primary (derived from accent + white/black) */
-  --color-primary-25: color-mix(in srgb, var(--color-primary-500) 4%, var(--color-white));
-  --color-primary-50: color-mix(in srgb, var(--color-primary-500) 8%, var(--color-white));
-  --color-primary-100: color-mix(in srgb, var(--color-primary-500) 16%, var(--color-white));
-  --color-primary-200: color-mix(in srgb, var(--color-primary-500) 28%, var(--color-white));
-  --color-primary-300: color-mix(in srgb, var(--color-primary-500) 44%, var(--color-white));
-  --color-primary-400: color-mix(in srgb, var(--color-primary-500) 68%, var(--color-white));
-  --color-primary-600: color-mix(in srgb, var(--color-primary-500) 88%, var(--color-black));
-  --color-primary-700: color-mix(in srgb, var(--color-primary-500) 74%, var(--color-black));
-  --color-primary-800: color-mix(in srgb, var(--color-primary-500) 58%, var(--color-black));
-  --color-primary-900: color-mix(in srgb, var(--color-primary-500) 42%, var(--color-black));
-  --color-primary-950: color-mix(in srgb, var(--color-primary-500) 28%, var(--color-black));
+  /* Primary (mapped directly to the blue palette, light to dark) */
+  --color-primary-25: color-mix(in srgb, #a9d6e5 55%, var(--color-white));
+  --color-primary-50: #a9d6e5;
+  --color-primary-100: #89c2d9;
+  --color-primary-200: #61a5c2;
+  --color-primary-300: #468faf;
+  --color-primary-400: #2c7da0;
+  --color-primary-600: #014f86;
+  --color-primary-700: #01497c;
+  --color-primary-800: #013a63;
+  --color-primary-900: #012a4a;
+  --color-primary-950: color-mix(in srgb, #012a4a 75%, var(--color-black));
 
   /* Brand - mirrors primary */
   --color-brand-25: var(--color-primary-25);
@@ -294,7 +296,7 @@ body {
 .dark .erp-modal-body select:focus,
 .dark .erp-modal-body textarea:focus {
   border-color: var(--color-primary-500) !important;
-  box-shadow: 0 0 0 3px rgba(255, 165, 0, 0.22) !important;
+  box-shadow: 0 0 0 3px rgba(42, 111, 151, 0.22) !important;
 }
 
 .erp-modal-body button {
@@ -307,7 +309,7 @@ body {
   --select-text: #14344c;
   --select-border: #b6c9da;
   --select-placeholder: #7a93ad;
-  --select-focus: rgba(255, 165, 0, 0.35);
+  --select-focus: rgba(42, 111, 151, 0.35);
   --select-option-bg: #ffffff;
   --select-option-text: #14344c;
   --select-option-hover: #eef5fb;
@@ -319,7 +321,7 @@ body {
   --header-search-border: #cbd5e1;
   --header-search-text: #0f172a;
   --header-search-placeholder: #94a3b8;
-  --header-search-focus: rgba(255, 165, 0, 0.35);
+  --header-search-focus: rgba(42, 111, 151, 0.35);
   --header-kbd-bg: #f1f5f9;
   --header-kbd-border: #cbd5e1;
   --header-kbd-text: #64748b;
@@ -330,11 +332,11 @@ body {
   --select-text: #f9fafb;
   --select-border: #374151;
   --select-placeholder: #9ca3af;
-  --select-focus: rgba(255, 165, 0, 0.45);
+  --select-focus: rgba(42, 111, 151, 0.45);
   --select-option-bg: #111827;
   --select-option-text: #f9fafb;
-  --select-option-hover: rgba(255, 165, 0, 0.2);
-  --select-option-selected: rgba(255, 165, 0, 0.28);
+  --select-option-hover: rgba(42, 111, 151, 0.2);
+  --select-option-selected: rgba(42, 111, 151, 0.28);
 
   --header-bg: #000000;
   --header-border: rgba(255, 255, 255, 0.12);
@@ -416,7 +418,7 @@ select option:focus {
 .dark input:focus,
 .dark textarea:focus {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(255, 165, 0, 0.45);
+  box-shadow: 0 0 0 2px rgba(42, 111, 151, 0.45);
   border-color: #374151 !important;
 }
 

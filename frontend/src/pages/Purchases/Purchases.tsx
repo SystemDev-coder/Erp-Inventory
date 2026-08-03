@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { ColumnDef } from '@tanstack/react-table';
-import { RefreshCw, ShoppingBag, Users } from 'lucide-react';
+import { CheckCircle2, ClipboardList, RefreshCw, ShoppingBag, Users } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
 import { PageHeader, TabActionToolbar } from '../../components/ui/layout';
 import { DataTable } from '../../components/ui/table/DataTable';
@@ -13,6 +13,38 @@ import { PurchaseItem, purchaseService, Purchase, PurchaseItemView } from '../..
 import { supplierService, Supplier } from '../../services/supplier.service';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
 import { defaultDateRange } from '../../utils/dateRange';
+import { useBranch } from '../../context/BranchContext';
+
+type SupplierFieldErrors = Partial<Record<string, string>>;
+
+function SupplierField({
+  label,
+  error,
+  touched,
+  success,
+  children,
+}: {
+  label: string;
+  error?: string;
+  touched?: boolean;
+  success?: boolean;
+  children: React.ReactNode;
+}) {
+  const showError = touched && error;
+  const showSuccess = touched && !error && success;
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">{label}</label>
+        {showSuccess && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />}
+      </div>
+      {children}
+      {showError && (
+        <p className="text-xs font-medium text-red-500 dark:text-red-400">{error}</p>
+      )}
+    </div>
+  );
+}
 
 type PurchaseForm = {
   purchase_id?: number;
@@ -30,6 +62,7 @@ const Purchases = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { showToast } = useToast();
+  const { activeBranchId } = useBranch();
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [items, setItems] = useState<PurchaseItemView[]>([]);
@@ -52,6 +85,18 @@ const Purchases = () => {
   const [supplierToDelete, setSupplierToDelete] = useState<Supplier | null>(null);
   const [supplierModalOpen, setSupplierModalOpen] = useState(false);
   const [supplierImportOpen, setSupplierImportOpen] = useState(false);
+
+  // Orders tab state
+  const [orders, setOrders] = useState<Purchase[]>([]);
+  const [ordersDisplayed, setOrdersDisplayed] = useState(false);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [orderDateRange, setOrderDateRange] = useState(() => defaultDateRange());
+  const [receiveOpen, setReceiveOpen] = useState(false);
+  const [receiveLoading, setReceiveLoading] = useState(false);
+  const [orderToReceive, setOrderToReceive] = useState<Purchase | null>(null);
+  const [receiveStatus, setReceiveStatus] = useState<'received' | 'partial' | 'unpaid'>('received');
+  const [orderDeleteOpen, setOrderDeleteOpen] = useState(false);
+  const [orderToDelete, setOrderToDelete] = useState<Purchase | null>(null);
   const [supplierForm, setSupplierForm] = useState<Supplier>({
     supplier_id: 0,
     supplier_name: '',
@@ -63,6 +108,8 @@ const Purchases = () => {
     remaining_balance: 0,
     is_active: true,
   } as Supplier);
+  const [supplierErrors, setSupplierErrors] = useState<SupplierFieldErrors>({});
+  const [supplierTouched, setSupplierTouched] = useState<Partial<Record<string, boolean>>>({});
 
   const loadPurchases = async (term?: string, status?: string) => {
     setLoading(true);
@@ -71,6 +118,7 @@ const Purchases = () => {
       status,
       fromDate: dateRange.fromDate,
       toDate: dateRange.toDate,
+      branchId: activeBranchId ?? undefined,
     });
     if (res.success && res.data?.purchases) {
       setPurchases(res.data.purchases);
@@ -79,6 +127,11 @@ const Purchases = () => {
     }
     setLoading(false);
   };
+
+  useEffect(() => {
+    if (purchasesDisplayed) void loadPurchases(search, statusFilter);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBranchId]);
 
   const loadSuppliers = async (term?: string) => {
     setLoading(true);
@@ -220,9 +273,68 @@ const Purchases = () => {
     window.URL.revokeObjectURL(url);
   };
 
+  const validateSupplier = (f: Supplier): SupplierFieldErrors => {
+    const errs: SupplierFieldErrors = {};
+    const digitCount = (val: string) => (val.match(/\d/g) || []).length;
+    if (!f.supplier_name.trim()) errs.supplier_name = 'Supplier name is required';
+    else if (f.supplier_name.trim().length < 2) errs.supplier_name = 'Name must be at least 2 characters';
+    if (!f.company_name?.trim()) errs.company_name = 'Company name is required';
+    if (!f.contact_person?.trim()) errs.contact_person = 'Contact person is required';
+    if (!f.contact_phone?.trim()) errs.contact_phone = 'Contact phone is required';
+    else if (digitCount(f.contact_phone) < 2) errs.contact_phone = 'Please add at least 2 numbers';
+    if (!f.phone?.trim()) errs.phone = 'Phone is required';
+    else if (digitCount(f.phone) < 2) errs.phone = 'Please add at least 2 numbers';
+    if (!f.location?.trim()) errs.location = 'Location is required';
+    if ((f.remaining_balance ?? 0) < 0) errs.remaining_balance = 'Balance cannot be negative';
+    return errs;
+  };
+
+  const getSupplierInputCls = (field: string) => {
+    const base = 'rounded-lg border px-3 py-2 w-full text-sm outline-none transition-all focus:ring-2';
+    if (!supplierTouched[field]) return `${base} border-slate-300 dark:border-slate-600 focus:border-primary-500 focus:ring-primary-500/20`;
+    if (supplierErrors[field]) return `${base} border-red-400 bg-red-50/40 dark:border-red-500 dark:bg-red-900/10 focus:border-red-500 focus:ring-red-500/20`;
+    return `${base} border-emerald-500 focus:border-emerald-500 focus:ring-emerald-500/20`;
+  };
+
+  const touchSupplier = (field: string) => {
+    setSupplierTouched(t => ({ ...t, [field]: true }));
+    setSupplierErrors(validateSupplier(supplierForm));
+  };
+
+  const setSupplierField = (field: string, value: unknown) => {
+    const next = { ...supplierForm, [field]: value } as Supplier;
+    setSupplierForm(next);
+    if (supplierTouched[field]) setSupplierErrors(validateSupplier(next));
+  };
+
+  const openSupplierModal = (preset?: Supplier) => {
+    setSupplierForm(preset ?? {
+      supplier_id: 0,
+      supplier_name: '',
+      company_name: '',
+      contact_person: '',
+      contact_phone: '',
+      phone: '',
+      location: '',
+      remaining_balance: 0,
+      is_active: true,
+    } as Supplier);
+    setSupplierErrors({});
+    setSupplierTouched({});
+    setSupplierModalOpen(true);
+  };
+
+  const closeSupplierModal = () => {
+    setSupplierModalOpen(false);
+    setSupplierErrors({});
+    setSupplierTouched({});
+  };
+
   const saveSupplier = async () => {
-    if (!supplierForm.supplier_name) {
-      showToast('error', 'Name required', 'Enter supplier name');
+    const errs = validateSupplier(supplierForm);
+    if (Object.keys(errs).length > 0) {
+      setSupplierErrors(errs);
+      setSupplierTouched({ supplier_name: true, company_name: true, contact_person: true, contact_phone: true, phone: true, location: true, remaining_balance: true });
       return;
     }
     setLoading(true);
@@ -231,18 +343,7 @@ const Purchases = () => {
       : await supplierService.create(supplierForm);
     if (res.success) {
       showToast('success', 'Supplier saved');
-      setSupplierModalOpen(false);
-      setSupplierForm({
-        supplier_id: 0,
-        supplier_name: '',
-        company_name: '',
-        contact_person: '',
-        contact_phone: '',
-        phone: '',
-        location: '',
-        remaining_balance: 0,
-        is_active: true,
-      } as Supplier);
+      closeSupplierModal();
       if (suppliersDisplayed) loadSuppliers(search);
     } else {
       showToast('error', 'Save failed', res.error || 'Check the form');
@@ -285,6 +386,121 @@ const Purchases = () => {
     setPurchaseToDelete(null);
     setDeleteOpen(false);
   };
+
+  const loadOrders = async () => {
+    setOrdersLoading(true);
+    const res = await purchaseService.list({
+      docType: 'order',
+      fromDate: orderDateRange.fromDate,
+      toDate: orderDateRange.toDate,
+    });
+    if (res.success && res.data?.purchases) {
+      setOrders(res.data.purchases);
+    } else {
+      showToast('error', 'Load failed', res.error || 'Could not load orders');
+    }
+    setOrdersLoading(false);
+  };
+
+  const openReceiveDialog = (order: Purchase) => {
+    setOrderToReceive(order);
+    setReceiveStatus('received');
+    setReceiveOpen(true);
+  };
+
+  const confirmReceiveOrder = async () => {
+    if (!orderToReceive) return;
+    setReceiveLoading(true);
+    const res = await purchaseService.receiveOrder(orderToReceive.purchase_id, {
+      status: receiveStatus,
+      purchaseType: receiveStatus === 'unpaid' ? 'credit' : 'cash',
+    });
+    setReceiveLoading(false);
+    if (res.success) {
+      showToast('success', 'Order Received', `PO-${orderToReceive.purchase_id} received — stock updated`);
+      setReceiveOpen(false);
+      setOrderToReceive(null);
+      if (ordersDisplayed) void loadOrders();
+    } else {
+      showToast('error', 'Receive failed', res.error || 'Could not receive order');
+    }
+  };
+
+  const confirmDeleteOrder = async () => {
+    if (!orderToDelete) return;
+    setOrdersLoading(true);
+    const res = await purchaseService.remove(orderToDelete.purchase_id);
+    if (res.success) {
+      showToast('success', 'Deleted', `Order #${orderToDelete.purchase_id} removed`);
+      if (ordersDisplayed) void loadOrders();
+    } else {
+      showToast('error', 'Delete failed', res.error || 'Could not delete order');
+    }
+    setOrdersLoading(false);
+    setOrderDeleteOpen(false);
+    setOrderToDelete(null);
+  };
+
+  const orderColumns: ColumnDef<Purchase>[] = [
+    {
+      accessorKey: 'purchase_date',
+      header: 'Date',
+      cell: ({ row }) => new Date(row.original.purchase_date).toLocaleDateString(),
+    },
+    { accessorKey: 'purchase_id', header: 'Order #', cell: ({ row }) => `PO-${row.original.purchase_id}` },
+    {
+      accessorKey: 'supplier_name',
+      header: 'Supplier',
+      cell: ({ row }) => row.original.supplier_name || '-',
+    },
+    {
+      accessorKey: 'total',
+      header: 'Total',
+      cell: ({ row }) => `$${Number(row.original.total || 0).toFixed(2)}`,
+    },
+    {
+      accessorKey: 'expected_date',
+      header: 'Expected Date',
+      cell: ({ row }) =>
+        row.original.expected_date
+          ? new Date(row.original.expected_date).toLocaleDateString()
+          : <span className="text-slate-400 text-xs">—</span>,
+    },
+    {
+      accessorKey: 'status',
+      header: 'Status',
+      cell: () => (
+        <Badge color="info" variant="light">Pending</Badge>
+      ),
+    },
+    { accessorKey: 'note', header: 'Note', cell: ({ row }) => row.original.note || '—' },
+    {
+      id: 'actions',
+      header: 'Actions',
+      cell: ({ row }) => (
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => openReceiveDialog(row.original)}
+            className="inline-flex items-center gap-1 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 transition-colors"
+          >
+            ✓ Mark Received
+          </button>
+          <button
+            onClick={() => navigate(`/purchases/${row.original.purchase_id}`)}
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors"
+          >
+            Edit
+          </button>
+          <button
+            onClick={() => { setOrderToDelete(row.original); setOrderDeleteOpen(true); }}
+            className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950 transition-colors"
+          >
+            Delete
+          </button>
+        </div>
+      ),
+    },
+  ];
 
   const supplierColumns: ColumnDef<Supplier>[] = [
     { accessorKey: 'supplier_name', header: 'Supplier' },
@@ -343,20 +559,7 @@ const Purchases = () => {
             title="Suppliers"
             primaryAction={{
               label: 'New Supplier',
-              onClick: () => {
-                setSupplierForm({
-                  supplier_id: 0,
-                  supplier_name: '',
-                  company_name: '',
-                  contact_person: '',
-                  contact_phone: '',
-                  phone: '',
-                  location: '',
-                  remaining_balance: 0,
-                  is_active: true,
-                } as Supplier);
-                setSupplierModalOpen(true);
-              },
+              onClick: () => openSupplierModal(),
             }}
             secondaryAction={{ label: 'Upload Data', onClick: () => setSupplierImportOpen(true) }}
             onDisplay={() => {
@@ -386,7 +589,7 @@ const Purchases = () => {
             columns={supplierColumns}
             isLoading={loading}
             searchPlaceholder="Find supplier..."
-            onEdit={(row) => { setSupplierForm(row as Supplier); setSupplierModalOpen(true); }}
+            onEdit={(row) => openSupplierModal(row as Supplier)}
             onDelete={deleteSupplier}
           />
         </div>
@@ -461,7 +664,6 @@ const Purchases = () => {
             title="Purchase Orders"
             // UPDATED: Support Purchase Orders (planned) separate from Purchases (received).
             primaryAction={{ label: 'New Purchase', onClick: () => navigate('/purchases/new') }}
-            secondaryAction={{ label: 'New Order', onClick: () => navigate('/purchases/new?docType=order') }}
             onDisplay={() => {
               setPurchasesDisplayed(true);
               void loadPurchases(search, statusFilter);
@@ -510,6 +712,67 @@ const Purchases = () => {
         </div>
       ),
     },
+    {
+      id: 'orders',
+      label: 'Orders',
+      icon: ClipboardList,
+      content: (
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">From Date</span>
+              <input
+                type="date"
+                value={orderDateRange.fromDate}
+                onChange={(e) => setOrderDateRange((prev) => ({ ...prev, fromDate: e.target.value }))}
+                className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              />
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">To Date</span>
+              <input
+                type="date"
+                value={orderDateRange.toDate}
+                onChange={(e) => setOrderDateRange((prev) => ({ ...prev, toDate: e.target.value }))}
+                className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              />
+              <button
+                type="button"
+                disabled={ordersLoading}
+                onClick={() => { setOrdersDisplayed(true); void loadOrders(); }}
+                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all disabled:opacity-60"
+              >
+                <RefreshCw className={`h-4 w-4 ${ordersLoading ? 'animate-spin' : ''}`} />
+                {ordersLoading ? 'Loading...' : 'Display'}
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/purchases/new?docType=order')}
+              className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-orange-600 transition-colors"
+            >
+              + New Order
+            </button>
+          </div>
+
+          {!ordersDisplayed && !ordersLoading && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+              Click <span className="font-semibold">Display</span> to load orders.
+            </div>
+          )}
+          {ordersDisplayed && !ordersLoading && orders.length === 0 && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+              No pending orders found for the selected date range.
+            </div>
+          )}
+
+          <DataTable
+            data={ordersDisplayed ? orders : []}
+            columns={orderColumns}
+            isLoading={ordersLoading}
+            searchPlaceholder="Find by supplier or note..."
+          />
+        </div>
+      ),
+    },
   ];
 
   return (
@@ -526,6 +789,8 @@ const Purchases = () => {
             ? 'suppliers'
             : location.pathname.endsWith('/items')
             ? 'items'
+            : location.pathname.endsWith('/orders')
+            ? 'orders'
             : 'list'
         }
       />
@@ -544,6 +809,87 @@ const Purchases = () => {
         cancelText="Cancel"
         variant="danger"
         isLoading={loading}
+      />
+
+      {/* Mark as Received modal */}
+      <Modal
+        isOpen={receiveOpen}
+        onClose={() => { setReceiveOpen(false); setOrderToReceive(null); }}
+        title={orderToReceive ? `Receive Order PO-${orderToReceive.purchase_id}` : 'Receive Order'}
+        size="sm"
+      >
+        {orderToReceive && (
+          <div className="space-y-4">
+            <div className="rounded-xl bg-slate-50 dark:bg-slate-800 p-4 space-y-1 text-sm">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Supplier</span>
+                <span className="font-medium">{orderToReceive.supplier_name || '—'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Total</span>
+                <span className="font-medium">${Number(orderToReceive.total || 0).toFixed(2)}</span>
+              </div>
+              {orderToReceive.expected_date && (
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Expected Date</span>
+                  <span className="font-medium">{new Date(orderToReceive.expected_date).toLocaleDateString()}</span>
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                Receive as
+              </label>
+              <select
+                value={receiveStatus}
+                onChange={(e) => setReceiveStatus(e.target.value as typeof receiveStatus)}
+                className="w-full h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              >
+                <option value="received">Received — Fully Paid (Cash)</option>
+                <option value="unpaid">Unpaid — Credit / Pay Later</option>
+                <option value="partial">Partial — Some Paid</option>
+              </select>
+            </div>
+
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              This will update stock inventory and record the supplier bill.
+            </p>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                onClick={() => { setReceiveOpen(false); setOrderToReceive(null); }}
+                disabled={receiveLoading}
+                className="px-4 py-2 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmReceiveOrder}
+                disabled={receiveLoading}
+                className="px-4 py-2 rounded-xl bg-green-600 text-sm font-semibold text-white hover:bg-green-700 transition-colors disabled:opacity-60"
+              >
+                {receiveLoading ? 'Processing...' : 'Confirm Receipt'}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <ConfirmDialog
+        isOpen={orderDeleteOpen}
+        onClose={() => { setOrderDeleteOpen(false); setOrderToDelete(null); }}
+        onConfirm={confirmDeleteOrder}
+        title="Delete Order?"
+        message={
+          orderToDelete
+            ? `Delete order PO-${orderToDelete.purchase_id}? This cannot be undone.`
+            : 'Are you sure?'
+        }
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="danger"
+        isLoading={ordersLoading}
       />
 
       <ConfirmDialog
@@ -671,82 +1017,136 @@ const Purchases = () => {
 
       <Modal
         isOpen={supplierModalOpen}
-        onClose={() => setSupplierModalOpen(false)}
+        onClose={closeSupplierModal}
         title={supplierForm.supplier_id ? 'Edit Supplier' : 'New Supplier'}
         size="xl"
       >
         <form
+          noValidate
           onSubmit={(e) => { e.preventDefault(); saveSupplier(); }}
-          className="grid grid-cols-1 md:grid-cols-2 gap-4 p-2"
+          className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-4 p-2"
         >
-          <label className="flex flex-col text-sm font-medium gap-1 text-slate-700 dark:text-slate-300">
-            Name
+          {/* Supplier Name — spans full width */}
+          <div className="md:col-span-2">
+            <SupplierField
+              label="Supplier Name"
+              error={supplierErrors.supplier_name}
+              touched={supplierTouched.supplier_name}
+              success={supplierForm.supplier_name.trim().length >= 2}
+            >
+              <input
+                className={getSupplierInputCls('supplier_name')}
+                placeholder="Enter supplier name"
+                value={supplierForm.supplier_name}
+                onBlur={() => touchSupplier('supplier_name')}
+                onChange={(e) => setSupplierField('supplier_name', e.target.value)}
+              />
+            </SupplierField>
+          </div>
+
+          <SupplierField
+            label="Company"
+            error={supplierErrors.company_name}
+            touched={supplierTouched.company_name}
+            success={!!(supplierForm.company_name?.trim())}
+          >
             <input
-              className="rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-2"
-              placeholder="Supplier name"
-              value={supplierForm.supplier_name}
-              onChange={(e) => setSupplierForm({ ...supplierForm, supplier_name: e.target.value })}
-              required
-            />
-          </label>
-          <label className="flex flex-col text-sm font-medium gap-1 text-slate-700 dark:text-slate-300">
-            Company
-            <input
-              className="rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-2"
+              className={getSupplierInputCls('company_name')}
               placeholder="Company name"
               value={supplierForm.company_name || ''}
-              onChange={(e) => setSupplierForm({ ...supplierForm, company_name: e.target.value })}
+              onBlur={() => touchSupplier('company_name')}
+              onChange={(e) => setSupplierField('company_name', e.target.value)}
             />
-          </label>
-          <label className="flex flex-col text-sm font-medium gap-1 text-slate-700 dark:text-slate-300">
-            Contact
+          </SupplierField>
+
+          <SupplierField
+            label="Contact Person"
+            error={supplierErrors.contact_person}
+            touched={supplierTouched.contact_person}
+            success={!!(supplierForm.contact_person?.trim())}
+          >
             <input
-              className="rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-2"
-              placeholder="Contact person"
+              className={getSupplierInputCls('contact_person')}
+              placeholder="Contact person name"
               value={supplierForm.contact_person || ''}
-              onChange={(e) => setSupplierForm({ ...supplierForm, contact_person: e.target.value })}
+              onBlur={() => touchSupplier('contact_person')}
+              onChange={(e) => setSupplierField('contact_person', e.target.value)}
             />
-          </label>
-          <label className="flex flex-col text-sm font-medium gap-1 text-slate-700 dark:text-slate-300">
-            Contact Phone
+          </SupplierField>
+
+          <SupplierField
+            label="Contact Phone"
+            error={supplierErrors.contact_phone}
+            touched={supplierTouched.contact_phone}
+            success={!!(supplierForm.contact_phone?.trim()) && (supplierForm.contact_phone.match(/\d/g) || []).length >= 2}
+          >
             <input
-              className="rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-2"
+              className={getSupplierInputCls('contact_phone')}
               placeholder="+1 555 000 1234"
               value={supplierForm.contact_phone || ''}
-              onChange={(e) => setSupplierForm({ ...supplierForm, contact_phone: e.target.value })}
+              onBlur={() => touchSupplier('contact_phone')}
+              onChange={(e) => setSupplierField('contact_phone', e.target.value)}
             />
-          </label>
-          <label className="flex flex-col text-sm font-medium gap-1 text-slate-700 dark:text-slate-300">
-            Phone
+          </SupplierField>
+
+          <SupplierField
+            label="Phone"
+            error={supplierErrors.phone}
+            touched={supplierTouched.phone}
+            success={!!(supplierForm.phone?.trim()) && (supplierForm.phone.match(/\d/g) || []).length >= 2}
+          >
             <input
-              className="rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-2"
+              className={getSupplierInputCls('phone')}
               placeholder="+1 555 123 4567"
               value={supplierForm.phone || ''}
-              onChange={(e) => setSupplierForm({ ...supplierForm, phone: e.target.value })}
+              onBlur={() => touchSupplier('phone')}
+              onChange={(e) => setSupplierField('phone', e.target.value)}
             />
-          </label>
-          <label className="flex flex-col text-sm font-medium gap-1 text-slate-700 dark:text-slate-300">
-            Location
+          </SupplierField>
+
+          <SupplierField
+            label="Location"
+            error={supplierErrors.location}
+            touched={supplierTouched.location}
+            success={!!(supplierForm.location?.trim())}
+          >
             <input
-              className="rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-2"
+              className={getSupplierInputCls('location')}
               placeholder="City / area"
               value={supplierForm.location || ''}
-              onChange={(e) => setSupplierForm({ ...supplierForm, location: e.target.value })}
+              onBlur={() => touchSupplier('location')}
+              onChange={(e) => setSupplierField('location', e.target.value)}
             />
-          </label>
-          <label className="flex flex-col text-sm font-medium gap-1 text-slate-700 dark:text-slate-300">
-            Remaining Balance
+          </SupplierField>
+
+          <SupplierField
+            label="Remaining Balance"
+            error={supplierErrors.remaining_balance}
+            touched={supplierTouched.remaining_balance}
+            success={(supplierForm.remaining_balance ?? 0) >= 0}
+          >
             <input
               type="number"
-              className="rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-2"
+              className={getSupplierInputCls('remaining_balance')}
               placeholder="0.00"
               value={supplierForm.remaining_balance ?? 0}
-              onChange={(e) => setSupplierForm({ ...supplierForm, remaining_balance: Number(e.target.value || 0) })}
+              onBlur={() => touchSupplier('remaining_balance')}
+              onChange={(e) => setSupplierField('remaining_balance', Number(e.target.value || 0))}
             />
-          </label>
-          <div className="flex justify-end gap-3 pt-2">
-            <button type="button" onClick={() => setSupplierModalOpen(false)} className="px-4 py-2 rounded-lg border">Cancel</button>
-            <button type="submit" className="px-4 py-2 rounded-lg bg-primary-600 text-white">
+          </SupplierField>
+
+          <div className="md:col-span-2 flex justify-end gap-2 pt-1 border-t border-slate-100 dark:border-slate-700 mt-1">
+            <button
+              type="button"
+              onClick={closeSupplierModal}
+              className="px-3 py-1.5 text-sm rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-1.5 text-sm rounded-lg bg-primary-600 text-white hover:bg-primary-700"
+            >
               {supplierForm.supplier_id ? 'Update' : 'Create'}
             </button>
           </div>

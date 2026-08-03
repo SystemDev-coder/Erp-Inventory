@@ -85,7 +85,8 @@ export const listPurchases = asyncHandler(async (req: AuthRequest, res: Response
   if (branchId) {
     assertBranchAccess(scope, branchId);
   }
-  const purchases = await purchasesService.listPurchases(scope, search, status, branchId, fromDate, toDate);
+  const docType = (req.query.docType as string) || undefined;
+  const purchases = await purchasesService.listPurchases(scope, search, status, branchId, fromDate, toDate, docType);
   return ApiResponse.success(res, { purchases });
 });
 
@@ -169,6 +170,24 @@ export const deletePurchase = asyncHandler(async (req: AuthRequest, res: Respons
   });
 
   return ApiResponse.success(res, null, 'Purchase deleted');
+});
+
+export const receivePurchaseOrder = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const id = Number(req.params.id);
+  const { status, purchaseType, note } = req.body as {
+    status?: 'received' | 'partial' | 'unpaid';
+    purchaseType?: 'cash' | 'credit';
+    note?: string | null;
+  };
+  if (!status || !['received', 'partial', 'unpaid'].includes(status)) {
+    throw ApiError.badRequest('status must be received, partial, or unpaid');
+  }
+  const purchase = await purchasesService.receiveOrder(id, { status, purchaseType, note }, scope);
+  if (!purchase) {
+    throw ApiError.notFound('Purchase order not found');
+  }
+  return ApiResponse.success(res, { purchase }, 'Order received and stock updated');
 });
 
 export const exportPurchasesXlsx = asyncHandler(async (req: AuthRequest, res: Response) => {

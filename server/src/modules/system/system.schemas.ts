@@ -63,7 +63,7 @@ export const updatePermissionSchema = z.object({
 );
 
 export const createUserSchema = z.object({
-  branchId: z.coerce.number().int().positive(),
+  branchIds: z.array(z.coerce.number().int().positive()).min(1, 'At least one branch is required'),
   roleId: z.coerce.number().int().positive(),
   name: z.string().trim().min(1).max(120),
   username: z.string().trim().min(3).max(80),
@@ -72,7 +72,7 @@ export const createUserSchema = z.object({
 });
 
 export const updateUserSchema = z.object({
-  branchId: z.coerce.number().int().positive().optional(),
+  branchIds: z.array(z.coerce.number().int().positive()).min(1, 'At least one branch is required').optional(),
   roleId: z.coerce.number().int().positive().optional(),
   name: z.string().trim().min(1).max(120).optional(),
   username: z.string().trim().min(3).max(80).optional(),
@@ -80,7 +80,7 @@ export const updateUserSchema = z.object({
   isActive: z.boolean().optional(),
 }).refine(
   (value) =>
-    value.branchId !== undefined ||
+    value.branchIds !== undefined ||
     value.roleId !== undefined ||
     value.name !== undefined ||
     value.username !== undefined ||

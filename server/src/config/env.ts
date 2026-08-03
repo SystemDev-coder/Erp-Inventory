@@ -7,6 +7,7 @@ dotenv.config({ path: path.join(__dirname, '../../.env') });
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.string().default('5000'),
+  HOST: z.string().default('0.0.0.0'),
   
   // PostgreSQL
   PGHOST: z.string().min(1, 'PGHOST is required'),
@@ -57,6 +58,7 @@ export const env = parseEnv();
 export const config = {
   nodeEnv: env.NODE_ENV,
   port: parseInt(env.PORT, 10),
+  host: env.HOST,
   isDev: env.NODE_ENV === 'development',
   isProd: env.NODE_ENV === 'production',
   

@@ -80,7 +80,7 @@ export const Modal: React.FC<ModalProps> = ({
                 >
                     {/* Header */}
                     {showHeader && (
-                        <div className={`${centerTitle ? 'relative flex items-center justify-end' : 'flex items-center justify-between'} border-b border-slate-800 bg-gradient-to-r from-slate-900 to-slate-800 px-6 py-4`}>
+                        <div className={`${centerTitle ? 'relative flex items-center justify-end' : 'flex items-center justify-between'} border-b border-primary-800 bg-gradient-to-r from-primary-900 to-primary-700 px-6 py-4`}>
                             <h3 className={`text-lg font-semibold text-white ${centerTitle ? 'absolute left-1/2 -translate-x-1/2 w-full text-center pointer-events-none' : ''}`}>
                                 {title}
                             </h3>

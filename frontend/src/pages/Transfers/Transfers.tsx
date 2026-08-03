@@ -12,6 +12,7 @@ import {
 } from '../../services/inventory.service';
 import { itemLabelWithAvailability } from '../../utils/itemAvailability';
 import { defaultDateRange } from '../../utils/dateRange';
+import { useBranch } from '../../context/BranchContext';
 
 type MovementRow = {
   move_id: number;
@@ -59,6 +60,7 @@ const initialForm: TransferForm = {
 
 const Transfers = () => {
   const { showToast } = useToast();
+  const { activeBranchId } = useBranch();
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [branches, setBranches] = useState<InventoryBranch[]>([]);
@@ -133,6 +135,7 @@ const Transfers = () => {
         page: 1,
         fromDate: dateRange.fromDate,
         toDate: dateRange.toDate,
+        branchId: activeBranchId ?? undefined,
       }),
     ]);
 
@@ -172,7 +175,8 @@ const Transfers = () => {
 
   useEffect(() => {
     void loadData();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBranchId]);
 
   const onItemChange = (itemId: string) => {
     const selected = availableItems.find((row) => row.item_id === Number(itemId));

@@ -560,7 +560,7 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
             setCardErrors((prev) => ({ ...prev, [card.id]: '' }));
             setExpandedCardId((prev) => (prev === card.id ? null : card.id));
           }}
-          className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-slate-900 to-slate-800 px-5 py-4 text-left text-white"
+          className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-primary-900 to-primary-700 px-5 py-4 text-left text-white"
         >
           <div>
             <p className="text-xl font-semibold leading-tight">{card.title}</p>

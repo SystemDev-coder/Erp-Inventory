@@ -35,7 +35,7 @@ export const userService = {
   },
   async create(data: Partial<UserRow> & { password: string }) {
     return apiClient.post<{ user: UserRow }>('/api/users', {
-      branchId: data.branch_id,
+      branchIds: data.branch_id ? [data.branch_id] : undefined,
       roleId: data.role_id,
       name: data.name,
       username: data.username,
@@ -45,7 +45,7 @@ export const userService = {
   },
   async update(id: number, data: Partial<UserRow> & { password?: string }) {
     return apiClient.put<{ user: UserRow }>(`/api/users/${id}`, {
-      branchId: data.branch_id,
+      branchIds: data.branch_id ? [data.branch_id] : undefined,
       roleId: data.role_id,
       name: data.name,
       username: data.username,

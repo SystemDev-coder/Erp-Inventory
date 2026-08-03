@@ -13,6 +13,7 @@ type Props<TValue extends string | number> = {
   options: ComboboxOption<TValue>[];
   placeholder?: string;
   disabled?: boolean;
+  hasError?: boolean;
   onChange: (value: TValue | '') => void;
   onSearch?: (query: string) => void;
   allowCustom?: boolean;
@@ -27,6 +28,7 @@ export function SearchableCombobox<TValue extends string | number>({
   options,
   placeholder = 'Select...',
   disabled,
+  hasError,
   onChange,
   onSearch,
   allowCustom,
@@ -133,7 +135,11 @@ export function SearchableCombobox<TValue extends string | number>({
             setOpen(true);
           }}
           placeholder={placeholder}
-          className="h-12 w-full rounded-lg border border-slate-300 bg-white px-3 pr-16 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+          className={`h-12 w-full rounded-lg border bg-white px-3 pr-16 text-sm text-slate-900 shadow-sm outline-none transition-all focus:ring-2 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-slate-900 dark:text-slate-100 ${
+            hasError
+              ? 'border-red-400 focus:border-red-500 focus:ring-red-500/20 dark:border-red-500'
+              : 'border-slate-300 focus:border-primary-500 focus:ring-primary-500/20 dark:border-slate-700'
+          }`}
         />
 
         <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">

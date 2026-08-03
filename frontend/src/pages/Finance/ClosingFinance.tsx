@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   CalendarCheck2,
   Clock3,
@@ -22,6 +22,7 @@ import {
   ProfitAllocation,
   ProfitShareRule,
 } from '../../services/finance.service';
+import { useBranch } from '../../context/BranchContext';
 
 type WizardStep = 1 | 2 | 3;
 type RuleMode = 'saved' | 'custom';
@@ -68,6 +69,7 @@ const emptyRule = (): ProfitShareRule => ({
 
 const ClosingFinance = () => {
   const { showToast } = useToast();
+  const { activeBranchId } = useBranch();
 
   const [loading, setLoading] = useState(false);
   const [displayed, setDisplayed] = useState(false);
@@ -149,9 +151,9 @@ const ClosingFinance = () => {
     setLoading(true);
     try {
       const [periodRes, rulesRes, accountsRes] = await Promise.all([
-        financeService.listClosingPeriods(),
-        financeService.listProfitShareRules(),
-        accountService.list(),
+        financeService.listClosingPeriods({ branchId: activeBranchId ?? undefined }),
+        financeService.listProfitShareRules(activeBranchId ?? undefined),
+        accountService.list({ branchId: activeBranchId ?? undefined }),
       ]);
       if (periodRes.success && periodRes.data?.periods) setPeriods(periodRes.data.periods);
       if (rulesRes.success && rulesRes.data?.rules) setRules(rulesRes.data.rules);
@@ -161,6 +163,11 @@ const ClosingFinance = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (displayed) void loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBranchId]);
 
   const resetCloseWizard = () => {
     setCloseStep(1);
@@ -181,6 +188,7 @@ const ClosingFinance = () => {
       return;
     }
     const payload = {
+      branchId: activeBranchId ?? undefined,
       closeMode: createForm.closeMode,
       periodFrom: createForm.periodFrom,
       periodTo: createForm.periodTo,

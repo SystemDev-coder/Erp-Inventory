@@ -26,6 +26,7 @@ export async function checkApiHealth(): Promise<HealthCheckResult> {
         'Content-Type': 'application/json',
       },
     });
+    
 
     const latency = Date.now() - startTime;
     const data = await response.json();

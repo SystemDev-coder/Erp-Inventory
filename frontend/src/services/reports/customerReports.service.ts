@@ -86,7 +86,7 @@ export interface CustomerActivityRow {
   net_exposure: number;
 }
 
-interface CustomerOptionsResponse {
+export interface CustomerOptionsResponse {
   branchId: number;
   customers: ReportOption[];
 }

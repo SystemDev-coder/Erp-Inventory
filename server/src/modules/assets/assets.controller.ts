@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { ApiResponse } from '../../utils/ApiResponse';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { AuthRequest } from '../../middlewares/requireAuth';
-import { resolveBranchScope } from '../../utils/branchScope';
+import { resolveActiveBranchIds, resolveBranchScope } from '../../utils/branchScope';
 import { assetsService } from './assets.service';
 import { ApiError } from '../../utils/ApiError';
 
@@ -29,7 +29,7 @@ const assetUpdateSchema = z
   });
 
 export const listAssets = asyncHandler(async (req: AuthRequest, res: Response) => {
-  const scope = await resolveBranchScope(req);
+  const branchIds = await resolveActiveBranchIds(req);
   const search = (req.query.search as string | undefined)?.trim();
   const type = (req.query.type as string | undefined)?.trim() as any;
   const state = (req.query.state as string | undefined)?.trim();
@@ -42,7 +42,7 @@ export const listAssets = asyncHandler(async (req: AuthRequest, res: Response) =
     throw ApiError.badRequest('fromDate cannot be after toDate');
   }
 
-  const assets = await assetsService.listAssets(scope, {
+  const assets = await assetsService.listAssets(branchIds, {
     search: search || undefined,
     type: type || undefined,
     state: state || undefined,

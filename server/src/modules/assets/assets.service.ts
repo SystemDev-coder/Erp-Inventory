@@ -257,7 +257,7 @@ export const assetsService = {
   },
 
   async listAssets(
-    scope: BranchScope,
+    branchIds: number[],
     filters: { search?: string; type?: AssetType; state?: string; fromDate?: string; toDate?: string }
   ): Promise<AssetRow[]> {
     await ensureAssetsSchema();
@@ -265,10 +265,8 @@ export const assetsService = {
     const params: Array<string | number | number[]> = [];
     const where: string[] = [];
 
-    if (!scope.isAdmin) {
-      params.push(scope.branchIds);
-      where.push(`a.branch_id = ANY($${params.length})`);
-    }
+    params.push(branchIds);
+    where.push(`a.branch_id = ANY($${params.length})`);
 
     if (filters.search) {
       params.push(`%${filters.search.trim()}%`);

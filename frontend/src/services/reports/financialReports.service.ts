@@ -180,7 +180,7 @@ export interface CapitalReportSummary {
   by_account: Array<{ account_id: number; account_name: string; total_amount: number }>;
 }
 
-interface FinancialOptionsResponse {
+export interface FinancialOptionsResponse {
   branchId: number;
   accounts: ReportOption[];
   customers: ReportOption[];
@@ -188,7 +188,7 @@ interface FinancialOptionsResponse {
   salesStoreEnabled?: boolean;
 }
 
-interface BalanceSheetResponse extends RowsResponse<BalanceSheetRow> {
+export interface BalanceSheetResponse extends RowsResponse<BalanceSheetRow> {
   asOfDate?: string;
 }
 

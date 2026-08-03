@@ -4,6 +4,7 @@ import type { ReportColumn } from '../../../components/reports/ReportModal';
 import { financialReportsService } from '../../../services/reports/financialReports.service';
 import type { DateRange, ModalReportState } from '../types';
 import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange } from '../reportUtils';
+import { useBranch } from '../../../context/BranchContext';
 
 type FinancialCardId =
   | 'balance-sheet'
@@ -149,6 +150,7 @@ type Props = {
 };
 
 export function FinancialReportsTab({ onOpenModal }: Props) {
+  const { activeBranchId } = useBranch();
   const [expandedCardKey, setExpandedCardKey] = useState<string | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<FinancialCardId | null>(null);
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
@@ -176,7 +178,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
     setOptionsError('');
 
     financialReportsService
-      .getFinancialOptions()
+      .getFinancialOptions(activeBranchId ?? undefined)
       .then((response) => {
         if (!alive) return;
         if (!response.success || !response.data) {
@@ -196,7 +198,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [activeBranchId]);
 
   const selectedAccountBalanceLabel = useMemo(
     () => accounts.find((option) => String(option.id) === selectedAccountBalanceId)?.label || '',
@@ -231,7 +233,11 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
     runCardAction('balance-sheet', async () => {
       ensureRangeValid(balanceRange, 'Balance Sheet');
       const asOfDate = balanceRange.toDate;
-      const response = await financialReportsService.getBalanceSheet({ asOfDate, fromDate: balanceRange.fromDate });
+      const response = await financialReportsService.getBalanceSheet({
+        asOfDate,
+        fromDate: balanceRange.fromDate,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load balance sheet');
       onOpenModal({
         title: 'Balance Sheet',
@@ -247,7 +253,10 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
   const handleCashFlow = () =>
     runCardAction('cash-flow', async () => {
       ensureRangeValid(cashFlowRange, 'Cash Flow Statement');
-      const response = await financialReportsService.getCashFlowStatement(cashFlowRange);
+      const response = await financialReportsService.getCashFlowStatement({
+        ...cashFlowRange,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load cash flow statement');
       const rows = toRecordRows(response.data.rows || []);
       const totalAmount = sumNumericField(rows, 'amount');
@@ -271,7 +280,10 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
   const handleCogsByInvoice = () =>
     runCardAction('cogs-by-invoice', async () => {
       ensureRangeValid(cogsRange, 'COGS (Cost of Goods Sold)');
-      const response = await financialReportsService.getCogsByInvoice(cogsRange);
+      const response = await financialReportsService.getCogsByInvoice({
+        ...cogsRange,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load COGS report');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -296,7 +308,11 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
     runCardAction('account-balances', async () => {
       const accountId = mode === 'show' ? Number(selectedAccountBalanceId || 0) : undefined;
       if (mode === 'show' && !accountId) throw new Error('Select an account first');
-      const response = await financialReportsService.getAccountBalances({ mode, accountId });
+      const response = await financialReportsService.getAccountBalances({
+        mode,
+        accountId,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load account balances');
       const rows = toRecordRows(response.data.rows || []);
       const totalDebit = rows.reduce((sum, row) => sum + Number(row.debit_balance || 0), 0);
@@ -334,7 +350,10 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
   const handleExpenseSummary = () =>
     runCardAction('expense-summary', async () => {
       ensureRangeValid(expenseRange, 'Expense Summary');
-      const response = await financialReportsService.getExpenseSummary(expenseRange);
+      const response = await financialReportsService.getExpenseSummary({
+        ...expenseRange,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load expense summary');
       const rows = toRecordRows(response.data.rows || []);
       const totalCharges = sumNumericField(rows, 'charges_count');
@@ -371,6 +390,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
         toDate: statementRange.toDate,
         mode,
         accountId,
+        branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load account statement');
       const rows = toRecordRows(response.data.rows || []).map((row) => ({
@@ -414,6 +434,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
       const response = await financialReportsService.getTrialBalance({
         fromDate: trialBalanceRange.fromDate,
         toDate: trialBalanceRange.toDate,
+        branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load trial balance');
       const rows = toRecordRows(response.data.rows || []);
@@ -445,6 +466,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
       const response = await financialReportsService.getAccountsReceivable({
         fromDate: receivableRange.fromDate,
         toDate: receivableRange.toDate,
+        branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load accounts receivable');
       const rows = toRecordRows(response.data.rows || []);
@@ -472,6 +494,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
       const response = await financialReportsService.getAccountsPayable({
         fromDate: payableRange.fromDate,
         toDate: payableRange.toDate,
+        branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load accounts payable');
       const rows = toRecordRows(response.data.rows || []);
@@ -705,7 +728,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
             setCardErrors((prev) => ({ ...prev, [card.id]: '' }));
             setExpandedCardKey((prev) => (prev === cardKey ? null : cardKey));
           }}
-          className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-slate-900 to-slate-800 px-5 py-4 text-left text-white"
+          className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-primary-900 to-primary-700 px-5 py-4 text-left text-white"
         >
           <div>
             <p className="text-xl font-semibold leading-tight">{card.title}</p>

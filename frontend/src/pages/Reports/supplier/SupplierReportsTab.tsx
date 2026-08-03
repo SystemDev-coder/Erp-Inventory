@@ -7,6 +7,7 @@ import { financeService } from '../../../services/finance.service';
 import { supplierService } from '../../../services/supplier.service';
 import type { DateRange, ModalReportState } from '../types';
 import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange } from '../reportUtils';
+import { useBranch } from '../../../context/BranchContext';
 
 type SupplierCardId =
   | 'supplier-list'
@@ -104,6 +105,7 @@ const moneyTotal = (label: string, value: number): ReportTotalItem => ({
 });
 
 export function SupplierReportsTab({ onOpenModal }: Props) {
+  const { activeBranchId } = useBranch();
   const [expandedCardId, setExpandedCardId] = useState<SupplierCardId | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<SupplierCardId | null>(null);
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
@@ -125,7 +127,7 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
     setOptionsError('');
 
     purchaseReportsService
-      .getPurchaseOptions()
+      .getPurchaseOptions(activeBranchId ?? undefined)
       .then((response) => {
         if (!alive) return;
         if (!response.success || !response.data) {
@@ -145,7 +147,8 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
     return () => {
       alive = false;
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBranchId]);
 
   const supplierNameById = useMemo(
     () => new Map(suppliers.map((supplier) => [String(supplier.id), supplier.label])),
@@ -171,7 +174,7 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
 
   const handleSupplierList = (mode: 'show' | 'all') =>
     runCardAction('supplier-list', async () => {
-      const response = await supplierService.list();
+      const response = await supplierService.list({ branchId: activeBranchId ?? undefined });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load supplier list');
       const supplierId = mode === 'show' ? Number(selectedListSupplierId || 0) : undefined;
       if (mode === 'show' && !supplierId) throw new Error('Select a supplier first');
@@ -412,7 +415,7 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
             setCardErrors((prev) => ({ ...prev, [card.id]: '' }));
             setExpandedCardId((prev) => (prev === card.id ? null : card.id));
           }}
-          className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-slate-900 to-slate-800 px-5 py-4 text-left text-white"
+          className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-primary-900 to-primary-700 px-5 py-4 text-left text-white"
         >
           <div>
             <p className="text-xl font-semibold leading-tight">{card.title}</p>

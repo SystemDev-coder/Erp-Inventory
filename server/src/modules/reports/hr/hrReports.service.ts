@@ -102,6 +102,25 @@ export interface EmployeeCountByDepartmentRow {
   total_salary_amount: number;
 }
 
+export interface PayrollEmployeeDetailRow {
+  payroll_line_id: number;
+  payroll_id: number;
+  period_year: number;
+  period_month: number;
+  period_from: string;
+  period_to: string;
+  payroll_status: string;
+  emp_id: number;
+  employee_name: string;
+  role_name: string;
+  basic_salary: number;
+  allowances: number;
+  deductions: number;
+  net_salary: number;
+  paid_amount: number;
+  outstanding_amount: number;
+}
+
 export const hrReportsService = {
   async getHrReportOptions(branchId: number): Promise<{ employees: HrReportOption[] }> {
     const employees = await queryMany<HrReportOption>(
@@ -442,6 +461,58 @@ export const hrReportsService = {
        [branchId, fromDate, toDate]
      );
    },
+
+  async getPayrollEmployeeDetail(
+    branchId: number,
+    fromDate: string,
+    toDate: string,
+    employeeId?: number
+  ): Promise<PayrollEmployeeDetailRow[]> {
+    const params: Array<number | string> = [branchId, fromDate, toDate];
+    let filter = '';
+    if (employeeId) {
+      params.push(employeeId);
+      filter = `AND pl.emp_id = $${params.length}`;
+    }
+    return queryMany<PayrollEmployeeDetailRow>(
+      `SELECT
+         pl.payroll_line_id,
+         pr.payroll_id,
+         pr.period_year,
+         pr.period_month,
+         pr.period_from::text AS period_from,
+         pr.period_to::text AS period_to,
+         pr.status::text AS payroll_status,
+         e.emp_id,
+         e.full_name AS employee_name,
+         COALESCE(r.role_name, 'Unassigned') AS role_name,
+         COALESCE(pl.basic_salary, 0)::double precision AS basic_salary,
+         COALESCE(pl.allowances, 0)::double precision AS allowances,
+         COALESCE(pl.deductions, 0)::double precision AS deductions,
+         COALESCE(pl.net_salary, 0)::double precision AS net_salary,
+         COALESCE(ep_paid.paid_amount, 0)::double precision AS paid_amount,
+         GREATEST(COALESCE(pl.net_salary, 0) - COALESCE(ep_paid.paid_amount, 0), 0)::double precision AS outstanding_amount
+       FROM ims.payroll_lines pl
+       JOIN ims.payroll_runs pr ON pr.payroll_id = pl.payroll_id
+       JOIN ims.employees e ON e.emp_id = pl.emp_id
+       LEFT JOIN ims.roles r
+         ON r.role_id = COALESCE(
+           e.role_id,
+           (SELECT u.role_id FROM ims.users u WHERE u.user_id = e.user_id)
+         )
+       LEFT JOIN (
+         SELECT emp_id, payroll_id,
+                COALESCE(SUM(amount_paid), 0)::double precision AS paid_amount
+           FROM ims.employee_payments
+          GROUP BY emp_id, payroll_id
+       ) ep_paid ON ep_paid.emp_id = pl.emp_id AND ep_paid.payroll_id = pl.payroll_id
+      WHERE pr.branch_id = $1
+        AND pr.period_from::date BETWEEN $2::date AND $3::date
+        ${filter}
+      ORDER BY pr.period_year ASC, pr.period_month ASC, pr.payroll_id ASC, e.full_name ASC`,
+      params
+    );
+  },
 
   async getEmployeeCountByDepartment(branchId: number): Promise<EmployeeCountByDepartmentRow[]> {
     return queryMany<EmployeeCountByDepartmentRow>(

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const userCreateSchema = z.object({
-  branchId: z.coerce.number().int().positive(),
+  branchIds: z.array(z.coerce.number().int().positive()).min(1, 'At least one branch is required'),
   roleId: z.coerce.number().int().positive(),
   name: z.string().min(1),
   username: z.string().min(3),
@@ -10,7 +10,7 @@ export const userCreateSchema = z.object({
 });
 
 export const userUpdateSchema = z.object({
-  branchId: z.coerce.number().int().positive().optional(),
+  branchIds: z.array(z.coerce.number().int().positive()).min(1, 'At least one branch is required').optional(),
   roleId: z.coerce.number().int().positive().optional(),
   name: z.string().min(1).optional(),
   username: z.string().min(3).optional(),

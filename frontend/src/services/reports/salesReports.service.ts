@@ -126,7 +126,7 @@ export interface SalesTopCustomerRow {
   net_sales: number;
 }
 
-interface SalesOptionsResponse {
+export interface SalesOptionsResponse {
   branchId: number;
   customers: ReportOption[];
   products: ReportOption[];

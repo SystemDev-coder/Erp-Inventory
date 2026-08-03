@@ -16,7 +16,7 @@ const startServer = async () => {
     await syncLedgerBalances();
 
     // Start server
-    app.listen(config.port, () => {
+    app.listen(config.port, config.host, () => {
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       console.log(`🚀 Server running on port ${config.port}`);
       console.log(`   Environment: ${config.nodeEnv}`);

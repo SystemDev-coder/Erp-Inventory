@@ -224,7 +224,7 @@ const scopedSupplier = async (
 
 export const suppliersService = {
   async listSuppliers(
-    scope: BranchScope,
+    branchIds: number[],
     search?: string,
     dateRange?: { fromDate?: string; toDate?: string }
   ): Promise<Supplier[]> {
@@ -235,10 +235,8 @@ export const suppliersService = {
     // UPDATED: Explicitly hide soft-deleted rows even when DB user bypasses RLS (e.g., postgres/superuser).
     where.push(`COALESCE(is_deleted, 0)::int = 0`);
 
-    if (!scope.isAdmin) {
-      params.push(scope.branchIds);
-      where.push(`branch_id = ANY($${params.length})`);
-    }
+    params.push(branchIds);
+    where.push(`branch_id = ANY($${params.length})`);
 
     if (search) {
       params.push(`%${search}%`);
@@ -281,11 +279,11 @@ export const suppliersService = {
     return rows.map(mapSupplier);
   },
 
-  async lookupSuppliers(scope: BranchScope, search?: string, limit = 50): Promise<Supplier[]> {
+  async lookupSuppliers(branchIds: number[], search?: string, limit = 50): Promise<Supplier[]> {
     const shape = await detectSupplierShape();
     const safeLimit = Math.max(1, Math.min(200, Math.floor(Number(limit) || 50)));
 
-    const params: unknown[] = [scope.branchIds];
+    const params: unknown[] = [branchIds];
 
     // UPDATED: Explicitly hide soft-deleted rows even when DB user bypasses RLS (e.g., postgres/superuser).
     const where: string[] = [`branch_id = ANY($1)`, `is_active = TRUE`, `COALESCE(is_deleted, 0)::int = 0`];

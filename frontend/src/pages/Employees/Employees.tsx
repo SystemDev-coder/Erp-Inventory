@@ -13,10 +13,12 @@ import { EmployeeModal } from './EmployeeModal';
 import { Modal } from '../../components/ui/modal/Modal';
 import DeleteConfirmModal from '../../components/ui/modal/DeleteConfirmModal';
 import { defaultDateRange } from '../../utils/dateRange';
+import { useBranch } from '../../context/BranchContext';
 
 const Employees = () => {
   const location = useLocation();
   const { showToast } = useToast();
+  const { activeBranchId } = useBranch();
 
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [stateEmployees, setStateEmployees] = useState<Employee[]>([]);
@@ -45,6 +47,7 @@ const Employees = () => {
       status: 'active',
       fromDate: dateRange.fromDate,
       toDate: dateRange.toDate,
+      branchId: activeBranchId ?? undefined,
     });
     if (res.success && res.data?.employees) {
       setEmployees(res.data.employees);
@@ -62,6 +65,7 @@ const Employees = () => {
       search: search || undefined,
       fromDate: dateRange.fromDate,
       toDate: dateRange.toDate,
+      branchId: activeBranchId ?? undefined,
     });
     if (res.success && res.data?.employees) {
       setStateEmployees(res.data.employees);
@@ -79,6 +83,12 @@ const Employees = () => {
       else showToast('error', 'HR', res.error || 'Failed to load roles');
     });
   }, []);
+
+  useEffect(() => {
+    if (hasDisplayed) void fetchEmployees(search || undefined);
+    if (stateLoaded) void fetchStateEmployees(stateDisplayFilter);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBranchId]);
 
   const handleSaveEmployee = async (payload: any) => {
     setIsSaving(true);

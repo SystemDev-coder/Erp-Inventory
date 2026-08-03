@@ -26,6 +26,7 @@ import {
   UserWithPermissions,
 } from './auth.types';
 import { logAudit } from '../../utils/audit';
+import { isAdminRoleName } from '../../utils/branchScope';
 
 type ResetEntry = {
   userId: number;
@@ -167,6 +168,7 @@ const mapProfile = async (userId: number): Promise<UserProfile | null> => {
     branch_id: branchId,
     branch_name: branchName,
     is_active: Boolean(row.is_active),
+    is_admin: isAdminRoleName(row.role_name),
   };
 };
 

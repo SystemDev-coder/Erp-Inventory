@@ -23,8 +23,9 @@ export type AccountPayload = {
 };
 
 export const accountService = {
-  async list() {
-    return apiClient.get<{ accounts: Account[] }>('/api/accounts');
+  async list(params?: { branchId?: number }) {
+    const qs = params?.branchId ? `?branchId=${params.branchId}` : '';
+    return apiClient.get<{ accounts: Account[] }>(`/api/accounts${qs}`);
   },
   async create(data: AccountPayload) {
     return apiClient.post<{ account: Account }>('/api/accounts', data);

@@ -44,13 +44,14 @@ const toQuery = (params: Record<string, string | number | undefined>) => {
 };
 
 export const assetsService = {
-  async list(input?: { search?: string; type?: AssetType; state?: string; fromDate?: string; toDate?: string }) {
+  async list(input?: { search?: string; type?: AssetType; state?: string; fromDate?: string; toDate?: string; branchId?: number }) {
     const query = toQuery({
       search: input?.search,
       type: input?.type,
       state: input?.state,
       fromDate: input?.fromDate,
       toDate: input?.toDate,
+      branchId: input?.branchId,
     });
     return apiClient.get<{ assets: Asset[] }>(`${API.ASSETS.LIST}${query}`);
   },

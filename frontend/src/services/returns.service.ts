@@ -81,8 +81,9 @@ export const returnsService = {
     listItems() {
         return apiClient.get<{ items: ReturnItemOption[] }>('/api/returns/items');
     },
-    listSalesCustomers() {
-        return apiClient.get<{ customers: any[] }>('/api/returns/sales/customers');
+    listSalesCustomers(params?: { branchId?: number }) {
+        const qs = params?.branchId ? `?branchId=${params.branchId}` : '';
+        return apiClient.get<{ customers: any[] }>(`/api/returns/sales/customers${qs}`);
     },
     listSalesItemsByCustomer(customerId: number) {
         return apiClient.get<{ items: ReturnItemOption[] }>(`/api/returns/sales/customer-items?customerId=${customerId}`);
@@ -90,10 +91,11 @@ export const returnsService = {
     listPurchaseItemsBySupplier(supplierId: number) {
         return apiClient.get<{ items: ReturnItemOption[] }>(`/api/returns/purchases/supplier-items?supplierId=${supplierId}`);
     },
-    listSalesReturns(params?: { fromDate?: string; toDate?: string }) {
+    listSalesReturns(params?: { fromDate?: string; toDate?: string; branchId?: number }) {
         const qsParts: string[] = [];
         if (params?.fromDate) qsParts.push(`fromDate=${encodeURIComponent(params.fromDate)}`);
         if (params?.toDate) qsParts.push(`toDate=${encodeURIComponent(params.toDate)}`);
+        if (params?.branchId) qsParts.push(`branchId=${params.branchId}`);
         const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
         return apiClient.get<{ rows: SalesReturn[] }>(`/api/returns/sales${qs}`);
     },
@@ -128,10 +130,11 @@ export const returnsService = {
     deleteSalesReturn(id: number) {
         return apiClient.delete(`/api/returns/sales/${id}`);
     },
-    listPurchaseReturns(params?: { fromDate?: string; toDate?: string }) {
+    listPurchaseReturns(params?: { fromDate?: string; toDate?: string; branchId?: number }) {
         const qsParts: string[] = [];
         if (params?.fromDate) qsParts.push(`fromDate=${encodeURIComponent(params.fromDate)}`);
         if (params?.toDate) qsParts.push(`toDate=${encodeURIComponent(params.toDate)}`);
+        if (params?.branchId) qsParts.push(`branchId=${params.branchId}`);
         const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
         return apiClient.get<{ rows: PurchaseReturn[] }>(`/api/returns/purchases${qs}`);
     },

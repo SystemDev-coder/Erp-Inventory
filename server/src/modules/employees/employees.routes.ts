@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middlewares/requireAuth';
-import { loadUserBranches } from '../../middleware/branchAccess.middleware';
 import { requireAnyPerm, requirePerm } from '../../middlewares/requirePerm';
 import {
   listEmployees,
@@ -19,9 +18,8 @@ import {
 
 const router = Router();
 
-// Apply authentication and branch context
+// Apply authentication
 router.use(requireAuth);
-router.use(loadUserBranches); // Automatically sets database context
 
 // Routes
 router.get('/stats', requirePerm('employees.view'), getEmployeeStats);

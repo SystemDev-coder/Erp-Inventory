@@ -7,13 +7,13 @@ import {
     UpdateSalesReturnInput,
     UpdatePurchaseReturnInput,
 } from './returns.service';
-import { resolveBranchScope } from '../../utils/branchScope';
+import { resolveActiveBranchIds, resolveBranchScope } from '../../utils/branchScope';
 import { ApiError } from '../../utils/ApiError';
 import { logAudit } from '../../utils/audit';
 
 // GET /api/returns/sales
 export const listSalesReturns = async (req: AuthRequest, res: Response): Promise<void> => {
-    const scope = await resolveBranchScope(req);
+    const branchIds = await resolveActiveBranchIds(req);
     const fromDate = (req.query.fromDate as string) || undefined;
     const toDate = (req.query.toDate as string) || undefined;
     if ((fromDate && !toDate) || (!fromDate && toDate)) {
@@ -22,7 +22,7 @@ export const listSalesReturns = async (req: AuthRequest, res: Response): Promise
     if (fromDate && toDate && fromDate > toDate) {
         throw ApiError.badRequest('fromDate cannot be after toDate');
     }
-    const rows = await returnsService.listSalesReturns(scope, { fromDate, toDate });
+    const rows = await returnsService.listSalesReturns(branchIds, { fromDate, toDate });
     res.json({ success: true, data: { rows } });
 };
 
@@ -40,8 +40,8 @@ export const listSalesReturnItems = async (req: AuthRequest, res: Response): Pro
 };
 
 export const listSalesCustomers = async (req: AuthRequest, res: Response): Promise<void> => {
-    const scope = await resolveBranchScope(req);
-    const customers = await returnsService.listSalesCustomers(scope);
+    const branchIds = await resolveActiveBranchIds(req);
+    const customers = await returnsService.listSalesCustomers(branchIds);
     res.json({ success: true, data: { customers } });
 };
 
@@ -102,7 +102,7 @@ export const deleteSalesReturn = async (req: AuthRequest, res: Response): Promis
 
 // GET /api/returns/purchases
 export const listPurchaseReturns = async (req: AuthRequest, res: Response): Promise<void> => {
-    const scope = await resolveBranchScope(req);
+    const branchIds = await resolveActiveBranchIds(req);
     const fromDate = (req.query.fromDate as string) || undefined;
     const toDate = (req.query.toDate as string) || undefined;
     if ((fromDate && !toDate) || (!fromDate && toDate)) {
@@ -111,7 +111,7 @@ export const listPurchaseReturns = async (req: AuthRequest, res: Response): Prom
     if (fromDate && toDate && fromDate > toDate) {
         throw ApiError.badRequest('fromDate cannot be after toDate');
     }
-    const rows = await returnsService.listPurchaseReturns(scope, { fromDate, toDate });
+    const rows = await returnsService.listPurchaseReturns(branchIds, { fromDate, toDate });
     res.json({ success: true, data: { rows } });
 };
 

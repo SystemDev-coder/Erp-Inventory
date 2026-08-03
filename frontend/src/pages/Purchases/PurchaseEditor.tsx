@@ -9,6 +9,7 @@ import { accountService, Account } from '../../services/account.service';
 import { productService, Product } from '../../services/product.service';
 import { Modal } from '../../components/ui/modal/Modal';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
+import { useBranch } from '../../context/BranchContext';
 
 type LineItem = {
   product_id: number | '';
@@ -42,6 +43,8 @@ const PurchaseEditor = () => {
   const { id } = useParams();
   const isEdit = Boolean(id);
   const { showToast } = useToast();
+  const { activeBranchId } = useBranch();
+  const docType: 'order' | 'purchase' = new URLSearchParams(location.search).get('docType') === 'order' ? 'order' : 'purchase';
 
   const [loading, setLoading] = useState(false);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -88,7 +91,7 @@ const PurchaseEditor = () => {
       setProductsLoading(true);
       // If we are searching, just fetch the first page from server and let the UI filter further.
       if (q) {
-        const res = await productService.list({ search: q, page: 1, limit });
+        const res = await productService.list({ search: q, page: 1, limit, branchId: activeBranchId ?? undefined });
         if (!res.success) {
           showToast('error', 'Load failed', res.error || 'Could not load products');
           return;
@@ -105,7 +108,7 @@ const PurchaseEditor = () => {
 
       // safety stop (200 * 100 = 20,000 products)
       for (let guard = 0; guard < 100; guard++) {
-        const res = await productService.list({ page, limit });
+        const res = await productService.list({ page, limit, branchId: activeBranchId ?? undefined });
         if (!res.success) {
           showToast('error', 'Load failed', res.error || 'Could not load products');
           break;
@@ -177,9 +180,9 @@ const PurchaseEditor = () => {
   };
 
   const loadOptions = async () => {
-    const sRes = await supplierService.list();
+    const sRes = await supplierService.list({ branchId: activeBranchId ?? undefined });
     if (sRes.success && sRes.data?.suppliers) setSuppliers(sRes.data.suppliers);
-    const aRes = await accountService.list();
+    const aRes = await accountService.list({ branchId: activeBranchId ?? undefined });
     if (aRes.success && aRes.data?.accounts) setAccounts(aRes.data.accounts);
   };
 
@@ -201,6 +204,7 @@ const PurchaseEditor = () => {
           discount: Number(p.discount || 0),
           total: Number(p.total || 0),
         status: p.status as any,
+        expected_date: p.expected_date ? p.expected_date.slice(0, 10) : new Date().toISOString().slice(0, 10),
         note: p.note || '',
         acc_id: primaryPaymentAcc || '',
         paid_amount: totalPaid,
@@ -238,7 +242,8 @@ const PurchaseEditor = () => {
     // preload some items for the inline item combobox (and keep using server-side search while typing)
     void loadProducts('');
     if (isEdit && Number(id)) loadPurchase(Number(id));
-  }, [id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, activeBranchId]);
 
   useEffect(() => {
     if (productPickerOpen && !productsLoaded) void loadProducts('');
@@ -410,6 +415,7 @@ const PurchaseEditor = () => {
         ? Number(form.paid_amount || 0)
         : totals.total;
     const payload = {
+      branchId: activeBranchId ?? undefined,
       supplierId: supplierId ? Number(supplierId) : null,
       docType,
       expectedDate: docType === 'order' ? form.expected_date : undefined,
@@ -593,28 +599,30 @@ const PurchaseEditor = () => {
           </div>
         )}
 
-        <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-          Purchase Type
-          <select
-            className={fieldCls}
-            value={effectivePurchaseType}
-            onChange={(e) =>
-              setForm((prev) => {
-                const nextType = e.target.value as 'cash' | 'credit';
-                return {
-                  ...prev,
-                  purchase_type: nextType,
-                  status: nextType === 'credit' ? 'unpaid' : prev.status === 'unpaid' ? 'received' : prev.status,
-                  acc_id: nextType === 'credit' ? '' : prev.acc_id,
-                  paid_amount: nextType === 'credit' ? 0 : prev.paid_amount,
-                };
-              })
-            }
-          >
-            <option value="cash">Cash</option>
-            <option value="credit">Credit</option>
-          </select>
-        </label>
+        {docType !== 'order' && (
+          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+            Purchase Type
+            <select
+              className={fieldCls}
+              value={effectivePurchaseType}
+              onChange={(e) =>
+                setForm((prev) => {
+                  const nextType = e.target.value as 'cash' | 'credit';
+                  return {
+                    ...prev,
+                    purchase_type: nextType,
+                    status: nextType === 'credit' ? 'unpaid' : prev.status === 'unpaid' ? 'received' : prev.status,
+                    acc_id: nextType === 'credit' ? '' : prev.acc_id,
+                    paid_amount: nextType === 'credit' ? 0 : prev.paid_amount,
+                  };
+                })
+              }
+            >
+              <option value="cash">Cash</option>
+              <option value="credit">Credit</option>
+            </select>
+          </label>
+        )}
 
         {docType === 'order' ? (
           <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
@@ -632,7 +640,7 @@ const PurchaseEditor = () => {
           <div className="hidden md:block" />
         )}
 
-        {shouldShowPaymentAccount ? (
+        {docType !== 'order' && (shouldShowPaymentAccount ? (
           <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
             Pay from Account
             <SearchableCombobox<number>
@@ -649,32 +657,33 @@ const PurchaseEditor = () => {
           </label>
         ) : (
           <div className="hidden md:block" />
-        )}
+        ))}
 
-        <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-          Purchase Status
-          <select
-            className={fieldCls}
-            value={effectiveStatus}
-            onChange={(e) => {
-              const nextStatus = e.target.value as any;
-              setForm((prev) => ({
-                ...prev,
-                status: nextStatus,
-                paid_amount: nextStatus === 'void' ? 0 : prev.paid_amount,
-                acc_id: nextStatus === 'void' ? '' : prev.acc_id,
-              }));
-            }}
-            disabled={docType === 'order' || effectivePurchaseType === 'credit'}
-          >
-            {docType === 'order' ? <option value="ordered">Ordered</option> : null}
-            <option value="received">Received</option>
-            <option value="partial">Incomplete</option>
-            <option value="unpaid">Unpaid</option>
-            <option value="void">Cancelled</option>
-          </select>
-          <span className="text-xs text-slate-500">Status controls how payment is recorded.</span>
-        </label>
+        {docType !== 'order' && (
+          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+            Purchase Status
+            <select
+              className={fieldCls}
+              value={effectiveStatus}
+              onChange={(e) => {
+                const nextStatus = e.target.value as any;
+                setForm((prev) => ({
+                  ...prev,
+                  status: nextStatus,
+                  paid_amount: nextStatus === 'void' ? 0 : prev.paid_amount,
+                  acc_id: nextStatus === 'void' ? '' : prev.acc_id,
+                }));
+              }}
+              disabled={effectivePurchaseType === 'credit'}
+            >
+              <option value="received">Received</option>
+              <option value="partial">Incomplete</option>
+              <option value="unpaid">Unpaid</option>
+              <option value="void">Cancelled</option>
+            </select>
+            <span className="text-xs text-slate-500">Status controls how payment is recorded.</span>
+          </label>
+        )}
 
         {docType !== 'order' && effectivePurchaseType !== 'credit' && effectiveStatus !== 'void' && (
           <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
@@ -1020,5 +1029,3 @@ const PurchaseEditor = () => {
 };
 
 export default PurchaseEditor;
-  // NEW: Purchase editor supports Purchase Orders via `?docType=order`.
-  const docType = new URLSearchParams(location.search).get('docType') === 'order' ? 'order' : 'purchase';

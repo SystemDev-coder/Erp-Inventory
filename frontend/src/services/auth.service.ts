@@ -16,6 +16,7 @@ export interface User {
   branch_id: number;
   branch_name: string;
   is_active: boolean;
+  is_admin: boolean;
 }
 
 export interface LoginCredentials {
@@ -31,6 +32,17 @@ export interface RegisterData {
   password: string;
   branch_id?: number;
   role_id?: number;
+}
+
+export interface MyBranch {
+  branch_id: number;
+  branch_name: string;
+}
+
+export interface MyBranchesResponse {
+  isAdmin: boolean;
+  primaryBranchId: number;
+  branches: MyBranch[];
 }
 
 export interface LoginResponse {
@@ -90,6 +102,13 @@ class AuthService {
    */
   async getCurrentUser(): Promise<ApiResponse<{ user: User }>> {
     return apiClient.get<{ user: User }>(API.AUTH.ME);
+  }
+
+  /**
+   * Get the branches the current user can access (and switch between)
+   */
+  async getMyBranches(): Promise<ApiResponse<MyBranchesResponse>> {
+    return apiClient.get<MyBranchesResponse>(API.AUTH.MY_BRANCHES);
   }
 
   /**

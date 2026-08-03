@@ -6,29 +6,40 @@ import { schedulesService } from './schedules.service';
 import { scheduleSchema, scheduleUpdateSchema, scheduleStatusSchema } from './schedules.schemas';
 import { logAudit } from '../../utils/audit';
 import { AuthRequest } from '../../middlewares/requireAuth';
+import {
+  assertBranchAccess,
+  pickBranchForWrite,
+  resolveActiveBranchIds,
+  resolveBranchScope,
+} from '../../utils/branchScope';
 
 export const listSchedules = asyncHandler(async (req: AuthRequest, res: Response) => {
   const { empId, status } = req.query;
+  const branchIds = await resolveActiveBranchIds(req);
   const schedules = await schedulesService.list({
     empId: empId ? Number(empId) : undefined,
     status: status as string,
-    branchIds: req.userBranches,
+    branchIds,
   });
   return ApiResponse.success(res, { schedules });
 });
 
 export const getSchedule = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
   const schedule = await schedulesService.getById(Number(req.params.id));
   if (!schedule) {
     throw ApiError.notFound('Schedule not found');
   }
+  assertBranchAccess(scope, schedule.branch_id);
   return ApiResponse.success(res, { schedule });
 });
 
 export const createSchedule = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
   const input = scheduleSchema.parse(req.body);
-  const schedule = await schedulesService.create(input);
-  
+  const branchId = pickBranchForWrite(scope, undefined);
+  const schedule = await schedulesService.create(input, { branchId });
+
   await logAudit({
     userId: req.user?.userId ?? null,
     action: 'create',
@@ -43,9 +54,17 @@ export const createSchedule = asyncHandler(async (req: AuthRequest, res: Respons
 });
 
 export const updateSchedule = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const id = Number(req.params.id);
+  const existing = await schedulesService.getById(id);
+  if (!existing) {
+    throw ApiError.notFound('Schedule not found');
+  }
+  assertBranchAccess(scope, existing.branch_id);
+
   const input = scheduleUpdateSchema.parse(req.body);
-  const schedule = await schedulesService.update(Number(req.params.id), input);
-  
+  const schedule = await schedulesService.update(id, input);
+
   if (!schedule) {
     throw ApiError.notFound('Schedule not found');
   }
@@ -64,12 +83,16 @@ export const updateSchedule = asyncHandler(async (req: AuthRequest, res: Respons
 });
 
 export const updateScheduleStatus = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const id = Number(req.params.id);
+  const existing = await schedulesService.getById(id);
+  if (!existing) {
+    throw ApiError.notFound('Schedule not found');
+  }
+  assertBranchAccess(scope, existing.branch_id);
+
   const { status } = scheduleStatusSchema.parse(req.body);
-  const schedule = await schedulesService.updateStatus(
-    Number(req.params.id),
-    status,
-    req.user?.userId
-  );
+  const schedule = await schedulesService.updateStatus(id, status, req.user?.userId);
 
   if (!schedule) {
     throw ApiError.notFound('Schedule not found');
@@ -89,8 +112,16 @@ export const updateScheduleStatus = asyncHandler(async (req: AuthRequest, res: R
 });
 
 export const deleteSchedule = asyncHandler(async (req: AuthRequest, res: Response) => {
-  const deleted = await schedulesService.delete(Number(req.params.id));
-  
+  const scope = await resolveBranchScope(req);
+  const id = Number(req.params.id);
+  const existing = await schedulesService.getById(id);
+  if (!existing) {
+    throw ApiError.notFound('Schedule not found');
+  }
+  assertBranchAccess(scope, existing.branch_id);
+
+  const deleted = await schedulesService.delete(id);
+
   if (!deleted) {
     throw ApiError.notFound('Schedule not found');
   }
@@ -99,7 +130,7 @@ export const deleteSchedule = asyncHandler(async (req: AuthRequest, res: Respons
     userId: req.user?.userId ?? null,
     action: 'delete',
     entity: 'employee_schedule',
-    entityId: Number(req.params.id),
+    entityId: id,
     ip: req.ip,
     userAgent: req.get('user-agent') || null,
   });
@@ -109,9 +140,11 @@ export const deleteSchedule = asyncHandler(async (req: AuthRequest, res: Respons
 
 export const getUpcomingSchedules = asyncHandler(async (req: AuthRequest, res: Response) => {
   const { empId, days } = req.query;
+  const branchIds = await resolveActiveBranchIds(req);
   const schedules = await schedulesService.getUpcoming(
     empId ? Number(empId) : undefined,
-    days ? Number(days) : 30
+    days ? Number(days) : 30,
+    branchIds
   );
   return ApiResponse.success(res, { schedules });
 });

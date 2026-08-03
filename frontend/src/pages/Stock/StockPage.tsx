@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
 import { AlertTriangle, Filter, RefreshCw, ArrowLeftRight, Plus, Building2, Warehouse, History } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
@@ -12,6 +12,7 @@ import { useAuth } from '../../context/AuthContext';
 import { itemLabelWithAvailability } from '../../utils/itemAvailability';
 import { formatAvailableQty } from '../../utils/itemAvailability';
 import { defaultDateRange } from '../../utils/dateRange';
+import { useBranch } from '../../context/BranchContext';
 
 type MovementRow = {
   move_date: string;
@@ -31,7 +32,8 @@ const badgeClass = 'inline-flex items-center rounded-full px-2 py-1 text-xs font
 
 const StockPage = () => {
   const { showToast } = useToast();
-  const { user } = useAuth();
+  const { user, permissions } = useAuth();
+  const { activeBranchId } = useBranch();
   const [stock, setStock] = useState<StockLevelRow[]>([]);
   const [movements, setMovements] = useState<MovementRow[]>([]);
   const [loadingStock, setLoadingStock] = useState(false);
@@ -82,10 +84,12 @@ const StockPage = () => {
   const [deletingBranch, setDeletingBranch] = useState(false);
   const [deletingWarehouse, setDeletingWarehouse] = useState(false);
 
-  const canManageLocations = useMemo(() => {
-    const role = (user?.role_name || '').toLowerCase();
-    return role === 'admin' || role === 'manager';
-  }, [user?.role_name]);
+  const canManageLocations = useMemo(
+    () =>
+      Boolean(user?.is_admin) ||
+      ['system.branches', 'stock.adjust', 'inventory.adjust'].some((perm) => permissions.includes(perm)),
+    [user?.is_admin, permissions]
+  );
 
   const activeBranches = useMemo(() => branches.filter((b) => b.is_active), [branches]);
   const activeWarehouses = useMemo(() => warehouses.filter((w) => w.is_active), [warehouses]);
@@ -283,7 +287,7 @@ const StockPage = () => {
   const loadStock = async () => {
     setLoadingStock(true);
     const res = await inventoryService.listStock({
-      branchId: filters.branchId || undefined,
+      branchId: filters.branchId || activeBranchId || undefined,
       whId: filters.whId || undefined,
       productId: filters.productId || undefined,
       search: filters.search || undefined,
@@ -300,7 +304,7 @@ const StockPage = () => {
     }
     setLoadingMove(true);
     const res = await inventoryService.listMovements({
-      branchId: filters.branchId || undefined,
+      branchId: filters.branchId || activeBranchId || undefined,
       whId: filters.whId || undefined,
       productId: filters.productId || undefined,
       search: filters.search || undefined,
@@ -311,6 +315,11 @@ const StockPage = () => {
     if (res.success && res.data?.rows) setMovements(res.data.rows as MovementRow[]);
     else showToast('error', 'Inventory', res.error || 'Failed to load movements');
   };
+
+  useEffect(() => {
+    if (stockDisplayed) void Promise.all([loadStock(), loadMovements()]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBranchId]);
 
   const loadLocations = async () => {
     setLoadingLocations(true);

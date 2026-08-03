@@ -121,6 +121,23 @@ export const getPayrollByMonthReport = asyncHandler(async (req: AuthRequest, res
   });
 });
 
+export const getPayrollEmployeeDetailReport = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const branchId = await resolveBranchIdForReports(req);
+  const { fromDate, toDate } = parseDateRange(req);
+  const mode = parseSelectionMode(req.query.mode);
+  const employeeId = mode === 'show' ? parseNumericId(req.query.employeeId, 'employeeId') : undefined;
+  const rows = await hrReportsService.getPayrollEmployeeDetail(branchId, fromDate, toDate, employeeId);
+  return ApiResponse.success(res, {
+    branchId,
+    reportKey: 'payroll-employee-detail',
+    fromDate,
+    toDate,
+    mode,
+    employeeId: employeeId ?? null,
+    rows,
+  });
+});
+
 export const getEmployeeCountByDepartmentReport = asyncHandler(async (req: AuthRequest, res: Response) => {
   const branchId = await resolveBranchIdForReports(req);
   const rows = await hrReportsService.getEmployeeCountByDepartment(branchId);

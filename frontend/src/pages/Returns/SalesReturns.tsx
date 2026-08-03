@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router';
 import { PageHeader } from '../../components/ui/layout';
@@ -7,9 +7,12 @@ import { returnsService, ReturnItemOption } from '../../services/returns.service
 import { customerService, Customer } from '../../services/customer.service';
 import { accountService, Account } from '../../services/account.service';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
+import { useBranch } from '../../context/BranchContext';
 
 const inputClass =
   'h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
+const errInputCls =
+  'h-11 w-full rounded-lg border border-red-400 bg-red-50/40 px-3 text-sm text-slate-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/20 dark:border-red-500 dark:bg-red-900/10 dark:text-slate-100';
 const labelClass = 'mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400';
 const tableHeadCls = 'px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400';
 const tableCellCls = 'px-3 py-2 text-sm text-slate-800 dark:text-slate-200';
@@ -26,6 +29,7 @@ const defaultLine = (): ReturnLine => ({ itemId: '', quantity: 1, unitPrice: 0 }
 
 const SalesReturns = () => {
   const { showToast } = useToast();
+  const { activeBranchId } = useBranch();
   const navigate = useNavigate();
   const { id } = useParams();
   const editingId = useMemo(() => {
@@ -47,6 +51,8 @@ const SalesReturns = () => {
   const [items, setItems] = useState<ReturnItemOption[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
 
   const subtotal = useMemo(
     () => lines.reduce((sum, line) => sum + Number(line.quantity || 0) * Number(line.unitPrice || 0), 0),
@@ -66,7 +72,8 @@ const SalesReturns = () => {
   useEffect(() => {
     void loadCustomers();
     void loadAccounts();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBranchId]);
 
   useEffect(() => {
     void loadReturn();
@@ -79,13 +86,13 @@ const SalesReturns = () => {
   }, [form.customerId]);
 
   const loadCustomers = async () => {
-    const res = await returnsService.listSalesCustomers();
+    const res = await returnsService.listSalesCustomers({ branchId: activeBranchId ?? undefined });
     if (res.success && res.data?.customers) {
       setCustomers(res.data.customers as Customer[]);
       return;
     }
     // Fallback: show all customers if the returns endpoint fails for any reason.
-    const fallback = await customerService.list();
+    const fallback = await customerService.list({ branchId: activeBranchId ?? undefined });
     if (fallback.success && fallback.data?.customers) setCustomers(fallback.data.customers);
   };
 
@@ -104,7 +111,7 @@ const SalesReturns = () => {
   }, [customers, editingId, form.customerId]);
 
   const loadAccounts = async () => {
-    const res = await accountService.list();
+    const res = await accountService.list({ branchId: activeBranchId ?? undefined });
     if (res.success && res.data?.accounts) setAccounts(res.data.accounts);
   };
 
@@ -139,6 +146,20 @@ const SalesReturns = () => {
     });
     setLines([defaultLine()]);
     setItems([]);
+    setErrors({});
+    setTouched({});
+  };
+
+  const validate = (): Record<string, string> => {
+    const errs: Record<string, string> = {};
+    if (!form.customerId) errs.customerId = 'Customer is required';
+    const hasValidLine = lines.some((l) => l.itemId && Number(l.quantity) > 0);
+    if (!hasValidLine) errs.items = 'Add at least one item with a quantity greater than 0';
+    const refundAmt = Number(form.refundAmount || 0);
+    if (refundAmt > 0 && !form.refundAccId) errs.refundAccId = 'Select a refund account';
+    if (refundAmt > subtotal) errs.refundAmount = 'Refund amount cannot exceed the return total';
+    if (refundAmt + 1e-9 < minRefund) errs.refundAmount = `Refund must be at least ${fmtCurrency(minRefund)}`;
+    return errs;
   };
 
   const loadReturn = async () => {
@@ -180,6 +201,8 @@ const SalesReturns = () => {
   const handleCustomerChange = async (customerId: string) => {
     setForm((prev) => ({ ...prev, customerId }));
     setLines([defaultLine()]);
+    setErrors((prev) => ({ ...prev, customerId: '', items: '' }));
+    setTouched((prev) => ({ ...prev, customerId: true }));
     await loadItemsForCustomer(customerId ? Number(customerId) : undefined);
   };
 
@@ -206,11 +229,13 @@ const SalesReturns = () => {
       unitPrice: selected ? Number(selected.sell_price || selected.cost_price || 0) : 0,
       quantity: selected && Number(selected.available_qty || 0) > 0 ? 1 : 0,
     });
+    setErrors((prev) => ({ ...prev, items: '' }));
   };
 
   const addLine = () => {
     if (!form.customerId) {
-      showToast('error', 'Sales Return', 'Please select a customer before adding items.');
+      setErrors((prev) => ({ ...prev, customerId: 'Customer is required' }));
+      setTouched((prev) => ({ ...prev, customerId: true }));
       return;
     }
     setLines((prev) => [...prev, defaultLine()]);
@@ -231,8 +256,10 @@ const SalesReturns = () => {
 
   const submitReturn = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.customerId) {
-      showToast('error', 'Sales Return', 'Customer is required');
+    const errs = validate();
+    if (Object.keys(errs).length > 0) {
+      setErrors(errs);
+      setTouched({ customerId: true, items: true, refundAccId: true, refundAmount: true });
       return;
     }
     const normalized = lines
@@ -242,10 +269,6 @@ const SalesReturns = () => {
         quantity: Math.round(Number(line.quantity || 0)),
         unitPrice: Number(line.unitPrice || 0),
       }));
-    if (!normalized.length || normalized.some((line) => line.quantity <= 0)) {
-      showToast('error', 'Sales Return', 'Select at least one item with quantity');
-      return;
-    }
     const unavailable = normalized.find((line) => {
       const selected = items.find((it) => Number(it.item_id) === Number(line.itemId));
       const maxQty = selected?.available_qty !== undefined ? Number(selected.available_qty || 0) : null;
@@ -258,18 +281,6 @@ const SalesReturns = () => {
       return;
     }
     const refundAmount = Number(form.refundAmount || 0);
-    if (refundAmount > 0 && !form.refundAccId) {
-      showToast('error', 'Sales Return', 'Select a refund account');
-      return;
-    }
-    if (refundAmount > subtotal) {
-      showToast('error', 'Sales Return', 'Refund amount cannot exceed return total');
-      return;
-    }
-    if (refundAmount + 1e-9 < minRefund) {
-      showToast('error', 'Sales Return', `Refund must be at least ${minRefund.toFixed(2)} (to avoid negative customer balance)`);
-      return;
-    }
 
     setSaving(true);
     const payload: any = {
@@ -325,14 +336,18 @@ const SalesReturns = () => {
         <form onSubmit={submitReturn} className="space-y-4 p-4">
 	          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
 	            <div>
-	              <label className={labelClass}>Customer *</label>
+	              <label className={labelClass}>Customer</label>
 	              <SearchableCombobox<number>
 	                value={form.customerId ? Number(form.customerId) : ''}
 	                options={customers.map((c) => ({ value: c.customer_id, label: c.full_name }))}
 	                placeholder="Select customer"
 	                disabled={loading}
+	                hasError={!!(touched.customerId && errors.customerId)}
 	                onChange={(nextValue) => void handleCustomerChange(nextValue === '' ? '' : String(nextValue))}
 	              />
+	              {touched.customerId && errors.customerId && (
+	                <p className="mt-1 text-xs font-medium text-red-500 dark:text-red-400">{errors.customerId}</p>
+	              )}
 	            </div>
             <div>
               <label className={labelClass}>Reference No</label>
@@ -446,6 +461,9 @@ const SalesReturns = () => {
               </tbody>
             </table>
           </div>
+          {touched.items && errors.items && (
+            <p className="mt-1 text-xs font-medium text-red-500 dark:text-red-400">{errors.items}</p>
+          )}
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-200">
@@ -473,10 +491,16 @@ const SalesReturns = () => {
 	                options={accounts.filter((a) => a.is_active).map((a) => ({ value: a.acc_id, label: a.name }))}
 	                placeholder={minRefund > 0 ? 'Select refund account' : 'No refund'}
 	                disabled={loading}
-	                onChange={(nextValue) =>
-	                  setForm((prev) => ({ ...prev, refundAccId: nextValue === '' ? '' : String(nextValue) }))
-	                }
+	                hasError={!!(touched.refundAccId && errors.refundAccId)}
+	                onChange={(nextValue) => {
+	                  setForm((prev) => ({ ...prev, refundAccId: nextValue === '' ? '' : String(nextValue) }));
+	                  setErrors((prev) => ({ ...prev, refundAccId: '' }));
+	                  setTouched((prev) => ({ ...prev, refundAccId: true }));
+	                }}
 	              />
+	              {touched.refundAccId && errors.refundAccId && (
+	                <p className="mt-1 text-xs font-medium text-red-500 dark:text-red-400">{errors.refundAccId}</p>
+	              )}
 	            </div>
             <div>
               <label className={`${labelClass} font-semibold`}>Refund Amount</label>
@@ -484,13 +508,20 @@ const SalesReturns = () => {
                 type="number"
                 min={minRefund}
                 step={0.01}
-                className={inputClass}
+                className={touched.refundAmount && errors.refundAmount ? errInputCls : inputClass}
                 value={form.refundAmount}
-                onChange={(e) => setForm((prev) => ({ ...prev, refundAmount: Number(e.target.value) }))}
+                onBlur={() => setTouched((prev) => ({ ...prev, refundAmount: true }))}
+                onChange={(e) => {
+                  setForm((prev) => ({ ...prev, refundAmount: Number(e.target.value) }));
+                  setErrors((prev) => ({ ...prev, refundAmount: '' }));
+                }}
                 placeholder="0.00"
               />
+              {touched.refundAmount && errors.refundAmount && (
+                <p className="mt-1 text-xs font-medium text-red-500 dark:text-red-400">{errors.refundAmount}</p>
+              )}
               {minRefund > 0 ? (
-                <p className="mt-1 text-[11px] text-slate-500">Refund must be at least {fmtCurrency(minRefund)} (customer has no enough outstanding).</p>
+                <p className="mt-1 text-[11px] text-slate-500">Refund must be at least {fmtCurrency(minRefund)} (customer outstanding not enough).</p>
               ) : null}
             </div>
           </div>

@@ -7,6 +7,7 @@ import {
   getHrReportOptions,
   getLoanBalancesReport,
   getPayrollByMonthReport,
+  getPayrollEmployeeDetailReport,
   getPayrollSummaryReport,
   getSalaryPaymentsReport,
 } from './hrReports.controller';
@@ -21,6 +22,7 @@ router.get('/employee-attendance', getEmployeeAttendanceReport);
 router.get('/loan-balances', getLoanBalancesReport);
 router.get('/employee-ledger', getEmployeeLedgerReport);
 router.get('/payroll-by-month', getPayrollByMonthReport);
+router.get('/payroll-employee-detail', getPayrollEmployeeDetailReport);
 router.get('/employee-count-by-department', getEmployeeCountByDepartmentReport);
 
 export default router;

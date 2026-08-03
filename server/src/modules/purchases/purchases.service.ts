@@ -713,7 +713,8 @@ export const purchasesService = {
     status?: string,
     branchId?: number,
     fromDate?: string,
-    toDate?: string
+    toDate?: string,
+    docType?: string
   ): Promise<Purchase[]> {
     const params: any[] = [];
     const clauses: string[] = [];
@@ -732,6 +733,10 @@ export const purchasesService = {
       params.push(status);
       clauses.push(`p.status = $${params.length}`);
     }
+    if (docType && docType !== 'all') {
+      params.push(docType);
+      clauses.push(`p.doc_type = $${params.length}`);
+    }
     if (fromDate && toDate) {
       params.push(fromDate);
       clauses.push(`p.purchase_date::date >= $${params.length}::date`);
@@ -749,6 +754,120 @@ export const purchasesService = {
         ORDER BY p.purchase_date DESC`,
       params
     );
+  },
+
+  async receiveOrder(
+    id: number,
+    input: { status: 'received' | 'partial' | 'unpaid'; purchaseType?: 'cash' | 'credit'; note?: string | null },
+    scope: BranchScope
+  ): Promise<Purchase | null> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const purchaseRes = await client.query<any>(
+        `SELECT p.*, s.name AS supplier_name
+           FROM ims.purchases p
+           LEFT JOIN ims.suppliers s ON s.supplier_id = p.supplier_id
+          WHERE p.purchase_id = $1
+          FOR UPDATE`,
+        [id]
+      );
+      const current = purchaseRes.rows[0];
+      if (!current) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+
+      const currentBranchId = Number(current.branch_id);
+      if (!scope.isAdmin && !scope.branchIds.includes(currentBranchId)) {
+        throw ApiError.forbidden('Branch access denied');
+      }
+      if (current.doc_type !== 'order' || current.status !== 'ordered') {
+        throw ApiError.badRequest('Only a pending purchase order can be received');
+      }
+
+      const purchaseType: 'cash' | 'credit' =
+        (input.purchaseType || (input.status === 'unpaid' ? 'credit' : 'cash')) as 'cash' | 'credit';
+      const nextStatus: PurchaseStatus =
+        purchaseType === 'credit' ? 'unpaid' : (input.status as PurchaseStatus);
+
+      const itemsRes = await client.query<{ item_id: number; quantity: string; unit_cost: string }>(
+        `SELECT item_id, quantity::text, unit_cost::text FROM ims.purchase_items WHERE purchase_id = $1`,
+        [id]
+      );
+      const stockLines = itemsRes.rows.map((row) => ({
+        itemId: Number(row.item_id),
+        quantity: Number(row.quantity),
+        unitCost: Number(row.unit_cost),
+      }));
+
+      let storeId = current.store_id ? Number(current.store_id) : null;
+      if (!storeId && stockLines.length > 0) {
+        storeId = await getOrCreateDefaultStoreId(client, currentBranchId);
+      }
+
+      if (stockLines.length > 0) {
+        await applyPurchaseStockEffects(client, {
+          branchId: currentBranchId,
+          purchaseId: id,
+          lines: stockLines,
+          direction: 'in',
+          moveType: 'purchase',
+          storeId,
+          note: `${AUTO_PURCHASE_NOTE_PREFIX} Order received`,
+        });
+      }
+
+      const total = roundMoney(current.total);
+      const supplierId = current.supplier_id ? Number(current.supplier_id) : null;
+
+      if (supplierId && total > 0) {
+        await adjustSupplierBalance(client, { branchId: currentBranchId, supplierId, delta: total });
+        await insertPurchaseBillLedger(client, {
+          branchId: currentBranchId,
+          purchaseId: id,
+          supplierId,
+          total,
+          note: input.note ?? current.note ?? null,
+        });
+      }
+
+      await client.query(
+        `UPDATE ims.purchases
+            SET doc_type = 'purchase',
+                status = $2,
+                purchase_type = $3
+          WHERE purchase_id = $1`,
+        [id, nextStatus, purchaseType]
+      );
+
+      await rewritePurchaseGl(client, { branchId: currentBranchId, purchaseId: id });
+
+      if (stockLines.length > 0) {
+        await syncLowStockNotifications(client, {
+          branchId: currentBranchId,
+          productIds: stockLines.map((l) => l.itemId),
+          actorUserId: Number(current.user_id || 1),
+        });
+      }
+
+      const updated = await client.query<Purchase>(
+        `SELECT p.*, s.name AS supplier_name
+           FROM ims.purchases p
+           LEFT JOIN ims.suppliers s ON s.supplier_id = p.supplier_id
+          WHERE p.purchase_id = $1`,
+        [id]
+      );
+
+      await client.query('COMMIT');
+      return updated.rows[0] || null;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   },
 
   async getPurchase(id: number, scope: BranchScope): Promise<Purchase | null> {

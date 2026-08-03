@@ -1,4 +1,4 @@
-﻿import { useCallback, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
 import { Ban, Edit3, Eye, FileCheck2, FileText, Printer, ReceiptText, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router';
@@ -11,6 +11,7 @@ import { Tabs } from '../../components/ui/tabs/Tabs';
 import { useToast } from '../../components/ui/toast/Toast';
 import { Sale, SaleItem, salesService } from '../../services/sales.service';
 import { defaultDateRange } from '../../utils/dateRange';
+import { useBranch } from '../../context/BranchContext';
 
 const formatMoney = (value: number) => `$${Number(value || 0).toFixed(2)}`;
 
@@ -24,6 +25,7 @@ const getDocRef = (sale: Pick<Sale, 'sale_id' | 'doc_type'>) => {
 const Sales = () => {
   const { showToast } = useToast();
   const navigate = useNavigate();
+  const { activeBranchId } = useBranch();
   const [loading, setLoading] = useState(false);
   const [sales, setSales] = useState<Sale[]>([]);
   const [hasLoaded, setHasLoaded] = useState(false);
@@ -41,7 +43,12 @@ const Sales = () => {
 
   const loadSales = useCallback(async () => {
     setLoading(true);
-    const res = await salesService.list({ includeVoided: true, fromDate: dateRange.fromDate, toDate: dateRange.toDate });
+    const res = await salesService.list({
+      includeVoided: true,
+      fromDate: dateRange.fromDate,
+      toDate: dateRange.toDate,
+      branchId: activeBranchId ?? undefined,
+    });
     if (res.success && res.data?.sales) {
       setSales(res.data.sales);
       setHasLoaded(true);
@@ -49,7 +56,12 @@ const Sales = () => {
       showToast('error', 'Sales', res.error || 'Failed to load sales');
     }
     setLoading(false);
-  }, [showToast, dateRange.fromDate, dateRange.toDate]);
+  }, [showToast, dateRange.fromDate, dateRange.toDate, activeBranchId]);
+
+  useEffect(() => {
+    if (hasLoaded) void loadSales();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBranchId]);
 
   const printSaleInvoice = useCallback(
     async (sale: Sale) => {

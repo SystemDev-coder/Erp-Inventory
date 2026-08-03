@@ -5,6 +5,7 @@ import { AuthRequest } from '../../middlewares/requireAuth';
 import { sessionService } from '../session/session.service';
 import { authService } from '../auth/auth.service';
 import { dashboardService } from './dashboard.service';
+import { resolveActiveBranchIds } from '../../utils/branchScope';
 
 export class DashboardController {
   /**
@@ -33,12 +34,13 @@ export class DashboardController {
       roleName = profile?.role_name ?? roleName;
     }
 
+    const branchIds = await resolveActiveBranchIds(req);
     const widgets = dashboardService.getDashboardWidgets(permissions);
     const [cards, charts, lowStockItems, recent] = await Promise.all([
-      dashboardService.getDashboardCards(req.user.branchId, permissions),
-      dashboardService.getDashboardCharts(req.user.branchId, permissions),
-      dashboardService.getLowStockItems(req.user.branchId, permissions),
-      dashboardService.getRecentActivity(req.user.branchId, permissions),
+      dashboardService.getDashboardCards(branchIds, permissions),
+      dashboardService.getDashboardCharts(branchIds, permissions),
+      dashboardService.getLowStockItems(branchIds, permissions),
+      dashboardService.getRecentActivity(branchIds, permissions),
     ]);
 
     return ApiResponse.success(res, {
@@ -78,7 +80,8 @@ export class DashboardController {
     }
 
     const cardId = String(req.params.cardId || '').trim();
-    const payload = await dashboardService.getDashboardCardDrilldown(req.user.branchId, permissions, cardId);
+    const branchIds = await resolveActiveBranchIds(req);
+    const payload = await dashboardService.getDashboardCardDrilldown(branchIds, permissions, cardId);
     return ApiResponse.success(res, payload);
   });
 }

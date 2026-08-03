@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
-import { BadgeAlert, Boxes, RefreshCw, Store } from 'lucide-react';
+import { BadgeAlert, Boxes, CheckCircle2, RefreshCw, Store } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
 import { DataTable } from '../../components/ui/table/DataTable';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
@@ -13,9 +13,40 @@ import { storeService, Store as StoreType } from '../../services/store.service';
 import StoresPage from '../Stock/StoresPage';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
 import { defaultDateRange } from '../../utils/dateRange';
+import { useBranch } from '../../context/BranchContext';
 
 type ProductForm = Partial<Product>;
 type TxCategory = 'adjustment' | 'paid' | 'sales' | 'cancelled';
+type ItemFieldErrors = Partial<Record<string, string>>;
+
+function ItemField({
+  label,
+  error,
+  touched,
+  success,
+  children,
+}: {
+  label: string;
+  error?: string;
+  touched?: boolean;
+  success?: boolean;
+  children: React.ReactNode;
+}) {
+  const showError = touched && error;
+  const showSuccess = touched && !error && success;
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">{label}</label>
+        {showSuccess && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />}
+      </div>
+      {children}
+      {showError && (
+        <p className="text-xs font-medium text-red-500 dark:text-red-400">{error}</p>
+      )}
+    </div>
+  );
+}
 
 const defaultProductForm: ProductForm = {
   name: '',
@@ -30,9 +61,6 @@ const defaultProductForm: ProductForm = {
 
 const fieldCls =
   'mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900';
-const modalLabelCls = 'mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300';
-const modalInputCls =
-  'h-12 w-full rounded-md border border-slate-300 bg-white px-3 text-base text-slate-900 shadow-sm outline-none transition-all placeholder:text-slate-400 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-100 dark:placeholder:text-slate-400 dark:focus:border-primary-400 dark:focus:ring-primary-500/25';
 const txLabel: Record<TxCategory, string> = {
   adjustment: 'Adjustment',
   paid: 'Paid',
@@ -42,6 +70,7 @@ const txLabel: Record<TxCategory, string> = {
 
 const Products = () => {
   const { showToast } = useToast();
+  const { activeBranchId } = useBranch();
 
   const [loading, setLoading] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
@@ -64,6 +93,8 @@ const Products = () => {
   const [itemImportOpen, setItemImportOpen] = useState(false);
 
   const [itemForm, setItemForm] = useState<ProductForm>(defaultProductForm);
+  const [itemErrors, setItemErrors] = useState<ItemFieldErrors>({});
+  const [itemTouched, setItemTouched] = useState<Partial<Record<string, boolean>>>({});
   const [itemStoreId, setItemStoreId] = useState<number | ''>('');
   const [stores, setStores] = useState<StoreType[]>([]);
   const [stateForm, setStateForm] = useState<{ product_id?: number; status: 'active' | 'inactive' }>({
@@ -91,6 +122,7 @@ const Products = () => {
       limit: 200,
       fromDate: itemsDateRange.fromDate,
       toDate: itemsDateRange.toDate,
+      branchId: activeBranchId ?? undefined,
     });
     if (res.success && res.data?.products) setProducts(res.data.products);
     else showToast('error', 'Items', res.error || 'Failed to load items');
@@ -108,6 +140,7 @@ const Products = () => {
       page: 1,
       fromDate: txFromDate || undefined,
       toDate: txToDate || undefined,
+      branchId: activeBranchId ?? undefined,
     };
     if (category === 'cancelled') query.status = 'CANCELLED';
     else query.transactionType = category.toUpperCase();
@@ -126,6 +159,7 @@ const Products = () => {
       limit: 200,
       fromDate: itemsDateRange.fromDate,
       toDate: itemsDateRange.toDate,
+      branchId: activeBranchId ?? undefined,
     });
     if (res.success && res.data?.products) {
       const onlyInactive = res.data.products.filter((item) => !item.is_active || String(item.status).toLowerCase() === 'inactive');
@@ -135,6 +169,13 @@ const Products = () => {
     }
     setLoading(false);
   };
+
+  useEffect(() => {
+    if (itemsDisplayed) void loadProducts();
+    if (txDisplayed) void loadTransactions();
+    if (inactiveDisplayed) void loadInactiveStateItems();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBranchId]);
 
   const filteredTransactions = useMemo(() => {
     return transactions;
@@ -181,9 +222,47 @@ const Products = () => {
     []
   );
 
+  const validateItem = (f: ProductForm): ItemFieldErrors => {
+    const errs: ItemFieldErrors = {};
+    if (!f.name?.trim()) errs.name = 'Item name is required';
+    else if (f.name.trim().length < 2) errs.name = 'Name must be at least 2 characters';
+    if (!f.cost_price || Number(f.cost_price) <= 0) errs.cost_price = 'Cost price is required';
+    if (!f.sell_price || Number(f.sell_price) <= 0) errs.sell_price = 'Sell price is required';
+    if ((f.stock_alert ?? 0) < 0) errs.stock_alert = 'Stock alert cannot be negative';
+    if ((f.opening_balance ?? 0) < 0) errs.opening_balance = 'Opening balance cannot be negative';
+    if ((f.quantity ?? 0) < 0) errs.quantity = 'Quantity cannot be negative';
+    return errs;
+  };
+
+  const getItemInputCls = (field: string) => {
+    const base = 'h-12 w-full rounded-md border px-3 text-sm text-slate-900 shadow-sm outline-none transition-all placeholder:text-slate-400 focus:ring-2 dark:text-slate-100 dark:placeholder:text-slate-400 bg-white dark:bg-slate-800/80';
+    if (!itemTouched[field]) return `${base} border-slate-300 dark:border-slate-600 focus:border-primary-500 focus:ring-primary-500/20`;
+    if (itemErrors[field]) return `${base} border-red-400 bg-red-50/40 dark:border-red-500 dark:bg-red-900/10 focus:border-red-500 focus:ring-red-500/20`;
+    return `${base} border-emerald-500 focus:border-emerald-500 focus:ring-emerald-500/20`;
+  };
+
+  const touchItem = (field: string) => {
+    setItemTouched(t => ({ ...t, [field]: true }));
+    setItemErrors(validateItem(itemForm));
+  };
+
+  const setItemField = (field: string, value: unknown) => {
+    const next = { ...itemForm, [field]: value } as ProductForm;
+    setItemForm(next);
+    if (itemTouched[field]) setItemErrors(validateItem(next));
+  };
+
+  const closeItemModal = () => {
+    setItemModalOpen(false);
+    setItemErrors({});
+    setItemTouched({});
+  };
+
   const saveItem = async () => {
-    if (!itemForm.name?.trim()) {
-      showToast('error', 'Items', 'Name is required');
+    const errs = validateItem(itemForm);
+    if (Object.keys(errs).length > 0) {
+      setItemErrors(errs);
+      setItemTouched({ name: true, cost_price: true, sell_price: true, stock_alert: true, opening_balance: true, quantity: true });
       return;
     }
     setLoading(true);
@@ -199,7 +278,7 @@ const Products = () => {
     setLoading(false);
     if (res.success) {
       showToast('success', 'Items', itemForm.product_id ? 'Item updated' : 'Item created');
-      setItemModalOpen(false);
+      closeItemModal();
       setItemForm(defaultProductForm);
       setItemStoreId('');
       await loadProducts();
@@ -290,6 +369,8 @@ const Products = () => {
               type="button"
               onClick={async () => {
                 setItemForm(defaultProductForm);
+                setItemErrors({});
+                setItemTouched({});
                 const storeRes = await storeService.list();
                 if (storeRes.success && storeRes.data?.stores) {
                   setStores(storeRes.data.stores);
@@ -320,8 +401,9 @@ const Products = () => {
             columns={itemColumns}
             isLoading={loading}
             onEdit={async (row) => {
-              setItemForm(row);
-              setItemForm((prev) => ({ ...prev, quantity: Number(row.quantity ?? row.stock ?? 0) }));
+              setItemForm({ ...row, quantity: Number(row.quantity ?? row.stock ?? 0) });
+              setItemErrors({});
+              setItemTouched({});
               const storeRes = await storeService.list();
               if (storeRes.success && storeRes.data?.stores) setStores(storeRes.data.stores);
               setItemStoreId(row.store_id || '');
@@ -504,113 +586,159 @@ const Products = () => {
       <PageHeader title="Stock Management" description="Manage items, stores, inventory transactions, and item states." />
       <Tabs tabs={storeTabs} defaultTab="items" />
 
-      <Modal isOpen={itemModalOpen} onClose={() => setItemModalOpen(false)} title={itemForm.product_id ? 'Edit Item' : 'New Item'} size="lg">
+      <Modal isOpen={itemModalOpen} onClose={closeItemModal} title={itemForm.product_id ? 'Edit Item' : 'New Item'} size="lg">
         <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            void saveItem();
-          }}
-          className="space-y-4 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-4 dark:border-slate-700 dark:bg-slate-900/40"
+          noValidate
+          onSubmit={(e) => { e.preventDefault(); void saveItem(); }}
+          className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-4 p-2"
         >
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <div className="space-y-1">
-              <label className={modalLabelCls}>Name</label>
+          {/* Item Name — full width, required */}
+          <div className="md:col-span-2">
+            <ItemField
+              label="Item Name"
+              error={itemErrors.name}
+              touched={itemTouched.name}
+              success={!!itemForm.name?.trim() && itemForm.name.trim().length >= 2}
+            >
               <input
-                className={modalInputCls}
+                className={getItemInputCls('name')}
+                placeholder="Enter item name"
                 value={itemForm.name || ''}
-                onChange={(e) => setItemForm({ ...itemForm, name: e.target.value })}
-                placeholder="Item name"
-                required
+                onBlur={() => touchItem('name')}
+                onChange={(e) => setItemField('name', e.target.value)}
               />
-            </div>
-            <div className="space-y-1">
-              <label className={modalLabelCls}>Barcode</label>
-              <input
-                className={modalInputCls}
-                value={itemForm.barcode || ''}
-                onChange={(e) => setItemForm({ ...itemForm, barcode: e.target.value })}
-                placeholder="Scan or enter barcode"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className={modalLabelCls}>Stock Alert</label>
-              <input
-                type="number"
-                min={0}
-                step="1"
-                className={modalInputCls}
-                value={itemForm.stock_alert ?? 5}
-                onChange={(e) => setItemForm({ ...itemForm, stock_alert: Number(e.target.value || 0) })}
-                placeholder="5"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className={modalLabelCls}>Cost Price</label>
-              <input
-                type="number"
-                step="0.01"
-                className={modalInputCls}
-                value={itemForm.cost_price ?? 0}
-                onChange={(e) => setItemForm({ ...itemForm, cost_price: Number(e.target.value || 0) })}
-                placeholder="0.00"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className={modalLabelCls}>Sell Price</label>
-              <input
-                type="number"
-                step="0.01"
-                className={modalInputCls}
-                value={itemForm.sell_price ?? 0}
-                onChange={(e) => setItemForm({ ...itemForm, sell_price: Number(e.target.value || 0) })}
-                placeholder="0.00"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className={modalLabelCls}>Opening Balance</label>
-              <input
-                type="number"
-                min={0}
-                step="1"
-                className={modalInputCls}
-                value={itemForm.opening_balance ?? 0}
-                onChange={(e) => setItemForm({ ...itemForm, opening_balance: Number(e.target.value || 0) })}
-                placeholder="0"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className={modalLabelCls}>Store (optional)</label>
-              <select
-                className={modalInputCls}
-                value={itemStoreId}
-                onChange={(e) => setItemStoreId(e.target.value ? Number(e.target.value) : '')}
-              >
-                <option value="">Select Store (optional)</option>
-                {stores.map((s) => <option key={s.store_id} value={s.store_id}>{s.store_name}</option>)}
-              </select>
-            </div>
-            <div className="space-y-1">
-              <label className={modalLabelCls}>Quantity</label>
-              <input
-                type="number"
-                step="1"
-                min={0}
-                className={modalInputCls}
-                value={itemForm.quantity ?? 0}
-                onChange={(e) => setItemForm({ ...itemForm, quantity: Number(e.target.value || 0) })}
-                placeholder="0"
-              />
-            </div>
+            </ItemField>
           </div>
-          <div className="flex justify-end gap-3 pt-3">
+
+          <ItemField
+            label="Cost Price"
+            error={itemErrors.cost_price}
+            touched={itemTouched.cost_price}
+            success={Number(itemForm.cost_price ?? 0) > 0}
+          >
+            <input
+              type="number"
+              step="0.01"
+              min={0}
+              className={getItemInputCls('cost_price')}
+              placeholder="0.00"
+              value={itemForm.cost_price ?? 0}
+              onBlur={() => touchItem('cost_price')}
+              onChange={(e) => setItemField('cost_price', Number(e.target.value || 0))}
+            />
+          </ItemField>
+
+          <ItemField
+            label="Sell Price"
+            error={itemErrors.sell_price}
+            touched={itemTouched.sell_price}
+            success={Number(itemForm.sell_price ?? 0) > 0}
+          >
+            <input
+              type="number"
+              step="0.01"
+              min={0}
+              className={getItemInputCls('sell_price')}
+              placeholder="0.00"
+              value={itemForm.sell_price ?? 0}
+              onBlur={() => touchItem('sell_price')}
+              onChange={(e) => setItemField('sell_price', Number(e.target.value || 0))}
+            />
+          </ItemField>
+
+          <ItemField
+            label="Barcode"
+            error={itemErrors.barcode}
+            touched={itemTouched.barcode}
+            success={!!(itemForm.barcode?.trim())}
+          >
+            <input
+              className={getItemInputCls('barcode')}
+              placeholder="Scan or enter barcode"
+              value={itemForm.barcode || ''}
+              onBlur={() => touchItem('barcode')}
+              onChange={(e) => setItemField('barcode', e.target.value)}
+            />
+          </ItemField>
+
+          <ItemField
+            label="Stock Alert"
+            error={itemErrors.stock_alert}
+            touched={itemTouched.stock_alert}
+            success={(itemForm.stock_alert ?? 0) >= 0}
+          >
+            <input
+              type="number"
+              min={0}
+              step="1"
+              className={getItemInputCls('stock_alert')}
+              placeholder="5"
+              value={itemForm.stock_alert ?? 5}
+              onBlur={() => touchItem('stock_alert')}
+              onChange={(e) => setItemField('stock_alert', Number(e.target.value || 0))}
+            />
+          </ItemField>
+
+          <ItemField
+            label="Opening Balance"
+            error={itemErrors.opening_balance}
+            touched={itemTouched.opening_balance}
+            success={(itemForm.opening_balance ?? 0) >= 0}
+          >
+            <input
+              type="number"
+              min={0}
+              step="1"
+              className={getItemInputCls('opening_balance')}
+              placeholder="0"
+              value={itemForm.opening_balance ?? 0}
+              onBlur={() => touchItem('opening_balance')}
+              onChange={(e) => setItemField('opening_balance', Number(e.target.value || 0))}
+            />
+          </ItemField>
+
+          <ItemField
+            label="Quantity"
+            error={itemErrors.quantity}
+            touched={itemTouched.quantity}
+            success={(itemForm.quantity ?? 0) >= 0}
+          >
+            <input
+              type="number"
+              step="1"
+              min={0}
+              className={getItemInputCls('quantity')}
+              placeholder="0"
+              value={itemForm.quantity ?? 0}
+              onBlur={() => touchItem('quantity')}
+              onChange={(e) => setItemField('quantity', Number(e.target.value || 0))}
+            />
+          </ItemField>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">Store (optional)</label>
+            <select
+              className="h-12 w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800/80 px-3 text-sm text-slate-900 dark:text-slate-100 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
+              value={itemStoreId}
+              onChange={(e) => setItemStoreId(e.target.value ? Number(e.target.value) : '')}
+            >
+              <option value="">Select store (optional)</option>
+              {stores.map((s) => <option key={s.store_id} value={s.store_id}>{s.store_name}</option>)}
+            </select>
+          </div>
+
+          <div className="md:col-span-2 flex justify-end gap-2 pt-1 border-t border-slate-100 dark:border-slate-700 mt-1">
             <button
               type="button"
-              onClick={() => setItemModalOpen(false)}
-              className="rounded-xl border border-slate-300 bg-white px-5 py-2 font-semibold text-slate-700 transition-all hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+              onClick={closeItemModal}
+              className="px-3 py-1.5 text-sm rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
             >
               Cancel
             </button>
-            <button type="submit" className="rounded-xl bg-primary-600 px-7 py-2 text-white font-bold transition-all shadow-lg shadow-primary-500/20 hover:bg-primary-700 active:scale-95">
+            <button
+              type="submit"
+              className="px-4 py-1.5 text-sm rounded-lg bg-primary-600 text-white hover:bg-primary-700"
+            >
               {itemForm.product_id ? 'Update Item' : 'Save Item'}
             </button>
           </div>

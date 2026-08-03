@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
+import { useBranch } from '../../context/BranchContext';
 import { apiClient, type ApiResponse } from '../../services/api';
 import { API, env } from '../../config/env';
 import { ReportModal, type ReportColumn } from '../../components/reports/ReportModal';
@@ -149,6 +150,7 @@ const Dashboard = () => {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
   const { permissions: userPermissions } = useAuth();
+  const { activeBranchId } = useBranch();
 
   const [data, setData] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -199,6 +201,11 @@ const Dashboard = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (hasLoaded) void loadDashboard();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBranchId]);
+
   const expandPermissionKeys = (permKey: string): string[] => {
     if (permKey.startsWith('items.')) {
       return [permKey, permKey.replace('items.', 'products.')];
@@ -248,7 +255,8 @@ const Dashboard = () => {
     setLoading(true);
     setError(null);
 
-    const res: ApiResponse<DashboardResponse> = await apiClient.get<DashboardResponse>(API.DASHBOARD);
+    const dashboardUrl = activeBranchId ? `${API.DASHBOARD}?branchId=${activeBranchId}` : API.DASHBOARD;
+    const res: ApiResponse<DashboardResponse> = await apiClient.get<DashboardResponse>(dashboardUrl);
     if (res.success && res.data) {
       setData(res.data);
       setLastUpdated(new Date().toISOString());
@@ -264,8 +272,11 @@ const Dashboard = () => {
   const openCardModal = async (card: DashboardCard) => {
     try {
       setCardModalLoadingId(card.id);
+      const drilldownUrl = `${API.DASHBOARD}/cards/${encodeURIComponent(card.id)}${
+        activeBranchId ? `?branchId=${activeBranchId}` : ''
+      }`;
       const res: ApiResponse<DashboardCardDrilldownResponse> = await apiClient.get<DashboardCardDrilldownResponse>(
-        `${API.DASHBOARD}/cards/${encodeURIComponent(card.id)}`
+        drilldownUrl
       );
       if (!res.success || !res.data) throw new Error(res.error || 'Failed to load card details');
 
@@ -422,12 +433,12 @@ const Dashboard = () => {
 
     const themeById: Record<string, { base: string; soft: string }> = isDark
       ? {
-        'income-trend-12m': { base: '#FFA500', soft: '#FFD08A' },
-        'sales-6m': { base: '#FFB74D', soft: '#FFE1B3' },
+        'income-trend-12m': { base: '#2A6F97', soft: '#A9D6E5' },
+        'sales-6m': { base: '#468FAF', soft: '#89C2D9' },
         }
       : {
-        'income-trend-12m': { base: '#FFA500', soft: '#FFD08A' },
-        'sales-6m': { base: '#FFB74D', soft: '#FFE1B3' },
+        'income-trend-12m': { base: '#2A6F97', soft: '#A9D6E5' },
+        'sales-6m': { base: '#468FAF', soft: '#89C2D9' },
         };
 
     const axisColor = isDark ? '#cbd5e1' : '#334155';

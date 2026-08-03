@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from '../../components/ui/table/DataTable';
 import { PageHeader } from '../../components/ui/layout';
@@ -7,6 +7,7 @@ import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { Modal } from '../../components/ui/modal/Modal';
 import { assetsService, Asset, AssetState, AssetType } from '../../services/assets.service';
 import { defaultDateRange } from '../../utils/dateRange';
+import { useBranch } from '../../context/BranchContext';
 
 const money = (value: number) =>
   `$${Number(value || 0).toLocaleString(undefined, {
@@ -41,6 +42,7 @@ const emptyForm = (type: AssetType): AssetForm => ({
 
 export default function Assets() {
   const { showToast } = useToast();
+  const { activeBranchId } = useBranch();
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -88,6 +90,7 @@ export default function Assets() {
         state: stateFilter || undefined,
         fromDate: dateRange.fromDate || undefined,
         toDate: dateRange.toDate || undefined,
+        branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data?.assets) {
         setAssets([]);
@@ -102,6 +105,11 @@ export default function Assets() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (hasDisplayed) void loadAssets();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBranchId]);
 
   const columns = useMemo<ColumnDef<Asset>[]>(
     () => [

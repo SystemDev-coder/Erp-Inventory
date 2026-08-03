@@ -1,5 +1,5 @@
 import { ApiError } from '../../utils/ApiError';
-import { assertBranchAccess, resolveBranchScope } from '../../utils/branchScope';
+import { resolveActiveBranchId } from '../../utils/branchScope';
 import { AuthRequest } from '../../middlewares/requireAuth';
 
 export type SelectionMode = 'all' | 'show';
@@ -36,14 +36,6 @@ export const parseNumericId = (value: unknown, fieldName: string): number => {
   return id;
 };
 
-export const resolveRequestedBranchId = (req: AuthRequest, defaultBranchId: number) => {
-  const raw = req.query.branchId;
-  if (raw === undefined || raw === null || raw === '') {
-    return defaultBranchId;
-  }
-  return parseNumericId(raw, 'branchId');
-};
-
 export const parseDateRange = (req: AuthRequest) => {
   const fromDate = parseIsoDate(req.query.fromDate as string | undefined, 'fromDate');
   const toDate = parseIsoDate(req.query.toDate as string | undefined, 'toDate');
@@ -53,9 +45,4 @@ export const parseDateRange = (req: AuthRequest) => {
   return { fromDate, toDate };
 };
 
-export const resolveBranchIdForReports = async (req: AuthRequest) => {
-  const scope = await resolveBranchScope(req);
-  const branchId = resolveRequestedBranchId(req, scope.primaryBranchId);
-  assertBranchAccess(scope, branchId);
-  return branchId;
-};
+export const resolveBranchIdForReports = (req: AuthRequest) => resolveActiveBranchId(req);

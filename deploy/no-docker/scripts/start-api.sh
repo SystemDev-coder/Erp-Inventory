@@ -1,12 +1,11 @@
 #!/bin/sh
 set -eu
 
-if [ -f /etc/erp-inventory/server.env ]; then
+if [ -f /srv/pms-bench/backend/.env ]; then
   set -a
-  . /etc/erp-inventory/server.env
+  . /srv/pms-bench/backend/.env
   set +a
 fi
 
-cd /opt/erp-inventory/releases/current/server
+cd /srv/pms-bench/backend
 exec node dist/server.js
-

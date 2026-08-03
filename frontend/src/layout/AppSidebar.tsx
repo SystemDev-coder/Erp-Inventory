@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import {
   BriefcaseBusiness,
@@ -21,7 +21,9 @@ import {
 } from 'lucide-react';
 import { useSidebar } from '../context/SidebarContext';
 import { useAuth } from '../context/AuthContext';
+import { useBranch } from '../context/BranchContext';
 import { useNavigate } from 'react-router';
+import { settingsService } from '../services/settings.service';
 
 type SidebarSubItem = {
   id: string;
@@ -45,6 +47,21 @@ type SidebarItem = {
 const AppSidebar: React.FC = () => {
   const { isExpanded, isMobileOpen, isHovered, setIsHovered, toggleSidebar } = useSidebar();
   const { permissions, lock, user } = useAuth();
+  const { branches, activeBranchId } = useBranch();
+  const [companyName, setCompanyName] = useState('');
+
+  useEffect(() => {
+    settingsService.getCompany().then((res) => {
+      if (res.success && res.data?.company?.company_name) {
+        setCompanyName(res.data.company.company_name);
+      }
+    });
+  }, []);
+
+  const displayBranchName =
+    (activeBranchId && branches.find((b) => b.branch_id === activeBranchId)?.branch_name) ||
+    user?.branch_name;
+  const brandName = displayBranchName || companyName || 'KeydMaal ERP';
   const location = useLocation();
   const navigate = useNavigate();
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
@@ -189,7 +206,7 @@ const AppSidebar: React.FC = () => {
           </div>
           {showExpanded && (
             <span className="text-lg font-semibold truncate">
-              {user?.branch_name || 'KeydMaal ERP'}
+              {brandName}
             </span>
           )}
         </Link>
@@ -308,7 +325,7 @@ const AppSidebar: React.FC = () => {
             <LockIcon className="h-4 w-4" /> Lock
           </button>
           <p className="text-xs text-slate-500 text-center dark:text-white/50">
-            © 2026 {user?.branch_name || 'KeydMaal ERP'}. All rights reserved.
+            © 2026 {brandName}. All rights reserved.
           </p>
         </div>
       )}

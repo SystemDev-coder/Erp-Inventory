@@ -11,6 +11,13 @@ let CloudinaryStorage: any;
 let multer: any;
 const unsignedPresetEnv = process.env.CLOUDINARY_UNSIGNED_PRESET || 'erp_unsigned_default';
 
+// When hosting multiple clients off one shared Cloudinary account, set
+// CLOUDINARY_FOLDER_PREFIX (e.g. the client's name) so every image this
+// deployment uploads lands under its own subfolder instead of mixing with
+// other clients' images in the same "erp-inventory/<type>" path.
+const folderPrefix = (process.env.CLOUDINARY_FOLDER_PREFIX || '').trim();
+const cloudinaryRootFolder = folderPrefix ? `erp-inventory/${folderPrefix}` : 'erp-inventory';
+
 // Try to import Cloudinary packages (optional)
 try {
   const cloudinaryModule = require('cloudinary');
@@ -76,7 +83,7 @@ const ensureUnsignedPreset = async (): Promise<string | null> => {
       await cloudinary.api.create_upload_preset({
         name: unsignedPresetEnv,
         unsigned: true,
-        folder: 'erp-inventory',
+        folder: cloudinaryRootFolder,
         // keep transformations inside preset (unsigned upload cannot pass them)
         transformation: [
           { width: 1200, height: 1200, crop: 'limit' },
@@ -130,7 +137,7 @@ const createStorage = (folder: string) => {
       const filename = file.originalname.split('.')[0];
 
       return {
-        folder: `erp-inventory/${folder}`,
+        folder: `${cloudinaryRootFolder}/${folder}`,
         allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'],
         public_id: `${filename}-${uniqueSuffix}`,
         transformation: [
@@ -272,10 +279,17 @@ export const deleteCloudinaryImage = async (imageUrl: string): Promise<boolean> 
     return false;
   }
   try {
-    const urlParts = imageUrl.split('/');
-    const publicIdWithExtension = urlParts.slice(-2).join('/');
-    const publicId = publicIdWithExtension.split('.')[0];
-    await cloudinary.uploader.destroy(`erp-inventory/${publicId}`);
+    // Extract the public_id straight from the URL (everything after
+    // "/upload/v<version>/" and before the file extension) instead of
+    // assuming a fixed number of folder levels - this keeps working
+    // whether or not CLOUDINARY_FOLDER_PREFIX adds an extra subfolder.
+    const match = imageUrl.match(/\/upload\/(?:v\d+\/)?(.+)\.[a-zA-Z0-9]+(?:\?.*)?$/);
+    const publicId = match ? match[1] : null;
+    if (!publicId) {
+      console.warn('Could not parse Cloudinary public_id from URL:', imageUrl);
+      return false;
+    }
+    await cloudinary.uploader.destroy(publicId);
     console.log(`✓ Deleted image: ${publicId}`);
     return true;
   } catch (error) {
@@ -299,7 +313,7 @@ export const uploadImageFromUrl = async (imageUrl: string, folder = 'system'): P
       const res = await cloudinary.uploader.upload(imageUrl, {
         upload_preset: presetName,
         unsigned: true,
-        folder: `erp-inventory/${folder}`,
+        folder: `${cloudinaryRootFolder}/${folder}`,
         resource_type: 'image',
       });
       return res?.secure_url || res?.url || null;
@@ -317,7 +331,7 @@ export const uploadImageFromUrl = async (imageUrl: string, folder = 'system'): P
           {
             upload_preset: presetName,
             unsigned: true,
-            folder: `erp-inventory/${folder}`,
+            folder: `${cloudinaryRootFolder}/${folder}`,
             resource_type: 'image',
           },
           (err: any, res: any) => (err ? reject(err) : resolve(res?.secure_url || res?.url || null))

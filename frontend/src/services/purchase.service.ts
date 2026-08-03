@@ -86,10 +86,11 @@ export interface PurchaseCreateInput {
 }
 
 export const purchaseService = {
-  async list(params?: { search?: string; status?: string; branchId?: number; fromDate?: string; toDate?: string }) {
+  async list(params?: { search?: string; status?: string; docType?: string; branchId?: number; fromDate?: string; toDate?: string }) {
     const qsParts: string[] = [];
     if (params?.search) qsParts.push(`search=${encodeURIComponent(params.search)}`);
     if (params?.status && params.status !== 'all') qsParts.push(`status=${encodeURIComponent(params.status)}`);
+    if (params?.docType && params.docType !== 'all') qsParts.push(`docType=${encodeURIComponent(params.docType)}`);
     if (params?.branchId) qsParts.push(`branchId=${encodeURIComponent(String(params.branchId))}`);
     if (params?.fromDate) qsParts.push(`fromDate=${encodeURIComponent(params.fromDate)}`);
     if (params?.toDate) qsParts.push(`toDate=${encodeURIComponent(params.toDate)}`);
@@ -124,6 +125,10 @@ export const purchaseService = {
 
   async remove(id: number) {
     return apiClient.delete<{ message: string }>(API.PURCHASES.ITEM(id));
+  },
+
+  async receiveOrder(id: number, data: { status: 'received' | 'partial' | 'unpaid'; purchaseType?: 'cash' | 'credit'; note?: string | null }) {
+    return apiClient.post<{ purchase: Purchase }>(`${API.PURCHASES.ITEM(id)}/receive`, data);
   },
 
   async exportXlsx(params?: { search?: string; status?: string; branchId?: number; fromDate?: string; toDate?: string }) {

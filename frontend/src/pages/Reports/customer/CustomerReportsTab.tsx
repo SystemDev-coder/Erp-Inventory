@@ -4,6 +4,7 @@ import type { ReportColumn, ReportTotalItem } from '../../../components/reports/
 import { customerReportsService } from '../../../services/reports/customerReports.service';
 import type { DateRange, ModalReportState } from '../types';
 import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange } from '../reportUtils';
+import { useBranch } from '../../../context/BranchContext';
 
 type CustomerCardId =
   | 'customer-list'
@@ -133,6 +134,7 @@ const moneyTotal = (label: string, value: number): ReportTotalItem => ({
 });
 
 export function CustomerReportsTab({ onOpenModal }: Props) {
+  const { activeBranchId } = useBranch();
   const [expandedCardId, setExpandedCardId] = useState<CustomerCardId | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<CustomerCardId | null>(null);
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
@@ -159,7 +161,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
     setOptionsError('');
 
     customerReportsService
-      .getCustomerOptions()
+      .getCustomerOptions(activeBranchId ?? undefined)
       .then((response) => {
         if (!alive) return;
         if (!response.success || !response.data) {
@@ -179,7 +181,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [activeBranchId]);
 
   const customerNameById = useMemo(
     () => new Map(customers.map((customer) => [String(customer.id), customer.label])),
@@ -207,7 +209,11 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
     runCardAction('customer-list', async () => {
       const customerId = mode === 'show' ? Number(selectedListCustomerId || 0) : undefined;
       if (mode === 'show' && !customerId) throw new Error('Select a customer first');
-      const response = await customerReportsService.getCustomerList({ mode, customerId });
+      const response = await customerReportsService.getCustomerList({
+        mode,
+        customerId,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load customer list');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -240,6 +246,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
         toDate: ledgerRange.toDate,
         mode,
         customerId,
+        branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load customer ledger');
       const rows = toRecordRows(response.data.rows || []);
@@ -285,7 +292,11 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
     runCardAction('outstanding-balances', async () => {
       const customerId = mode === 'show' ? Number(selectedOutstandingCustomerId || 0) : undefined;
       if (mode === 'show' && !customerId) throw new Error('Select a customer first');
-      const response = await customerReportsService.getOutstandingBalances({ mode, customerId });
+      const response = await customerReportsService.getOutstandingBalances({
+        mode,
+        customerId,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load outstanding balances');
       const rows = toRecordRows(response.data.rows || []);
       const dr = sumByKey(rows, 'total_debit');
@@ -323,6 +334,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
         toDate: paymentHistoryRange.toDate,
         mode,
         customerId,
+        branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load payment history');
       const rows = toRecordRows(response.data.rows || []);
@@ -353,7 +365,11 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
     runCardAction('credit-customers', async () => {
       const customerId = mode === 'show' ? Number(selectedCreditCustomerId || 0) : undefined;
       if (mode === 'show' && !customerId) throw new Error('Select a customer first');
-      const response = await customerReportsService.getCreditCustomers({ mode, customerId });
+      const response = await customerReportsService.getCreditCustomers({
+        mode,
+        customerId,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load credit customers');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -379,7 +395,10 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
   const handleNewCustomers = () =>
     runCardAction('new-customers', async () => {
       ensureRangeValid(newCustomersRange, 'New Customers');
-      const response = await customerReportsService.getNewCustomers(newCustomersRange);
+      const response = await customerReportsService.getNewCustomers({
+        ...newCustomersRange,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load new customers');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -416,6 +435,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
         toDate: activityRange.toDate,
         mode,
         customerId,
+        branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load customer activity');
       const rows = toRecordRows(response.data.rows || []);
@@ -590,7 +610,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
             setCardErrors((prev) => ({ ...prev, [card.id]: '' }));
             setExpandedCardId((prev) => (prev === card.id ? null : card.id));
           }}
-          className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-slate-900 to-slate-800 px-5 py-4 text-left text-white"
+          className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-primary-900 to-primary-700 px-5 py-4 text-left text-white"
         >
           <div>
             <p className="text-xl font-semibold leading-tight">{card.title}</p>

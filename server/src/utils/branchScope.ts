@@ -8,6 +8,9 @@ export interface BranchScope {
   primaryBranchId: number;
 }
 
+export const isAdminRoleName = (roleName: string | null | undefined): boolean =>
+  (roleName || '').toLowerCase().includes('admin');
+
 const dedupeNumbers = (values: Array<number | null | undefined>) =>
   Array.from(
     new Set(
@@ -53,8 +56,7 @@ export const resolveBranchScope = async (req: AuthRequest): Promise<BranchScope>
     [req.user.roleId]
   );
 
-  const roleName = (roleRow?.role_name || '').toLowerCase();
-  const isAdmin = roleName.includes('admin');
+  const isAdmin = isAdminRoleName(roleRow?.role_name);
 
   if (isAdmin) {
     const rows = await queryMany<{ branch_id: number }>(
@@ -122,4 +124,41 @@ export const pickBranchForWrite = (
     return requestedBranchId;
   }
   return scope.primaryBranchId;
+};
+
+export const resolveActiveBranchId = async (req: AuthRequest): Promise<number> => {
+  const scope = await resolveBranchScope(req);
+  const raw = req.query.branchId;
+  let branchId = scope.primaryBranchId;
+  if (raw !== undefined && raw !== null && raw !== '') {
+    const parsed = Number(raw);
+    if (!parsed || Number.isNaN(parsed) || parsed <= 0) {
+      throw ApiError.badRequest('branchId is invalid');
+    }
+    branchId = parsed;
+  }
+  assertBranchAccess(scope, branchId);
+  return branchId;
+};
+
+/**
+ * Resolves which branch id(s) a request should be scoped to, for endpoints that
+ * aggregate across branches (e.g. dashboard). Unlike resolveActiveBranchId, an
+ * admin with no ?branchId= gets every branch ("All Branches" mode). A non-admin
+ * with no ?branchId= is pinned to their primary branch only, never the full
+ * multi-branch set — this is what guarantees a Multi-Branch user never sees
+ * mixed data unless they explicitly pick a branch they're assigned to.
+ */
+export const resolveActiveBranchIds = async (req: AuthRequest): Promise<number[]> => {
+  const scope = await resolveBranchScope(req);
+  const raw = req.query.branchId;
+  if (raw !== undefined && raw !== null && raw !== '') {
+    const parsed = Number(raw);
+    if (!parsed || Number.isNaN(parsed) || parsed <= 0) {
+      throw ApiError.badRequest('branchId is invalid');
+    }
+    assertBranchAccess(scope, parsed);
+    return [parsed];
+  }
+  return scope.isAdmin ? scope.branchIds : [scope.primaryBranchId];
 };

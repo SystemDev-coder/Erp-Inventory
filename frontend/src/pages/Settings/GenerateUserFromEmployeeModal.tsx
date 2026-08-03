@@ -4,6 +4,7 @@ import { Shield, User, Key, Eye, EyeOff, UserPlus } from 'lucide-react';
 import { employeeService, Employee } from '../../services/employee.service';
 import { RoleRow } from '../../services/user.service';
 import { useToast } from '../../components/ui/toast/Toast';
+import { useBranch } from '../../context/BranchContext';
 
 interface GenerateUserFormData {
   emp_id: number | '';
@@ -23,6 +24,7 @@ interface Props {
 
 const GenerateUserFromEmployeeModal = ({ isOpen, onClose, onGenerate, roles }: Props) => {
   const { showToast } = useToast();
+  const { activeBranchId } = useBranch();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -52,12 +54,13 @@ const GenerateUserFromEmployeeModal = ({ isOpen, onClose, onGenerate, roles }: P
       });
       setShowPassword(false);
     }
-  }, [isOpen]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, activeBranchId]);
 
   const fetchEmployeesWithoutUsers = async () => {
     setLoadingEmployees(true);
     try {
-      const response = await employeeService.list({ status: 'active' });
+      const response = await employeeService.list({ status: 'active', branchId: activeBranchId ?? undefined });
       if (response.success && response.data?.employees) {
         // Filter only employees without user accounts
         const employeesWithoutUsers = response.data.employees.filter(

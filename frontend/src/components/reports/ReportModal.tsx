@@ -626,20 +626,20 @@ export function ReportModal<T extends Record<string, any>>({
             {enablePdf && !isIncomeStatement && !isBalanceSheet && (
               <button
                 onClick={handlePrint}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-black bg-white px-4 py-2 text-sm font-semibold text-black transition dark:border-slate-200 dark:bg-slate-900 dark:text-slate-100 sm:w-auto"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-primary-600 bg-white px-4 py-2 text-sm font-semibold text-primary-700 transition dark:border-primary-700 dark:bg-slate-900 dark:text-primary-300 sm:w-auto"
               >
                 <Printer className="h-4 w-4" /> Export PDF
               </button>
             )}
             <button
               onClick={handlePrint}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-black bg-black px-4 py-2 text-sm font-semibold text-white transition sm:w-auto"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-primary-600 bg-primary-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary-700 sm:w-auto"
             >
               <Printer className="h-4 w-4" /> Print
             </button>
             <button
               onClick={handleExportExcel}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-black bg-white px-4 py-2 text-sm font-semibold text-black transition dark:border-slate-200 dark:bg-slate-900 dark:text-slate-100 sm:w-auto"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-primary-600 bg-white px-4 py-2 text-sm font-semibold text-primary-700 transition dark:border-primary-700 dark:bg-slate-900 dark:text-primary-300 sm:w-auto"
             >
               <FileSpreadsheet className="h-4 w-4" /> Export Excel
             </button>
@@ -664,7 +664,7 @@ export function ReportModal<T extends Record<string, any>>({
                 <div
                   aria-hidden="true"
                   className="h-[2px]"
-                  style={{ background: "#FFA500" }}
+                  style={{ background: "#2A6F97" }}
                 />
               </div>
             ) : null}

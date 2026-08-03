@@ -9,6 +9,7 @@ import {
   updatePurchase,
   deletePurchase,
   exportPurchasesXlsx,
+  receivePurchaseOrder,
 } from './purchases.controller';
 
 const router = Router();
@@ -20,6 +21,7 @@ router.get('/export', requirePerm('purchases.view'), exportPurchasesXlsx);
 router.get('/', requirePerm('purchases.view'), listPurchases);
 router.get('/:id', requirePerm('purchases.view'), getPurchase);
 router.post('/', requirePerm('purchases.create'), createPurchase);
+router.post('/:id/receive', requirePerm('purchases.update'), receivePurchaseOrder);
 router.put('/:id', requirePerm('purchases.update'), updatePurchase);
 router.delete('/:id', requirePerm('purchases.delete'), deletePurchase);
 

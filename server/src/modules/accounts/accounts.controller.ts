@@ -3,14 +3,14 @@ import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiResponse } from '../../utils/ApiResponse';
 import { ApiError } from '../../utils/ApiError';
 import { AuthRequest } from '../../middlewares/requireAuth';
-import { pickBranchForWrite, resolveBranchScope } from '../../utils/branchScope';
+import { pickBranchForWrite, resolveActiveBranchIds, resolveBranchScope } from '../../utils/branchScope';
 import { accountsService } from './accounts.service';
 import { accountSchema, accountUpdateSchema } from './accounts.schemas';
 import { logAudit } from '../../utils/audit';
 
 export const listAccounts = asyncHandler(async (req: AuthRequest, res: Response) => {
-  const scope = await resolveBranchScope(req);
-  const accounts = await accountsService.list(scope);
+  const branchIds = await resolveActiveBranchIds(req);
+  const accounts = await accountsService.list(branchIds);
   return ApiResponse.success(res, { accounts });
 });
 

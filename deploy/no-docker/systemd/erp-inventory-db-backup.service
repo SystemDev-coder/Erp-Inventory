@@ -4,8 +4,8 @@ After=postgresql.service
 
 [Service]
 Type=oneshot
-User=postgres
-Group=postgres
-EnvironmentFile=/etc/erp-inventory/server.env
-ExecStart=/bin/sh -c 'mkdir -p /var/backups/erp-inventory && pg_dump -Fc -d "$PGDATABASE" -f "/var/backups/erp-inventory/${PGDATABASE}-$(date +%%F-%%H%%M%%S).dump"'
+User=erp
+Group=erp
+EnvironmentFile=/srv/pms-bench/backend/.env
+ExecStart=/bin/sh -c 'mkdir -p /srv/pms-bench/backups && PGPASSWORD="$ADMIN_PGPASSWORD" pg_dump -h "$PGHOST" -p "$PGPORT" -U "$ADMIN_PGUSER" -Fc -d "$PGDATABASE" -f "/srv/pms-bench/backups/${PGDATABASE}-$(date +%%F-%%H%%M%%S).dump"'
 

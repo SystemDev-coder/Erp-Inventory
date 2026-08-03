@@ -5,6 +5,7 @@ import { salesReportsService } from '../../../services/reports/salesReports.serv
 import { salesService, type Sale } from '../../../services/sales.service';
 import type { DateRange, ModalReportState } from '../types';
 import { formatCurrency, formatDateOnly, formatDateTime, formatQuantity, toRecordRows, defaultReportRange } from '../reportUtils';
+import { useBranch } from '../../../context/BranchContext';
 
 type SalesCardId =
   | 'sales-summary'
@@ -189,6 +190,7 @@ type Props = {
 };
 
 export function SalesReportsTab({ onOpenModal }: Props) {
+  const { activeBranchId } = useBranch();
   const [expandedCardId, setExpandedCardId] = useState<SalesCardId | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<SalesCardId | null>(null);
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
@@ -227,7 +229,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
     setOptionsError('');
 
     salesReportsService
-      .getSalesOptions()
+      .getSalesOptions(activeBranchId ?? undefined)
       .then((response) => {
         if (!alive) return;
         if (!response.success || !response.data) {
@@ -251,7 +253,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [activeBranchId]);
 
   const selectedCustomerLabel = useMemo(
     () => salesOptions.customers.find((option) => String(option.id) === selectedCustomerId)?.label || '',
@@ -323,7 +325,11 @@ export function SalesReportsTab({ onOpenModal }: Props) {
 
     try {
       if (metricKey === 'invoices') {
-        const response = await salesReportsService.getInvoiceStatus({ ...range, status: 'all' });
+        const response = await salesReportsService.getInvoiceStatus({
+          ...range,
+          status: 'all',
+          branchId: activeBranchId ?? undefined,
+        });
         if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load invoice status');
         const rows = toRecordRows(response.data.rows || []);
         onOpenModal({
@@ -347,7 +353,11 @@ export function SalesReportsTab({ onOpenModal }: Props) {
 
       if (metricKey === 'paid invoices' || metricKey === 'partial invoices' || metricKey === 'unpaid invoices') {
         const status = metricKey.startsWith('paid') ? 'paid' : metricKey.startsWith('partial') ? 'partial' : 'unpaid';
-        const response = await salesReportsService.getInvoiceStatus({ ...range, status });
+        const response = await salesReportsService.getInvoiceStatus({
+          ...range,
+          status,
+          branchId: activeBranchId ?? undefined,
+        });
         if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load invoice status');
         const rows = toRecordRows(response.data.rows || []);
         onOpenModal({
@@ -370,7 +380,10 @@ export function SalesReportsTab({ onOpenModal }: Props) {
       }
 
       if (metricKey === 'sales returns' || metricKey === 'returns count') {
-        const response = await salesReportsService.getSalesReturns(range);
+        const response = await salesReportsService.getSalesReturns({
+          ...range,
+          branchId: activeBranchId ?? undefined,
+        });
         if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load sales returns');
         const rows = toRecordRows(response.data.rows || []);
         onOpenModal({
@@ -398,6 +411,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
         docType: 'all',
         status: 'all',
         includeVoided: false,
+        branchId: activeBranchId ?? undefined,
       });
       if (!docsRes.success || !docsRes.data?.sales) throw new Error(docsRes.error || 'Failed to load sales documents');
 
@@ -432,7 +446,10 @@ export function SalesReportsTab({ onOpenModal }: Props) {
       });
 
       if (metricKey === 'net after returns') {
-        const returnsRes = await salesReportsService.getSalesReturns(range);
+        const returnsRes = await salesReportsService.getSalesReturns({
+          ...range,
+          branchId: activeBranchId ?? undefined,
+        });
         if (!returnsRes.success || !returnsRes.data) throw new Error(returnsRes.error || returnsRes.message || 'Failed to load sales returns');
 
         const saleEntries = baseRows.map((row) => ({
@@ -552,7 +569,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
 
   const handleDailySales = () =>
     runCardAction('daily-sales', async () => {
-      const response = await salesReportsService.getDailySales();
+      const response = await salesReportsService.getDailySales(activeBranchId ?? undefined);
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load daily sales');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -574,7 +591,10 @@ export function SalesReportsTab({ onOpenModal }: Props) {
   const handleSalesSummary = () =>
     runCardAction('sales-summary', async () => {
       ensureRangeValid(summaryRange, 'Sales Summary');
-      const response = await salesReportsService.getSalesSummary(summaryRange);
+      const response = await salesReportsService.getSalesSummary({
+        ...summaryRange,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load sales summary');
       const rows = toRecordRows(response.data.rows || []);
       const clickableColumns = salesSummaryColumns.map((col) => {
@@ -601,7 +621,10 @@ export function SalesReportsTab({ onOpenModal }: Props) {
   const handleCogsByInvoice = () =>
     runCardAction('cogs-by-invoice', async () => {
       ensureRangeValid(cogsRange, 'COGS (Cost of Goods Sold)');
-      const response = await salesReportsService.getCogsByInvoice(cogsRange);
+      const response = await salesReportsService.getCogsByInvoice({
+        ...cogsRange,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load COGS report');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -628,6 +651,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
       const response = await salesReportsService.getInvoiceStatus({
         ...invoiceStatusRange,
         status: invoiceStatusFilter,
+        branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load invoice status report');
       const rows = toRecordRows(response.data.rows || []);
@@ -653,7 +677,11 @@ export function SalesReportsTab({ onOpenModal }: Props) {
     runCardAction('sales-by-customer', async () => {
       const customerId = mode === 'show' ? Number(selectedCustomerId || 0) : undefined;
       if (mode === 'show' && !customerId) throw new Error('Select a customer first');
-      const response = await salesReportsService.getSalesByCustomer({ mode, customerId });
+      const response = await salesReportsService.getSalesByCustomer({
+        mode,
+        customerId,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load customer sales');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -676,7 +704,11 @@ export function SalesReportsTab({ onOpenModal }: Props) {
     runCardAction('sales-by-product', async () => {
       const productId = mode === 'show' ? Number(selectedProductId || 0) : undefined;
       if (mode === 'show' && !productId) throw new Error('Select a product first');
-      const response = await salesReportsService.getSalesByProduct({ mode, productId });
+      const response = await salesReportsService.getSalesByProduct({
+        mode,
+        productId,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load product sales');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -705,6 +737,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
         ...salesByStoreRange,
         mode,
         storeId,
+        branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load store sales report');
       const rows = toRecordRows(response.data.rows || []);
@@ -734,7 +767,10 @@ export function SalesReportsTab({ onOpenModal }: Props) {
   const handleTopSellingItems = () =>
     runCardAction('top-selling-items', async () => {
       ensureRangeValid(topSellingRange, 'Top Selling Items');
-      const response = await salesReportsService.getTopSellingItems(topSellingRange);
+      const response = await salesReportsService.getTopSellingItems({
+        ...topSellingRange,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load top selling items');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -758,7 +794,10 @@ export function SalesReportsTab({ onOpenModal }: Props) {
   const handleTopCustomers = () =>
     runCardAction('top-customers', async () => {
       ensureRangeValid(topCustomersRange, 'Top Customers');
-      const response = await salesReportsService.getTopCustomers(topCustomersRange);
+      const response = await salesReportsService.getTopCustomers({
+        ...topCustomersRange,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load top customers report');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -784,7 +823,10 @@ export function SalesReportsTab({ onOpenModal }: Props) {
   const handleSalesReturns = () =>
     runCardAction('sales-returns', async () => {
       ensureRangeValid(returnsRange, 'Sales Returns');
-      const response = await salesReportsService.getSalesReturns(returnsRange);
+      const response = await salesReportsService.getSalesReturns({
+        ...returnsRange,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load sales returns');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -807,7 +849,10 @@ export function SalesReportsTab({ onOpenModal }: Props) {
   const handlePaymentsByAccount = () =>
     runCardAction('payments-by-account', async () => {
       ensureRangeValid(paymentsRange, 'Sales Payments by Account');
-      const response = await salesReportsService.getPaymentsByAccount(paymentsRange);
+      const response = await salesReportsService.getPaymentsByAccount({
+        ...paymentsRange,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load payments by account report');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -831,7 +876,10 @@ export function SalesReportsTab({ onOpenModal }: Props) {
   const handleQuotations = () =>
     runCardAction('quotations', async () => {
       ensureRangeValid(quotationsRange, 'Quotations');
-      const response = await salesReportsService.getQuotations(quotationsRange);
+      const response = await salesReportsService.getQuotations({
+        ...quotationsRange,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load quotations report');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -853,7 +901,10 @@ export function SalesReportsTab({ onOpenModal }: Props) {
   const handleCashierPerformance = () =>
     runCardAction('cashier-performance', async () => {
       ensureRangeValid(cashierRange, 'Cashier Performance');
-      const response = await salesReportsService.getCashierPerformance(cashierRange);
+      const response = await salesReportsService.getCashierPerformance({
+        ...cashierRange,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load cashier performance');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -1001,7 +1052,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
             setCardErrors((prev) => ({ ...prev, [card.id]: '' }));
             setExpandedCardId((prev) => (prev === card.id ? null : card.id));
           }}
-          className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-slate-900 to-slate-800 px-5 py-4 text-left text-white"
+          className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-primary-900 to-primary-700 px-5 py-4 text-left text-white"
         >
           <div>
             <p className="text-xl font-semibold leading-tight">{card.title}</p>

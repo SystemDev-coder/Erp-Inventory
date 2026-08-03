@@ -5,6 +5,7 @@ import { PageHeader } from '../../components/ui/layout';
 import { useToast } from '../../components/ui/toast/Toast';
 import { inventoryService, InventoryItem } from '../../services/inventory.service';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
+import { useBranch } from '../../context/BranchContext';
 
 type AdjustmentType = 'INCREASE' | 'DECREASE';
 
@@ -26,6 +27,7 @@ type ItemOption = {
 export default function StockAdjustmentCreatePage() {
   const { showToast } = useToast();
   const navigate = useNavigate();
+  const { activeBranchId } = useBranch();
 
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -46,8 +48,8 @@ export default function StockAdjustmentCreatePage() {
       try {
         setLoading(true);
         const [itemsRes, stockRes] = await Promise.all([
-          inventoryService.listItems({ page: 1, limit: 5000 }),
-          inventoryService.listStock({ page: 1, limit: 5000 }),
+          inventoryService.listItems({ page: 1, limit: 5000, branchId: activeBranchId ?? undefined }),
+          inventoryService.listStock({ page: 1, limit: 5000, branchId: activeBranchId ?? undefined }),
         ]);
 
         const stockMap = new Map<number, number>();
@@ -71,7 +73,8 @@ export default function StockAdjustmentCreatePage() {
       }
     };
     void loadLookups();
-  }, [showToast]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showToast, activeBranchId]);
 
   const itemById = useMemo(() => {
     const map = new Map<number, ItemOption>();

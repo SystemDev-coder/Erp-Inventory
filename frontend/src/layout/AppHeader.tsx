@@ -5,6 +5,7 @@ import { useSidebar } from "../context/SidebarContext";
 import { ThemeToggleButton } from "../components/common/ThemeToggleButton";
 import NotificationDropdown from "../components/header/NotificationDropdown";
 import UserDropdown from "../components/header/UserDropdown";
+import BranchSwitcherDropdown from "../components/header/BranchSwitcherDropdown";
 import { useAuth } from "../context/AuthContext";
 
 type QuickCommand = {
@@ -33,7 +34,6 @@ const QUICK_COMMANDS: QuickCommand[] = [
 ];
 
 const AppHeader: React.FC = () => {
-  const [isApplicationMenuOpen, setApplicationMenuOpen] = useState(false);
   const [searchValue, setSearchValue] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -49,10 +49,6 @@ const AppHeader: React.FC = () => {
     } else {
       toggleMobileSidebar();
     }
-  };
-
-  const toggleApplicationMenu = () => {
-    setApplicationMenuOpen(!isApplicationMenuOpen);
   };
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -267,6 +263,7 @@ const AppHeader: React.FC = () => {
               Version 1.0
             </span>
             <div className="flex items-center gap-2 2xsm:gap-3">
+              <BranchSwitcherDropdown />
               <ThemeToggleButton />
               <NotificationDropdown />
             </div>

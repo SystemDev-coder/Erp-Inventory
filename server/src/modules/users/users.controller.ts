@@ -25,7 +25,7 @@ export const createUser = asyncHandler(async (req: AuthRequest, res: Response) =
     action: 'create',
     entity: 'users',
     entityId: user.user_id,
-    newValue: { username: user.username, role_id: user.role_id, branch_id: user.branch_id },
+    newValue: { username: user.username, role_id: user.role_id, branch_ids: user.branch_ids },
     ip: req.ip,
     userAgent: req.get('user-agent') || null,
   });

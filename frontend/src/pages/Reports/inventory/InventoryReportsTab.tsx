@@ -4,6 +4,7 @@ import type { ReportColumn, ReportTotalItem } from '../../../components/reports/
 import { inventoryReportsService } from '../../../services/reports/inventoryReports.service';
 import type { DateRange, ModalReportState } from '../types';
 import { formatCurrency, formatDateOnly, formatDateTime, formatQuantity, toRecordRows, defaultReportRange } from '../reportUtils';
+import { useBranch } from '../../../context/BranchContext';
 
 type InventoryCardId =
   | 'current-stock'
@@ -177,6 +178,7 @@ const moneyTotal = (label: string, value: number): ReportTotalItem => ({
 });
 
 export function InventoryReportsTab({ onOpenModal }: Props) {
+  const { activeBranchId } = useBranch();
   const [expandedCardId, setExpandedCardId] = useState<InventoryCardId | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<InventoryCardId | null>(null);
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
@@ -203,7 +205,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
     setOptionsLoading(true);
     setOptionsError('');
     inventoryReportsService
-      .getInventoryOptions()
+      .getInventoryOptions(activeBranchId ?? undefined)
       .then((response) => {
         if (!alive) return;
         if (!response.success || !response.data) {
@@ -224,7 +226,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [activeBranchId]);
 
   const selectedStoreSummaryLabel = useMemo(
     () => stores.find((option) => String(option.id) === selectedStoreSummaryId)?.label || '',
@@ -266,7 +268,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
 
   const handleCurrentStockLevels = () =>
     runCardAction('current-stock', async () => {
-      const response = await inventoryReportsService.getCurrentStockLevels();
+      const response = await inventoryReportsService.getCurrentStockLevels(activeBranchId ?? undefined);
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load current stock');
       const rows = toRecordRows(response.data.rows || []);
       const totalQty = sumByKey(rows, 'total_qty');
@@ -303,7 +305,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
 
   const handleLowStockAlert = () =>
     runCardAction('low-stock', async () => {
-      const response = await inventoryReportsService.getLowStockAlert();
+      const response = await inventoryReportsService.getLowStockAlert(activeBranchId ?? undefined);
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load low stock alert');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -332,7 +334,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
 
   const handleInventoryValuation = () =>
     runCardAction('valuation', async () => {
-      const response = await inventoryReportsService.getInventoryValuation();
+      const response = await inventoryReportsService.getInventoryValuation(activeBranchId ?? undefined);
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load valuation');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -362,7 +364,10 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
   const handleStockAdjustmentLog = () =>
     runCardAction('adjustments', async () => {
       ensureRangeValid(adjustmentRange, 'Stock Adjustment Log');
-      const response = await inventoryReportsService.getStockAdjustmentLog(adjustmentRange);
+      const response = await inventoryReportsService.getStockAdjustmentLog({
+        ...adjustmentRange,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load adjustments');
       const rows = toRecordRows(response.data.rows || []);
       const addQty = rows.reduce((sum, row) => {
@@ -398,7 +403,10 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
   const handleInventoryLoss = () =>
     runCardAction('inventory-loss', async () => {
       ensureRangeValid(lossRange, 'Inventory Loss');
-      const response = await inventoryReportsService.getInventoryLoss(lossRange);
+      const response = await inventoryReportsService.getInventoryLoss({
+        ...lossRange,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load inventory loss');
       const rows = toRecordRows(response.data.rows || []);
       const totalQty = sumByKey(rows, 'quantity');
@@ -431,6 +439,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
       const response = await inventoryReportsService.getInventoryFound({
         fromDate: inventoryLedgerRange.fromDate,
         toDate: inventoryLedgerRange.toDate,
+        branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load inventory found');
 
@@ -468,7 +477,11 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
     runCardAction('store-stock', async () => {
       const storeId = mode === 'show' ? Number(selectedStoreSummaryId || 0) : undefined;
       if (mode === 'show' && !storeId) throw new Error('Select a store first');
-      const response = await inventoryReportsService.getStoreStockReport({ mode, storeId });
+      const response = await inventoryReportsService.getStoreStockReport({
+        mode,
+        storeId,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load store stock report');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -499,7 +512,11 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
     runCardAction('store-wise', async () => {
       const storeId = mode === 'show' ? Number(selectedStoreDetailsId || 0) : undefined;
       if (mode === 'show' && !storeId) throw new Error('Select a store first');
-      const response = await inventoryReportsService.getStoreWiseStock({ mode, storeId });
+      const response = await inventoryReportsService.getStoreWiseStock({
+        mode,
+        storeId,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load store-wise stock');
       const rows = toRecordRows(response.data.rows || []);
       const uniqueItems = new Set(rows.map((row) => String(row.item_id || ''))).size;
@@ -536,6 +553,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
         fromDate: movementRange.fromDate,
         toDate: movementRange.toDate,
         storeId,
+        branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load store movement summary');
       const rows = toRecordRows(response.data.rows || []);
@@ -590,6 +608,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
         toDate: movementDetailRange.toDate,
         storeId,
         itemId,
+        branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load store movement detail');
       const rows: Record<string, unknown>[] = toRecordRows(response.data.rows || []).map((row) => ({
@@ -738,7 +757,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
             setCardErrors((prev) => ({ ...prev, [card.id]: '' }));
             setExpandedCardId((prev) => (prev === card.id ? null : card.id));
           }}
-          className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-slate-900 to-slate-800 px-5 py-4 text-left text-white"
+          className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-primary-900 to-primary-700 px-5 py-4 text-left text-white"
         >
           <div>
             <p className="text-xl font-semibold leading-tight">{card.title}</p>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router';
 import { PageHeader } from '../../components/ui/layout';
@@ -7,9 +7,12 @@ import { returnsService, ReturnItemOption } from '../../services/returns.service
 import { supplierService, Supplier } from '../../services/supplier.service';
 import { accountService, Account } from '../../services/account.service';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
+import { useBranch } from '../../context/BranchContext';
 
 const inputClass =
   'h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
+const errInputCls =
+  'h-11 w-full rounded-lg border border-red-400 bg-red-50/40 px-3 text-sm text-slate-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/20 dark:border-red-500 dark:bg-red-900/10 dark:text-slate-100';
 const labelClass = 'mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400';
 const tableHeadCls = 'px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400';
 const tableCellCls = 'px-3 py-2 text-sm text-slate-800 dark:text-slate-200';
@@ -26,6 +29,7 @@ const defaultLine = (): ReturnLine => ({ itemId: '', quantity: 1, unitCost: 0 })
 
 const PurchaseReturns = () => {
   const { showToast } = useToast();
+  const { activeBranchId } = useBranch();
   const navigate = useNavigate();
   const { id } = useParams();
   const editingId = useMemo(() => {
@@ -47,6 +51,8 @@ const PurchaseReturns = () => {
   const [items, setItems] = useState<ReturnItemOption[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
 
   const subtotal = useMemo(
     () => lines.reduce((sum, line) => sum + Number(line.quantity || 0) * Number(line.unitCost || 0), 0),
@@ -63,7 +69,8 @@ const PurchaseReturns = () => {
   useEffect(() => {
     void loadSuppliers();
     void loadAccounts();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBranchId]);
 
   useEffect(() => {
     void loadReturn();
@@ -76,12 +83,12 @@ const PurchaseReturns = () => {
   }, [form.supplierId]);
 
   const loadSuppliers = async () => {
-    const res = await supplierService.list();
+    const res = await supplierService.list({ branchId: activeBranchId ?? undefined });
     if (res.success && res.data?.suppliers) setSuppliers(res.data.suppliers);
   };
 
   const loadAccounts = async () => {
-    const res = await accountService.list();
+    const res = await accountService.list({ branchId: activeBranchId ?? undefined });
     if (res.success && res.data?.accounts) setAccounts(res.data.accounts);
   };
 
@@ -116,6 +123,20 @@ const PurchaseReturns = () => {
     });
     setLines([defaultLine()]);
     setItems([]);
+    setErrors({});
+    setTouched({});
+  };
+
+  const validate = (): Record<string, string> => {
+    const errs: Record<string, string> = {};
+    if (!form.supplierId) errs.supplierId = 'Supplier is required';
+    const hasValidLine = lines.some((l) => l.itemId && Number(l.quantity) > 0);
+    if (!hasValidLine) errs.items = 'Add at least one item with a quantity greater than 0';
+    const refundAmt = Number(form.refundAmount || 0);
+    if (refundAmt > 0 && !form.refundAccId) errs.refundAccId = 'Select a refund account';
+    if (refundAmt > subtotal) errs.refundAmount = 'Refund amount cannot exceed the return total';
+    if (refundAmt + 1e-9 < minRefund) errs.refundAmount = `Refund must be at least ${fmtCurrency(minRefund)}`;
+    return errs;
   };
 
   const loadReturn = async () => {
@@ -157,6 +178,8 @@ const PurchaseReturns = () => {
   const handleSupplierChange = async (supplierId: string) => {
     setForm((prev) => ({ ...prev, supplierId }));
     setLines([defaultLine()]);
+    setErrors((prev) => ({ ...prev, supplierId: '', items: '' }));
+    setTouched((prev) => ({ ...prev, supplierId: true }));
     await loadItemsForSupplier(supplierId ? Number(supplierId) : undefined);
   };
 
@@ -183,9 +206,17 @@ const PurchaseReturns = () => {
       unitCost: selected ? Number(selected.cost_price || 0) : 0,
       quantity: selected && Number(selected.available_qty || 0) > 0 ? 1 : 0,
     });
+    setErrors((prev) => ({ ...prev, items: '' }));
   };
 
-  const addLine = () => setLines((prev) => [...prev, defaultLine()]);
+  const addLine = () => {
+    if (!form.supplierId) {
+      setErrors((prev) => ({ ...prev, supplierId: 'Supplier is required' }));
+      setTouched((prev) => ({ ...prev, supplierId: true }));
+      return;
+    }
+    setLines((prev) => [...prev, defaultLine()]);
+  };
   const removeLine = (index: number) =>
     setLines((prev) => {
       const next = prev.filter((_, idx) => idx !== index);
@@ -202,8 +233,10 @@ const PurchaseReturns = () => {
 
   const submitReturn = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.supplierId) {
-      showToast('error', 'Purchase Return', 'Supplier is required');
+    const errs = validate();
+    if (Object.keys(errs).length > 0) {
+      setErrors(errs);
+      setTouched({ supplierId: true, items: true, refundAccId: true, refundAmount: true });
       return;
     }
     const normalized = lines
@@ -213,10 +246,6 @@ const PurchaseReturns = () => {
         quantity: Math.round(Number(line.quantity || 0)),
         unitCost: Number(line.unitCost || 0),
       }));
-    if (!normalized.length || normalized.some((line) => line.quantity <= 0)) {
-      showToast('error', 'Purchase Return', 'Select at least one item with quantity');
-      return;
-    }
     const unavailable = normalized.find((line) => {
       const selected = items.find((it) => Number(it.item_id) === Number(line.itemId));
       const maxQty = selected?.available_qty !== undefined ? Number(selected.available_qty || 0) : null;
@@ -229,18 +258,6 @@ const PurchaseReturns = () => {
       return;
     }
     const refundAmount = Number(form.refundAmount || 0);
-    if (refundAmount > 0 && !form.refundAccId) {
-      showToast('error', 'Purchase Return', 'Select a refund account');
-      return;
-    }
-    if (refundAmount > subtotal) {
-      showToast('error', 'Purchase Return', 'Refund amount cannot exceed return total');
-      return;
-    }
-    if (refundAmount + 1e-9 < minRefund) {
-      showToast('error', 'Purchase Return', `Refund must be at least ${minRefund.toFixed(2)} (to avoid negative supplier balance)`);
-      return;
-    }
 
     setSaving(true);
     const payload: any = {
@@ -296,14 +313,18 @@ const PurchaseReturns = () => {
         <form onSubmit={submitReturn} className="space-y-4 p-4">
 	          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
 	            <div>
-	              <label className={labelClass}>Supplier *</label>
+	              <label className={labelClass}>Supplier</label>
 	              <SearchableCombobox<number>
 	                value={form.supplierId ? Number(form.supplierId) : ''}
 	                options={suppliers.map((s) => ({ value: s.supplier_id, label: s.supplier_name }))}
 	                placeholder="Select supplier"
 	                disabled={loading}
+	                hasError={!!(touched.supplierId && errors.supplierId)}
 	                onChange={(nextValue) => void handleSupplierChange(nextValue === '' ? '' : String(nextValue))}
 	              />
+	              {touched.supplierId && errors.supplierId && (
+	                <p className="mt-1 text-xs font-medium text-red-500 dark:text-red-400">{errors.supplierId}</p>
+	              )}
 	            </div>
             <div>
               <label className={labelClass}>Reference No</label>
@@ -397,6 +418,9 @@ const PurchaseReturns = () => {
               </tbody>
             </table>
           </div>
+          {touched.items && errors.items && (
+            <p className="mt-1 text-xs font-medium text-red-500 dark:text-red-400">{errors.items}</p>
+          )}
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-200">
@@ -424,10 +448,16 @@ const PurchaseReturns = () => {
 	                options={accounts.filter((a) => a.is_active).map((a) => ({ value: a.acc_id, label: a.name }))}
 	                placeholder={minRefund > 0 ? 'Select refund account' : 'No refund'}
 	                disabled={loading}
-	                onChange={(nextValue) =>
-	                  setForm((prev) => ({ ...prev, refundAccId: nextValue === '' ? '' : String(nextValue) }))
-	                }
+	                hasError={!!(touched.refundAccId && errors.refundAccId)}
+	                onChange={(nextValue) => {
+	                  setForm((prev) => ({ ...prev, refundAccId: nextValue === '' ? '' : String(nextValue) }));
+	                  setErrors((prev) => ({ ...prev, refundAccId: '' }));
+	                  setTouched((prev) => ({ ...prev, refundAccId: true }));
+	                }}
 	              />
+	              {touched.refundAccId && errors.refundAccId && (
+	                <p className="mt-1 text-xs font-medium text-red-500 dark:text-red-400">{errors.refundAccId}</p>
+	              )}
 	            </div>
             <div>
               <label className={`${labelClass} font-semibold`}>Refund Amount</label>
@@ -435,11 +465,18 @@ const PurchaseReturns = () => {
                 type="number"
                 min={minRefund}
                 step={0.01}
-                className={inputClass}
+                className={touched.refundAmount && errors.refundAmount ? errInputCls : inputClass}
                 value={form.refundAmount}
-                onChange={(e) => setForm((prev) => ({ ...prev, refundAmount: Number(e.target.value) }))}
+                onBlur={() => setTouched((prev) => ({ ...prev, refundAmount: true }))}
+                onChange={(e) => {
+                  setForm((prev) => ({ ...prev, refundAmount: Number(e.target.value) }));
+                  setErrors((prev) => ({ ...prev, refundAmount: '' }));
+                }}
                 placeholder="0.00"
               />
+              {touched.refundAmount && errors.refundAmount && (
+                <p className="mt-1 text-xs font-medium text-red-500 dark:text-red-400">{errors.refundAmount}</p>
+              )}
               {minRefund > 0 ? (
                 <p className="mt-1 text-[11px] text-slate-500">Refund must be at least {fmtCurrency(minRefund)} (supplier payable not enough).</p>
               ) : null}

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
 import { Plus, RefreshCw, AlertCircle, DollarSign, Wallet, TrendingDown } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
@@ -19,6 +19,7 @@ import {
     SupplierOutstandingPurchase,
 } from '../../services/finance.service';
 import { defaultDateRange } from '../../utils/dateRange';
+import { useBranch } from '../../context/BranchContext';
 
 type ActiveTab = 'customer-receipts' | 'supplier-receipts';
 
@@ -84,6 +85,7 @@ const parseAmountInput = (value: string | null | undefined) => {
 
 const Receipts = () => {
     const { showToast } = useToast();
+    const { activeBranchId } = useBranch();
 
     const [activeTab, setActiveTab] = useState<ActiveTab>('customer-receipts');
     const [loading, setLoading] = useState(false);
@@ -141,7 +143,7 @@ const Receipts = () => {
 
     const lookupCustomers = async (query: string) => {
         const q = String(query || '').trim();
-        const res = await customerService.lookup({ search: q, limit: 50 });
+        const res = await customerService.lookup({ search: q, limit: 50, branchId: activeBranchId ?? undefined });
         if (res.success && res.data?.customers) {
             setCustomerLookup(res.data.customers);
         }
@@ -149,7 +151,7 @@ const Receipts = () => {
 
     const lookupSuppliers = async (query: string) => {
         const q = String(query || '').trim();
-        const res = await supplierService.lookup({ search: q, limit: 50 });
+        const res = await supplierService.lookup({ search: q, limit: 50, branchId: activeBranchId ?? undefined });
         if (res.success && res.data?.suppliers) {
             setSupplierLookup(res.data.suppliers);
         }
@@ -160,10 +162,10 @@ const Receipts = () => {
         setLoading(true);
         try {
             const [accRes, custRes, crRes, unpaidC] = await Promise.all([
-                accountService.list(),
-                customerService.list({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
-                financeService.listCustomerReceipts({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
-                financeService.listCustomerUnpaid(),
+                accountService.list({ branchId: activeBranchId ?? undefined }),
+                customerService.list({ fromDate: dateRange.fromDate, toDate: dateRange.toDate, branchId: activeBranchId ?? undefined }),
+                financeService.listCustomerReceipts({ fromDate: dateRange.fromDate, toDate: dateRange.toDate, branchId: activeBranchId ?? undefined }),
+                financeService.listCustomerUnpaid(undefined, activeBranchId ?? undefined),
             ]);
             if (accRes.success && accRes.data?.accounts) setAccounts(accRes.data.accounts);
             if (custRes.success && custRes.data?.customers) setCustomers(custRes.data.customers);
@@ -183,10 +185,10 @@ const Receipts = () => {
         setLoading(true);
         try {
             const [accRes, supRes, srRes, unpaidS, outPurch] = await Promise.all([
-                accountService.list(),
-                supplierService.list({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
-                financeService.listSupplierReceipts({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
-                financeService.listSupplierUnpaid(),
+                accountService.list({ branchId: activeBranchId ?? undefined }),
+                supplierService.list({ fromDate: dateRange.fromDate, toDate: dateRange.toDate, branchId: activeBranchId ?? undefined }),
+                financeService.listSupplierReceipts({ fromDate: dateRange.fromDate, toDate: dateRange.toDate, branchId: activeBranchId ?? undefined }),
+                financeService.listSupplierUnpaid(undefined, activeBranchId ?? undefined),
                 financeService.listSupplierOutstandingPurchases(),
             ]);
             if (accRes.success && accRes.data?.accounts) setAccounts(accRes.data.accounts);
@@ -221,6 +223,12 @@ const Receipts = () => {
         }
         await loadCustomerData();
     };
+
+    useEffect(() => {
+        if (customerDisplayed) void loadCustomerData();
+        if (supplierDisplayed) void loadSupplierData();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeBranchId]);
 
     // ─── Computed Summaries ────────────────────────────────────────────────────
     const custTotalReceived = customerReceipts.reduce((s, r) => s + Number(r.amount ?? 0), 0);
@@ -353,7 +361,7 @@ const Receipts = () => {
             if (row.customer_id) {
                 void (async () => {
                     setCustomerBalanceLoading(true);
-                    const balanceRes = await financeService.getCustomerCombinedBalance(row.customer_id as number);
+                    const balanceRes = await financeService.getCustomerCombinedBalance(row.customer_id as number, activeBranchId ?? undefined);
                     if (balanceRes.success && balanceRes.data?.balance) {
                         setCustomerCombinedBalance(Number(balanceRes.data.balance.total_balance ?? 0));
                     } else {
@@ -381,7 +389,7 @@ const Receipts = () => {
         }
 
         setCustomerBalanceLoading(true);
-        const balanceRes = await financeService.getCustomerCombinedBalance(customerId);
+        const balanceRes = await financeService.getCustomerCombinedBalance(customerId, activeBranchId ?? undefined);
         setCustomerBalanceLoading(false);
 
         if (!balanceRes.success || !balanceRes.data?.balance) {
@@ -396,7 +404,7 @@ const Receipts = () => {
 
     const loadSupplierCombinedBalance = async (supplierId: number): Promise<number | null> => {
         setSupplierBalanceLoading(true);
-        const balanceRes = await financeService.getSupplierCombinedBalance(supplierId);
+        const balanceRes = await financeService.getSupplierCombinedBalance(supplierId, activeBranchId ?? undefined);
         setSupplierBalanceLoading(false);
 
         if (!balanceRes.success || !balanceRes.data?.balance) {
@@ -461,6 +469,7 @@ const Receipts = () => {
                     note: receiptForm.note,
                 })
                 : await financeService.createCustomerReceipt({
+                    branch_id: activeBranchId ?? undefined,
                     acc_id: receiptForm.acc_id,
                     customer_id: receiptForm.customer_id,
                     amount,
@@ -512,6 +521,7 @@ const Receipts = () => {
                     note: receiptForm.note,
                 })
                 : await financeService.createSupplierReceipt({
+                    branch_id: activeBranchId ?? undefined,
                     acc_id: receiptForm.acc_id,
                     supplier_id: receiptForm.supplier_id,
                     purchase_id: receiptForm.purchase_id,

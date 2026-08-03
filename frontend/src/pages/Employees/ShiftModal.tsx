@@ -5,6 +5,7 @@ import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import Badge from '../../components/ui/badge/Badge';
 import { shiftService, Shift } from '../../services/shift.service';
 import { useToast } from '../../components/ui/toast/Toast';
+import { useBranch } from '../../context/BranchContext';
 
 interface ShiftModalProps {
   isOpen: boolean;
@@ -13,6 +14,7 @@ interface ShiftModalProps {
 
 const ShiftModal: React.FC<ShiftModalProps> = ({ isOpen, onClose }) => {
   const { showToast } = useToast();
+  const { activeBranchId } = useBranch();
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [shifts, setShifts] = useState<Shift[]>([]);
@@ -31,7 +33,7 @@ const ShiftModal: React.FC<ShiftModalProps> = ({ isOpen, onClose }) => {
   const loadShifts = async () => {
     setLoading(true);
     try {
-      const response = await shiftService.list({ limit: 120 });
+      const response = await shiftService.list({ limit: 120, branchId: activeBranchId ?? undefined });
       if (response.success && response.data?.shifts) {
         setShifts(response.data.shifts);
       } else {
@@ -48,7 +50,8 @@ const ShiftModal: React.FC<ShiftModalProps> = ({ isOpen, onClose }) => {
     if (isOpen) {
       loadShifts();
     }
-  }, [isOpen]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, activeBranchId]);
 
   const handleOpenShift = async (e: React.FormEvent) => {
     e.preventDefault();

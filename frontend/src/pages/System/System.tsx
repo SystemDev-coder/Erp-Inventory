@@ -62,7 +62,7 @@ const System = () => {
     username: '',
     password: '',
     roleId: '',
-    branchId: '',
+    branchIds: [] as number[],
     isActive: true,
   });
   const [roleForm, setRoleForm] = useState({
@@ -190,7 +190,7 @@ const System = () => {
       username: '',
       password: '',
       roleId: roleList[0] ? String(roleList[0].role_id) : '',
-      branchId: branchList[0] ? String(branchList[0].branch_id) : '',
+      branchIds: branchList[0] ? [branchList[0].branch_id] : [],
       isActive: true,
     });
     setUserModalOpen(true);
@@ -205,7 +205,7 @@ const System = () => {
       username: user.username,
       password: '',
       roleId: String(user.role_id),
-      branchId: String(user.branch_id),
+      branchIds: user.branch_ids && user.branch_ids.length ? user.branch_ids : [user.branch_id],
       isActive: user.is_active,
     });
     setUserModalOpen(true);
@@ -220,8 +220,8 @@ const System = () => {
       showToast('error', 'Users', 'Password is required');
       return;
     }
-    if (!userForm.roleId || !userForm.branchId) {
-      showToast('error', 'Users', 'Role and branch are required');
+    if (!userForm.roleId || !userForm.branchIds.length) {
+      showToast('error', 'Users', 'Role and at least one branch are required');
       return;
     }
 
@@ -230,7 +230,7 @@ const System = () => {
       username: userForm.username.trim(),
       password: userForm.password.trim(),
       roleId: Number(userForm.roleId),
-      branchId: Number(userForm.branchId),
+      branchIds: userForm.branchIds,
       isActive: userForm.isActive,
     };
 
@@ -241,7 +241,7 @@ const System = () => {
           username: payload.username,
           password: payload.password || undefined,
           roleId: payload.roleId,
-          branchId: payload.branchId,
+          branchIds: payload.branchIds,
           isActive: payload.isActive,
         })
       : await systemService.createUser(payload);
@@ -312,7 +312,7 @@ const System = () => {
         const found = nextRoles.find((r) => (r.role_name || '').toLowerCase() === roleName.toLowerCase());
         setPrivilegesPrefillRoleId(found?.role_id ?? null);
       }
-      goToTab('privileges');
+      goToTab('role-privileges');
     }
   };
 
@@ -488,7 +488,13 @@ const System = () => {
                       <td>{u.name}</td>
                       <td>{u.username}</td>
                       <td>{u.role_name || '-'}</td>
-	                      <td>{u.branch_name || u.branch_id}</td>
+	                      <td>
+	                        {u.branch_ids && u.branch_ids.length > 1
+	                          ? `${u.branch_ids.length} branches (Global)`
+	                          : branches.find((b) => b.branch_id === (u.branch_ids?.[0] ?? u.branch_id))?.branch_name ||
+	                            u.branch_name ||
+	                            u.branch_id}
+	                      </td>
 	                      <td>{u.is_active ? 'Active' : 'Inactive'}</td>
 	                      <td className="space-x-2 py-2">
 	                        {/* NEW: Jump to user privileges editor */}
@@ -581,7 +587,7 @@ const System = () => {
 	                          <button
 	                            onClick={() => {
 	                              setPrivilegesPrefillRoleId(r.role_id);
-	                              goToTab('privileges');
+	                              goToTab('role-privileges');
 	                            }}
 	                            className="px-2 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
 	                            title="Edit privileges"
@@ -634,6 +640,36 @@ const System = () => {
 	                  onUserSelected={(id) => setPrivilegesPrefillUserId(id)}
 	                  // UPDATED: Show only permissions currently used in the sidebar (v1.0)
 	                  allowedPermissionKeys={SIDEBAR_PERMISSION_KEY_SET}
+	                />
+	              </Suspense>
+	            ),
+	          },
+	        ]
+	      : []),
+	    // NEW: Role Privileges tab (role → permissions) is lazy-loaded for stability
+	    ...(canViewPrivileges
+	      ? [
+	          {
+	            id: 'role-privileges',
+	            label: 'Role Privileges',
+	            icon: CheckSquare,
+	            badge: 0,
+	            content: (
+	              <Suspense
+	                fallback={
+	                  <div className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+	                    Loading role privileges editor...
+	                  </div>
+	                }
+	              >
+	                <RolePrivilegesTab
+	                  roles={roles}
+	                  permissions={permissions}
+	                  canUpdateRolePermissions={canUpdateRolePermissions}
+	                  loadRoles={loadRoles}
+	                  loadPermissions={loadPermissions}
+	                  initialRoleId={privilegesPrefillRoleId}
+	                  onRoleSelected={(id) => setPrivilegesPrefillRoleId(id)}
 	                />
 	              </Suspense>
 	            ),
@@ -729,21 +765,46 @@ const System = () => {
               ))}
             </select>
           </label>
-          <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
-            Branch
-            <select
-              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
-              value={userForm.branchId}
-              onChange={(e) => setUserForm({ ...userForm, branchId: e.target.value })}
-            >
-              <option value="">Select branch</option>
+          <div className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300 md:col-span-2">
+            <div className="flex items-center justify-between">
+              <span>Branches</span>
+              <button
+                type="button"
+                className="text-xs font-semibold text-primary-600 hover:underline"
+                onClick={() =>
+                  setUserForm((prev) => ({
+                    ...prev,
+                    branchIds:
+                      prev.branchIds.length === branches.length ? [] : branches.map((b) => b.branch_id),
+                  }))
+                }
+              >
+                {userForm.branchIds.length === branches.length ? 'Clear all' : 'Select all (global)'}
+              </button>
+            </div>
+            <div className="grid max-h-40 grid-cols-2 gap-1 overflow-y-auto rounded-lg border border-slate-300 bg-white p-2 text-sm dark:border-slate-700 dark:bg-slate-800 sm:grid-cols-3">
               {branches.map((branch) => (
-                <option key={branch.branch_id} value={branch.branch_id}>
-                  {branch.branch_name}
-                </option>
+                <label key={branch.branch_id} className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-slate-50 dark:hover:bg-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={userForm.branchIds.includes(branch.branch_id)}
+                    onChange={(e) =>
+                      setUserForm((prev) => ({
+                        ...prev,
+                        branchIds: e.target.checked
+                          ? [...prev.branchIds, branch.branch_id]
+                          : prev.branchIds.filter((id) => id !== branch.branch_id),
+                      }))
+                    }
+                  />
+                  <span className="truncate">{branch.branch_name}</span>
+                </label>
               ))}
-            </select>
-          </label>
+            </div>
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              Pick one branch for a branch-only user, or several for a global user who can work across branches.
+            </span>
+          </div>
           {editingUser && (
             <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
               Status

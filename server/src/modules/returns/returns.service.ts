@@ -1118,22 +1118,19 @@ const rewritePurchaseReturnGl = async (client: PoolClient, params: { branchId: n
 };
 
 export const returnsService = {
-    async listSalesCustomers(scope: BranchScope): Promise<any[]> {
+    async listSalesCustomers(branchIds: number[]): Promise<any[]> {
         const docTypeFilter = (await hasSalesDocTypeColumn())
             ? `AND COALESCE(s.doc_type::text, 'sale') <> 'quotation'`
             : '';
 
-        const params: any[] = [];
+        const params: any[] = [branchIds];
         let where = `
             WHERE s.customer_id IS NOT NULL
               AND LOWER(COALESCE(s.status::text, '')) <> 'void'
               AND LOWER(COALESCE(s.status::text, '')) IN ('paid', 'partial')
+              AND s.branch_id = ANY($1)
               ${docTypeFilter}
         `;
-        if (!scope.isAdmin) {
-            params.push(scope.branchIds);
-            where += ` AND s.branch_id = ANY($${params.length})`;
-        }
 
         return queryMany(
             `SELECT DISTINCT
@@ -1358,15 +1355,13 @@ export const returnsService = {
     },
 
     async listSalesReturns(
-        scope: BranchScope,
+        branchIds: number[],
         dateRange?: { fromDate?: string; toDate?: string }
     ): Promise<SalesReturn[]> {
         const params: any[] = [];
         const whereParts: string[] = [];
-        if (!scope.isAdmin) {
-            params.push(scope.branchIds);
-            whereParts.push(`sr.branch_id = ANY($${params.length})`);
-        }
+        params.push(branchIds);
+        whereParts.push(`sr.branch_id = ANY($${params.length})`);
         if (dateRange?.fromDate && dateRange?.toDate) {
             params.push(dateRange.fromDate);
             whereParts.push(`sr.return_date::date >= $${params.length}::date`);
@@ -2141,16 +2136,14 @@ export const returnsService = {
     },
 
     async listPurchaseReturns(
-        scope: BranchScope,
+        branchIds: number[],
         dateRange?: { fromDate?: string; toDate?: string }
     ): Promise<PurchaseReturn[]> {
         const supplierNameColumn = await getSupplierNameColumn();
         const params: any[] = [];
         const whereParts: string[] = [];
-        if (!scope.isAdmin) {
-            params.push(scope.branchIds);
-            whereParts.push(`pr.branch_id = ANY($${params.length})`);
-        }
+        params.push(branchIds);
+        whereParts.push(`pr.branch_id = ANY($${params.length})`);
         if (dateRange?.fromDate && dateRange?.toDate) {
             params.push(dateRange.fromDate);
             whereParts.push(`pr.return_date::date >= $${params.length}::date`);

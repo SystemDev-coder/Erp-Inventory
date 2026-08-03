@@ -80,13 +80,14 @@ export const schedulesService = {
     );
   },
 
-  async create(input: ScheduleInput): Promise<Schedule> {
+  async create(input: ScheduleInput, context: { branchId: number }): Promise<Schedule> {
     const result = await queryOne<Schedule>(
-      `INSERT INTO ims.employee_schedule 
-        (emp_id, schedule_type, start_date, end_date, reason, notes, status)
-       VALUES ($1, $2::ims.schedule_type_enum, $3, $4, $5, $6, 'pending') 
+      `INSERT INTO ims.employee_schedule
+        (branch_id, emp_id, schedule_type, start_date, end_date, reason, notes, status)
+       VALUES ($1, $2, $3::ims.schedule_type_enum, $4, $5, $6, $7, 'pending')
        RETURNING *`,
       [
+        context.branchId,
         input.emp_id,
         input.schedule_type,
         input.start_date,
@@ -171,9 +172,21 @@ export const schedulesService = {
     return true;
   },
 
-  async getUpcoming(empId?: number, days: number = 30): Promise<Schedule[]> {
+  async getUpcoming(empId?: number, days: number = 30, branchIds?: number[]): Promise<Schedule[]> {
+    const params: any[] = [];
+    let empClause = '';
+    if (empId) {
+      params.push(empId);
+      empClause = `AND s.emp_id = $${params.length}`;
+    }
+    let branchClause = '';
+    if (branchIds && branchIds.length > 0) {
+      params.push(branchIds);
+      branchClause = `AND s.branch_id = ANY($${params.length})`;
+    }
+
     const sql = `
-      SELECT 
+      SELECT
         s.*,
         e.full_name as employee_name
       FROM ims.employee_schedule s
@@ -181,10 +194,11 @@ export const schedulesService = {
       WHERE s.start_date >= CURRENT_DATE
         AND s.start_date <= CURRENT_DATE + INTERVAL '${days} days'
         AND s.status IN ('pending', 'approved')
-        ${empId ? 'AND s.emp_id = $1' : ''}
+        ${empClause}
+        ${branchClause}
       ORDER BY s.start_date ASC
     `;
 
-    return queryMany<Schedule>(sql, empId ? [empId] : []);
+    return queryMany<Schedule>(sql, params);
   },
 };

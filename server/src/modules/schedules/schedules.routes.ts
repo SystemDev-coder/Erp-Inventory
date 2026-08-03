@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middlewares/requireAuth';
-import { loadUserBranches } from '../../middleware/branchAccess.middleware';
 import {
   listSchedules,
   getSchedule,
@@ -13,8 +12,8 @@ import {
 
 const router = Router();
 
-// All routes require authentication and branch loading
-router.use(requireAuth, loadUserBranches);
+// All routes require authentication
+router.use(requireAuth);
 
 // Schedule routes
 router.get('/', listSchedules);

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeftRight,
   BriefcaseBusiness,
+  Building2,
   CircleDollarSign,
   Eye,
   History,
@@ -24,6 +25,7 @@ import {
   SettingsAssetOverview,
   SettingsClosingPeriod,
   SettingsClosingSummary,
+  Branch,
 } from '../../services/settings.service';
 import { systemService, SystemAuditLog } from '../../services/system.service';
 import { useToast } from '../../components/ui/toast/Toast';
@@ -77,7 +79,7 @@ const Settings = () => {
   const modalBtnPrimaryClass =
     'px-4 py-2 rounded-xl bg-primary-600 text-white font-semibold hover:bg-primary-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed';
   const { showToast } = useToast();
-  const { permissions } = useAuth();
+  const { user, permissions } = useAuth();
   const allowRemoteImageUpload = true;
   const logoStorageKey = 'erp.company.logo_img';
   const bannerStorageKey = 'erp.company.banner_img';
@@ -90,6 +92,18 @@ const Settings = () => {
   const [companyDeleting, setCompanyDeleting] = useState(false);
   const [companyDeleteConfirmOpen, setCompanyDeleteConfirmOpen] = useState(false);
   const [companyForm, setCompanyForm] = useState(emptyCompanyForm);
+
+  const canManageBranches = Boolean(user?.is_admin) || permissions.includes('system.branches');
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [branchesDisplayed, setBranchesDisplayed] = useState(false);
+  const [branchesLoading, setBranchesLoading] = useState(false);
+  const [branchModalOpen, setBranchModalOpen] = useState(false);
+  const [branchSaving, setBranchSaving] = useState(false);
+  const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
+  const [branchForm, setBranchForm] = useState({ branchName: '', location: '', isActive: true });
+  const [branchToDelete, setBranchToDelete] = useState<Branch | null>(null);
+  const [branchDeleting, setBranchDeleting] = useState(false);
+  const [branchDeleteConfirmOpen, setBranchDeleteConfirmOpen] = useState(false);
 
   const readFileAsDataUrl = (file: File): Promise<string> =>
     new Promise((resolve, reject) => {
@@ -568,6 +582,86 @@ const Settings = () => {
     setCompanyForm(emptyCompanyForm);
     setCompanyDeleteConfirmOpen(false);
     showToast('success', 'Company Info', 'Deleted');
+  };
+
+  const loadBranches = async () => {
+    setBranchesLoading(true);
+    const res = await settingsService.listBranches();
+    setBranchesLoading(false);
+    if (!res.success || !res.data?.branches) {
+      showToast('error', 'Branches', res.error || 'Failed to load branches');
+      return;
+    }
+    setBranches(res.data.branches);
+  };
+
+  const handleDisplayBranches = async () => {
+    setBranchesDisplayed(true);
+    await loadBranches();
+  };
+
+  const openCreateBranch = () => {
+    setEditingBranch(null);
+    setBranchForm({ branchName: '', location: '', isActive: true });
+    setBranchModalOpen(true);
+  };
+
+  const openEditBranch = (branch: Branch) => {
+    setEditingBranch(branch);
+    setBranchForm({
+      branchName: branch.branch_name || '',
+      location: branch.location || '',
+      isActive: branch.is_active,
+    });
+    setBranchModalOpen(true);
+  };
+
+  const handleBranchSave = async () => {
+    const branchName = branchForm.branchName.trim();
+    if (!branchName) {
+      showToast('error', 'Branches', 'Branch name is required');
+      return;
+    }
+    setBranchSaving(true);
+    const res = editingBranch
+      ? await settingsService.updateBranch(editingBranch.branch_id, {
+          branchName,
+          location: branchForm.location.trim() || undefined,
+          isActive: branchForm.isActive,
+        })
+      : await settingsService.createBranch({
+          branchName,
+          location: branchForm.location.trim() || undefined,
+          isActive: branchForm.isActive,
+        });
+    setBranchSaving(false);
+    if (!res.success) {
+      showToast('error', 'Branches', res.error || 'Save failed');
+      return;
+    }
+    setBranchModalOpen(false);
+    showToast('success', 'Branches', editingBranch ? 'Branch updated' : 'Branch created');
+    await loadBranches();
+  };
+
+  const requestDeleteBranch = (branch: Branch) => {
+    setBranchToDelete(branch);
+    setBranchDeleteConfirmOpen(true);
+  };
+
+  const handleBranchDelete = async () => {
+    if (!branchToDelete) return;
+    setBranchDeleting(true);
+    const res = await settingsService.deleteBranch(branchToDelete.branch_id);
+    setBranchDeleting(false);
+    if (!res.success) {
+      showToast('error', 'Branches', res.error || 'Delete failed');
+      return;
+    }
+    setBranchToDelete(null);
+    setBranchDeleteConfirmOpen(false);
+    showToast('success', 'Branches', 'Branch deleted');
+    await loadBranches();
   };
 
   const openCreateCapital = () => {
@@ -1337,6 +1431,125 @@ const Settings = () => {
         cancelText="Cancel"
         variant="danger"
         isLoading={companyDeleting}
+      />
+    </div>
+  );
+
+  const branchesContent = (
+    <div className="bg-white border border-black rounded-xl p-6 space-y-4 text-black">
+      <div className="flex items-center justify-between">
+        <h3 className="text-base font-semibold">Branches</h3>
+        <div className="flex gap-2">
+          <button
+            onClick={handleDisplayBranches}
+            className="px-3 py-2 rounded border border-black bg-white text-black text-sm"
+            disabled={branchesLoading}
+          >
+            {branchesLoading ? 'Loading...' : 'Display'}
+          </button>
+          <button
+            onClick={openCreateBranch}
+            className="px-3 py-2 rounded border border-black bg-black text-white text-sm inline-flex items-center gap-2"
+          >
+            <Plus className="w-4 h-4" /> Add Branch
+          </button>
+        </div>
+      </div>
+
+      {!branchesDisplayed ? (
+        <p className="text-sm">Click Display to load branches.</p>
+      ) : branches.length === 0 ? (
+        <p className="text-sm">No branches yet.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="text-left border-b border-black">
+                <th className="py-2 pr-4">Name</th>
+                <th className="py-2 pr-4">Location</th>
+                <th className="py-2 pr-4">Status</th>
+                <th className="py-2 pr-4">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {branches.map((branch) => (
+                <tr key={branch.branch_id} className="border-b border-black/10">
+                  <td className="py-2 pr-4">{branch.branch_name}</td>
+                  <td className="py-2 pr-4">{branch.location || '-'}</td>
+                  <td className="py-2 pr-4">{branch.is_active ? 'Active' : 'Inactive'}</td>
+                  <td className="py-2 pr-4">
+                    <div className="flex gap-2">
+                      <button onClick={() => openEditBranch(branch)} className="px-2 py-1 rounded border border-black inline-flex items-center gap-1">
+                        <Pencil className="w-3.5 h-3.5" /> Edit
+                      </button>
+                      <button
+                        onClick={() => requestDeleteBranch(branch)}
+                        className="px-2 py-1 rounded border border-black inline-flex items-center gap-1"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <Modal isOpen={branchModalOpen} onClose={() => setBranchModalOpen(false)} title={`${editingBranch ? 'Edit' : 'Add'} Branch`} size="md">
+        <div className="grid grid-cols-1 gap-4">
+          <label className="text-sm font-medium flex flex-col gap-1">
+            Branch Name
+            <input
+              className="rounded border border-black px-3 py-2"
+              value={branchForm.branchName}
+              onChange={(e) => setBranchForm({ ...branchForm, branchName: e.target.value })}
+              placeholder="e.g. Main Branch"
+            />
+          </label>
+          <label className="text-sm font-medium flex flex-col gap-1">
+            Location
+            <input
+              className="rounded border border-black px-3 py-2"
+              value={branchForm.location}
+              onChange={(e) => setBranchForm({ ...branchForm, location: e.target.value })}
+              placeholder="City / area"
+            />
+          </label>
+          {editingBranch && (
+            <label className="text-sm font-medium flex flex-col gap-1">
+              Status
+              <select
+                className="rounded border border-black px-3 py-2"
+                value={branchForm.isActive ? 'active' : 'inactive'}
+                onChange={(e) => setBranchForm({ ...branchForm, isActive: e.target.value === 'active' })}
+              >
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </label>
+          )}
+        </div>
+        <div className="flex justify-end gap-2 pt-4">
+          <button className="px-4 py-2 rounded border border-black" onClick={() => setBranchModalOpen(false)}>Cancel</button>
+          <button className="px-4 py-2 rounded border border-black bg-black text-white" onClick={handleBranchSave} disabled={branchSaving}>
+            {branchSaving ? 'Saving...' : editingBranch ? 'Update' : 'Save'}
+          </button>
+        </div>
+      </Modal>
+
+      <ConfirmDialog
+        isOpen={branchDeleteConfirmOpen}
+        onClose={() => setBranchDeleteConfirmOpen(false)}
+        onConfirm={handleBranchDelete}
+        title="Delete Branch?"
+        highlightedName={branchToDelete?.branch_name || undefined}
+        message="This action will permanently remove this branch."
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="danger"
+        isLoading={branchDeleting}
       />
     </div>
   );
@@ -2892,6 +3105,9 @@ const Settings = () => {
       { id: 'closing-period', label: 'Closing Period', icon: CircleDollarSign, content: closingContent },
       { id: 'profit-sharing', label: 'Profit Sharing', icon: Percent, content: profitContent },
     ];
+    if (canManageBranches) {
+      result.splice(1, 0, { id: 'branches', label: 'Branches', icon: Building2, content: branchesContent });
+    }
     if (canManageAssets) {
       result.splice(2, 0, { id: 'assets', label: 'Assets', icon: BriefcaseBusiness, content: assetsContent });
     }
@@ -2901,7 +3117,9 @@ const Settings = () => {
     return result;
   }, [
     permissions,
+    canManageBranches,
     companyContent,
+    branchesContent,
     assetsContent,
     capitalContent,
     cleanupContent,

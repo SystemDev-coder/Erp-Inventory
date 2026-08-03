@@ -102,7 +102,7 @@ export class DashboardService {
   }
 
   async getDashboardCardDrilldown(
-    branchId: number,
+    branchIds: number[],
     permissions: string[],
     cardId: string
   ): Promise<DashboardCardDrilldown> {
@@ -135,16 +135,16 @@ export class DashboardService {
                 NULLIF(${phoneCol}, '')::text AS phone,
                 ${createdCol}::text AS created_at
            FROM ims.customers
-          WHERE branch_id = $1
+          WHERE branch_id = ANY($1)
           ORDER BY customer_id DESC
           LIMIT 500`,
-        [branchId]
+        [branchIds]
       );
       const totalRow = await queryOne<{ total: string }>(
         `SELECT COUNT(*)::text AS total
            FROM ims.customers
-          WHERE branch_id = $1`,
-        [branchId]
+          WHERE branch_id = ANY($1)`,
+        [branchIds]
       );
       return { cardId, title: 'Total Customers', format: 'number', total: Number(totalRow?.total || 0), rows };
     }
@@ -170,18 +170,18 @@ export class DashboardService {
                 ${hasPosition ? `NULLIF(${positionCol}, '')::text` : `NULL::text`} AS position,
                 COALESCE(status::text, '')::text AS status
            FROM ims.employees
-          WHERE branch_id = $1
+          WHERE branch_id = ANY($1)
             AND status = 'active'
           ORDER BY ${idCol} DESC
           LIMIT 500`,
-        [branchId]
+        [branchIds]
       );
       const totalRow = await queryOne<{ total: string }>(
         `SELECT COUNT(*)::text AS total
            FROM ims.employees
-          WHERE branch_id = $1
+          WHERE branch_id = ANY($1)
             AND status = 'active'`,
-        [branchId]
+        [branchIds]
       );
       return { cardId, title: 'Total Employees', format: 'number', total: Number(totalRow?.total || 0), rows };
     }
@@ -202,18 +202,18 @@ export class DashboardService {
                 ${priceCol}::text AS sale_price,
                 COALESCE(is_active, TRUE) AS is_active
            FROM ims.items
-          WHERE branch_id = $1
+          WHERE branch_id = ANY($1)
             AND is_active = TRUE
           ORDER BY item_id DESC
           LIMIT 500`,
-        [branchId]
+        [branchIds]
       );
       const totalRow = await queryOne<{ total: string }>(
         `SELECT COUNT(*)::text AS total
            FROM ims.items
-          WHERE branch_id = $1
+          WHERE branch_id = ANY($1)
             AND is_active = TRUE`,
-        [branchId]
+        [branchIds]
       );
       return { cardId, title: 'Total Products', format: 'number', total: Number(totalRow?.total || 0), rows };
     }
@@ -252,7 +252,7 @@ export class DashboardService {
            ) st
              ON st.item_id = i.item_id
             AND st.branch_id = i.branch_id
-          WHERE i.branch_id = $1
+          WHERE i.branch_id = ANY($1)
             AND i.is_active = TRUE
          )
          SELECT item_id,
@@ -262,7 +262,7 @@ export class DashboardService {
            FROM item_stock
           ${cardId === 'low-stock-alert' ? 'WHERE quantity <= stock_alert' : ''}
           ORDER BY item_name`,
-        [branchId]
+        [branchIds]
       );
 
       const total = rows.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
@@ -293,7 +293,7 @@ export class DashboardService {
                 COALESCE(s.status::text, '')::text AS status
               FROM ims.sales s
               LEFT JOIN ims.customers c ON c.customer_id = s.customer_id AND c.branch_id = s.branch_id
-             WHERE s.branch_id = $1
+             WHERE s.branch_id = ANY($1)
                AND s.status <> 'void'
                AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
             UNION ALL
@@ -311,7 +311,7 @@ export class DashboardService {
                 COALESCE(NULLIF(to_jsonb(sr) ->> 'status', ''), 'posted')::text AS status
               FROM ims.sales_returns sr
               LEFT JOIN ims.customers c ON c.customer_id = sr.customer_id AND c.branch_id = sr.branch_id
-             WHERE sr.branch_id = $1
+             WHERE sr.branch_id = ANY($1)
             ORDER BY sale_id ASC`
           : `SELECT
                 s.sale_id,
@@ -322,7 +322,7 @@ export class DashboardService {
                 COALESCE(s.status::text, '')::text AS status
               FROM ims.sales s
               LEFT JOIN ims.customers c ON c.customer_id = s.customer_id AND c.branch_id = s.branch_id
-             WHERE s.branch_id = $1
+             WHERE s.branch_id = ANY($1)
                AND s.status <> 'void'
                AND ${predicate}
                AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
@@ -335,7 +335,7 @@ export class DashboardService {
         customer_name: string;
         total: string;
         status: string;
-      }>(salesSql, [branchId]);
+      }>(salesSql, [branchIds]);
       const total = rows.reduce((sum, row) => sum + Number(row.total || 0), 0);
       return {
         cardId,
@@ -386,7 +386,7 @@ export class DashboardService {
           JOIN ims.expense_charges ec ON ec.charge_id = ep.exp_ch_id AND ec.branch_id = ep.branch_id
           LEFT JOIN ims.expenses ex ON ex.exp_id = ec.exp_id AND ex.branch_id = ec.branch_id
           LEFT JOIN ims.accounts a ON a.acc_id = ep.acc_id AND a.branch_id = ep.branch_id
-         WHERE ep.branch_id = $1
+         WHERE ep.branch_id = ANY($1)
            AND ${datePredicate.replace(/p\./g, 'ep.')}
         UNION ALL
           SELECT
@@ -400,10 +400,10 @@ export class DashboardService {
           FROM ims.employee_payments emp
           LEFT JOIN ims.employees e ON e.${employeeIdCol} = emp.${employeePaymentEmpIdCol} AND e.branch_id = emp.branch_id
           LEFT JOIN ims.accounts a ON a.acc_id = emp.acc_id AND a.branch_id = emp.branch_id
-         WHERE emp.branch_id = $1
+         WHERE emp.branch_id = ANY($1)
            AND ${datePredicate.replace(/p\./g, 'emp.')}
          ORDER BY pay_date DESC`,
-        [branchId]
+        [branchIds]
       );
 
       const total = rows.reduce((sum, row) => sum + Number(row.amount_paid || 0), 0);
@@ -420,7 +420,7 @@ export class DashboardService {
   }
 
   async getDashboardCards(
-    branchId: number,
+    branchIds: number[],
     permissions: string[]
   ): Promise<DashboardCard[]> {
     if (!permissions.includes('dashboard.view') && !permissions.includes('home.view')) {
@@ -461,13 +461,13 @@ export class DashboardService {
            ) st
              ON st.item_id = i.item_id
             AND st.branch_id = i.branch_id
-          WHERE i.branch_id = $1
+          WHERE i.branch_id = ANY($1)
             AND i.is_active = TRUE
          )
          SELECT COUNT(*)::text AS count
            FROM item_stock
           WHERE quantity <= stock_alert`,
-        [branchId]
+        [branchIds]
       );
     };
 
@@ -492,12 +492,12 @@ export class DashboardService {
            ) st
              ON st.item_id = i.item_id
             AND st.branch_id = i.branch_id
-          WHERE i.branch_id = $1
+          WHERE i.branch_id = ANY($1)
             AND i.is_active = TRUE
          )
          SELECT COALESCE(SUM(quantity), 0)::text AS total
            FROM item_stock`,
-        [branchId]
+        [branchIds]
       );
     };
 
@@ -515,82 +515,82 @@ export class DashboardService {
         ? queryOne<{ count: string }>(
             `SELECT COUNT(*)::text AS count
                FROM ims.customers
-              WHERE branch_id = $1`,
-            [branchId]
+              WHERE branch_id = ANY($1)`,
+            [branchIds]
           )
         : Promise.resolve(null),
       canViewEmployees
         ? queryOne<{ count: string }>(
             `SELECT COUNT(*)::text AS count
                FROM ims.employees
-              WHERE branch_id = $1
+              WHERE branch_id = ANY($1)
                 AND status = 'active'`,
-            [branchId]
+            [branchIds]
           )
         : Promise.resolve(null),
       canViewProducts
         ? queryOne<{ count: string }>(
             `SELECT COUNT(*)::text AS count
                FROM ims.items
-              WHERE branch_id = $1
+              WHERE branch_id = ANY($1)
                 AND is_active = TRUE`,
-            [branchId]
+            [branchIds]
           )
         : Promise.resolve(null),
       canViewSales
         ? queryOne<{ total: string }>(
             `SELECT COALESCE(SUM(s.total), 0)::text AS total
                FROM ims.sales s
-              WHERE s.branch_id = $1
+              WHERE s.branch_id = ANY($1)
                 AND s.status <> 'void'
                 AND s.sale_date::date = CURRENT_DATE
                 AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'`,
-            [branchId]
+            [branchIds]
           )
         : Promise.resolve(null),
       canViewSales
         ? queryOne<{ total: string }>(
             `SELECT COALESCE(SUM(s.total), 0)::text AS total
                FROM ims.sales s
-              WHERE s.branch_id = $1
+              WHERE s.branch_id = ANY($1)
                 AND s.status <> 'void'
                 AND s.sale_date >= date_trunc('month', CURRENT_DATE)
                 AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'`,
-            [branchId]
+            [branchIds]
           )
         : Promise.resolve(null),
       canViewPayments
         ? queryOne<{ total: string }>(
             `SELECT (
-                COALESCE((SELECT SUM(ep.amount_paid) FROM ims.expense_payments ep WHERE ep.branch_id = $1 AND ep.pay_date::date = CURRENT_DATE), 0)
+                COALESCE((SELECT SUM(ep.amount_paid) FROM ims.expense_payments ep WHERE ep.branch_id = ANY($1) AND ep.pay_date::date = CURRENT_DATE), 0)
                 +
-                COALESCE((SELECT SUM(emp.amount_paid) FROM ims.employee_payments emp WHERE emp.branch_id = $1 AND emp.pay_date::date = CURRENT_DATE), 0)
+                COALESCE((SELECT SUM(emp.amount_paid) FROM ims.employee_payments emp WHERE emp.branch_id = ANY($1) AND emp.pay_date::date = CURRENT_DATE), 0)
               )::text AS total`,
-            [branchId]
+            [branchIds]
           )
         : Promise.resolve(null),
       canViewPayments
         ? queryOne<{ total: string }>(
             `SELECT (
-                COALESCE((SELECT SUM(ep.amount_paid) FROM ims.expense_payments ep WHERE ep.branch_id = $1 AND ep.pay_date >= date_trunc('month', CURRENT_DATE)), 0)
+                COALESCE((SELECT SUM(ep.amount_paid) FROM ims.expense_payments ep WHERE ep.branch_id = ANY($1) AND ep.pay_date >= date_trunc('month', CURRENT_DATE)), 0)
                 +
-                COALESCE((SELECT SUM(emp.amount_paid) FROM ims.employee_payments emp WHERE emp.branch_id = $1 AND emp.pay_date >= date_trunc('month', CURRENT_DATE)), 0)
+                COALESCE((SELECT SUM(emp.amount_paid) FROM ims.employee_payments emp WHERE emp.branch_id = ANY($1) AND emp.pay_date >= date_trunc('month', CURRENT_DATE)), 0)
               )::text AS total`,
-            [branchId]
+            [branchIds]
           )
         : Promise.resolve(null),
       canViewSales
         ? queryOne<{ total: string }>(
             `SELECT (
                 COALESCE((SELECT SUM(s.total) FROM ims.sales s
-                          WHERE s.branch_id = $1
+                          WHERE s.branch_id = ANY($1)
                             AND s.status <> 'void'
                             AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'), 0)
                 -
                 COALESCE((SELECT SUM(sr.total) FROM ims.sales_returns sr
-                          WHERE sr.branch_id = $1), 0)
+                          WHERE sr.branch_id = ANY($1)), 0)
               )::text AS total`,
-            [branchId]
+            [branchIds]
           )
         : Promise.resolve(null),
     ]);
@@ -713,7 +713,7 @@ export class DashboardService {
   }
 
   async getLowStockItems(
-    branchId: number,
+    branchIds: number[],
     permissions: string[]
   ): Promise<DashboardLowStockItem[]> {
     if (!hasPermission(permissions, 'stock.view')) {
@@ -751,7 +751,7 @@ export class DashboardService {
          ) st
            ON st.item_id = i.item_id
           AND st.branch_id = i.branch_id
-        WHERE i.branch_id = $1
+        WHERE i.branch_id = ANY($1)
           AND i.is_active = TRUE
        )
        SELECT
@@ -763,7 +763,7 @@ export class DashboardService {
        WHERE quantity <= stock_alert
        ORDER BY (stock_alert - quantity) DESC, item_name ASC
        LIMIT 12`,
-      [branchId]
+      [branchIds]
     );
 
     return rows.map((row) => {
@@ -780,7 +780,7 @@ export class DashboardService {
   }
 
   async getDashboardCharts(
-    branchId: number,
+    branchIds: number[],
     permissions: string[]
   ): Promise<DashboardChart[]> {
     const charts: DashboardChart[] = [];
@@ -798,7 +798,7 @@ export class DashboardService {
            SELECT date_trunc('month', s.sale_date) AS month_start,
                   COALESCE(SUM(s.total), 0) AS total
              FROM ims.sales s
-            WHERE s.branch_id = $1
+            WHERE s.branch_id = ANY($1)
               AND s.status <> 'void'
               AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
             GROUP BY date_trunc('month', s.sale_date)
@@ -808,7 +808,7 @@ export class DashboardService {
            FROM months m
            LEFT JOIN sales s ON s.month_start = m.month_start
           ORDER BY m.month_start`,
-        [branchId]
+        [branchIds]
       );
 
       const labels6m = rows6m.map((row) => row.label);
@@ -834,7 +834,7 @@ export class DashboardService {
            SELECT date_trunc('month', s.sale_date) AS month_start,
                   COALESCE(SUM(s.total), 0) AS income
              FROM ims.sales s
-            WHERE s.branch_id = $1
+            WHERE s.branch_id = ANY($1)
               AND s.status <> 'void'
               AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
             GROUP BY date_trunc('month', s.sale_date)
@@ -844,7 +844,7 @@ export class DashboardService {
            FROM months m
            LEFT JOIN sales s ON s.month_start = m.month_start
           ORDER BY m.month_start`,
-        [branchId]
+        [branchIds]
       );
 
       const labels12m = rows12m.map((row) => row.label);
@@ -863,7 +863,7 @@ export class DashboardService {
   }
 
   async getRecentActivity(
-    branchId: number,
+    branchIds: number[],
     permissions: string[]
   ): Promise<DashboardRecentRow[]> {
     const rows: DashboardRecentRow[] = [];
@@ -877,11 +877,11 @@ export class DashboardService {
       }>(
         `SELECT s.sale_id, s.total::text, s.sale_date::text, s.status::text
            FROM ims.sales s
-          WHERE s.branch_id = $1
+          WHERE s.branch_id = ANY($1)
             AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
           ORDER BY s.sale_date DESC
           LIMIT 5`,
-        [branchId]
+        [branchIds]
       );
 
       sales.forEach((sale) => {
@@ -905,10 +905,10 @@ export class DashboardService {
       }>(
         `SELECT purchase_id, total::text, purchase_date::text, status::text
            FROM ims.purchases
-          WHERE branch_id = $1
+          WHERE branch_id = ANY($1)
           ORDER BY purchase_date DESC
           LIMIT 5`,
-        [branchId]
+        [branchIds]
       );
 
       purchases.forEach((purchase) => {

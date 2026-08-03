@@ -11,6 +11,7 @@ import {
 export interface UserRow {
   user_id: number;
   branch_id: number;
+  branch_ids: number[];
   role_id: number;
   name: string;
   username: string;
@@ -67,11 +68,27 @@ const ensureBranch = async (branchId?: number): Promise<number> => {
   return Number(fallback.branch_id);
 };
 
+const validateBranchIds = async (branchIds: number[]): Promise<number[]> => {
+  const unique = Array.from(new Set(branchIds));
+  const rows = await queryMany<{ branch_id: number }>(
+    `SELECT branch_id
+       FROM ims.branches
+      WHERE branch_id = ANY($1)
+        AND is_active = TRUE`,
+    [unique]
+  );
+  if (rows.length !== unique.length) {
+    throw ApiError.badRequest('One or more selected branches are invalid or inactive');
+  }
+  return unique;
+};
+
 const getUserRow = async (id: number): Promise<UserRow | null> =>
   queryOne<UserRow>(
     `SELECT
         u.user_id,
         COALESCE(ub.branch_id, 0) AS branch_id,
+        COALESCE(ubs.branch_ids, '{}') AS branch_ids,
         u.role_id,
         u.name,
         u.username,
@@ -89,6 +106,11 @@ const getUserRow = async (id: number): Promise<UserRow | null> =>
         ORDER BY is_default DESC, branch_id
         LIMIT 1
      ) ub ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT array_agg(branch_id ORDER BY is_default DESC, branch_id) AS branch_ids
+         FROM ims.user_branches
+        WHERE user_id = u.user_id
+     ) ubs ON TRUE
      LEFT JOIN ims.employees e ON e.user_id = u.user_id
      WHERE u.user_id = $1`,
     [id]
@@ -100,6 +122,7 @@ export const usersService = {
       `SELECT
           u.user_id,
           COALESCE(ub.branch_id, 0) AS branch_id,
+          COALESCE(ubs.branch_ids, '{}') AS branch_ids,
           u.role_id,
           u.name,
           u.username,
@@ -117,6 +140,11 @@ export const usersService = {
           ORDER BY is_default DESC, branch_id
           LIMIT 1
        ) ub ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT array_agg(branch_id ORDER BY is_default DESC, branch_id) AS branch_ids
+           FROM ims.user_branches
+          WHERE user_id = u.user_id
+       ) ubs ON TRUE
        LEFT JOIN ims.employees e ON e.user_id = u.user_id
        -- UPDATED: Hide internal developer account from Users UI list.
        WHERE LOWER(u.username) <> 'madal'
@@ -147,7 +175,7 @@ export const usersService = {
     }
 
     const roleId = await ensureRole(input.roleId);
-    const branchId = await ensureBranch(input.branchId);
+    const branchIds = await validateBranchIds(input.branchIds);
     const passwordHash = await hashPassword(input.password);
 
     const createdId = await withTransaction(async (client) => {
@@ -159,13 +187,15 @@ export const usersService = {
       );
       const userId = Number(inserted.rows[0].user_id);
 
-      await client.query(
-        `INSERT INTO ims.user_branches (user_id, branch_id, is_default)
-         VALUES ($1, $2, TRUE)
-         ON CONFLICT (user_id, branch_id)
-         DO UPDATE SET is_default = TRUE`,
-        [userId, branchId]
-      );
+      for (let i = 0; i < branchIds.length; i++) {
+        await client.query(
+          `INSERT INTO ims.user_branches (user_id, branch_id, is_default)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (user_id, branch_id)
+           DO UPDATE SET is_default = $3`,
+          [userId, branchIds[i], i === 0]
+        );
+      }
 
       return userId;
     });
@@ -232,21 +262,23 @@ export const usersService = {
         );
       }
 
-      if (input.branchId !== undefined) {
-        const branchId = await ensureBranch(input.branchId);
+      if (input.branchIds !== undefined) {
+        const branchIds = await validateBranchIds(input.branchIds);
         await client.query(
-          `UPDATE ims.user_branches
-              SET is_default = FALSE
-            WHERE user_id = $1`,
-          [id]
+          `DELETE FROM ims.user_branches
+            WHERE user_id = $1
+              AND branch_id <> ALL($2)`,
+          [id, branchIds]
         );
-        await client.query(
-          `INSERT INTO ims.user_branches (user_id, branch_id, is_default)
-           VALUES ($1, $2, TRUE)
-           ON CONFLICT (user_id, branch_id)
-           DO UPDATE SET is_default = TRUE`,
-          [id, branchId]
-        );
+        for (let i = 0; i < branchIds.length; i++) {
+          await client.query(
+            `INSERT INTO ims.user_branches (user_id, branch_id, is_default)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (user_id, branch_id)
+             DO UPDATE SET is_default = $3`,
+            [id, branchIds[i], i === 0]
+          );
+        }
       }
     });
 

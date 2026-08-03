@@ -98,7 +98,7 @@ export interface PurchasePriceVarianceRow {
   purchase_lines: number;
 }
 
-interface PurchaseOptionsResponse {
+export interface PurchaseOptionsResponse {
   branchId: number;
   suppliers: ReportOption[];
   products: ReportOption[];

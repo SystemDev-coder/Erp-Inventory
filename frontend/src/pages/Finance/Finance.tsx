@@ -23,10 +23,12 @@ import {
 import { Modal } from '../../components/ui/modal/Modal';
 import DeleteConfirmModal from '../../components/ui/modal/DeleteConfirmModal';
 import { defaultDateRange } from '../../utils/dateRange';
+import { useBranch } from '../../context/BranchContext';
 
 const Finance = () => {
   const location = useLocation();
   const { showToast } = useToast();
+  const { activeBranchId } = useBranch();
 
   const currentMonth = () => {
     const d = new Date();
@@ -583,16 +585,16 @@ const [deletingBudget, setDeletingBudget] = useState(false);
   const loadAll = async () => {
     setLoading(true);
     const [acc, tr, cr, sr, oi, ch, bd, ex, unpaidC, unpaidS, pr] = await Promise.all([
-      accountService.list(),
-      financeService.listTransfers({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
-      financeService.listCustomerReceipts({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
-      financeService.listSupplierReceipts({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
-      financeService.listOtherIncome({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
-      financeService.listExpenseCharges({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
-      financeService.listExpenseBudgets({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
-      financeService.listExpenses({ fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
-      financeService.listCustomerUnpaid(custMonthOnly ? currentMonth() : undefined),
-      financeService.listSupplierUnpaid(supMonthOnly ? currentMonth() : undefined),
+      accountService.list({ branchId: activeBranchId ?? undefined }),
+      financeService.listTransfers({ fromDate: dateRange.fromDate, toDate: dateRange.toDate, branchId: activeBranchId ?? undefined }),
+      financeService.listCustomerReceipts({ fromDate: dateRange.fromDate, toDate: dateRange.toDate, branchId: activeBranchId ?? undefined }),
+      financeService.listSupplierReceipts({ fromDate: dateRange.fromDate, toDate: dateRange.toDate, branchId: activeBranchId ?? undefined }),
+      financeService.listOtherIncome({ fromDate: dateRange.fromDate, toDate: dateRange.toDate, branchId: activeBranchId ?? undefined }),
+      financeService.listExpenseCharges({ fromDate: dateRange.fromDate, toDate: dateRange.toDate, branchId: activeBranchId ?? undefined }),
+      financeService.listExpenseBudgets({ fromDate: dateRange.fromDate, toDate: dateRange.toDate, branchId: activeBranchId ?? undefined }),
+      financeService.listExpenses({ fromDate: dateRange.fromDate, toDate: dateRange.toDate, branchId: activeBranchId ?? undefined }),
+      financeService.listCustomerUnpaid(custMonthOnly ? currentMonth() : undefined, activeBranchId ?? undefined),
+      financeService.listSupplierUnpaid(supMonthOnly ? currentMonth() : undefined, activeBranchId ?? undefined),
       financeService.listPayroll({ period: payrollPeriod, fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
     ]);
     if (acc.success && acc.data?.accounts) setAccounts(acc.data.accounts);
@@ -626,6 +628,11 @@ const [deletingBudget, setDeletingBudget] = useState(false);
       void loadAll();
     }
   };
+
+  useEffect(() => {
+    if (financeDisplayed) void loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBranchId]);
 
   const emptyHint = (message: string) => (
     <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">

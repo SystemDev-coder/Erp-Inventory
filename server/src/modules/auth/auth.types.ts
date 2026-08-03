@@ -18,6 +18,7 @@ export interface UserProfile {
   branch_id: number;
   branch_name: string;
   is_active: boolean;
+  is_admin: boolean;
 }
 
 export interface UserWithPermissions {

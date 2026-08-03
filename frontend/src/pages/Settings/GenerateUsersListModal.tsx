@@ -5,6 +5,7 @@ import { employeeService, Employee } from '../../services/employee.service';
 import { userService } from '../../services/user.service';
 import { useToast } from '../../components/ui/toast/Toast';
 import Badge from '../../components/ui/badge/Badge';
+import { useBranch } from '../../context/BranchContext';
 
 interface Props {
   isOpen: boolean;
@@ -21,6 +22,7 @@ interface EmployeeWithCredentials extends Employee {
 
 const GenerateUsersListModal = ({ isOpen, onClose, onSuccess }: Props) => {
   const { showToast } = useToast();
+  const { activeBranchId } = useBranch();
   const [employees, setEmployees] = useState<EmployeeWithCredentials[]>([]);
   const [loading, setLoading] = useState(false);
   const [showPasswords, setShowPasswords] = useState<Record<number, boolean>>({});
@@ -29,12 +31,13 @@ const GenerateUsersListModal = ({ isOpen, onClose, onSuccess }: Props) => {
     if (isOpen) {
       fetchEmployees();
     }
-  }, [isOpen]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, activeBranchId]);
 
   const fetchEmployees = async () => {
     setLoading(true);
     try {
-      const response = await employeeService.list({ status: 'active' });
+      const response = await employeeService.list({ status: 'active', branchId: activeBranchId ?? undefined });
       if (response.success && response.data?.employees) {
         const employeesWithCreds: EmployeeWithCredentials[] = response.data.employees.map(emp => ({
           ...emp,

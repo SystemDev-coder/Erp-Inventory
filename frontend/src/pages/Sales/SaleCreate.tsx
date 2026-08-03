@@ -1,6 +1,6 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router';
-import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, AlertCircle } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
 import { useToast } from '../../components/ui/toast/Toast';
 import { accountService, Account } from '../../services/account.service';
@@ -9,12 +9,22 @@ import { inventoryService, InventoryItem } from '../../services/inventory.servic
 import { SaleDocType, SaleStatus, salesService } from '../../services/sales.service';
 import { formatAvailableQty, itemLabelWithAvailability } from '../../utils/itemAvailability';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
+import { useBranch } from '../../context/BranchContext';
 
 type FormLine = {
   item_id: number | '';
   quantity: number;
   unit_price: number;
   available_qty?: number;
+};
+
+type FormErrors = {
+  customer?: string;
+  quoteValidUntil?: string;
+  items?: string;
+  account?: string;
+  paidAmount?: string;
+  stock?: string;
 };
 
 const todayString = () => new Date().toISOString().slice(0, 10);
@@ -35,6 +45,7 @@ const SaleCreate = () => {
   const { showToast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
+  const { activeBranchId } = useBranch();
   const { id } = useParams<{ id: string }>();
   const editId = Number(id || 0) || null;
   const isEditing = Boolean(editId);
@@ -49,16 +60,41 @@ const SaleCreate = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [itemOptions, setItemOptions] = useState<SaleItemOption[]>([]);
-  // Manual tax: user enters percent directly, no dropdown
   const [isDebt, setIsDebt] = useState(false);
+  const [formErrors, setFormErrors] = useState<FormErrors>({});
 
-  const controlCls =
-    'h-12 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100';
+  // ── CSS helpers ───────────────────────────────────────────────────────────
+  const baseCls =
+    'h-12 w-full rounded-lg border bg-white px-3 text-sm text-slate-900 shadow-sm outline-none transition-all focus:ring-2 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-slate-900 dark:text-slate-100';
+  const okBorder = 'border-slate-300 dark:border-slate-700 focus:border-primary-500 focus:ring-primary-500/20';
+  const errBorder = 'border-red-400 dark:border-red-500 focus:border-red-500 focus:ring-red-500/20';
+
+  const controlCls = `${baseCls} ${okBorder}`;
   const controlReadonlyCls =
     'h-12 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 text-sm text-slate-700 shadow-sm outline-none disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200';
   const textareaCls =
     'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100';
 
+  const fieldCls = (field: keyof FormErrors) =>
+    `${baseCls} ${formErrors[field] ? errBorder : okBorder}`;
+
+  const clearError = (field: keyof FormErrors) =>
+    setFormErrors((prev) => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+
+  const FieldError = ({ field }: { field: keyof FormErrors }) =>
+    formErrors[field] ? (
+      <p className="mt-1 flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400">
+        <AlertCircle className="h-3 w-3 shrink-0" />
+        {formErrors[field]}
+      </p>
+    ) : null;
+
+  // ── Form state ────────────────────────────────────────────────────────────
   const [saleForm, setSaleForm] = useState({
     customer_id: '' as number | '',
     doc_type: docTypeFromQuery as SaleDocType,
@@ -91,10 +127,10 @@ const SaleCreate = () => {
     const loadLookups = async () => {
       setLoading(true);
       const [cRes, aRes, iRes, stockRes] = await Promise.all([
-        customerService.list(),
-        accountService.list(),
-        inventoryService.listItems({}),
-        inventoryService.listStock({ page: 1, limit: 5000 }),
+        customerService.list({ branchId: activeBranchId ?? undefined }),
+        accountService.list({ branchId: activeBranchId ?? undefined }),
+        inventoryService.listItems({ branchId: activeBranchId ?? undefined }),
+        inventoryService.listStock({ page: 1, limit: 5000, branchId: activeBranchId ?? undefined }),
       ]);
 
       if (cRes.success && cRes.data?.customers) setCustomers(cRes.data.customers);
@@ -123,7 +159,8 @@ const SaleCreate = () => {
       setLoading(false);
     };
     void loadLookups();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBranchId]);
 
   useEffect(() => {
     if (!isEditing || !editId) return;
@@ -283,43 +320,65 @@ const SaleCreate = () => {
     };
   };
 
-  const handleSaveSale = async () => {
+  // ── Validation ────────────────────────────────────────────────────────────
+  const validate = (): FormErrors => {
+    const errors: FormErrors = {};
+
     const validItems = saleForm.items.filter((line) => line.item_id && line.quantity > 0);
     if (!validItems.length) {
-      showToast('error', 'Sales', 'Select at least one item with quantity');
-      return;
+      errors.items = 'Add at least one item with a quantity greater than 0.';
     }
 
-    // Customer is optional for cash documents (walking customer).
-    // Require a customer only when we are creating a receivable (credit / unpaid / partial),
-    // excluding quotations (which do not post accounts/stock).
     const requiresCustomer =
-      effectiveDocType !== 'quotation' && effectiveStatus !== 'paid' && effectiveStatus !== 'void';
+      effectiveDocType !== 'quotation' &&
+      effectiveStatus !== 'paid' &&
+      effectiveStatus !== 'void';
     if (requiresCustomer && !saleForm.customer_id) {
-      showToast('error', 'Sales', 'Please select a customer for unpaid/partial documents.');
-      return;
+      errors.customer = 'Customer is required for unpaid or partial documents.';
     }
 
     if (effectiveDocType === 'quotation' && !saleForm.quote_valid_until) {
-      showToast('error', 'Quotation', 'Quote valid until date is required');
-      return;
+      errors.quoteValidUntil = 'Quote valid until date is required.';
     }
 
-    // Quotation does not post stock; allow quoting even if current stock is low.
     if (firstInsufficientLine && effectiveDocType !== 'quotation') {
-      const selected = itemOptions.find((item) => item.item_id === Number(firstInsufficientLine.item_id));
-      const itemLabel = selected?.item_name || `Item ${firstInsufficientLine.item_id}`;
-      showToast(
-        'error',
-        'Sales',
-        `${itemLabel}: requested ${Number(firstInsufficientLine.quantity)} but only ${formatAvailableQty(
-          firstInsufficientAvailableQty
-        )} available`
-      );
+      const label =
+        itemOptions.find((o) => o.item_id === Number(firstInsufficientLine.item_id))?.item_name ||
+        `Item ${firstInsufficientLine.item_id}`;
+      errors.stock = `${label}: requested ${Number(firstInsufficientLine.quantity)}, only ${formatAvailableQty(firstInsufficientAvailableQty)} available.`;
+    }
+
+    if (effectiveDocType !== 'quotation' && shouldShowAccount && !saleForm.acc_id) {
+      errors.account = 'Select an account to receive the payment.';
+    }
+
+    if (
+      effectiveDocType !== 'quotation' &&
+      effectiveStatus === 'partial' &&
+      Number(saleForm.paid_amount || 0) <= 0
+    ) {
+      errors.paidAmount = 'Enter the amount paid for a partial payment.';
+    }
+
+    return errors;
+  };
+
+  const handleSaveSale = async () => {
+    const errors = validate();
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors);
+      // scroll to first error
+      setTimeout(() => {
+        document.querySelector('[data-field-error]')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 50);
       return;
     }
+    setFormErrors({});
+
+    const validItems = saleForm.items.filter((line) => line.item_id && line.quantity > 0);
 
     const payload = {
+      branchId: activeBranchId ?? undefined,
       customerId: saleForm.customer_id || undefined,
       saleDate: saleForm.sale_date,
       docType: effectiveDocType,
@@ -352,11 +411,6 @@ const SaleCreate = () => {
     if (effectiveDocType === 'quotation') {
       setSubmitting(true);
       try {
-        if (!validItems.length) {
-          showToast('error', 'Quotation', 'Please add at least one item.');
-          return;
-        }
-
         const saleRes = isEditing && editId
           ? await salesService.update(editId, payload)
           : await salesService.create(payload);
@@ -374,11 +428,7 @@ const SaleCreate = () => {
         }
 
         printHtmlDocument(printRes.data.html);
-        showToast(
-          'success',
-          'Quotation',
-          isEditing ? 'Quotation updated and printed' : 'Quotation saved and printed'
-        );
+        showToast('success', 'Quotation', isEditing ? 'Quotation updated and printed' : 'Quotation saved and printed');
         navigate('/sales');
       } catch (error) {
         console.error('Quotation save error:', error);
@@ -386,16 +436,6 @@ const SaleCreate = () => {
       } finally {
         setSubmitting(false);
       }
-      return;
-    }
-
-    if (shouldShowAccount && !saleForm.acc_id) {
-      showToast('error', 'Sales', 'Select account for received payment');
-      return;
-    }
-
-    if (effectiveStatus === 'partial' && Number(saleForm.paid_amount || 0) <= 0) {
-      showToast('error', 'Sales', 'Enter paid amount for partial payment');
       return;
     }
 
@@ -413,6 +453,7 @@ const SaleCreate = () => {
     }
   };
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div>
       <PageHeader
@@ -429,15 +470,13 @@ const SaleCreate = () => {
       />
 
       <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+
+        {/* ── Row 1: Doc type / Date / Quote valid until ── */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
             Document Type
             {effectiveDocType === 'quotation' ? (
-              <input
-                className={controlReadonlyCls}
-                value="Quotation"
-                disabled
-              />
+              <input className={controlReadonlyCls} value="Quotation" disabled />
             ) : (
               <select
                 className={controlCls}
@@ -445,10 +484,7 @@ const SaleCreate = () => {
                 onChange={(e) => {
                   const nextDoc = e.target.value as SaleDocType;
                   setIsDebt(false);
-                  setSaleForm((prev) => ({
-                    ...prev,
-                    doc_type: nextDoc,
-                  }));
+                  setSaleForm((prev) => ({ ...prev, doc_type: nextDoc }));
                 }}
                 disabled={loading}
               >
@@ -470,39 +506,52 @@ const SaleCreate = () => {
           </label>
 
           {effectiveDocType === 'quotation' && (
-            <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-              Quote Valid Until
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                Quote Valid Until <span className="text-red-500">*</span>
+              </label>
               <input
                 type="date"
-                className={controlCls}
+                className={fieldCls('quoteValidUntil')}
                 value={saleForm.quote_valid_until}
-                onChange={(e) =>
-                  setSaleForm((prev) => ({ ...prev, quote_valid_until: e.target.value }))
-                }
+                onChange={(e) => {
+                  clearError('quoteValidUntil');
+                  setSaleForm((prev) => ({ ...prev, quote_valid_until: e.target.value }));
+                }}
                 disabled={loading}
               />
-            </label>
+              <FieldError field="quoteValidUntil" />
+            </div>
           )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-	          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-	            Customer
-	            <SearchableCombobox<number>
-	              value={saleForm.customer_id}
-	              options={customers.map((customer) => ({
-	                value: customer.customer_id,
-	                label: customer.full_name,
-	              }))}
-	              placeholder="Walking Customer"
-	              disabled={loading}
-	              onChange={(nextValue) => {
-	                const customerId = nextValue === '' ? '' : Number(nextValue);
-	                setIsDebt(false);
-	                setSaleForm((prev) => ({ ...prev, customer_id: customerId }));
-	              }}
-	            />
-	          </label>
+        {/* ── Row 2: Customer / Status ── */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="flex flex-col gap-1" data-field-error={formErrors.customer ? '' : undefined}>
+            <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
+              Customer
+              {effectiveDocType !== 'quotation' && effectiveStatus !== 'paid' && effectiveStatus !== 'void' && (
+                <span className="text-red-500 ml-0.5">*</span>
+              )}
+            </label>
+            <SearchableCombobox<number>
+              value={saleForm.customer_id}
+              options={customers.map((customer) => ({
+                value: customer.customer_id,
+                label: customer.full_name,
+              }))}
+              placeholder="Walking Customer"
+              disabled={loading}
+              hasError={!!formErrors.customer}
+              onChange={(nextValue) => {
+                clearError('customer');
+                const customerId = nextValue === '' ? '' : Number(nextValue);
+                setIsDebt(false);
+                setSaleForm((prev) => ({ ...prev, customer_id: customerId }));
+              }}
+            />
+            <FieldError field="customer" />
+          </div>
 
           <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
             Status
@@ -510,10 +559,7 @@ const SaleCreate = () => {
               className={controlCls}
               value={effectiveStatus}
               onChange={(e) =>
-                setSaleForm((prev) => ({
-                  ...prev,
-                  status: e.target.value as SaleStatus,
-                }))
+                setSaleForm((prev) => ({ ...prev, status: e.target.value as SaleStatus }))
               }
               disabled={loading || saleForm.doc_type === 'quotation' || effectiveSaleType === 'credit'}
             >
@@ -523,10 +569,10 @@ const SaleCreate = () => {
               <option value="void">Void</option>
             </select>
           </label>
-
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {/* ── Row 3: Sale type / Account ── */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
             Sale Type
             <select
@@ -552,8 +598,10 @@ const SaleCreate = () => {
           </label>
 
           {shouldShowAccount && (
-            <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-              Receive To Account
+            <div className="flex flex-col gap-1" data-field-error={formErrors.account ? '' : undefined}>
+              <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                Receive To Account <span className="text-red-500">*</span>
+              </label>
               <SearchableCombobox<number>
                 value={saleForm.acc_id}
                 options={accounts.map((account) => ({
@@ -562,14 +610,18 @@ const SaleCreate = () => {
                 }))}
                 placeholder="Select account"
                 disabled={loading}
-                onChange={(nextValue) =>
-                  setSaleForm((prev) => ({ ...prev, acc_id: nextValue === '' ? '' : Number(nextValue) }))
-                }
+                hasError={!!formErrors.account}
+                onChange={(nextValue) => {
+                  clearError('account');
+                  setSaleForm((prev) => ({ ...prev, acc_id: nextValue === '' ? '' : Number(nextValue) }));
+                }}
               />
-            </label>
+              <FieldError field="account" />
+            </div>
           )}
         </div>
 
+        {/* ── Debt toggle ── */}
         {saleForm.customer_id && saleForm.doc_type !== 'quotation' && (
           <div className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-300">
             <input
@@ -595,6 +647,7 @@ const SaleCreate = () => {
           </div>
         )}
 
+        {/* ── Note ── */}
         <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
           Note
           <textarea
@@ -605,9 +658,13 @@ const SaleCreate = () => {
           />
         </label>
 
+        {/* ── Items ── */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <span className="font-semibold text-slate-800 dark:text-slate-200">Items</span>
+            <div>
+              <span className="font-semibold text-slate-800 dark:text-slate-200">Items</span>
+              <span className="text-red-500 ml-0.5 text-sm">*</span>
+            </div>
             <button
               type="button"
               onClick={() =>
@@ -622,6 +679,17 @@ const SaleCreate = () => {
             </button>
           </div>
 
+          {/* Items global errors */}
+          {(formErrors.items || formErrors.stock) && (
+            <div
+              data-field-error=""
+              className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400"
+            >
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{formErrors.items || formErrors.stock}</span>
+            </div>
+          )}
+
           <div className="hidden md:grid md:grid-cols-[2fr_1fr_1fr_auto] gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400 px-1">
             <span>Item</span>
             <span className="text-right">Qty</span>
@@ -630,115 +698,122 @@ const SaleCreate = () => {
           </div>
 
           <div className="space-y-2">
-            {saleForm.items.map((line, idx) => (
-              <div
-                key={idx}
-                className="grid grid-cols-1 md:grid-cols-[2fr_1fr_1fr_auto] gap-2 items-start"
-              >
-                <div>
-                  <SearchableCombobox<number>
-                    value={line.item_id}
-                    options={itemOptions.map((item) => ({
-                      value: item.item_id,
-                      label: itemLabelWithAvailability(item.item_name, item.available_qty),
-                    }))}
-                    placeholder="Select item"
-                    disabled={loading}
-                    onChange={(nextValue) => {
-                      const itemId = nextValue === '' ? '' : Number(nextValue);
-                      const option = itemOptions.find((item) => item.item_id === itemId);
-                      const nextItems = [...saleForm.items];
-                      nextItems[idx] = {
-                        ...nextItems[idx],
-                        item_id: itemId,
-                        unit_price: option ? Number(option.unit_price || 0) : nextItems[idx].unit_price,
-                        available_qty: option?.available_qty ?? 0,
-                      };
-                      setSaleForm((prev) => ({ ...prev, items: nextItems }));
-                      recalcTotals(nextItems, saleForm.discount);
-                    }}
-                  />
-                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                    Available Quantity:{' '}
-                    <span className="font-medium text-slate-700 dark:text-slate-200">
-                      {formatAvailableQty(getLineAvailableQty(line))} units
-                    </span>
-                  </p>
-                </div>
+            {saleForm.items.map((line, idx) => {
+              const lineErr =
+                !!line.item_id && Number(line.quantity || 0) > getLineAvailableQty(line);
+              return (
+                <div
+                  key={idx}
+                  className="grid grid-cols-1 md:grid-cols-[2fr_1fr_1fr_auto] gap-2 items-start"
+                >
+                  <div>
+                    <SearchableCombobox<number>
+                      value={line.item_id}
+                      options={itemOptions.map((item) => ({
+                        value: item.item_id,
+                        label: itemLabelWithAvailability(item.item_name, item.available_qty),
+                      }))}
+                      placeholder="Select item"
+                      disabled={loading}
+                      onChange={(nextValue) => {
+                        clearError('items');
+                        clearError('stock');
+                        const itemId = nextValue === '' ? '' : Number(nextValue);
+                        const option = itemOptions.find((item) => item.item_id === itemId);
+                        const nextItems = [...saleForm.items];
+                        nextItems[idx] = {
+                          ...nextItems[idx],
+                          item_id: itemId,
+                          unit_price: option ? Number(option.unit_price || 0) : nextItems[idx].unit_price,
+                          available_qty: option?.available_qty ?? 0,
+                        };
+                        setSaleForm((prev) => ({ ...prev, items: nextItems }));
+                        recalcTotals(nextItems, saleForm.discount);
+                      }}
+                    />
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                      Available:{' '}
+                      <span className="font-medium text-slate-700 dark:text-slate-200">
+                        {formatAvailableQty(getLineAvailableQty(line))} units
+                      </span>
+                    </p>
+                  </div>
 
-                <div>
+                  <div>
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.001}
+                      className={`${lineErr
+                        ? `${baseCls} ${errBorder}`
+                        : controlCls
+                      } text-right`}
+                      value={line.quantity}
+                      onChange={(e) => {
+                        clearError('items');
+                        clearError('stock');
+                        const quantity = Number(e.target.value || 0);
+                        const nextItems = [...saleForm.items];
+                        const selected = itemOptions.find((item) => item.item_id === nextItems[idx].item_id);
+                        nextItems[idx] = {
+                          ...nextItems[idx],
+                          quantity,
+                          unit_price:
+                            nextItems[idx].unit_price > 0
+                              ? nextItems[idx].unit_price
+                              : Number(selected?.unit_price || 0),
+                        };
+                        setSaleForm((prev) => ({ ...prev, items: nextItems }));
+                        recalcTotals(nextItems, saleForm.discount);
+                      }}
+                      disabled={loading}
+                    />
+                    {lineErr && (
+                      <p className="mt-1 flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400">
+                        <AlertCircle className="h-3 w-3 shrink-0" />
+                        Exceeds available stock
+                      </p>
+                    )}
+                  </div>
+
                   <input
                     type="number"
                     min={0}
-                    step={0.001}
-                    className={`${controlCls} text-right`}
-                    value={line.quantity}
-                    onChange={(e) => {
-                      const quantity = Number(e.target.value || 0);
-                      const nextItems = [...saleForm.items];
-                      const selected = itemOptions.find((item) => item.item_id === nextItems[idx].item_id);
-                      nextItems[idx] = {
-                        ...nextItems[idx],
-                        quantity,
-                        unit_price:
-                          nextItems[idx].unit_price > 0
-                            ? nextItems[idx].unit_price
-                            : Number(selected?.unit_price || 0),
-                      };
-                      setSaleForm((prev) => ({ ...prev, items: nextItems }));
-                      recalcTotals(nextItems, saleForm.discount);
-                    }}
+                    className={`${controlReadonlyCls} text-right`}
+                    value={line.unit_price}
+                    readOnly
+                    title="Unit price is set automatically from item price"
                     disabled={loading}
                   />
-                  {!!line.item_id && Number(line.quantity || 0) > getLineAvailableQty(line) && (
-                    <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
-                      Quantity exceeds available stock.
-                    </p>
-                  )}
-                </div>
 
-                <input
-                  type="number"
-                  min={0}
-                  className={`${controlReadonlyCls} text-right`}
-                  value={line.unit_price}
-                  readOnly
-                  title="Unit price is set automatically from item price"
-                  disabled={loading}
-                />
-
-                <div className="flex items-center justify-between md:justify-end gap-3 text-sm text-slate-600 dark:text-slate-300">
-                  <div className="flex items-center gap-2">
-                    <span className="md:hidden font-medium">Line Total</span>
-                    <span className="font-semibold">
-                      ${(Number(line.quantity || 0) * Number(line.unit_price || 0)).toFixed(2)}
-                    </span>
+                  <div className="flex items-center justify-between md:justify-end gap-3 text-sm text-slate-600 dark:text-slate-300">
+                    <div className="flex items-center gap-2">
+                      <span className="md:hidden font-medium">Line Total</span>
+                      <span className="font-semibold">
+                        ${(Number(line.quantity || 0) * Number(line.unit_price || 0)).toFixed(2)}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextItems = saleForm.items.filter((_, i) => i !== idx);
+                        const final: FormLine[] = nextItems.length ? nextItems : [{ item_id: '', quantity: 1, unit_price: 0 }];
+                        setSaleForm((prev) => ({ ...prev, items: final }));
+                        recalcTotals(final, saleForm.discount);
+                      }}
+                      className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 text-red-500 hover:bg-red-50"
+                      aria-label="Remove line"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const nextItems = saleForm.items.filter((_, itemIdx) => itemIdx !== idx);
-                      setSaleForm((prev) => ({
-                        ...prev,
-                        items: nextItems.length ? nextItems : [{ item_id: '', quantity: 1, unit_price: 0 }],
-                      }));
-                      recalcTotals(
-                        nextItems.length ? nextItems : [{ item_id: '', quantity: 1, unit_price: 0 }],
-                        saleForm.discount
-                      );
-                    }}
-                    className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 text-red-500 hover:bg-red-50"
-                    aria-label="Remove line"
-                    title="Remove line"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
+        {/* ── Totals row ── */}
         <div className="flex justify-end gap-6 text-sm mt-2">
           <div className="flex flex-col items-end">
             <span className="text-slate-500">Subtotal</span>
@@ -784,28 +859,35 @@ const SaleCreate = () => {
           </div>
         </div>
 
+        {/* ── Paid amount ── */}
         {shouldShowAccount && (
           <div className="flex justify-end">
-            <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200 min-w-[220px]">
-              Amount Paid
+            <div
+              className="flex flex-col gap-1 min-w-[220px]"
+              data-field-error={formErrors.paidAmount ? '' : undefined}
+            >
+              <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                Amount Paid
+                {effectiveStatus === 'partial' && <span className="text-red-500 ml-0.5">*</span>}
+              </label>
               <input
                 type="number"
-                className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-sm text-right"
+                className={`${fieldCls('paidAmount')} text-right`}
                 value={saleForm.paid_amount}
                 min={0}
                 max={saleForm.total}
-                onChange={(e) =>
-                  setSaleForm((prev) => ({
-                    ...prev,
-                    paid_amount: Number(e.target.value || 0),
-                  }))
-                }
+                onChange={(e) => {
+                  clearError('paidAmount');
+                  setSaleForm((prev) => ({ ...prev, paid_amount: Number(e.target.value || 0) }));
+                }}
                 disabled={loading}
               />
-            </label>
+              <FieldError field="paidAmount" />
+            </div>
           </div>
         )}
 
+        {/* ── Actions ── */}
         <div className="flex justify-end gap-3 pt-4">
           <button
             type="button"
@@ -835,5 +917,3 @@ const SaleCreate = () => {
 };
 
 export default SaleCreate;
-
-

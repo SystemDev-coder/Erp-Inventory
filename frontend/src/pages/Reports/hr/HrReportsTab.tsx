@@ -4,16 +4,19 @@ import type { ReportColumn } from '../../../components/reports/ReportModal';
 import { hrReportsService } from '../../../services/reports/hrReports.service';
 import type { DateRange, ModalReportState } from '../types';
 import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange } from '../reportUtils';
+import { useBranch } from '../../../context/BranchContext';
 
 type HrCardId =
   | 'employee-list'
   | 'payroll-summary'
+  | 'payroll-employee-detail'
   | 'salary-payments'
   | 'payroll-by-month';
 
 const hrCards: Array<{ id: HrCardId; title: string; hint: string }> = [
   { id: 'employee-list', title: 'Employee List', hint: 'Dropdown + Show / All' },
   { id: 'payroll-summary', title: 'Payroll Summary', hint: 'Between two dates' },
+  { id: 'payroll-employee-detail', title: 'Payroll Employee Detail', hint: 'Date range + employee salary breakdown' },
   { id: 'salary-payments', title: 'Salary Payments', hint: 'Date range + Show / All' },
   { id: 'payroll-by-month', title: 'Payroll by Month', hint: 'Between two dates' },
 ];
@@ -58,6 +61,23 @@ const salaryPaymentsColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'note', header: 'Note' },
 ];
 
+const payrollEmployeeDetailColumns: ReportColumn<Record<string, unknown>>[] = [
+  { key: 'payroll_id', header: 'Payroll #', align: 'right' },
+  { key: 'period_year', header: 'Year', align: 'right' },
+  { key: 'period_month', header: 'Month', align: 'right' },
+  { key: 'period_from', header: 'From', render: (row) => formatDateOnly(row.period_from) },
+  { key: 'period_to', header: 'To', render: (row) => formatDateOnly(row.period_to) },
+  { key: 'employee_name', header: 'Employee' },
+  { key: 'role_name', header: 'Role / Dept' },
+  { key: 'payroll_status', header: 'Status' },
+  { key: 'basic_salary', header: 'Basic', align: 'right', render: (row) => formatCurrency(row.basic_salary) },
+  { key: 'allowances', header: 'Allowances', align: 'right', render: (row) => formatCurrency(row.allowances) },
+  { key: 'deductions', header: 'Deductions', align: 'right', render: (row) => formatCurrency(row.deductions) },
+  { key: 'net_salary', header: 'Net Salary', align: 'right', render: (row) => formatCurrency(row.net_salary) },
+  { key: 'paid_amount', header: 'Paid', align: 'right', render: (row) => formatCurrency(row.paid_amount) },
+  { key: 'outstanding_amount', header: 'Outstanding', align: 'right', render: (row) => formatCurrency(row.outstanding_amount) },
+];
+
 const payrollByMonthColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'period_year', header: 'Year', align: 'right' },
   { key: 'period_month', header: 'Month', align: 'right' },
@@ -73,6 +93,7 @@ type Props = {
 };
 
 export function HrReportsTab({ onOpenModal }: Props) {
+  const { activeBranchId } = useBranch();
   const [expandedCardKey, setExpandedCardKey] = useState<string | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<HrCardId | null>(null);
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
@@ -85,6 +106,8 @@ export function HrReportsTab({ onOpenModal }: Props) {
   const [selectedSalaryEmployeeId, setSelectedSalaryEmployeeId] = useState('');
 
   const [payrollSummaryRange, setPayrollSummaryRange] = useState<DateRange>(defaultReportRange());
+  const [payrollEmployeeDetailRange, setPayrollEmployeeDetailRange] = useState<DateRange>(defaultReportRange());
+  const [selectedDetailEmployeeId, setSelectedDetailEmployeeId] = useState('');
   const [salaryPaymentsRange, setSalaryPaymentsRange] = useState<DateRange>(defaultReportRange());
   const [payrollByMonthRange, setPayrollByMonthRange] = useState<DateRange>(defaultReportRange());
 
@@ -94,7 +117,7 @@ export function HrReportsTab({ onOpenModal }: Props) {
     setOptionsError('');
 
     hrReportsService
-      .getHrOptions()
+      .getHrOptions(activeBranchId ?? undefined)
       .then((response) => {
         if (!alive) return;
         if (!response.success || !response.data) {
@@ -114,7 +137,7 @@ export function HrReportsTab({ onOpenModal }: Props) {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [activeBranchId]);
 
   const selectedEmployeeListLabel = useMemo(
     () => employees.find((option) => String(option.id) === selectedEmployeeListId)?.label || '',
@@ -123,6 +146,10 @@ export function HrReportsTab({ onOpenModal }: Props) {
   const selectedSalaryEmployeeLabel = useMemo(
     () => employees.find((option) => String(option.id) === selectedSalaryEmployeeId)?.label || '',
     [employees, selectedSalaryEmployeeId]
+  );
+  const selectedDetailEmployeeLabel = useMemo(
+    () => employees.find((option) => String(option.id) === selectedDetailEmployeeId)?.label || '',
+    [employees, selectedDetailEmployeeId]
   );
 
   const runCardAction = async (cardId: HrCardId, action: () => Promise<void>) => {
@@ -149,7 +176,7 @@ export function HrReportsTab({ onOpenModal }: Props) {
     runCardAction('employee-list', async () => {
       const employeeId = mode === 'show' ? Number(selectedEmployeeListId || 0) : undefined;
       if (mode === 'show' && !employeeId) throw new Error('Select an employee first');
-      const response = await hrReportsService.getEmployeeList({ mode, employeeId });
+      const response = await hrReportsService.getEmployeeList({ mode, employeeId, branchId: activeBranchId ?? undefined });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load employee list');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -174,7 +201,10 @@ export function HrReportsTab({ onOpenModal }: Props) {
   const handlePayrollSummary = () =>
     runCardAction('payroll-summary', async () => {
       ensureRangeValid(payrollSummaryRange, 'Payroll Summary');
-      const response = await hrReportsService.getPayrollSummary(payrollSummaryRange);
+      const response = await hrReportsService.getPayrollSummary({
+        ...payrollSummaryRange,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load payroll summary');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -199,6 +229,46 @@ export function HrReportsTab({ onOpenModal }: Props) {
       });
     });
 
+  const handlePayrollEmployeeDetail = (mode: 'show' | 'all') =>
+    runCardAction('payroll-employee-detail', async () => {
+      ensureRangeValid(payrollEmployeeDetailRange, 'Payroll Employee Detail');
+      const employeeId = mode === 'show' ? Number(selectedDetailEmployeeId || 0) : undefined;
+      if (mode === 'show' && !employeeId) throw new Error('Select an employee first');
+      const response = await hrReportsService.getPayrollEmployeeDetail({
+        fromDate: payrollEmployeeDetailRange.fromDate,
+        toDate: payrollEmployeeDetailRange.toDate,
+        mode,
+        employeeId,
+        branchId: activeBranchId ?? undefined,
+      });
+      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load payroll employee detail');
+      const rows = toRecordRows(response.data.rows || []);
+      onOpenModal({
+        title: 'Payroll Employee Detail',
+        subtitle: `${formatDateOnly(payrollEmployeeDetailRange.fromDate)} - ${formatDateOnly(payrollEmployeeDetailRange.toDate)}`,
+        fileName: 'payroll-employee-detail',
+        data: rows,
+        columns: payrollEmployeeDetailColumns,
+        filters: {
+          'From Date': payrollEmployeeDetailRange.fromDate,
+          'To Date': payrollEmployeeDetailRange.toDate,
+          Mode: mode === 'show' ? 'Show' : 'All',
+          Employee: mode === 'show' ? selectedDetailEmployeeLabel || 'Selected Employee' : 'All Employees',
+        },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            basic_salary: formatCurrency(sumNumericField(rows, 'basic_salary')),
+            allowances: formatCurrency(sumNumericField(rows, 'allowances')),
+            deductions: formatCurrency(sumNumericField(rows, 'deductions')),
+            net_salary: formatCurrency(sumNumericField(rows, 'net_salary')),
+            paid_amount: formatCurrency(sumNumericField(rows, 'paid_amount')),
+            outstanding_amount: formatCurrency(sumNumericField(rows, 'outstanding_amount')),
+          },
+        },
+      });
+    });
+
   const handleSalaryPayments = (mode: 'show' | 'all') =>
     runCardAction('salary-payments', async () => {
       ensureRangeValid(salaryPaymentsRange, 'Salary Payments');
@@ -209,6 +279,7 @@ export function HrReportsTab({ onOpenModal }: Props) {
         toDate: salaryPaymentsRange.toDate,
         mode,
         employeeId,
+        branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load salary payments');
       const rows = toRecordRows(response.data.rows || []);
@@ -236,7 +307,10 @@ export function HrReportsTab({ onOpenModal }: Props) {
   const handlePayrollByMonth = () =>
     runCardAction('payroll-by-month', async () => {
       ensureRangeValid(payrollByMonthRange, 'Payroll by Month');
-      const response = await hrReportsService.getPayrollByMonth(payrollByMonthRange);
+      const response = await hrReportsService.getPayrollByMonth({
+        ...payrollByMonthRange,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load payroll by month');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -345,6 +419,20 @@ export function HrReportsTab({ onOpenModal }: Props) {
       );
     }
 
+    if (cardId === 'payroll-employee-detail') {
+      return (
+        <div className="space-y-3">
+          {renderDateRange(payrollEmployeeDetailRange, setPayrollEmployeeDetailRange)}
+          {renderEmployeeSelector(selectedDetailEmployeeId, setSelectedDetailEmployeeId, 'All Employees')}
+          {renderShowAllButtons(
+            () => handlePayrollEmployeeDetail('show'),
+            () => handlePayrollEmployeeDetail('all'),
+            cardId
+          )}
+        </div>
+      );
+    }
+
     if (cardId === 'salary-payments') {
       return (
         <div className="space-y-3">
@@ -383,7 +471,7 @@ export function HrReportsTab({ onOpenModal }: Props) {
             setCardErrors((prev) => ({ ...prev, [card.id]: '' }));
             setExpandedCardKey((prev) => (prev === cardKey ? null : cardKey));
           }}
-          className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-slate-900 to-slate-800 px-5 py-4 text-left text-white"
+          className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-primary-900 to-primary-700 px-5 py-4 text-left text-white"
         >
           <div>
             <p className="text-xl font-semibold leading-tight">{card.title}</p>

@@ -177,7 +177,7 @@ const upsertCustomerOpeningLedger = async (
 
 export const customersService = {
   async listCustomers(
-    scope: BranchScope,
+    branchIds: number[],
     search?: string,
     dateRange?: { fromDate?: string; toDate?: string }
   ): Promise<Customer[]> {
@@ -187,7 +187,7 @@ export const customersService = {
     return withTransaction(async (client) => {
       // Keep customer table balances aligned with refund/return ledger logic so the Customers page updates immediately.
       // Only applies when the system is using `remaining_balance` as the live outstanding column.
-      if (balanceColumn === 'remaining_balance' && scope.branchIds.length) {
+      if (balanceColumn === 'remaining_balance' && branchIds.length) {
         await client.query(
           `WITH touched AS (
              SELECT DISTINCT l.customer_id
@@ -235,7 +235,7 @@ export const customersService = {
             WHERE c.branch_id = ANY($1)
               AND c.customer_id = l.customer_id
               AND c.is_active = TRUE`,
-          [scope.branchIds]
+          [branchIds]
         );
       }
 
@@ -245,10 +245,8 @@ export const customersService = {
       // UPDATED: Explicitly hide soft-deleted rows even when DB user bypasses RLS (e.g., postgres/superuser).
       where.push(`COALESCE(is_deleted, 0)::int = 0`);
 
-      if (!scope.isAdmin) {
-        params.push(scope.branchIds);
-        where.push(`branch_id = ANY($${params.length})`);
-      }
+      params.push(branchIds);
+      where.push(`branch_id = ANY($${params.length})`);
 
       if (search) {
         params.push(`%${search}%`);
@@ -299,12 +297,12 @@ export const customersService = {
     });
   },
 
-  async lookupCustomers(scope: BranchScope, search?: string, limit = 50): Promise<Customer[]> {
+  async lookupCustomers(branchIds: number[], search?: string, limit = 50): Promise<Customer[]> {
     const balanceColumn = await detectCustomerBalanceColumn();
     const genderSelect = getGenderSelect();
 
     const safeLimit = Math.max(1, Math.min(200, Math.floor(Number(limit) || 50)));
-    const params: unknown[] = [scope.branchIds];
+    const params: unknown[] = [branchIds];
 
     // UPDATED: Explicitly hide soft-deleted rows even when DB user bypasses RLS (e.g., postgres/superuser).
     const where: string[] = [`branch_id = ANY($1)`, `is_active = TRUE`, `COALESCE(is_deleted, 0)::int = 0`];

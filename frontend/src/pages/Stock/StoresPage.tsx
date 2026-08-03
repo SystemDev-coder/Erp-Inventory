@@ -1,4 +1,4 @@
-﻿import { useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import { Store, Package, Plus, Trash2, ChevronDown, ChevronRight, Pencil, Eye } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
 import { useToast } from '../../components/ui/toast/Toast';
@@ -7,9 +7,11 @@ import { productService, Product } from '../../services/product.service';
 import { Modal } from '../../components/ui/modal/Modal';
 import { itemLabelWithAvailability } from '../../utils/itemAvailability';
 import { defaultDateRange } from '../../utils/dateRange';
+import { useBranch } from '../../context/BranchContext';
 
 const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const { showToast } = useToast();
+  const { activeBranchId } = useBranch();
   const [stores, setStores] = useState<StoreType[]>([]);
   const [loading, setLoading] = useState(false);
   const [hasDisplayed, setHasDisplayed] = useState(false);
@@ -37,6 +39,7 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
     const res = await storeService.list({
       fromDate: dateRange.fromDate,
       toDate: dateRange.toDate,
+      branchId: activeBranchId ?? undefined,
     });
     if (res.success && res.data?.stores) {
       setStores(res.data.stores);
@@ -45,6 +48,11 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
     }
     setLoading(false);
   };
+
+  useEffect(() => {
+    if (hasDisplayed) void loadStores();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBranchId]);
 
   const loadStoreItems = async (storeId: number) => {
     const res = await storeService.listItems(storeId);
@@ -63,7 +71,7 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   };
 
   const loadProducts = async () => {
-    const res = await productService.list();
+    const res = await productService.list({ branchId: activeBranchId ?? undefined });
     if (res.success && res.data?.products) {
       setProducts(res.data.products);
     }

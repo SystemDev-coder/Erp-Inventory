@@ -5,7 +5,7 @@ import { ApiError } from '../../utils/ApiError';
 import { suppliersService, type SupplierInput as SupplierServiceInput } from './suppliers.service';
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { z } from 'zod';
-import { pickBranchForWrite, resolveBranchScope } from '../../utils/branchScope';
+import { pickBranchForWrite, resolveActiveBranchIds, resolveBranchScope } from '../../utils/branchScope';
 import { logAudit } from '../../utils/audit';
 
 const supplierSchema = z.object({
@@ -51,7 +51,7 @@ const normalizeSupplierUpdateInput = (
 
 // List all suppliers
 export const listSuppliers = asyncHandler(async (req: AuthRequest, res: Response) => {
-  const scope = await resolveBranchScope(req);
+  const branchIds = await resolveActiveBranchIds(req);
   const search = req.query.search as string;
   const fromDate = (req.query.fromDate as string) || undefined;
   const toDate = (req.query.toDate as string) || undefined;
@@ -61,18 +61,18 @@ export const listSuppliers = asyncHandler(async (req: AuthRequest, res: Response
   if (fromDate && toDate && fromDate > toDate) {
     throw ApiError.badRequest('fromDate cannot be after toDate');
   }
-  const suppliers = await suppliersService.listSuppliers(scope, search, { fromDate, toDate });
+  const suppliers = await suppliersService.listSuppliers(branchIds, search, { fromDate, toDate });
   return ApiResponse.success(res, { suppliers });
 });
 
 export const lookupSuppliers = asyncHandler(async (req: AuthRequest, res: Response) => {
-  const scope = await resolveBranchScope(req);
+  const branchIds = await resolveActiveBranchIds(req);
   const querySchema = z.object({
     search: z.string().trim().optional().default(''),
     limit: z.coerce.number().int().positive().max(200).optional().default(50),
   });
   const input = querySchema.parse(req.query);
-  const suppliers = await suppliersService.lookupSuppliers(scope, input.search, input.limit);
+  const suppliers = await suppliersService.lookupSuppliers(branchIds, input.search, input.limit);
   return ApiResponse.success(res, { suppliers });
 });
 

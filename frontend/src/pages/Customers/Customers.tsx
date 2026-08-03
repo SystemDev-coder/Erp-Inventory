@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router';
 import { ColumnDef } from '@tanstack/react-table';
-import { Users, UserPlus, UserCheck } from 'lucide-react';
+import { Users, UserPlus, UserCheck, CheckCircle2 } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
 import { PageHeader, TabActionToolbar } from '../../components/ui/layout';
 import { DataTable } from '../../components/ui/table/DataTable';
@@ -12,17 +12,21 @@ import Badge from '../../components/ui/badge/Badge';
 import { customerService, Customer } from '../../services/customer.service';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
 import { defaultDateRange } from '../../utils/dateRange';
+import { useBranch } from '../../context/BranchContext';
 
+// ── Types ────────────────────────────────────────────────────────────────────
 type CustomerForm = {
     customer_id?: number;
     full_name: string;
     phone: string;
     customer_type: 'regular' | 'one-time';
-    address?: string;
+    address: string;
     gender: 'male' | 'female';
     is_active: boolean;
     remaining_balance: number;
 };
+
+type FieldErrors = Partial<Record<keyof CustomerForm, string>>;
 
 const emptyForm: CustomerForm = {
     full_name: '',
@@ -34,100 +38,161 @@ const emptyForm: CustomerForm = {
     remaining_balance: 0,
 };
 
-const formLabelClass = 'mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300';
-const formInputClass =
-    'h-12 w-full rounded-md border border-slate-300 bg-white px-3 text-base text-slate-900 shadow-sm outline-none transition-all placeholder:text-slate-400 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-100 dark:placeholder:text-slate-400 dark:focus:border-primary-400 dark:focus:ring-primary-500/25';
+// ── Field-level validation ───────────────────────────────────────────────────
+function validateForm(f: CustomerForm): FieldErrors {
+    const e: FieldErrors = {};
+    if (!f.full_name.trim())
+        e.full_name = 'Customer name is required';
+    else if (f.full_name.trim().length < 2)
+        e.full_name = 'Name must be at least 2 characters';
 
+    if (f.phone.trim()) {
+        const digits = f.phone.replace(/\D/g, '');
+        if (digits.length < 2)
+            e.phone = 'Please add at least 2 numbers';
+    }
+
+    if (Number(f.remaining_balance) < 0)
+        e.remaining_balance = 'Balance cannot be negative';
+
+    return e;
+}
+
+// ── Shared field component ────────────────────────────────────────────────────
+type FieldProps = {
+    label: string;
+    error?: string;
+    touched?: boolean;
+    success?: boolean;
+    children: React.ReactNode;
+    hint?: string;
+    colSpan?: boolean;
+};
+
+function Field({ label, error, touched, success, children, hint, colSpan }: FieldProps) {
+    const showError = touched && error;
+    const showSuccess = touched && !error && success;
+    return (
+        <div className={`flex flex-col gap-1 ${colSpan ? 'md:col-span-2' : ''}`}>
+            <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                    {label}
+                </label>
+                {showSuccess && (
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                )}
+            </div>
+            {children}
+            {showError ? (
+                <p className="text-xs font-medium text-red-500 dark:text-red-400">{error}</p>
+            ) : hint ? (
+                <p className="text-xs text-slate-400 dark:text-slate-500">{hint}</p>
+            ) : null}
+        </div>
+    );
+}
+
+// ── Input class helper ────────────────────────────────────────────────────────
+function getInputCls(error?: string, touched?: boolean) {
+    const base =
+        'h-11 w-full rounded-lg border bg-white px-3 text-sm text-slate-900 shadow-sm outline-none transition-all duration-150 placeholder:text-slate-400 focus:ring-2 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:opacity-70 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500';
+    if (touched && error)
+        return `${base} border-red-400 bg-red-50/40 focus:border-red-500 focus:ring-red-500/20 dark:border-red-500 dark:bg-red-900/10`;
+    if (touched && !error)
+        return `${base} border-emerald-400 focus:border-emerald-500 focus:ring-emerald-500/20 dark:border-emerald-600`;
+    return `${base} border-slate-200 focus:border-primary-500 focus:ring-primary-500/20 dark:border-slate-700 dark:focus:border-primary-400`;
+}
+
+// ── Main component ───────────────────────────────────────────────────────────
 const Customers = () => {
     const { tab } = useParams();
     const { showToast } = useToast();
+    const { activeBranchId } = useBranch();
+
     const [isAddOpen, setIsAddOpen] = useState(false);
     const [customers, setCustomers] = useState<Customer[]>([]);
     const [hasDisplayed, setHasDisplayed] = useState(false);
     const [loading, setLoading] = useState(false);
     const [form, setForm] = useState<CustomerForm>(emptyForm);
+    const [errors, setErrors] = useState<FieldErrors>({});
+    const [touched, setTouched] = useState<Partial<Record<keyof CustomerForm, boolean>>>({});
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null);
     const [importModalOpen, setImportModalOpen] = useState(false);
-
     const [dateRange, setDateRange] = useState(() => defaultDateRange());
+
+    // touch a field on blur and validate immediately
+    const touch = (field: keyof CustomerForm) => {
+        setTouched((prev) => ({ ...prev, [field]: true }));
+        setErrors(validateForm({ ...form }));
+    };
+
+    // update form + re-validate touched field live
+    const set = <K extends keyof CustomerForm>(field: K, value: CustomerForm[K]) => {
+        const next = { ...form, [field]: value };
+        setForm(next);
+        if (touched[field]) setErrors(validateForm(next));
+    };
+
+    const openModal = (preset?: CustomerForm) => {
+        setForm(preset ?? emptyForm);
+        setErrors({});
+        setTouched({});
+        setIsAddOpen(true);
+    };
+
+    const closeModal = () => {
+        setIsAddOpen(false);
+        setErrors({});
+        setTouched({});
+    };
 
     const fetchCustomers = async () => {
         setLoading(true);
         const res = await customerService.list({
             fromDate: dateRange.fromDate,
             toDate: dateRange.toDate,
+            branchId: activeBranchId ?? undefined,
         });
-        if (res.success && res.data?.customers) {
-            setCustomers(res.data.customers);
-        } else {
-            showToast('error', 'Load failed', res.error || 'Could not load customers');
-        }
+        if (res.success && res.data?.customers) setCustomers(res.data.customers);
+        else showToast('error', 'Load failed', res.error || 'Could not load customers');
         setLoading(false);
     };
 
-    const handleDisplay = async () => {
-        setHasDisplayed(true);
-        await fetchCustomers();
-    };
+    const handleDisplay = async () => { setHasDisplayed(true); await fetchCustomers(); };
 
-    const columns: ColumnDef<Customer>[] = useMemo(() => [
-        { accessorKey: 'full_name', header: 'Customer Name' },
-        { accessorKey: 'phone', header: 'Phone Number' },
-        {
-            accessorKey: 'gender',
-            header: 'Gender',
-            cell: ({ row }) => row.original.gender || row.original.sex || '-',
-        },
-        {
-            accessorKey: 'customer_type',
-            header: 'Customer Type',
-            cell: ({ row }) => row.original.customer_type === 'one-time' ? 'One-time' : 'Regular',
-        },
-        {
-            accessorKey: 'balance',
-            header: 'Pending Balance',
-            cell: ({ row }) => (
-                <span className={Number(row.original.balance) > 0 ? 'text-red-600 font-bold' : ''}>
-                    ${Number(row.original.balance || 0).toFixed(2)}
-                </span>
-            )
-        },
-        {
-            accessorKey: 'is_active',
-            header: 'Status',
-            cell: ({ row }) => (
-                <Badge
-                    color={row.original.is_active ? 'success' : 'error'}
-                    variant="light"
-                >
-                    {row.original.is_active ? 'Active' : 'Inactive'}
-                </Badge>
-            )
-        },
-    ], []);
+    useEffect(() => {
+        if (hasDisplayed) void fetchCustomers();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeBranchId]);
 
     const handleSave = async () => {
+        // mark all fields as touched so all errors surface
+        const allTouched: Partial<Record<keyof CustomerForm, boolean>> = {
+            full_name: true, phone: true, remaining_balance: true,
+        };
+        setTouched(allTouched);
+        const errs = validateForm(form);
+        setErrors(errs);
+        if (Object.keys(errs).length > 0) return;
+
         setLoading(true);
         const payload = {
-            full_name: form.full_name,
-            phone: form.phone || null,
+            full_name: form.full_name.trim(),
+            phone: form.phone?.trim() || null,
             customer_type: form.customer_type,
-            address: form.address || null,
+            address: form.address?.trim() || null,
             sex: form.gender,
             gender: form.gender,
             is_active: form.is_active,
             remaining_balance: Number(form.remaining_balance) || 0,
         };
-
         const res = form.customer_id
             ? await customerService.update(form.customer_id, payload)
             : await customerService.create(payload);
-
         if (res.success) {
             showToast('success', 'Saved', form.customer_id ? 'Customer updated' : 'Customer added');
-            setIsAddOpen(false);
-            setForm(emptyForm);
+            closeModal();
             fetchCustomers();
         } else {
             showToast('error', 'Save failed', res.error || 'Please check the form');
@@ -135,26 +200,19 @@ const Customers = () => {
         setLoading(false);
     };
 
-    const onEdit = (row: Customer) => {
-        setForm({
+    const onEdit = (row: Customer) =>
+        openModal({
             customer_id: row.customer_id,
             full_name: row.full_name,
             phone: row.phone || '',
             customer_type: (row.customer_type as 'regular' | 'one-time') || 'regular',
             address: row.address || '',
-            gender: (row.gender as 'male' | 'female') || (row.sex as 'male' | 'female') || 'male',
+            gender: (row.gender || row.sex || 'male') as 'male' | 'female',
             is_active: row.is_active,
             remaining_balance: Number(row.remaining_balance ?? 0),
         });
-        setIsAddOpen(true);
-    };
 
-    const onDelete = (row: Customer) => {
-        setCustomerToDelete(row);
-        setDeleteConfirmOpen(true);
-    };
-
-    const visibleCustomers = hasDisplayed ? customers : [];
+    const onDelete = (row: Customer) => { setCustomerToDelete(row); setDeleteConfirmOpen(true); };
 
     const confirmDelete = async () => {
         if (!customerToDelete) return;
@@ -171,245 +229,256 @@ const Customers = () => {
         setDeleteConfirmOpen(false);
     };
 
+    const columns: ColumnDef<Customer>[] = useMemo(() => [
+        { accessorKey: 'full_name', header: 'Customer Name' },
+        { accessorKey: 'phone', header: 'Phone Number' },
+        { accessorKey: 'gender', header: 'Gender', cell: ({ row }) => row.original.gender || row.original.sex || '-' },
+        { accessorKey: 'customer_type', header: 'Customer Type', cell: ({ row }) => row.original.customer_type === 'one-time' ? 'One-time' : 'Regular' },
+        {
+            accessorKey: 'balance', header: 'Pending Balance',
+            cell: ({ row }) => (
+                <span className={Number(row.original.balance) > 0 ? 'font-bold text-red-600' : ''}>
+                    ${Number(row.original.balance || 0).toFixed(2)}
+                </span>
+            )
+        },
+        {
+            accessorKey: 'is_active', header: 'Status',
+            cell: ({ row }) => (
+                <Badge color={row.original.is_active ? 'success' : 'error'} variant="light">
+                    {row.original.is_active ? 'Active' : 'Inactive'}
+                </Badge>
+            )
+        },
+    ], []);
+
+    const visibleCustomers = hasDisplayed ? customers : [];
+
+    const toolbarDateRange = {
+        fromDate: dateRange.fromDate,
+        toDate: dateRange.toDate,
+        onFromDateChange: (v: string) => { setDateRange((p) => ({ ...p, fromDate: v })); setHasDisplayed(false); },
+        onToDateChange: (v: string) => { setDateRange((p) => ({ ...p, toDate: v })); setHasDisplayed(false); },
+    };
+
+    const emptyHint = (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-300">
+            Click <strong>Display</strong> to load data.
+        </div>
+    );
+    const noData = (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-300">
+            No customers found for the selected filters.
+        </div>
+    );
+
+    const sharedToolbar = {
+        primaryAction: { label: 'New Customer', onClick: () => openModal() },
+        secondaryAction: { label: 'Upload Data', onClick: () => setImportModalOpen(true) },
+        onDisplay: handleDisplay,
+        displayLoading: loading,
+        dateRange: toolbarDateRange,
+    };
+
     const tabs = [
         {
-            id: 'all',
-            label: 'All',
-            icon: Users,
+            id: 'all', label: 'All', icon: Users,
             content: (
                 <div className="space-y-2">
-                        <TabActionToolbar
-                        title="Customer Directory"
-                        primaryAction={{ label: 'New Customer', onClick: () => { setForm(emptyForm); setIsAddOpen(true); } }}
-                        secondaryAction={{ label: 'Upload Data', onClick: () => setImportModalOpen(true) }}
-                        onDisplay={handleDisplay}
-                        displayLoading={loading}
-                        onExport={() => showToast('info', 'Export', 'Customer export coming soon')}
-                        dateRange={{
-                            fromDate: dateRange.fromDate,
-                            toDate: dateRange.toDate,
-                            onFromDateChange: (value) => {
-                                setDateRange((prev) => ({ ...prev, fromDate: value }));
-                                setHasDisplayed(false);
-                            },
-                            onToDateChange: (value) => {
-                                setDateRange((prev) => ({ ...prev, toDate: value }));
-                                setHasDisplayed(false);
-                            },
-                        }}
-                    />
-                    {!hasDisplayed && (
-                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
-                            Click <span className="font-semibold">Display</span> to load data.
-                        </div>
-                    )}
-                    {hasDisplayed && !loading && visibleCustomers.length === 0 && (
-                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
-                            No data found for the selected filters.
-                        </div>
-                    )}
-                    <DataTable
-                        data={visibleCustomers}
-                        columns={columns}
-                        searchPlaceholder="Find a customer by name or phone..."
-                        isLoading={loading}
-                        onEdit={onEdit}
-                        onDelete={onDelete}
-                    />
+                    <TabActionToolbar title="Customer Directory" {...sharedToolbar}
+                        onExport={() => showToast('info', 'Export', 'Coming soon')} />
+                    {!hasDisplayed && emptyHint}
+                    {hasDisplayed && !loading && !visibleCustomers.length && noData}
+                    <DataTable data={visibleCustomers} columns={columns}
+                        searchPlaceholder="Search by name or phone…" isLoading={loading}
+                        onEdit={onEdit} onDelete={onDelete} />
                 </div>
             )
         },
         {
-            id: 'regular',
-            label: 'Regular',
-            icon: UserCheck,
+            id: 'regular', label: 'Regular', icon: UserCheck,
             content: (
                 <div className="space-y-2">
-                        <TabActionToolbar
-                        title="Regular Customers"
-                        primaryAction={{ label: 'New Customer', onClick: () => { setForm(emptyForm); setIsAddOpen(true); } }}
-                        secondaryAction={{ label: 'Upload Data', onClick: () => setImportModalOpen(true) }}
-                        onDisplay={handleDisplay}
-                        displayLoading={loading}
-                        dateRange={{
-                            fromDate: dateRange.fromDate,
-                            toDate: dateRange.toDate,
-                            onFromDateChange: (value) => {
-                                setDateRange((prev) => ({ ...prev, fromDate: value }));
-                                setHasDisplayed(false);
-                            },
-                            onToDateChange: (value) => {
-                                setDateRange((prev) => ({ ...prev, toDate: value }));
-                                setHasDisplayed(false);
-                            },
-                        }}
-                    />
-                    {!hasDisplayed && (
-                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
-                            Click <span className="font-semibold">Display</span> to load data.
-                        </div>
-                    )}
-                    {hasDisplayed && !loading && visibleCustomers.filter(c => c.customer_type !== 'one-time').length === 0 && (
-                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
-                            No data found for the selected filters.
-                        </div>
-                    )}
-                    <DataTable
-                        data={visibleCustomers.filter(c => c.customer_type !== 'one-time')}
-                        columns={columns}
-                        isLoading={loading}
-                        onEdit={onEdit}
-                        onDelete={onDelete}
-                    />
+                    <TabActionToolbar title="Regular Customers" {...sharedToolbar} />
+                    {!hasDisplayed && emptyHint}
+                    {hasDisplayed && !loading && !visibleCustomers.filter(c => c.customer_type !== 'one-time').length && noData}
+                    <DataTable data={visibleCustomers.filter(c => c.customer_type !== 'one-time')}
+                        columns={columns} isLoading={loading} onEdit={onEdit} onDelete={onDelete} />
                 </div>
             )
         },
         {
-            id: 'walking',
-            label: 'Walking',
-            icon: UserPlus,
+            id: 'walking', label: 'Walking', icon: UserPlus,
             content: (
                 <div className="space-y-2">
-                        <TabActionToolbar
-                        title="Walking Customers"
-                        primaryAction={{ label: 'New Customer', onClick: () => { setForm(emptyForm); setIsAddOpen(true); } }}
-                        secondaryAction={{ label: 'Upload Data', onClick: () => setImportModalOpen(true) }}
-                        onDisplay={handleDisplay}
-                        displayLoading={loading}
-                        dateRange={{
-                            fromDate: dateRange.fromDate,
-                            toDate: dateRange.toDate,
-                            onFromDateChange: (value) => {
-                                setDateRange((prev) => ({ ...prev, fromDate: value }));
-                                setHasDisplayed(false);
-                            },
-                            onToDateChange: (value) => {
-                                setDateRange((prev) => ({ ...prev, toDate: value }));
-                                setHasDisplayed(false);
-                            },
-                        }}
-                    />
-                    {!hasDisplayed && (
-                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
-                            Click <span className="font-semibold">Display</span> to load data.
-                        </div>
-                    )}
-                    {hasDisplayed && !loading && visibleCustomers.filter(c => c.customer_type === 'one-time').length === 0 && (
-                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
-                            No data found for the selected filters.
-                        </div>
-                    )}
-                    <DataTable
-                        data={visibleCustomers.filter(c => c.customer_type === 'one-time')}
-                        columns={columns}
-                        isLoading={loading}
-                        onEdit={onEdit}
-                        onDelete={onDelete}
-                    />
+                    <TabActionToolbar title="Walking Customers" {...sharedToolbar} />
+                    {!hasDisplayed && emptyHint}
+                    {hasDisplayed && !loading && !visibleCustomers.filter(c => c.customer_type === 'one-time').length && noData}
+                    <DataTable data={visibleCustomers.filter(c => c.customer_type === 'one-time')}
+                        columns={columns} isLoading={loading} onEdit={onEdit} onDelete={onDelete} />
                 </div>
             )
-        }
+        },
     ];
+
+    // derived
+    const t = touched;
+    const e = errors;
 
     return (
         <div>
-            <PageHeader
-                title="Customers"
-                description="Manage the people who buy from your shop."
-            />
+            <PageHeader title="Customers" description="Manage the people who buy from your shop." />
             <Tabs tabs={tabs} defaultTab={tab === 'regular' || tab === 'walking' ? tab : 'all'} />
 
+            {/* ══ Customer Form Modal ══════════════════════════════════════════ */}
             <Modal
                 isOpen={isAddOpen}
-                onClose={() => setIsAddOpen(false)}
+                onClose={closeModal}
                 title={form.customer_id ? 'Edit Customer' : 'Add New Customer'}
                 size="lg"
             >
-                <form onSubmit={(e) => {
-                    e.preventDefault();
-                    handleSave();
-                }} className="w-full space-y-4 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-5 dark:border-slate-700 dark:bg-slate-900/40">
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                        <div className="space-y-1">
-                            <label className={formLabelClass}>Customer Name</label>
+                <form
+                    onSubmit={(ev) => { ev.preventDefault(); handleSave(); }}
+                    noValidate
+                    className="space-y-5"
+                >
+                    {/* Row 1 – Name / Phone */}
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        <Field label="Customer Name" error={e.full_name} touched={t.full_name} success={!!form.full_name.trim()}>
                             <input
                                 type="text"
-                                required
-                                placeholder="Full Name"
+                                placeholder="e.g. Ahmed Hassan"
                                 value={form.full_name}
-                                onChange={(e) => setForm({ ...form, full_name: e.target.value })}
-                                className={formInputClass}
+                                onChange={(ev) => set('full_name', ev.target.value)}
+                                onBlur={() => touch('full_name')}
+                                className={getInputCls(e.full_name, t.full_name)}
+                                disabled={loading}
+                                autoComplete="name"
                             />
-                        </div>
-                        <div className="space-y-1">
-                            <label className={formLabelClass}>Phone Number</label>
+                        </Field>
+
+                        <Field label="Phone Number" error={e.phone} touched={t.phone} success={!!form.phone.trim() && !e.phone}>
                             <input
                                 type="tel"
-                                placeholder="+123..."
+                                placeholder="e.g. +252 61 123 4567"
                                 value={form.phone}
-                                onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                                className={formInputClass}
+                                onChange={(ev) => set('phone', ev.target.value)}
+                                onBlur={() => touch('phone')}
+                                className={getInputCls(e.phone, t.phone)}
+                                disabled={loading}
+                                autoComplete="tel"
                             />
-                        </div>
-                        <div className="space-y-1">
-                            <label className={formLabelClass}>Customer Type</label>
+                        </Field>
+                    </div>
+
+                    {/* Row 2 – Type / Gender */}
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        <Field label="Customer Type">
                             <select
-                                className={formInputClass}
+                                className={getInputCls()}
                                 value={form.customer_type}
-                                onChange={(e) => setForm({ ...form, customer_type: e.target.value as 'regular' | 'one-time' })}
+                                onChange={(ev) => set('customer_type', ev.target.value as 'regular' | 'one-time')}
+                                disabled={loading}
                             >
                                 <option value="regular">Regular Customer</option>
                                 <option value="one-time">One-time Visitor</option>
                             </select>
-                        </div>
-                        <div className="space-y-1">
-                            <label className={formLabelClass}>Gender</label>
+                        </Field>
+
+                        <Field label="Gender">
                             <select
-                                required
-                                className={formInputClass}
+                                className={getInputCls()}
                                 value={form.gender}
-                                onChange={(e) => setForm({ ...form, gender: e.target.value as 'male' | 'female' })}
+                                onChange={(ev) => set('gender', ev.target.value as 'male' | 'female')}
+                                disabled={loading}
                             >
                                 <option value="male">Male</option>
                                 <option value="female">Female</option>
                             </select>
-                        </div>
-                        <div className="space-y-1">
-                            <label className={formLabelClass}>Address</label>
-                            <input
-                                type="text"
-                                placeholder="Address (optional)"
-                                value={form.address}
-                                onChange={(e) => setForm({ ...form, address: e.target.value })}
-                                className={formInputClass}
-                            />
-                        </div>
-                        <div className="space-y-1">
-                            <label className={formLabelClass}>Remaining Balance</label>
+                        </Field>
+                    </div>
+
+                    {/* Row 3 – Address (full width) */}
+                    <Field label="Address" colSpan>
+                        <input
+                            type="text"
+                            placeholder="City / Street (optional)"
+                            value={form.address}
+                            onChange={(ev) => set('address', ev.target.value)}
+                            className={getInputCls()}
+                            disabled={loading}
+                            autoComplete="street-address"
+                        />
+                    </Field>
+
+                    {/* Row 4 – Balance / Active toggle */}
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        <Field
+                            label="Opening Balance"
+                            error={e.remaining_balance}
+                            touched={t.remaining_balance}
+                            hint="Amount the customer already owes"
+                        >
                             <input
                                 type="number"
                                 min={0}
                                 step="0.01"
                                 placeholder="0.00"
                                 value={form.remaining_balance}
-                                onChange={(e) => setForm({ ...form, remaining_balance: Number(e.target.value || 0) })}
-                                className={formInputClass}
+                                onChange={(ev) => set('remaining_balance', Number(ev.target.value || 0))}
+                                onBlur={() => touch('remaining_balance')}
+                                className={getInputCls(e.remaining_balance, t.remaining_balance)}
+                                disabled={loading}
                             />
-                            <p className="text-xs text-slate-500 dark:text-slate-400">Opening balance or amount customer owes</p>
-                        </div>
+                        </Field>
+
+                        {form.customer_id && (
+                            <div className="flex items-center self-end pb-2">
+                                <label className="relative inline-flex cursor-pointer items-center gap-3">
+                                    <div className="relative">
+                                        <input
+                                            type="checkbox"
+                                            className="peer sr-only"
+                                            checked={form.is_active}
+                                            onChange={(ev) => set('is_active', ev.target.checked)}
+                                            disabled={loading}
+                                        />
+                                        <div className="h-6 w-11 rounded-full bg-slate-200 transition-colors peer-checked:bg-primary-500 dark:bg-slate-700 peer-checked:dark:bg-primary-500" />
+                                        <div className="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5" />
+                                    </div>
+                                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                                        {form.is_active ? 'Active' : 'Inactive'}
+                                    </span>
+                                </label>
+                            </div>
+                        )}
                     </div>
 
-                    <div className="flex justify-center gap-3 pt-3">
-                        <button type="button" onClick={() => setIsAddOpen(false)} className="rounded-xl border border-slate-300 bg-white px-5 py-2 font-semibold text-slate-700 transition-all hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
+                    {/* Divider */}
+                    <div className="border-t border-slate-100 dark:border-slate-800" />
+
+                    {/* Actions */}
+                    <div className="flex items-center justify-end gap-3">
+                        <button
+                            type="button"
+                            onClick={closeModal}
+                            disabled={loading}
+                            className="rounded-lg border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition-all hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                        >
                             Cancel
                         </button>
-                        <button type="submit" className="rounded-xl bg-primary-600 px-7 py-2 text-white font-bold transition-all shadow-lg shadow-primary-500/20 hover:bg-primary-700 active:scale-95">
-                            {form.customer_id ? 'Update Customer' : 'Save Customer'}
+                        <button
+                            type="submit"
+                            disabled={loading}
+                            className="rounded-lg bg-primary-600 px-7 py-2.5 text-sm font-bold text-white shadow-sm shadow-primary-500/30 transition-all hover:bg-primary-700 active:scale-95 disabled:opacity-60"
+                        >
+                            {loading ? 'Saving…' : form.customer_id ? 'Update Customer' : 'Save Customer'}
                         </button>
                     </div>
                 </form>
             </Modal>
 
+            {/* ══ Delete confirm ══════════════════════════════════════════════ */}
             <ConfirmDialog
                 isOpen={deleteConfirmOpen}
                 onClose={() => { setDeleteConfirmOpen(false); setCustomerToDelete(null); }}
@@ -427,6 +496,7 @@ const Customers = () => {
                 isLoading={loading}
             />
 
+            {/* ══ Import ══════════════════════════════════════════════════════ */}
             <ImportUploadModal
                 isOpen={importModalOpen}
                 onClose={() => setImportModalOpen(false)}
@@ -434,11 +504,7 @@ const Customers = () => {
                 title="Upload Customers"
                 columns={['full_name', 'phone', 'customer_type', 'gender', 'address', 'remaining_balance']}
                 templateHeaders={['full_name', 'phone', 'gender', 'address', 'remaining_balance']}
-                onImported={async () => {
-                    if (hasDisplayed) {
-                        await fetchCustomers();
-                    }
-                }}
+                onImported={async () => { if (hasDisplayed) await fetchCustomers(); }}
             />
         </div>
     );

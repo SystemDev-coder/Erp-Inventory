@@ -4,6 +4,7 @@ import type { ReportColumn } from '../../../components/reports/ReportModal';
 import { purchaseReportsService } from '../../../services/reports/purchaseReports.service';
 import type { DateRange, ModalReportState } from '../types';
 import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange } from '../reportUtils';
+import { useBranch } from '../../../context/BranchContext';
 
 type PurchaseCardId =
   | 'orders-summary'
@@ -96,6 +97,7 @@ type Props = {
 };
 
 export function PurchaseReportsTab({ onOpenModal }: Props) {
+  const { activeBranchId } = useBranch();
   const [expandedCardId, setExpandedCardId] = useState<PurchaseCardId | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<PurchaseCardId | null>(null);
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
@@ -120,7 +122,7 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
     setOptionsError('');
 
     purchaseReportsService
-      .getPurchaseOptions()
+      .getPurchaseOptions(activeBranchId ?? undefined)
       .then((response) => {
         if (!alive) return;
         if (!response.success || !response.data) {
@@ -141,7 +143,7 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [activeBranchId]);
 
   const selectedVarianceProductLabel = useMemo(
     () => products.find((option) => String(option.id) === selectedVarianceProductId)?.label || '',
@@ -176,7 +178,10 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
   const handleOrdersSummary = () =>
     runCardAction('orders-summary', async () => {
       ensureRangeValid(ordersRange, 'Purchase Orders Summary');
-      const response = await purchaseReportsService.getPurchaseOrdersSummary(ordersRange);
+      const response = await purchaseReportsService.getPurchaseOrdersSummary({
+        ...ordersRange,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load purchase orders');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -201,7 +206,10 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
   const handlePurchaseReturns = () =>
     runCardAction('purchase-returns', async () => {
       ensureRangeValid(returnsRange, 'Purchase Returns');
-      const response = await purchaseReportsService.getPurchaseReturns(returnsRange);
+      const response = await purchaseReportsService.getPurchaseReturns({
+        ...returnsRange,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load purchase returns');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -224,7 +232,10 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
   const handlePaymentStatus = () =>
     runCardAction('payment-status', async () => {
       ensureRangeValid(paymentRange, 'Purchase Payment Status');
-      const response = await purchaseReportsService.getPurchasePaymentStatus(paymentRange);
+      const response = await purchaseReportsService.getPurchasePaymentStatus({
+        ...paymentRange,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load payment status');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -249,7 +260,11 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
     runCardAction('supplier-wise', async () => {
       const supplierId = mode === 'show' ? Number(selectedWiseSupplierId || 0) : undefined;
       if (mode === 'show' && !supplierId) throw new Error('Select a supplier first');
-      const response = await purchaseReportsService.getSupplierWisePurchases({ mode, supplierId });
+      const response = await purchaseReportsService.getSupplierWisePurchases({
+        mode,
+        supplierId,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load supplier purchases');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -276,7 +291,10 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
   const handleBestSuppliers = () =>
     runCardAction('best-suppliers', async () => {
       ensureRangeValid(bestSuppliersRange, 'Best Suppliers');
-      const response = await purchaseReportsService.getBestSuppliers(bestSuppliersRange);
+      const response = await purchaseReportsService.getBestSuppliers({
+        ...bestSuppliersRange,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load best suppliers');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
@@ -308,6 +326,7 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
         toDate: priceVarianceRange.toDate,
         mode,
         productId,
+        branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load price variance');
       const rows = toRecordRows(response.data.rows || []);
@@ -400,7 +419,7 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
             setCardErrors((prev) => ({ ...prev, [card.id]: '' }));
             setExpandedCardId((prev) => (prev === card.id ? null : card.id));
           }}
-          className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-slate-900 to-slate-800 px-5 py-4 text-left text-white"
+          className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-primary-900 to-primary-700 px-5 py-4 text-left text-white"
         >
           <div>
             <p className="text-xl font-semibold leading-tight">{card.title}</p>

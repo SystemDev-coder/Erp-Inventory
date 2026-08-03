@@ -89,6 +89,25 @@ export interface PayrollByMonthRow {
   outstanding_amount: number;
 }
 
+export interface PayrollEmployeeDetailRow {
+  payroll_line_id: number;
+  payroll_id: number;
+  period_year: number;
+  period_month: number;
+  period_from: string;
+  period_to: string;
+  payroll_status: string;
+  emp_id: number;
+  employee_name: string;
+  role_name: string;
+  basic_salary: number;
+  allowances: number;
+  deductions: number;
+  net_salary: number;
+  paid_amount: number;
+  outstanding_amount: number;
+}
+
 export interface EmployeeCountByDepartmentRow {
   department: string;
   total_employees: number;
@@ -97,7 +116,7 @@ export interface EmployeeCountByDepartmentRow {
   total_salary_amount: number;
 }
 
-interface HrOptionsResponse {
+export interface HrOptionsResponse {
   branchId: number;
   employees: ReportOption[];
 }
@@ -193,6 +212,23 @@ export const hrReportsService = {
       toDate: input.toDate,
     });
     return apiClient.get<RowsResponse<PayrollByMonthRow>>(`${API.REPORTS.HR_PAYROLL_BY_MONTH}${query}`);
+  },
+
+  async getPayrollEmployeeDetail(input: {
+    fromDate: string;
+    toDate: string;
+    mode: ReportSelectionMode;
+    employeeId?: number;
+    branchId?: number;
+  }) {
+    const query = toQuery({
+      branchId: input.branchId,
+      fromDate: input.fromDate,
+      toDate: input.toDate,
+      mode: input.mode,
+      employeeId: input.mode === 'show' ? input.employeeId : undefined,
+    });
+    return apiClient.get<RowsResponse<PayrollEmployeeDetailRow>>(`${API.REPORTS.HR_PAYROLL_EMPLOYEE_DETAIL}${query}`);
   },
 
   async getEmployeeCountByDepartment(branchId?: number) {

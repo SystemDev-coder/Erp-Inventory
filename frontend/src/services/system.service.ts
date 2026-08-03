@@ -28,6 +28,7 @@ export interface SystemUser {
   role_id: number;
   role_name?: string | null;
   branch_id: number;
+  branch_ids?: number[];
   branch_name?: string | null;
   is_active: boolean;
   created_at?: string;
@@ -78,7 +79,7 @@ export const systemService = {
   },
 
   async createUser(data: {
-    branchId: number;
+    branchIds: number[];
     roleId: number;
     name: string;
     username: string;
@@ -91,7 +92,7 @@ export const systemService = {
   async updateUser(
     id: number,
     data: {
-      branchId?: number;
+      branchIds?: number[];
       roleId?: number;
       name?: string;
       username?: string;

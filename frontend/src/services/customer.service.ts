@@ -16,11 +16,12 @@ export interface Customer {
 }
 
 export const customerService = {
-  async list(params?: { search?: string; fromDate?: string; toDate?: string }) {
+  async list(params?: { search?: string; fromDate?: string; toDate?: string; branchId?: number }) {
     const qsParts: string[] = [];
     if (params?.search) qsParts.push(`search=${encodeURIComponent(params.search)}`);
     if (params?.fromDate) qsParts.push(`fromDate=${encodeURIComponent(params.fromDate)}`);
     if (params?.toDate) qsParts.push(`toDate=${encodeURIComponent(params.toDate)}`);
+    if (params?.branchId) qsParts.push(`branchId=${params.branchId}`);
     const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
     return apiClient.get<{ customers: Customer[] }>(`${API.CUSTOMERS.LIST}${qs}`);
   },
@@ -54,10 +55,11 @@ export const customerService = {
     });
   },
 
-  async lookup(params?: { search?: string; limit?: number }) {
+  async lookup(params?: { search?: string; limit?: number; branchId?: number }) {
     const qsParts: string[] = [];
     if (params?.search) qsParts.push(`search=${encodeURIComponent(params.search)}`);
     if (params?.limit) qsParts.push(`limit=${encodeURIComponent(String(params.limit))}`);
+    if (params?.branchId) qsParts.push(`branchId=${params.branchId}`);
     const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
     return apiClient.get<{ customers: Customer[] }>(`${API.CUSTOMERS.LIST}/lookup${qs}`);
   },

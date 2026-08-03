@@ -150,7 +150,7 @@ export interface InventoryTransactionLedgerRow {
   note: string;
 }
 
-interface InventoryOptionsResponse {
+export interface InventoryOptionsResponse {
   branchId: number;
   stores: InventoryStoreOption[];
   products: ReportOption[];

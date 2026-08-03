@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Eye, Plus, RefreshCw, RotateCcw, ShoppingBag } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { PageHeader } from '../../components/ui/layout';
@@ -14,6 +14,7 @@ import {
 } from '../../services/returns.service';
 import DeleteConfirmModal from '../../components/ui/modal/DeleteConfirmModal';
 import { defaultDateRange } from '../../utils/dateRange';
+import { useBranch } from '../../context/BranchContext';
 
 const tableHeadCls = 'px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400';
 const tableCellCls = 'px-3 py-2 text-sm text-slate-800 dark:text-slate-200';
@@ -32,6 +33,7 @@ type DeleteReturnTarget =
 const Returns = () => {
   const { showToast } = useToast();
   const navigate = useNavigate();
+  const { activeBranchId } = useBranch();
   const [loading, setLoading] = useState(false);
   const [salesRows, setSalesRows] = useState<SalesReturn[]>([]);
   const [purchaseRows, setPurchaseRows] = useState<PurchaseReturn[]>([]);
@@ -51,6 +53,7 @@ const Returns = () => {
     const res = await returnsService.listSalesReturns({
       fromDate: dateRange.fromDate,
       toDate: dateRange.toDate,
+      branchId: activeBranchId ?? undefined,
     });
     setLoading(false);
     if (res.success && res.data?.rows) {
@@ -65,6 +68,7 @@ const Returns = () => {
     const res = await returnsService.listPurchaseReturns({
       fromDate: dateRange.fromDate,
       toDate: dateRange.toDate,
+      branchId: activeBranchId ?? undefined,
     });
     setLoading(false);
     if (res.success && res.data?.rows) {
@@ -73,6 +77,12 @@ const Returns = () => {
       showToast('error', 'Purchase Returns', res.error || 'Failed to load purchase returns');
     }
   };
+
+  useEffect(() => {
+    if (salesDisplayed) void loadSalesReturns();
+    if (purchaseDisplayed) void loadPurchaseReturns();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBranchId]);
 
   const removeSalesReturn = async (id: number) => {
     setLoading(true);
@@ -465,10 +475,10 @@ const Returns = () => {
               <div><span className="text-xs text-slate-500">Date</span><div className="font-medium">{fmtDate(viewHeader.return_date)}</div></div>
               <div><span className="text-xs text-slate-500">Reference</span><div className="font-medium">{viewHeader.reference_no || '-'}</div></div>
               <div><span className="text-xs text-slate-500">Status</span><div className="font-medium">{resolveStatus((viewHeader as any).status)}</div></div>
-              {'customer_name' in viewHeader ? (
-                <div><span className="text-xs text-slate-500">Customer</span><div className="font-medium">{viewHeader.customer_name || '-'}</div></div>
+              {viewKind === 'purchase' ? (
+                <div><span className="text-xs text-slate-500">Supplier</span><div className="font-medium">{(viewHeader as PurchaseReturn).supplier_name || '-'}</div></div>
               ) : (
-                <div><span className="text-xs text-slate-500">Supplier</span><div className="font-medium">{viewHeader.supplier_name || '-'}</div></div>
+                <div><span className="text-xs text-slate-500">Customer</span><div className="font-medium">{(viewHeader as SalesReturn).customer_name || '-'}</div></div>
               )}
               <div><span className="text-xs text-slate-500">Subtotal</span><div className="font-medium">{fmtCurrency(viewHeader.subtotal)}</div></div>
               <div><span className="text-xs text-slate-500">Total</span><div className="font-medium">{fmtCurrency(viewHeader.total)}</div></div>

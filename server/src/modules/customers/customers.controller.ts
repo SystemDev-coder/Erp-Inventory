@@ -5,7 +5,7 @@ import { ApiResponse } from '../../utils/ApiResponse';
 import { ApiError } from '../../utils/ApiError';
 import { customersService } from './customers.service';
 import { AuthRequest } from '../../middlewares/requireAuth';
-import { pickBranchForWrite, resolveBranchScope } from '../../utils/branchScope';
+import { pickBranchForWrite, resolveActiveBranchIds, resolveBranchScope } from '../../utils/branchScope';
 import { logAudit } from '../../utils/audit';
 
 const genderSchema = z.enum(['male', 'female']);
@@ -39,7 +39,7 @@ const customerUpdateSchema = customerBaseSchema
   }));
 
 export const listCustomers = asyncHandler(async (req: AuthRequest, res: Response) => {
-  const scope = await resolveBranchScope(req);
+  const branchIds = await resolveActiveBranchIds(req);
   const search = req.query.search as string | undefined;
   const fromDate = req.query.fromDate as string | undefined;
   const toDate = req.query.toDate as string | undefined;
@@ -49,18 +49,18 @@ export const listCustomers = asyncHandler(async (req: AuthRequest, res: Response
   if (fromDate && toDate && fromDate > toDate) {
     throw ApiError.badRequest('fromDate cannot be after toDate');
   }
-  const customers = await customersService.listCustomers(scope, search, { fromDate, toDate });
+  const customers = await customersService.listCustomers(branchIds, search, { fromDate, toDate });
   return ApiResponse.success(res, { customers });
 });
 
 export const lookupCustomers = asyncHandler(async (req: AuthRequest, res: Response) => {
-  const scope = await resolveBranchScope(req);
+  const branchIds = await resolveActiveBranchIds(req);
   const querySchema = z.object({
     search: z.string().trim().optional().default(''),
     limit: z.coerce.number().int().positive().max(200).optional().default(50),
   });
   const input = querySchema.parse(req.query);
-  const customers = await customersService.lookupCustomers(scope, input.search, input.limit);
+  const customers = await customersService.lookupCustomers(branchIds, input.search, input.limit);
   return ApiResponse.success(res, { customers });
 });
 

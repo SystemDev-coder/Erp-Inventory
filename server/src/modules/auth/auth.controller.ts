@@ -14,6 +14,8 @@ import {
   lockSetSchema,
   lockVerifySchema,
 } from './auth.schemas';
+import { resolveBranchScope } from '../../utils/branchScope';
+import { queryMany } from '../../db/query';
 
 export class AuthController {
   register = asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -72,6 +74,31 @@ export class AuthController {
     const data = await authService.getUserWithPermissions(req.user.userId);
 
     return ApiResponse.success(res, data);
+  });
+
+  myBranches = asyncHandler(async (req: AuthRequest, res: Response) => {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized',
+      });
+    }
+
+    const scope = await resolveBranchScope(req);
+    const branches = await queryMany<{ branch_id: number; branch_name: string }>(
+      `SELECT branch_id, branch_name
+         FROM ims.branches
+        WHERE branch_id = ANY($1)
+          AND is_active = TRUE
+        ORDER BY branch_name`,
+      [scope.branchIds]
+    );
+
+    return ApiResponse.success(res, {
+      isAdmin: scope.isAdmin,
+      primaryBranchId: scope.primaryBranchId,
+      branches,
+    });
   });
 
   logout = asyncHandler(async (req: AuthRequest, res: Response) => {

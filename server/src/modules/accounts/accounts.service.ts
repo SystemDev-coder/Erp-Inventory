@@ -179,7 +179,7 @@ export const accountsService = {
     return row ? mapAccount(row) : null;
   },
 
-  async list(scope: BranchScope): Promise<Account[]> {
+  async list(branchIds: number[]): Promise<Account[]> {
     await ensureAccountsSchema();
     // Finance > Accounts is for cash/bank (payment) accounts only.
     // Keep ledger/system accounts in the database for reporting, but hide them from this list.
@@ -195,94 +195,51 @@ export const accountsService = {
     // Always present live balances:
     // - If the account has any GL postings, use SUM(debit-credit) from ims.account_transactions
     // - Otherwise fallback to ims.accounts.balance (opening balance entered directly)
-    const rows = scope.isAdmin
-      ? await queryMany<{
-          acc_id: number;
-          branch_id: number;
-          name: string;
-          institution: string | null;
-          balance: string;
-          is_active: boolean;
-          account_type: string;
-          created_at?: string;
-        }>(
-           `WITH txn AS (
-              SELECT
-                at.branch_id,
-                at.acc_id,
-                COUNT(*)::int AS txn_count,
-               COALESCE(SUM(COALESCE(at.debit, 0) - COALESCE(at.credit, 0)), 0)::double precision AS txn_balance
-             FROM ims.account_transactions at
-             WHERE at.txn_date::date <= CURRENT_DATE
-             GROUP BY at.branch_id, at.acc_id
-           )
-           SELECT
-             a.acc_id,
-             a.branch_id,
-             a.name,
-             a.institution,
-             (
-               CASE
-                 WHEN COALESCE(t.txn_count, 0) > 0 THEN COALESCE(t.txn_balance, 0)
-                 ELSE COALESCE(a.balance, 0)::double precision
-               END
-             )::text AS balance,
-             a.is_active,
-             a.account_type,
-             a.created_at::text
-            FROM ims.accounts a
-            LEFT JOIN txn t
-              ON t.branch_id = a.branch_id
-             AND t.acc_id = a.acc_id
-            WHERE a.is_active = TRUE
-              ${cashAccountsFilter}
-            ORDER BY a.name, a.acc_id DESC`
-         )
-      : await queryMany<{
-          acc_id: number;
-          branch_id: number;
-          name: string;
-          institution: string | null;
-          balance: string;
-          is_active: boolean;
-          account_type: string;
-          created_at?: string;
-        }>(
-          `WITH txn AS (
-             SELECT
-               at.branch_id,
-               at.acc_id,
-               COUNT(*)::int AS txn_count,
-               COALESCE(SUM(COALESCE(at.debit, 0) - COALESCE(at.credit, 0)), 0)::double precision AS txn_balance
-             FROM ims.account_transactions at
-             WHERE at.branch_id = ANY($1)
-               AND at.txn_date::date <= CURRENT_DATE
-             GROUP BY at.branch_id, at.acc_id
-           )
-           SELECT
-             a.acc_id,
-             a.branch_id,
-             a.name,
-             a.institution,
-             (
-               CASE
-                 WHEN COALESCE(t.txn_count, 0) > 0 THEN COALESCE(t.txn_balance, 0)
-                 ELSE COALESCE(a.balance, 0)::double precision
-               END
-             )::text AS balance,
-             a.is_active,
-             a.account_type,
-             a.created_at::text
-            FROM ims.accounts a
-            LEFT JOIN txn t
-              ON t.branch_id = a.branch_id
-             AND t.acc_id = a.acc_id
-            WHERE a.branch_id = ANY($1)
-              AND a.is_active = TRUE
-              ${cashAccountsFilter}
-            ORDER BY a.name, a.acc_id DESC`,
-           [scope.branchIds]
-         );
+    const rows = await queryMany<{
+      acc_id: number;
+      branch_id: number;
+      name: string;
+      institution: string | null;
+      balance: string;
+      is_active: boolean;
+      account_type: string;
+      created_at?: string;
+    }>(
+      `WITH txn AS (
+         SELECT
+           at.branch_id,
+           at.acc_id,
+           COUNT(*)::int AS txn_count,
+           COALESCE(SUM(COALESCE(at.debit, 0) - COALESCE(at.credit, 0)), 0)::double precision AS txn_balance
+         FROM ims.account_transactions at
+         WHERE at.branch_id = ANY($1)
+           AND at.txn_date::date <= CURRENT_DATE
+         GROUP BY at.branch_id, at.acc_id
+       )
+       SELECT
+         a.acc_id,
+         a.branch_id,
+         a.name,
+         a.institution,
+         (
+           CASE
+             WHEN COALESCE(t.txn_count, 0) > 0 THEN COALESCE(t.txn_balance, 0)
+             ELSE COALESCE(a.balance, 0)::double precision
+           END
+         )::text AS balance,
+         a.is_active,
+         a.account_type,
+         a.created_at::text
+        FROM ims.accounts a
+        LEFT JOIN txn t
+          ON t.branch_id = a.branch_id
+         AND t.acc_id = a.acc_id
+        WHERE a.branch_id = ANY($1)
+          AND a.is_active = TRUE
+          ${cashAccountsFilter}
+        ORDER BY a.name, a.acc_id DESC`,
+      [branchIds]
+    );
 
     return rows.map(mapAccount);
   },

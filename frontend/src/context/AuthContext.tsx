@@ -8,6 +8,7 @@ import { authService, User, LoginCredentials, RegisterData } from '../services/a
 import { userService } from '../services/user.service';
 import { ApiResponse } from '../services/api';
 import { setAccessToken, clearAccessToken, getAccessToken } from '../services/authStore';
+import { clearActiveBranchId } from '../services/branchStore';
 
 interface AuthContextType {
   user: User | null;
@@ -109,6 +110,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       console.error('Logout error:', error);
     } finally {
       clearAccessToken();
+      clearActiveBranchId();
       setUser(null);
       setPermissions([]);
       setLockedInfo(null);

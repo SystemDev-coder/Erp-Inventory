@@ -7,6 +7,7 @@ import App from "./App.tsx";
 import { AppWrapper } from "./components/common/PageMeta.tsx";
 import { ThemeProvider } from "./context/ThemeContext.tsx";
 import { AuthProvider } from "./context/AuthContext.tsx";
+import { BranchProvider } from "./context/BranchContext.tsx";
 import { ToastProvider } from "./components/ui/toast/Toast.tsx";
 
 const storedTheme = localStorage.getItem("theme");
@@ -24,11 +25,13 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ThemeProvider>
       <AuthProvider>
-        <ToastProvider>
-          <AppWrapper>
-            <App />
-          </AppWrapper>
-        </ToastProvider>
+        <BranchProvider>
+          <ToastProvider>
+            <AppWrapper>
+              <App />
+            </AppWrapper>
+          </ToastProvider>
+        </BranchProvider>
       </AuthProvider>
     </ThemeProvider>
   </StrictMode>,

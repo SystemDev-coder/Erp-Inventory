@@ -135,7 +135,7 @@ export const createUser = asyncHandler(async (req: AuthRequest, res: Response) =
     newValue: {
       username: user.username,
       role_id: user.role_id,
-      branch_id: user.branch_id,
+      branch_ids: user.branch_ids,
       is_active: user.is_active,
     },
     ip: req.ip,

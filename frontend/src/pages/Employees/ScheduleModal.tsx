@@ -6,6 +6,7 @@ import { scheduleService, Schedule, ScheduleInput } from '../../services/schedul
 import { employeeService, Employee } from '../../services/employee.service';
 import { useToast } from '../../components/ui/toast/Toast';
 import Badge from '../../components/ui/badge/Badge';
+import { useBranch } from '../../context/BranchContext';
 
 interface Props {
   isOpen: boolean;
@@ -15,6 +16,7 @@ interface Props {
 
 const ScheduleModal = ({ isOpen, onClose, selectedEmployee }: Props) => {
   const { showToast } = useToast();
+  const { activeBranchId } = useBranch();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [loading, setLoading] = useState(false);
@@ -44,11 +46,12 @@ const ScheduleModal = ({ isOpen, onClose, selectedEmployee }: Props) => {
         fetchSchedules();
       }
     }
-  }, [isOpen, selectedEmployee]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, selectedEmployee, activeBranchId]);
 
   const fetchEmployees = async () => {
     try {
-      const response = await employeeService.list({ status: 'active' });
+      const response = await employeeService.list({ status: 'active', branchId: activeBranchId ?? undefined });
       if (response.success && response.data?.employees) {
         setEmployees(response.data.employees);
       }

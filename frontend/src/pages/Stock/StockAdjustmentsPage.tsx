@@ -9,6 +9,7 @@ import { Modal } from '../../components/ui/modal/Modal';
 import DeleteConfirmModal from '../../components/ui/modal/DeleteConfirmModal';
 import { inventoryService, InventoryItem, StockAdjustmentRow } from '../../services/inventory.service';
 import { defaultDateRange } from '../../utils/dateRange';
+import { useBranch } from '../../context/BranchContext';
 
 const formatDate = (value: string) => {
   // API may return ISO datetime; show YYYY-MM-DD.
@@ -21,6 +22,7 @@ const todayYmd = () => new Date().toISOString().slice(0, 10);
 export default function StockAdjustmentsPage() {
   const { showToast } = useToast();
   const navigate = useNavigate();
+  const { activeBranchId } = useBranch();
 
   const [hasDisplayed, setHasDisplayed] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -84,14 +86,14 @@ export default function StockAdjustmentsPage() {
   const loadItems = useCallback(async () => {
     try {
       setItemsLoading(true);
-      const res = await inventoryService.listItems({ page: 1, limit: 1000 });
+      const res = await inventoryService.listItems({ page: 1, limit: 1000, branchId: activeBranchId ?? undefined });
       setItems(res.data?.items ?? []);
     } catch (err: any) {
       showToast('error', 'Failed', err?.message || 'Could not load items.');
     } finally {
       setItemsLoading(false);
     }
-  }, [showToast]);
+  }, [showToast, activeBranchId]);
 
   const reloadAll = useCallback(async () => {
     if (dateRange.fromDate && dateRange.toDate && dateRange.fromDate > dateRange.toDate) {
@@ -112,6 +114,13 @@ export default function StockAdjustmentsPage() {
   useEffect(() => {
     setIsLoading(false);
   }, []);
+
+  // Reset the cached item picker options when the active branch changes, so the
+  // edit-adjustment modal re-fetches branch-scoped items the next time it opens.
+  useEffect(() => {
+    setItems([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBranchId]);
 
   const openEdit = async (row: StockAdjustmentRow) => {
     const inferredType = row.adjustment_type ?? (Number(row.qty_delta || 0) < 0 ? 'DECREASE' : 'INCREASE');
