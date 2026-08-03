@@ -7,6 +7,8 @@ import {
   assertBranchAccess,
   pickBranchForWrite,
 } from '../../utils/branchScope';
+import { ensureCoaAccounts } from '../../utils/coaDefaults';
+import { postGl, deleteGlByRef } from '../../utils/glPosting';
 import {
   CategoryCreateInput,
   CategoryUpdateInput,
@@ -297,6 +299,33 @@ const upsertStoreItemQuantity = async (
                updated_at = NOW()`,
     [storeId, itemId, quantity]
   );
+};
+
+const roundMoney = (value: unknown) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+
+// Opening stock (opening_balance * cost_price) must be reflected in the GL as an
+// Inventory asset, otherwise the Balance Sheet's Inventory figure only reflects
+// stock movements recorded after item creation and silently omits any starting
+// stock - understating Inventory (and Equity) by however much stock was on hand
+// when the item was set up.
+const rewriteItemOpeningStockGl = async (
+  client: PoolClient,
+  params: { branchId: number; itemId: number; itemName: string; openingBalance: number; costPrice: number }
+) => {
+  await deleteGlByRef(client, { branchId: params.branchId, refTable: 'items', refId: params.itemId });
+  const value = roundMoney(Number(params.openingBalance || 0) * Number(params.costPrice || 0));
+  if (value <= 0) return;
+  const coa = await ensureCoaAccounts(client, params.branchId, ['inventory', 'openingBalanceEquity']);
+  await postGl(client, {
+    branchId: params.branchId,
+    refTable: 'items',
+    refId: params.itemId,
+    note: `Opening stock: ${params.itemName}`,
+    lines: [
+      { accId: coa.inventory, debit: value, note: 'Opening stock' },
+      { accId: coa.openingBalanceEquity, credit: value, note: 'Opening stock' },
+    ],
+  });
 };
 
 export const productsService = {
@@ -619,6 +648,15 @@ export const productsService = {
         const quantity = Number(input.quantity ?? input.openingBalance ?? 0);
         await upsertStoreItemQuantity(client, branchId, input.storeId, itemId, quantity);
       }
+
+      await rewriteItemOpeningStockGl(client, {
+        branchId,
+        itemId,
+        itemName: input.name,
+        openingBalance,
+        costPrice: input.costPrice ?? 0,
+      });
+
       return itemId;
     });
 
@@ -673,6 +711,25 @@ export const productsService = {
       }
       if (targetStoreId && input.quantity !== undefined) {
         await upsertStoreItemQuantity(client, current.branch_id, targetStoreId, id, Number(input.quantity));
+      }
+
+      if (input.openingBalance !== undefined || input.costPrice !== undefined) {
+        const fresh = await client.query<{ name: string; opening_balance: string; cost_price: string }>(
+          `SELECT name, COALESCE(opening_balance, 0)::text AS opening_balance, COALESCE(cost_price, 0)::text AS cost_price
+             FROM ims.items
+            WHERE item_id = $1`,
+          [id]
+        );
+        const row = fresh.rows[0];
+        if (row) {
+          await rewriteItemOpeningStockGl(client, {
+            branchId: current.branch_id,
+            itemId: id,
+            itemName: row.name,
+            openingBalance: Number(row.opening_balance),
+            costPrice: Number(row.cost_price),
+          });
+        }
       }
     });
 
