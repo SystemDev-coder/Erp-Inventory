@@ -37,6 +37,7 @@ echo "==> Pulling latest '$BRANCH' for client '$NAME'..."
 git -C "$REPO_DIR" fetch origin "$BRANCH"
 git -C "$REPO_DIR" checkout "$BRANCH"
 git -C "$REPO_DIR" reset --hard "origin/$BRANCH"
+chown -R "$APP_USER:$APP_USER" "$CLIENT_DIR"
 
 echo "==> Rebuilding backend..."
 cd "$REPO_DIR/server"

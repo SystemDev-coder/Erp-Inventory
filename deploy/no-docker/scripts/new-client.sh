@@ -109,6 +109,8 @@ else
   fi
 fi
 
+chown -R "$APP_USER:$APP_USER" "$CLIENT_DIR"
+
 echo "==> Installing + building backend for '$NAME'..."
 cd "$REPO_DIR/server"
 sudo -u "$APP_USER" npm ci
