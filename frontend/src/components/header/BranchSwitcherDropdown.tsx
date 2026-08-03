@@ -8,7 +8,7 @@ export default function BranchSwitcherDropdown() {
   const [isOpen, setIsOpen] = useState(false);
   const { isAdmin, branches, activeBranchId, setActiveBranch } = useBranch();
 
-  if (branches.length <= 1) return null;
+  if (branches.length === 0) return null;
 
   const toggleDropdown = () => setIsOpen((prev) => !prev);
   const closeDropdown = () => setIsOpen(false);
@@ -16,6 +16,15 @@ export default function BranchSwitcherDropdown() {
   const activeBranchName =
     branches.find((b) => b.branch_id === activeBranchId)?.branch_name ||
     (isAdmin ? "All branches" : "");
+
+  if (branches.length === 1) {
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-theme-sm font-medium text-slate-700 dark:border-slate-700 dark:text-slate-200">
+        <Building2 className="h-4 w-4 text-slate-500 dark:text-slate-300" />
+        <span className="max-w-[140px] truncate">{branches[0].branch_name}</span>
+      </div>
+    );
+  }
 
   return (
     <div className="relative">

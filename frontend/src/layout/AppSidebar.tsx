@@ -21,7 +21,6 @@ import {
 } from 'lucide-react';
 import { useSidebar } from '../context/SidebarContext';
 import { useAuth } from '../context/AuthContext';
-import { useBranch } from '../context/BranchContext';
 import { useNavigate } from 'react-router';
 import { settingsService } from '../services/settings.service';
 
@@ -47,7 +46,6 @@ type SidebarItem = {
 const AppSidebar: React.FC = () => {
   const { isExpanded, isMobileOpen, isHovered, setIsHovered, toggleSidebar } = useSidebar();
   const { permissions, lock, user } = useAuth();
-  const { branches, activeBranchId } = useBranch();
   const [companyName, setCompanyName] = useState('');
 
   useEffect(() => {
@@ -58,10 +56,7 @@ const AppSidebar: React.FC = () => {
     });
   }, []);
 
-  const displayBranchName =
-    (activeBranchId && branches.find((b) => b.branch_id === activeBranchId)?.branch_name) ||
-    user?.branch_name;
-  const brandName = displayBranchName || companyName || 'KeydMaal ERP';
+  const brandName = companyName || 'KeydMaal ERP';
   const location = useLocation();
   const navigate = useNavigate();
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
