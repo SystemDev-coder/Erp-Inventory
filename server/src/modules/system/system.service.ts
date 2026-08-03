@@ -1653,6 +1653,13 @@ export const systemService = {
        for (const b of branches.rows) {
          const bid = Number(b.branch_id);
 
+         // Serialize against createCapitalContribution/createOwnerDrawing (and
+         // their update variants) - all of them delete-then-repost GL rows for
+         // the same ref_id, and without this lock a reconcile running here at
+         // the same moment as one of those requests can leave both sides'
+         // inserts in place (duplicate GL rows for one contribution/drawing).
+         await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`capital:${bid}`]);
+
          // Canonicalize legacy refund rows so ledgers and stored balances agree.
          // Customer refunds: should reduce receivable => credit.
          await client.query(
@@ -1704,7 +1711,6 @@ export const systemService = {
             ) AS exists`
           );
            if (capitalTable.rows[0]?.exists) {
-             const coa = await ensureCoaAccounts(client, bid, ['openingBalanceEquity']);
              const rows = await client.query<{
                capital_id: number;
                acc_id: number;
@@ -1739,6 +1745,9 @@ export const systemService = {
                 [bid, cc.capital_id]
               );
                const memo = `[CAPITAL] ${cc.owner_name}${cc.note ? ` - ${cc.note}` : ''}`;
+               // Owner invests cash: Dr the stored deposit account (Cash/Bank), Cr Owner Capital.
+               // acc_id here is whatever cash/bank account the contribution was recorded
+               // against at create time - never re-point it at an equity account.
                await postGl(client, {
                  branchId: bid,
                  txnDate: cc.contribution_date || null,
@@ -1747,16 +1756,10 @@ export const systemService = {
                  refId: Number(cc.capital_id),
                  note: memo,
                  lines: [
-                   { accId: coa.openingBalanceEquity, debit: amount, credit: 0, note: 'Reclass from opening balance equity' },
+                   { accId: Number(cc.acc_id), debit: amount, credit: 0, note: 'Owner capital deposit' },
                    { accId: Number(cc.equity_acc_id), debit: 0, credit: amount, note: 'Owner capital' },
                  ],
                });
-
-               // Keep the capital record pointing to the equity source (not cash/bank).
-               await client.query(`UPDATE ims.capital_contributions SET acc_id = $2 WHERE capital_id = $1`, [
-                 Number(cc.capital_id),
-                 coa.openingBalanceEquity,
-               ]);
              }
            }
 

@@ -1672,6 +1672,78 @@ export const buildBalanceSheetFromLedger = async (
 // Professional balance sheet: no auto-plugging of retained earnings.
 // - Assets / Liabilities / Equity come from posted GL (ims.account_transactions)
 // - Net Income is shown as "Unclosed" when closing entries are not posted yet.
+// Wraps buildBalanceSheetFromGl (which is guaranteed to balance - every
+// number comes from SUM(debit - credit) on the same ledger where total
+// debits always equal total credits) and overlays a per-owner breakdown on
+// the lump "Owner Capital" / "Owner Drawings" GL lines, so the report still
+// names each owner individually. If the named breakdown doesn't add up to
+// the GL total (e.g. a contribution/drawing was never posted to the ledger
+// for some reason), the lump GL figure is kept instead of a guess, and the
+// mismatch is logged for follow-up - the balance-sheet total itself is
+// never affected either way, since it always comes straight from the GL.
+const buildBalanceSheetGuaranteedBalanced = async (branchId: number, asOfDate: string): Promise<BalanceSheetRow[]> => {
+  const rows = await buildBalanceSheetFromGl(branchId, asOfDate);
+
+  const findEquity = (label: string) =>
+    rows.find((r) => r.section === 'Equity' && String(r.line_item).toLowerCase() === label);
+  const ownerCapitalRow = findEquity('owner capital');
+  const ownerDrawingsRow = findEquity('owner drawings');
+
+  const overlayOwnerBreakdown = async (
+    lumpRow: BalanceSheetRow | undefined,
+    tableName: 'capital_contributions' | 'owner_drawings',
+    dateColumn: 'contribution_date' | 'draw_date',
+    sign: 1 | -1
+  ) => {
+    if (!lumpRow) return;
+    const byOwner = await queryManyIfTableExists<{ owner_name: string; amount: number }>(
+      tableName,
+      `SELECT COALESCE(NULLIF(BTRIM(owner_name), ''), 'Owner') AS owner_name,
+              COALESCE(SUM(amount), 0)::double precision AS amount
+         FROM ims.${tableName}
+        WHERE branch_id = $1
+          AND ${dateColumn}::date <= $2::date
+        GROUP BY 1
+        HAVING COALESCE(SUM(amount), 0) <> 0
+        ORDER BY 1`,
+      [branchId, asOfDate]
+    );
+    if (!byOwner || byOwner.length === 0) return;
+
+    const breakdownTotal = sign * byOwner.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+    if (!isApproxZero(breakdownTotal - Number(lumpRow.amount || 0))) {
+      console.warn(
+        `[balance-sheet] ${tableName} breakdown ($${breakdownTotal.toFixed(2)}) does not match GL "${lumpRow.line_item}" ` +
+          `balance ($${Number(lumpRow.amount).toFixed(2)}) for branch ${branchId} as of ${asOfDate} - showing the GL total.`
+      );
+      return;
+    }
+
+    const index = rows.indexOf(lumpRow);
+    if (index === -1) return;
+    const replacement: BalanceSheetRow[] = byOwner.map((row) => ({
+      section: 'Equity',
+      line_item: String(row.owner_name),
+      amount: sign * Number(row.amount || 0),
+      row_type: 'detail',
+    }));
+    rows.splice(index, 1, ...replacement);
+  };
+
+  await overlayOwnerBreakdown(ownerCapitalRow, 'capital_contributions', 'contribution_date', 1);
+  await overlayOwnerBreakdown(ownerDrawingsRow, 'owner_drawings', 'draw_date', -1);
+
+  const balanceCheck = rows.find((r) => r.section === 'Summary' && r.line_item === 'Unbalanced Difference');
+  if (balanceCheck) {
+    console.warn(
+      `[balance-sheet] branch ${branchId} as of ${asOfDate} is off by $${Number(balanceCheck.amount).toFixed(2)} ` +
+        `(Assets vs Liabilities+Equity) - see account_transactions for unposted/duplicate entries.`
+    );
+  }
+
+  return rows;
+};
+
 const buildBalanceSheetFromGl = async (branchId: number, asOfDate: string): Promise<BalanceSheetRow[]> => {
   const accountRows = await queryMany<{
     acc_id: number;
@@ -2963,11 +3035,8 @@ export const financialReportsService = {
   },
 
   async getBalanceSheet(branchId: number, asOfDate: string, fromDate?: string): Promise<BalanceSheetRow[]> {
-    // Smart ERP balance sheet:
-    // - Uses normalized transactions (fills missing postings from operational modules when possible)
-    // - Falls back to system balances for legacy branches
-    // - Keeps Total Assets = Total Liabilities + Equity via retained earnings reconciliation
-    return buildBalanceSheetFromLedger(branchId, asOfDate, fromDate);
+    void fromDate; // kept for API compatibility; a balance sheet is always as-of a single date.
+    return buildBalanceSheetGuaranteedBalanced(branchId, asOfDate);
   },
 
   async getAccountsReceivable(branchId: number, fromDate: string, toDate: string): Promise<AccountsReceivableRow[]> {

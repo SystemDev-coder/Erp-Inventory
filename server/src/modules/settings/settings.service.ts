@@ -584,6 +584,44 @@ const ensureOwnerCapitalAccount = async (branchId: number): Promise<number> => {
   return Number(created.acc_id);
 };
 
+// Resolves the real cash/bank asset account that capital moves in/out of.
+// Uses the caller's explicit choice if given and valid for this branch,
+// otherwise picks the first active asset account (preferring one named
+// "cash" or "bank") so a payout/deposit account always exists.
+const resolveCashOrBankAccount = async (branchId: number, accountId?: number): Promise<number> => {
+  const account = accountId
+    ? await queryOne<{ acc_id: number; account_type: string }>(
+        `SELECT acc_id, account_type
+           FROM ims.accounts
+          WHERE acc_id = $1
+            AND branch_id = $2
+            AND is_active = TRUE`,
+        [accountId, branchId]
+      )
+    : await queryOne<{ acc_id: number; account_type: string }>(
+        `SELECT acc_id, account_type
+           FROM ims.accounts
+          WHERE branch_id = $1
+            AND is_active = TRUE
+            AND account_type = 'asset'
+          ORDER BY
+            CASE
+              WHEN name ILIKE '%cash%' THEN 0
+              WHEN name ILIKE '%bank%' THEN 1
+              ELSE 2
+            END,
+            acc_id ASC
+          LIMIT 1`,
+        [branchId]
+      );
+
+  if (!account) throw ApiError.badRequest('No active cash/bank account found for this branch');
+  if ((account.account_type || 'asset') !== 'asset') {
+    throw ApiError.badRequest('Selected account must be an asset (cash/bank) account');
+  }
+  return Number(account.acc_id);
+};
+
 const isCapitalDateLocked = async (branchId: number, date: string): Promise<boolean> => {
   const tableExists = await queryOne<{ exists: boolean }>(
     `SELECT EXISTS (
@@ -1408,6 +1446,7 @@ export const settingsService = {
       amount: number;
       sharePct?: number;
       date: string;
+      accountId?: number;
       note?: string | null;
       branchId?: number;
     },
@@ -1424,14 +1463,10 @@ export const settingsService = {
     }
 
     const ownerCapitalAccId = await ensureOwnerCapitalAccount(branchId);
+    const depositAccountId = await resolveCashOrBankAccount(branchId, input.accountId);
 
     const capitalId = await withTransaction(async (client) => {
-      // IMPORTANT:
-      // Capital entries in this system are used to record OWNER EQUITY allocation,
-      // not to move cash/bank (cash opening balances are recorded in Accounts).
-      // So we reclassify within equity: Dr Opening Balance Equity, Cr Owner Capital.
-      const coa = await ensureCoaAccounts(client, branchId, ['openingBalanceEquity']);
-      const sourceEquityAccId = coa.openingBalanceEquity;
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`capital:${branchId}`]);
 
       const rowRes = await client.query<{ capital_id: number }>(
         `INSERT INTO ims.capital_contributions
@@ -1444,7 +1479,7 @@ export const settingsService = {
           input.amount,
           Number(input.sharePct || 0),
           input.date,
-          sourceEquityAccId,
+          depositAccountId,
           ownerCapitalAccId,
           input.note || null,
           userId,
@@ -1462,6 +1497,7 @@ export const settingsService = {
       );
 
       const memo = `[CAPITAL] ${ownerName}${input.note ? ` - ${input.note}` : ''}`;
+      // Owner invests cash into the business: Dr Cash/Bank (asset up), Cr Owner Capital (equity up).
       await postGl(client, {
         branchId,
         txnDate: input.date || null,
@@ -1470,7 +1506,7 @@ export const settingsService = {
         refId: capital_id,
         note: memo,
         lines: [
-          { accId: sourceEquityAccId, debit: Number(input.amount || 0), credit: 0, note: 'Reclass from opening balance equity' },
+          { accId: depositAccountId, debit: Number(input.amount || 0), credit: 0, note: 'Owner capital deposit' },
           { accId: ownerCapitalAccId, debit: 0, credit: Number(input.amount || 0), note: 'Owner capital' },
         ],
       });
@@ -1636,43 +1672,12 @@ export const settingsService = {
       throw ApiError.badRequest(`Draw amount exceeds available equity (${availableEquity.toFixed(2)})`);
     }
 
-    const payoutAccount = input.accountId
-      ? await queryOne<{ acc_id: number; account_type: string }>(
-          `SELECT acc_id, account_type
-             FROM ims.accounts
-            WHERE acc_id = $1
-              AND branch_id = $2
-              AND is_active = TRUE`,
-          [input.accountId, branchId]
-        )
-      : await queryOne<{ acc_id: number; account_type: string }>(
-          `SELECT acc_id, account_type
-             FROM ims.accounts
-            WHERE branch_id = $1
-              AND is_active = TRUE
-              AND account_type = 'asset'
-            ORDER BY
-              CASE
-                WHEN name ILIKE '%cash%' THEN 0
-                WHEN name ILIKE '%bank%' THEN 1
-                ELSE 2
-              END,
-              acc_id ASC
-            LIMIT 1`,
-          [branchId]
-        );
-
-    if (!payoutAccount) {
-      throw ApiError.badRequest('No active payout account found for this branch');
-    }
-    if ((payoutAccount.account_type || 'asset') !== 'asset') {
-      throw ApiError.badRequest('Payout account must be an asset (cash/bank) account');
-    }
-
-    const payoutAccountId = Number(payoutAccount.acc_id);
+    const payoutAccountId = await resolveCashOrBankAccount(branchId, input.accountId);
     const ownerCapitalAccId = await ensureOwnerCapitalAccount(branchId);
 
     const drawId = await withTransaction(async (client) => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`capital:${branchId}`]);
+
       const rowRes = await client.query<{ draw_id: number }>(
         `INSERT INTO ims.owner_drawings
            (branch_id, owner_name, amount, draw_date, acc_id, equity_acc_id, note, created_by)
@@ -1795,6 +1800,8 @@ export const settingsService = {
     const nextAccountId = Number(next.accountId);
 
     const updated = await withTransaction(async (client) => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`capital:${Number(existing.branch_id)}`]);
+
       if (existing.journal_id) {
         await client.query(`DELETE FROM ims.journal_entries WHERE journal_id = $1`, [existing.journal_id]);
       }
@@ -1909,7 +1916,7 @@ export const settingsService = {
 
   async updateCapitalContribution(
     id: number,
-    input: { ownerName?: string; amount?: number; sharePct?: number; date?: string; note?: string | null },
+    input: { ownerName?: string; amount?: number; sharePct?: number; date?: string; accountId?: number; note?: string | null },
     scope: BranchScope,
     userId: number
   ): Promise<CapitalContribution> {
@@ -1952,7 +1959,15 @@ export const settingsService = {
       throw ApiError.badRequest('Cannot update capital entry in a closed accounting period');
     }
 
+    // Don't trust existing.acc_id as a fallback here - on records created before
+    // this fix it still points at an equity account (Opening Balance Equity),
+    // not a real cash/bank asset account; let resolveCashOrBankAccount auto-pick
+    // a fresh one whenever the caller doesn't explicitly choose one.
+    const depositAccountId = await resolveCashOrBankAccount(Number(existing.branch_id), input.accountId);
+
     const updated = await withTransaction(async (client) => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`capital:${Number(existing.branch_id)}`]);
+
       if (existing.journal_id) {
         await client.query(`DELETE FROM ims.journal_entries WHERE journal_id = $1`, [existing.journal_id]);
       }
@@ -1972,15 +1987,15 @@ export const settingsService = {
                 share_pct = $4,
                 contribution_date = $5::date,
                 note = $6,
+                acc_id = $7,
                 journal_id = NULL,
                 updated_at = NOW()
           WHERE capital_id = $1`,
-        [id, next.ownerName, next.amount, Number(next.sharePct || 0), next.date, next.note || null]
+        [id, next.ownerName, next.amount, Number(next.sharePct || 0), next.date, next.note || null, depositAccountId]
       );
 
       const memo = `[CAPITAL] ${next.ownerName}${next.note ? ` - ${next.note}` : ''}`;
-      const coa = await ensureCoaAccounts(client, Number(existing.branch_id), ['openingBalanceEquity']);
-      const sourceEquityAccId = coa.openingBalanceEquity;
+      // Owner invests cash into the business: Dr Cash/Bank (asset up), Cr Owner Capital (equity up).
       await postGl(client, {
         branchId: Number(existing.branch_id),
         txnDate: next.date || null,
@@ -1989,13 +2004,10 @@ export const settingsService = {
         refId: id,
         note: memo,
         lines: [
-          { accId: sourceEquityAccId, debit: Number(next.amount || 0), credit: 0, note: 'Reclass from opening balance equity' },
+          { accId: depositAccountId, debit: Number(next.amount || 0), credit: 0, note: 'Owner capital deposit' },
           { accId: Number(existing.equity_acc_id), debit: 0, credit: Number(next.amount || 0), note: 'Owner capital' },
         ],
       });
-
-      // Keep contribution's acc_id pointing to the equity source (not cash/bank).
-      await client.query(`UPDATE ims.capital_contributions SET acc_id = $2 WHERE capital_id = $1`, [id, sourceEquityAccId]);
 
       const reloaded = await this.getCapitalContributionById(id, scope);
       if (!reloaded) throw ApiError.internal('Failed to load updated capital entry');

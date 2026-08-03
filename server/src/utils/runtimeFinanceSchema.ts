@@ -1,7 +1,5 @@
 import { adminQueryMany } from '../db/adminQuery';
-import { queryOne } from '../db/query';
 import { assetsService } from '../modules/assets/assets.service';
-import { systemService } from '../modules/system/system.service';
 
 let runtimeFinanceSchemaReady = false;
 
@@ -303,23 +301,11 @@ export const ensureRuntimeFinanceSchema = async (): Promise<void> => {
   // Best-effort migration/cleanup (fixed_assets -> assets, remove legacy "Supplies" account).
   await assetsService.ensureSchema();
 
-  // If older deployments posted owner capital into cash/bank accounts, normalize it so it does not inflate cash balances.
-  // This runs only when needed and keeps TB/BS stable by rebuilding GL and recomputing balances.
-  const needsCapitalRebuild = await queryOne<{ exists: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1
-         FROM ims.account_transactions at
-         JOIN ims.accounts a
-           ON a.branch_id = at.branch_id
-          AND a.acc_id = at.acc_id
-        WHERE at.ref_table = 'capital_contributions'
-          AND COALESCE(a.account_type::text, 'asset') = 'asset'
-        LIMIT 1
-     ) AS exists`
-  );
-  if (needsCapitalRebuild?.exists) {
-    await systemService.reconcileBalances();
-  }
+  // NOTE: capital contributions posting Dr Cash/Bank, Cr Owner Capital is now
+  // the correct, intended behavior (proper double-entry for a real cash
+  // investment) - do not "fix" that on boot. If a branch's GL ever needs a
+  // manual rebuild, use the admin "Reconcile Balances" action instead of
+  // running this unconditionally on every server start.
 
   runtimeFinanceSchemaReady = true;
 };

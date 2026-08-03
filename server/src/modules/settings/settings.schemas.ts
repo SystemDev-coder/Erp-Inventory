@@ -61,6 +61,7 @@ export const capitalUpdateSchema = z
     amount: z.coerce.number().positive('Amount must be greater than 0').optional(),
     sharePct: z.coerce.number().min(0, 'Share must be 0 or greater').max(100, 'Share cannot exceed 100%').optional(),
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD').optional(),
+    accountId: z.coerce.number().int().positive('Account is required').optional(),
     note: z.string().max(500).optional().or(z.literal('')),
   })
   .refine((value) => Object.keys(value).length > 0, {
