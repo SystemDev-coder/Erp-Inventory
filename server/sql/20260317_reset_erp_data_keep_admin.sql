@@ -72,15 +72,33 @@ BEGIN
     EXECUTE 'TRUNCATE TABLE ' || v_truncate_list || ' RESTART IDENTITY CASCADE';
   END IF;
 
-  -- Keep only selected users (by username).
+  -- user_branches/user_permissions/user_permission_overrides/user_locks all
+  -- already have ON DELETE CASCADE (or SET NULL for granted_by) back to
+  -- ims.users, so a plain delete cascades correctly on its own. The only
+  -- blocker is ims.trg_soft_delete, which intercepts deletes on ims.users
+  -- and raises if it finds ANY referencing row - bypass it for this
+  -- intentional hard reset so removed users are genuinely gone, not
+  -- soft-deleted "ghost" rows.
+  -- Suppress regular triggers for this delete: trg_soft_delete would block
+  -- it outright, and trg_audit_all_tables would try to log the delete with
+  -- user_id = the deleted row's own id, self-violating audit_logs' FK back
+  -- to ims.users once that row is gone. session_replication_role also
+  -- suppresses the FK CASCADE enforcement triggers, so the child-table
+  -- cleanup below (normally automatic via ON DELETE CASCADE) has to be
+  -- done explicitly while still in this block.
+  SET session_replication_role = replica;
+
   DELETE FROM ims.users u
    WHERE NOT (COALESCE(lower(u.username), '') = ANY(v_keep_usernames));
 
-  -- Remove orphaned user mappings (defensive: some schemas may not use CASCADE).
   DELETE FROM ims.user_branches ub WHERE NOT EXISTS (SELECT 1 FROM ims.users u WHERE u.user_id = ub.user_id);
   DELETE FROM ims.user_permissions up WHERE NOT EXISTS (SELECT 1 FROM ims.users u WHERE u.user_id = up.user_id);
+  UPDATE ims.user_permissions SET granted_by = NULL
+   WHERE granted_by IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ims.users u WHERE u.user_id = ims.user_permissions.granted_by);
   DELETE FROM ims.user_permission_overrides uo WHERE NOT EXISTS (SELECT 1 FROM ims.users u WHERE u.user_id = uo.user_id);
   DELETE FROM ims.user_locks ul WHERE NOT EXISTS (SELECT 1 FROM ims.users u WHERE u.user_id = ul.user_id);
+
+  SET session_replication_role = DEFAULT;
 
   -- Ensure at least one active branch exists (bootstrap expects it).
   SELECT branch_id
