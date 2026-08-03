@@ -410,21 +410,6 @@ BEGIN
     END;
   END IF;
 
-  IF EXISTS (
-    SELECT 1
-      FROM pg_proc p
-      JOIN pg_namespace n ON n.oid = p.pronamespace
-     WHERE n.nspname = 'ims'
-       AND p.proname = 'sp_create_sample_users'
-  ) THEN
-    BEGIN
-      PERFORM ims.sp_create_sample_users();
-    EXCEPTION
-      WHEN OTHERS THEN
-        RAISE WARNING 'Skipping sp_create_sample_users: %', SQLERRM;
-    END;
-  END IF;
-
   -- Hard guarantee: Admin can access Settings -> Company Info and Audit History
   INSERT INTO ims.permissions (perm_key, perm_name, module, sub_module, action_type, description)
   VALUES
@@ -520,6 +505,16 @@ fi
 apply_incremental_migrations
 
 run_bootstrap_seed
+
+# sp_create_sample_users() seeds demo accounts (admin/cabdi/deeqa/faarax/xasan/sahra)
+# that all share one publicly-known password baked into Full_complete_scheme.sql.
+# Only ever run it for disposable demo/try-it instances, never on a real
+# deployment - RUN_DEMO_SEED already gates the transactional demo data below,
+# so reuse the same flag here.
+if [ "$RUN_DEMO_SEED" = "true" ]; then
+  echo "RUN_DEMO_SEED=true: creating sample demo users"
+  psql_admin -v ON_ERROR_STOP=1 -c "SELECT ims.sp_create_sample_users();" || echo "Skipping sp_create_sample_users"
+fi
 
 echo "Applying runtime schema fixes..."
 psql_admin -v ON_ERROR_STOP=1 <<SQL
