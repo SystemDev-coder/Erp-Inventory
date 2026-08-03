@@ -316,6 +316,12 @@ const isInventoryLossAccountName = (name: string) => {
   return n.includes('loss') || n.includes('shrink') || n.includes('damage') || n.includes('write');
 };
 
+const isInventoryGainAccountName = (name: string) => {
+  const n = normalizeAccountName(name);
+  if (!n.includes('inventory')) return false;
+  return n.includes('gain') || n.includes('found') || n.includes('surplus');
+};
+
 const queryInventoryOnHandValue = async (branchId: number): Promise<number> =>
   queryAmount(
     `WITH legacy_adjustments AS (
@@ -481,7 +487,12 @@ const isNonCurrentLiabilityAccount = (name: string) => {
   );
 };
 
-const isInventoryAccount = (name: string) => normalizeAccountName(name).includes('inventory');
+// "Inventory Gain"/"Inventory Loss" are P&L accounts that merely reference inventory in
+// their name - they must never be treated as the Inventory asset account itself.
+const isInventoryAccount = (name: string) =>
+  normalizeAccountName(name).includes('inventory')
+  && !isInventoryLossAccountName(name)
+  && !isInventoryGainAccountName(name);
 const isPrepaidAccount = (name: string) => {
   const n = normalizeAccountName(name);
   return n.includes('prepaid') || n.includes('prepared');
@@ -517,6 +528,7 @@ const classifyForBalanceSheet = (accountType: string, accountName: string): Bala
   // resolved before that broad keyword matching (e.g. "Inventory Loss" contains no
   // asset-category keyword, so it's safe to check here first regardless of order).
   if (isInventoryLossAccountName(accountName)) return 'expense';
+  if (isInventoryGainAccountName(accountName)) return 'revenue';
 
   // Specific, well-defined asset categories take priority over the generic expense/revenue
   // keyword matching below - otherwise "Prepaid Rent" gets caught by the word "rent" and
