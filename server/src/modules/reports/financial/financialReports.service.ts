@@ -1808,7 +1808,7 @@ const buildBalanceSheetFromGl = async (branchId: number, asOfDate: string): Prom
        AND at.txn_date::date <= $2::date
      WHERE a.branch_id = $1
        AND a.is_active = TRUE
-     GROUP BY a.acc_id, a.name, a.institution, a.account_type, a.balance
+     GROUP BY a.branch_id, a.acc_id, a.name, a.institution, a.account_type, a.balance
      ORDER BY a.acc_id ASC`,
     [branchId, asOfDate]
   );
