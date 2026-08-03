@@ -331,8 +331,8 @@ export const hrReportsService = {
            'PAYROLL_CHARGE'::text AS entry_type,
            'payroll_lines'::text AS ref_table,
            pl.payroll_line_id AS ref_id,
-           0::double precision AS amount_in,
-           COALESCE(pl.net_salary, 0)::double precision AS amount_out,
+           COALESCE(pl.net_salary, 0)::double precision AS amount_in,
+           0::double precision AS amount_out,
            COALESCE(pl.note, '') AS note
          FROM ims.payroll_lines pl
          JOIN ims.payroll_runs pr ON pr.payroll_id = pl.payroll_id

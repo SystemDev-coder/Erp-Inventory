@@ -135,6 +135,14 @@ export const purchaseReportsService = {
            COALESCE(SUM(sp.amount_paid), 0)::double precision AS paid_amount
          FROM ims.supplier_payments sp
          GROUP BY sp.purchase_id
+       ),
+       returns AS (
+         SELECT
+           pr.purchase_id,
+           COALESCE(SUM(pr.total), 0)::double precision AS returned_amount
+         FROM ims.purchase_returns pr
+         WHERE pr.purchase_id IS NOT NULL
+         GROUP BY pr.purchase_id
        )
        SELECT
          p.purchase_id,
@@ -146,21 +154,22 @@ export const purchaseReportsService = {
          COALESCE(p.discount, 0)::double precision AS discount,
          COALESCE(p.total, 0)::double precision AS total,
          COALESCE(pay.paid_amount, 0)::double precision AS paid_amount,
-         GREATEST(COALESCE(p.total, 0) - COALESCE(pay.paid_amount, 0), 0)::double precision AS outstanding_amount,
+         GREATEST(COALESCE(p.total, 0) - COALESCE(ret.returned_amount, 0) - COALESCE(pay.paid_amount, 0), 0)::double precision AS outstanding_amount,
          CASE
-           WHEN LOWER(COALESCE(p.status::text, '')) = 'void' THEN 'VOID'
-           WHEN COALESCE(pay.paid_amount, 0) >= COALESCE(p.total, 0) THEN 'PAID'
+           WHEN COALESCE(pay.paid_amount, 0) >= COALESCE(p.total, 0) - COALESCE(ret.returned_amount, 0) THEN 'PAID'
            WHEN COALESCE(pay.paid_amount, 0) > 0 THEN 'PARTIAL'
            ELSE 'UNPAID'
          END AS payment_status,
          COALESCE(p.status::text, 'unpaid') AS status
        FROM ims.purchases p
        LEFT JOIN payments pay ON pay.purchase_id = p.purchase_id
+       LEFT JOIN returns ret ON ret.purchase_id = p.purchase_id
        LEFT JOIN ims.suppliers s ON s.supplier_id = p.supplier_id
        LEFT JOIN ims.users u ON u.user_id = p.user_id
        LEFT JOIN ims.stores st ON st.store_id = p.store_id
       WHERE p.branch_id = $1
         AND p.purchase_date::date BETWEEN $2::date AND $3::date
+        AND LOWER(COALESCE(p.status::text, '')) <> 'void'
       ORDER BY p.purchase_date ASC, p.purchase_id ASC`,
       [branchId, fromDate, toDate]
     );
@@ -168,7 +177,7 @@ export const purchaseReportsService = {
 
   async getSupplierWisePurchases(branchId: number, supplierId?: number): Promise<SupplierWisePurchaseRow[]> {
     const params: Array<number> = [branchId];
-    const filters: string[] = ['p.branch_id = $1'];
+    const filters: string[] = ['p.branch_id = $1', "LOWER(COALESCE(p.status::text, '')) <> 'void'"];
 
     if (supplierId) {
       params.push(supplierId);
@@ -227,6 +236,14 @@ export const purchaseReportsService = {
            COALESCE(SUM(sp.amount_paid), 0)::double precision AS paid_amount
          FROM ims.supplier_payments sp
          GROUP BY sp.purchase_id
+       ),
+       returns AS (
+         SELECT
+           pr.purchase_id,
+           COALESCE(SUM(pr.total), 0)::double precision AS returned_amount
+         FROM ims.purchase_returns pr
+         WHERE pr.purchase_id IS NOT NULL
+         GROUP BY pr.purchase_id
        )
        SELECT
          p.purchase_id,
@@ -234,19 +251,20 @@ export const purchaseReportsService = {
          COALESCE(s.name, 'Unknown Supplier') AS supplier_name,
          COALESCE(p.total, 0)::double precision AS total,
          COALESCE(pay.paid_amount, 0)::double precision AS paid_amount,
-         GREATEST(COALESCE(p.total, 0) - COALESCE(pay.paid_amount, 0), 0)::double precision AS outstanding_amount,
+         GREATEST(COALESCE(p.total, 0) - COALESCE(ret.returned_amount, 0) - COALESCE(pay.paid_amount, 0), 0)::double precision AS outstanding_amount,
          CASE
-           WHEN LOWER(COALESCE(p.status::text, '')) = 'void' THEN 'VOID'
-           WHEN COALESCE(pay.paid_amount, 0) >= COALESCE(p.total, 0) THEN 'PAID'
+           WHEN COALESCE(pay.paid_amount, 0) >= COALESCE(p.total, 0) - COALESCE(ret.returned_amount, 0) THEN 'PAID'
            WHEN COALESCE(pay.paid_amount, 0) > 0 THEN 'PARTIAL'
            ELSE 'UNPAID'
          END AS payment_status,
          COALESCE(p.status::text, 'unpaid') AS status
        FROM ims.purchases p
        LEFT JOIN payments pay ON pay.purchase_id = p.purchase_id
+       LEFT JOIN returns ret ON ret.purchase_id = p.purchase_id
        LEFT JOIN ims.suppliers s ON s.supplier_id = p.supplier_id
       WHERE p.branch_id = $1
         AND p.purchase_date::date BETWEEN $2::date AND $3::date
+        AND LOWER(COALESCE(p.status::text, '')) <> 'void'
       ORDER BY p.purchase_date ASC, p.purchase_id ASC`,
       [branchId, fromDate, toDate]
     );
@@ -273,20 +291,8 @@ export const purchaseReportsService = {
            COALESCE(l.entry_type::text, 'purchase') AS entry_type,
            COALESCE(l.ref_table, '') AS ref_table,
            l.ref_id,
-           (
-             CASE
-               WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%')
-                 THEN ABS(COALESCE(l.debit, 0)) + ABS(COALESCE(l.credit, 0))
-               ELSE COALESCE(l.debit, 0)
-             END
-           )::double precision AS debit,
-           (
-             CASE
-               WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%')
-                 THEN 0
-               ELSE COALESCE(l.credit, 0)
-             END
-           )::double precision AS credit,
+           COALESCE(l.debit, 0)::double precision AS debit,
+           COALESCE(l.credit, 0)::double precision AS credit,
            COALESCE(l.note, '') AS note
          FROM ims.supplier_ledger l
          LEFT JOIN ims.suppliers s ON s.supplier_id = l.supplier_id
@@ -368,6 +374,7 @@ export const purchaseReportsService = {
        LEFT JOIN ims.purchase_items pi ON pi.purchase_id = p.purchase_id
       WHERE p.branch_id = $1
         AND p.purchase_date::date BETWEEN $2::date AND $3::date
+        AND LOWER(COALESCE(p.status::text, '')) <> 'void'
       GROUP BY p.purchase_id, p.purchase_date, s.name, p.subtotal, p.discount, p.total, p.status
       ORDER BY p.purchase_date ASC, p.purchase_id ASC`,
       [branchId, fromDate, toDate]
@@ -392,6 +399,14 @@ export const purchaseReportsService = {
            COALESCE(SUM(sp.amount_paid), 0)::double precision AS paid_amount
          FROM ims.supplier_payments sp
          GROUP BY sp.purchase_id
+       ),
+       returns AS (
+         SELECT
+           pr.purchase_id,
+           COALESCE(SUM(pr.total), 0)::double precision AS returned_amount
+         FROM ims.purchase_returns pr
+         WHERE pr.purchase_id IS NOT NULL
+         GROUP BY pr.purchase_id
        )
        SELECT
          s.supplier_id,
@@ -399,10 +414,11 @@ export const purchaseReportsService = {
          COUNT(sp.purchase_id)::int AS purchases_count,
          COALESCE(SUM(sp.total_amount), 0)::double precision AS total_amount,
          COALESCE(SUM(pay.paid_amount), 0)::double precision AS total_paid,
-         COALESCE(SUM(GREATEST(sp.total_amount - COALESCE(pay.paid_amount, 0), 0)), 0)::double precision AS outstanding_amount,
+         COALESCE(SUM(GREATEST(sp.total_amount - COALESCE(ret.returned_amount, 0) - COALESCE(pay.paid_amount, 0), 0)), 0)::double precision AS outstanding_amount,
          COALESCE(AVG(sp.total_amount), 0)::double precision AS avg_purchase_value
        FROM scoped_purchases sp
        LEFT JOIN payments pay ON pay.purchase_id = sp.purchase_id
+       LEFT JOIN returns ret ON ret.purchase_id = sp.purchase_id
        LEFT JOIN ims.suppliers s ON s.supplier_id = sp.supplier_id
       GROUP BY s.supplier_id, s.name
       ORDER BY total_amount DESC, purchases_count DESC

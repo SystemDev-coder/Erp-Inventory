@@ -181,22 +181,11 @@ export const customerReportsService = {
            ) AS entry_type,
            COALESCE(l.ref_table, '') AS ref_table,
            l.ref_id,
-           -- ERP behavior: show refunds as a "credit" (subtraction) on the customer ledger report.
-           -- This is a presentation/reporting convention; operational modules may store refunds as debits.
-           (
-             CASE
-               WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%')
-                 THEN 0
-               ELSE COALESCE(l.debit, 0)
-             END
-           )::double precision AS debit,
-           (
-             CASE
-               WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%')
-                 THEN COALESCE(l.debit, 0) + COALESCE(l.credit, 0)
-               ELSE COALESCE(l.credit, 0)
-             END
-           )::double precision AS credit,
+           -- Refunds are written as a debit that partially reverses the return's credit note
+           -- (that portion was paid back in cash, not kept as store credit) - use the ledger's
+           -- own signed debit/credit as-is so the running balance nets correctly.
+           COALESCE(l.debit, 0)::double precision AS debit,
+           COALESCE(l.credit, 0)::double precision AS credit,
            COALESCE(l.note, '') AS note
          FROM ims.customer_ledger l
          LEFT JOIN ims.customers c ON c.customer_id = l.customer_id
@@ -254,15 +243,9 @@ export const customerReportsService = {
       `WITH ledger AS (
          SELECT
            l.customer_id,
-           COALESCE(SUM(CASE WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%') THEN 0 ELSE l.debit END), 0)::double precision AS total_debit,
-           COALESCE(SUM(CASE WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%') THEN (COALESCE(l.debit, 0) + COALESCE(l.credit, 0)) ELSE l.credit END), 0)::double precision AS total_credit,
-           COALESCE(
-             SUM(
-               (CASE WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%') THEN 0 ELSE l.debit END)
-               - (CASE WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%') THEN (COALESCE(l.debit, 0) + COALESCE(l.credit, 0)) ELSE l.credit END)
-             ),
-             0
-           )::double precision AS ledger_balance
+           COALESCE(SUM(l.debit), 0)::double precision AS total_debit,
+           COALESCE(SUM(l.credit), 0)::double precision AS total_credit,
+           COALESCE(SUM(COALESCE(l.debit, 0) - COALESCE(l.credit, 0)), 0)::double precision AS ledger_balance
           FROM ims.customer_ledger l
          WHERE l.branch_id = $1
            AND NOT (
@@ -419,17 +402,7 @@ export const customerReportsService = {
       `WITH ledger AS (
          SELECT
            l.customer_id,
-           COALESCE(
-             SUM(
-               CASE
-                 -- Normalize refunds to always reduce outstanding, regardless of whether legacy rows used debit or credit.
-                 WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%')
-                   THEN -ABS(COALESCE(l.debit, 0) + COALESCE(l.credit, 0))
-                 ELSE COALESCE(l.debit, 0) - COALESCE(l.credit, 0)
-               END
-             ),
-             0
-           )::double precision AS ledger_balance
+           COALESCE(SUM(COALESCE(l.debit, 0) - COALESCE(l.credit, 0)), 0)::double precision AS ledger_balance
           FROM ims.customer_ledger l
          WHERE l.branch_id = $1
            AND NOT (

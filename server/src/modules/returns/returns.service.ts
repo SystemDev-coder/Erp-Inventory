@@ -1687,9 +1687,9 @@ export const returnsService = {
             }
             if (input.customerId) {
                 // Keep customers table in sync with ledger logic used by reports:
-                // - Return credits reduce outstanding by `total`
-                // - Refunds reduce outstanding by `refundAmount` (in addition to the return credit)
-                const desiredDelta = -roundMoney(total + refundAmount);
+                // - Return credit reduces outstanding by `total`
+                // - Cash refund partially reverses that credit (that portion left as cash, not store credit)
+                const desiredDelta = -roundMoney(total - refundAmount);
                 const safeDelta = Math.max(-currentOutstanding, desiredDelta);
                 if (safeDelta !== 0) {
                     await adjustCustomerBalance(client, {
@@ -1827,7 +1827,7 @@ export const returnsService = {
             const refundAmountCandidate = refundUpdateRequested ? Number(input.refundAmount || 0) : previousRefundAmount;
 
             const previousTotal = roundMoney(Number(current?.total || 0));
-            const previousCustomerEffect = roundMoney(previousTotal + previousRefundAmount);
+            const previousCustomerEffect = roundMoney(previousTotal - previousRefundAmount);
 
             const newCustomerId = Number(input.customerId || 0);
             const currentOutstanding = newCustomerId
@@ -1996,7 +1996,7 @@ export const returnsService = {
                 });
             }
             if (newCustomerId) {
-                const newEffect = roundMoney(total + refundAmount);
+                const newEffect = roundMoney(total - refundAmount);
                 const netDelta =
                     oldCustomerId && oldCustomerId === newCustomerId ? roundMoney(previousCustomerEffect - newEffect) : -newEffect;
                 const safeDelta = Math.max(-currentOutstanding, netDelta);
@@ -2078,7 +2078,7 @@ export const returnsService = {
             });
             const refundAmount = roundMoney(refundLines.reduce((s, r) => s + r.amount, 0));
             const total = roundMoney(Number(current?.total || 0));
-            const previousCustomerEffect = roundMoney(total + refundAmount);
+            const previousCustomerEffect = roundMoney(total - refundAmount);
             for (const r of refundLines) {
                 // Reverse the cash outflow for the refund.
                 await applyAccountBalanceDelta(client, {
@@ -2444,15 +2444,16 @@ export const returnsService = {
             }
             if (refundAmount > 0) {
                 const refundEntryType = await pickLedgerEntryType(client, ['refund', 'payment', 'return', 'adjustment']);
+                // Refund partially reverses the return's debit (that portion was paid back in cash, not kept as payable credit).
                 await client.query(
                     `INSERT INTO ims.supplier_ledger
                        (branch_id, supplier_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
-                     VALUES ($1, $2, $3, 'purchase_returns', $4, $5, $6, 0, $7)`,
+                     VALUES ($1, $2, $3, 'purchase_returns', $4, $5, 0, $6, $7)`,
                     [context.branchId, input.supplierId, refundEntryType, pr.pr_id, refundAccId, refundAmount, 'Supplier refund']
                 );
             }
-            // Keep suppliers table in sync with report expectations: refunds reduce outstanding.
-            const desiredDelta = -roundMoney(total + refundAmount);
+            // Keep suppliers table in sync with report expectations: refund partially reverses the return's reduction.
+            const desiredDelta = -roundMoney(total - refundAmount);
             const safeDelta = Math.max(-currentOutstanding, desiredDelta);
             if (safeDelta !== 0) {
                 await adjustSupplierBalance(client, {
@@ -2572,7 +2573,7 @@ export const returnsService = {
             const refundAmountCandidate = refundUpdateRequested ? Number(input.refundAmount || 0) : previousRefundAmount;
 
             const previousTotal = roundMoney(Number(current?.total || 0));
-            const previousSupplierEffect = roundMoney(previousTotal + previousRefundAmount);
+            const previousSupplierEffect = roundMoney(previousTotal - previousRefundAmount);
             if (oldSupplierId && previousSupplierEffect > 0) {
                 await adjustSupplierBalance(client, {
                     branchId: Number(current.branch_id),
@@ -2725,13 +2726,13 @@ export const returnsService = {
                     await client.query(
                         `INSERT INTO ims.supplier_ledger
                            (branch_id, supplier_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
-                         VALUES ($1, $2, $3, 'purchase_returns', $4, $5, $6, 0, $7)`,
+                         VALUES ($1, $2, $3, 'purchase_returns', $4, $5, 0, $6, $7)`,
                         [current.branch_id, input.supplierId, refundEntryType, id, Number(r.accId), r.amount, 'Supplier refund']
                     );
                 }
             }
             if (newSupplierId) {
-                const newSupplierEffect = roundMoney(total + refundAmount);
+                const newSupplierEffect = roundMoney(total - refundAmount);
                 const netDelta =
                     oldSupplierId && oldSupplierId === newSupplierId
                         ? roundMoney(previousSupplierEffect - newSupplierEffect)
@@ -2809,7 +2810,7 @@ export const returnsService = {
             });
             const refundAmount = roundMoney(refundLines.reduce((s, r) => s + r.amount, 0));
             const total = roundMoney(Number(current?.total || 0));
-            const previousSupplierEffect = roundMoney(total + refundAmount);
+            const previousSupplierEffect = roundMoney(total - refundAmount);
             for (const r of refundLines) {
                 // Reverse the cash inflow for the refund.
                 await applyAccountBalanceDelta(client, {

@@ -187,8 +187,7 @@ const legacyAdjustmentsCte = `
       ), 0)::numeric(14,3) AS qty_delta
     FROM ims.stock_adjustment a
     JOIN ims.items i ON i.item_id = a.item_id
-    WHERE i.is_active = TRUE
-      AND COALESCE(a.is_deleted, 0)::int = 0
+    WHERE COALESCE(a.is_deleted, 0)::int = 0
       AND UPPER(COALESCE(a.status, 'POSTED')) = 'POSTED'
       AND NOT EXISTS (
         SELECT 1
@@ -243,7 +242,6 @@ const getStoreMovementDetailRows = async (
        FROM ims.items i
        LEFT JOIN ims.stores st ON st.store_id = i.store_id
        WHERE i.branch_id = $1
-         AND i.is_active = TRUE
          AND ($4::bigint IS NULL OR COALESCE(i.store_id, 0) = $4::bigint)
          AND ($5::bigint IS NULL OR i.item_id = $5::bigint)
      ),
@@ -413,7 +411,7 @@ export const inventoryReportsService = {
          ON st.item_id = i.item_id
         AND st.branch_id = i.branch_id
       WHERE i.branch_id = $1
-        AND i.is_active = TRUE
+        AND (i.is_active = TRUE OR COALESCE(st.total_qty, 0) <> 0)
       ORDER BY i.item_id ASC`,
       [branchId]
     );
@@ -460,7 +458,7 @@ export const inventoryReportsService = {
          ON st.item_id = i.item_id
         AND st.branch_id = i.branch_id
       WHERE i.branch_id = $1
-        AND i.is_active = TRUE
+        AND (i.is_active = TRUE OR COALESCE(st.total_qty, 0) <> 0)
       ORDER BY cost_value DESC, i.name`,
       [branchId]
     );
@@ -674,14 +672,14 @@ export const inventoryReportsService = {
     let filter = '';
     if (storeId) {
       params.push(storeId);
-      filter = `AND s.store_id = $${params.length}`;
+      filter = `AND mt.store_id = $${params.length}`;
     }
 
     return queryMany<StoreStockSummaryRow>(
       `WITH ${legacyAdjustmentsCte},
        movement_totals AS (
          SELECT
-           i.store_id,
+           COALESCE(i.store_id, 0)::bigint AS store_id,
            i.item_id,
            (
              COALESCE(i.opening_balance, 0)
@@ -698,22 +696,20 @@ export const inventoryReportsService = {
            ON la.branch_id = i.branch_id
           AND la.item_id = i.item_id
          WHERE i.branch_id = $1
-           AND i.is_active = TRUE
          GROUP BY i.store_id, i.item_id, i.opening_balance, i.cost_price, la.qty_delta
        )
        SELECT
-         s.store_id,
-         s.store_name,
+         mt.store_id,
+         COALESCE(st.store_name, 'Unassigned Store')::text AS store_name,
          COUNT(DISTINCT mt.item_id)::int AS item_count,
          COALESCE(SUM(mt.quantity), 0)::double precision AS total_qty,
          COALESCE(SUM(mt.quantity * mt.cost_price), 0)::double precision AS stock_value
-       FROM ims.stores s
-       LEFT JOIN movement_totals mt ON mt.store_id = s.store_id
-      WHERE s.branch_id = $1
-        AND s.is_active = TRUE
+       FROM movement_totals mt
+       LEFT JOIN ims.stores st ON st.store_id = mt.store_id
+      WHERE 1 = 1
         ${filter}
-      GROUP BY s.store_id, s.store_name
-      ORDER BY s.store_id ASC`,
+      GROUP BY mt.store_id, st.store_name
+      ORDER BY CASE WHEN mt.store_id = 0 THEN 2147483647 ELSE mt.store_id END ASC`,
       params
     );
   },
@@ -723,14 +719,14 @@ export const inventoryReportsService = {
     let filter = '';
     if (storeId) {
       params.push(storeId);
-      filter = `AND s.store_id = $${params.length}`;
+      filter = `AND COALESCE(i.store_id, 0) = $${params.length}`;
     }
 
     return queryMany<StoreWiseStockRow>(
       `WITH ${legacyAdjustmentsCte},
        movement_totals AS (
          SELECT
-           i.store_id,
+           COALESCE(i.store_id, 0)::bigint AS store_id,
            i.item_id,
            (
              COALESCE(i.opening_balance, 0)
@@ -746,12 +742,11 @@ export const inventoryReportsService = {
            ON la.branch_id = i.branch_id
           AND la.item_id = i.item_id
          WHERE i.branch_id = $1
-           AND i.is_active = TRUE
          GROUP BY i.store_id, i.item_id, i.opening_balance, la.qty_delta
        )
        SELECT
-         s.store_id,
-         s.store_name,
+         COALESCE(i.store_id, 0)::bigint AS store_id,
+         COALESCE(st.store_name, 'Unassigned Store')::text AS store_name,
          i.item_id,
          i.name AS item_name,
          COALESCE(i.barcode, '') AS barcode,
@@ -759,12 +754,13 @@ export const inventoryReportsService = {
          COALESCE(i.cost_price, 0)::double precision AS cost_price,
          COALESCE(i.sell_price, i.cost_price, 0)::double precision AS sell_price,
          (COALESCE(mt.quantity, 0) * COALESCE(i.cost_price, 0))::double precision AS stock_value
-       FROM ims.stores s
-       JOIN ims.items i ON i.branch_id = s.branch_id AND COALESCE(i.store_id, 0) = s.store_id
-       LEFT JOIN movement_totals mt ON mt.item_id = i.item_id AND mt.store_id = s.store_id
-      WHERE s.branch_id = $1
+       FROM ims.items i
+       LEFT JOIN ims.stores st ON st.store_id = i.store_id
+       LEFT JOIN movement_totals mt ON mt.item_id = i.item_id AND mt.store_id = COALESCE(i.store_id, 0)
+      WHERE i.branch_id = $1
+        AND (i.is_active = TRUE OR COALESCE(mt.quantity, 0) <> 0)
         ${filter}
-      ORDER BY s.store_id ASC, i.item_id ASC
+      ORDER BY CASE WHEN COALESCE(i.store_id, 0) = 0 THEN 2147483647 ELSE i.store_id END ASC, i.item_id ASC
       LIMIT 4000`,
       params
     );
@@ -838,7 +834,6 @@ export const inventoryReportsService = {
          FROM ims.items i
          LEFT JOIN ims.stores st ON st.store_id = i.store_id
          WHERE i.branch_id = $1
-           AND i.is_active = TRUE
            AND ($4::bigint IS NULL OR COALESCE(i.store_id, 0) = $4::bigint)
            AND ($5::bigint IS NULL OR i.item_id = $5::bigint)
        ),
