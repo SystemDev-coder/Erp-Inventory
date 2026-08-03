@@ -380,6 +380,14 @@ BEGIN
     ON CONFLICT (branch_name) DO UPDATE SET is_active = EXCLUDED.is_active;
   END IF;
 
+  -- Every active branch needs at least one store to hold stock/items against.
+  INSERT INTO ims.stores (branch_id, store_name, is_active)
+  SELECT b.branch_id, 'Main', TRUE
+    FROM ims.branches b
+   WHERE b.is_active = TRUE
+     AND NOT EXISTS (SELECT 1 FROM ims.stores s WHERE s.branch_id = b.branch_id)
+  ON CONFLICT (branch_id, store_name) DO NOTHING;
+
   IF EXISTS (
     SELECT 1
       FROM pg_proc p
