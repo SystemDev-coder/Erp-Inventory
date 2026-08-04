@@ -769,11 +769,11 @@ export function ReportModal<T extends Record<string, any>>({
                   <p className="text-[14px] text-slate-600">{balanceSheetDateLabel || `As of ${formatStatementDate(reportDate)}`}</p>
                 </div>
               ) : balanceSheetDateLabel ? (
-                <div className="mb-3 text-right text-[12px] font-semibold text-slate-600">{balanceSheetDateLabel}</div>
+                <div className="mb-3 text-right text-[13px] font-semibold text-slate-600">{balanceSheetDateLabel}</div>
               ) : null}
 
               <div className="overflow-hidden rounded-md">
-                <table className="w-full table-fixed border-collapse text-[12px]">
+                <table className="w-full table-fixed border-collapse text-[14px]">
                   <thead>
                     <tr className="text-zinc-900">
                       <th className="border-b border-slate-300 px-2 py-2 text-left font-semibold">Particulars</th>

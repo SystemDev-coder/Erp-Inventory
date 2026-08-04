@@ -6,7 +6,7 @@ import { BranchScope, pickBranchForWrite, assertBranchAccess } from '../../utils
 import { softDeleteById } from '../../db/softDelete';
 import { adjustSystemAccountBalance } from '../../utils/systemAccounts';
 import { postGl } from '../../utils/glPosting';
-import { ensureCoaAccounts } from '../../utils/coaDefaults';
+import { ensureCoaAccounts, ensureNamedAssetAccount } from '../../utils/coaDefaults';
 import {
   AccountTransferInput,
   accountTransferUpdateSchema,
@@ -103,6 +103,14 @@ const creditAccount = async (client: PoolClient, branchId: number, accId: number
   );
 };
 
+// A charge whose category name is "Prepaid ..." represents money paid for a future
+// period (e.g. "Prepaid Rent" for next month) - it is not yet consumed, so it must not
+// hit Operating Expense on the books. It's an asset until the period it covers arrives.
+const isPrepaidExpenseCategory = (name: string) => {
+  const n = (name || '').trim().toLowerCase();
+  return n.includes('prepaid') || n.includes('prepared');
+};
+
 const rewriteExpenseChargeGl = async (
   client: PoolClient,
   params: { branchId: number; chargeId: number }
@@ -114,6 +122,7 @@ const rewriteExpenseChargeGl = async (
       charge_date: string | null;
       amount: string;
       note: string | null;
+      expense_name: string;
       is_opening_paid: boolean;
     }>(
       `SELECT
@@ -122,11 +131,13 @@ const rewriteExpenseChargeGl = async (
           c.charge_date::text AS charge_date,
           COALESCE(c.amount, 0)::text AS amount,
           c.note,
+          COALESCE(e.name, '') AS expense_name,
           COALESCE(
             NULLIF(to_jsonb(c) ->> 'is_opening_paid', '')::boolean,
             COALESCE(c.note, '') ILIKE '${OPENING_EXPENSE_NOTE_PREFIX}%'
           ) AS is_opening_paid
        FROM ims.expense_charges c
+       LEFT JOIN ims.expenses e ON e.exp_id = c.exp_id
       WHERE c.branch_id = $1
         AND c.charge_id = $2
       LIMIT 1`,
@@ -147,16 +158,38 @@ const rewriteExpenseChargeGl = async (
   const amount = roundMoney(Number(charge.amount || 0));
   if (amount <= 0) return;
 
+  // Two independent signals for "this is prepaid, not yet an expense":
+  // 1. The category is explicitly named "Prepaid ..." (e.g. "Prepaid Rent").
+  // 2. The charge date is still in the future relative to right now - if you're
+  //    recording a charge for a period that hasn't arrived yet, it's a prepayment
+  //    even if the category is just called "Rent".
+  const chargeDateOnly = charge.charge_date ? charge.charge_date.slice(0, 10) : null;
+  const todayOnly = new Date().toISOString().slice(0, 10);
+  const isFutureDated = !!chargeDateOnly && chargeDateOnly > todayOnly;
+  const isNamedPrepaid = isPrepaidExpenseCategory(charge.expense_name);
+  const isPrepaid = isNamedPrepaid || isFutureDated;
+  const prepaidAssetName = isNamedPrepaid
+    ? charge.expense_name
+    : `Prepaid ${charge.expense_name || 'Expense'}`;
+
   const coa = await ensureCoaAccounts(client, params.branchId, ['operatingExpense', 'expensePayable']);
+  const debitAccId = isPrepaid
+    ? await ensureNamedAssetAccount(client, params.branchId, prepaidAssetName)
+    : coa.operatingExpense;
+  // A prepaid asset is recognized when the prepayment is committed to, not on the future
+  // date it covers - posting it in the future would leave Expense Payable looking wrong
+  // (a payment recorded today with no matching charge yet) until that date arrives.
+  const glPostDate = isPrepaid && isFutureDated ? todayOnly : charge.charge_date;
+
   await postGl(client, {
     branchId: params.branchId,
-    txnDate: charge.charge_date || null,
+    txnDate: glPostDate || null,
     txnType: 'other',
     refTable: 'expense_charges',
     refId: params.chargeId,
     note: `Expense charge #${params.chargeId}${charge.note ? ` â€” ${charge.note}` : ''}`,
     lines: [
-      { accId: coa.operatingExpense, debit: amount, credit: 0, note: 'Operating expense' },
+      { accId: debitAccId, debit: amount, credit: 0, note: isPrepaid ? 'Prepaid expense (asset)' : 'Operating expense' },
       { accId: coa.expensePayable, debit: 0, credit: amount, note: 'Expense payable' },
     ],
   });

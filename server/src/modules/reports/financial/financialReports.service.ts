@@ -1855,11 +1855,25 @@ const buildBalanceSheetFromGl = async (branchId: number, asOfDate: string): Prom
 
   let revenueTotal = 0;
   let expenseTotal = 0;
+  // Inventory Gain/Loss adjust the Inventory asset's book value directly (a physical
+  // count correction) rather than flowing through Net Income - folded into the
+  // "Inventory" line below instead of appearing as separate P&L rows.
+  let inventoryAdjustment = 0;
 
   for (const row of accountRows) {
     const type = String(row.account_type || 'asset').toLowerCase();
     const name = String(row.account_name || '').trim() || `Account #${row.acc_id}`;
     const net = Number(row.net || 0); // debit - credit
+
+    if (isInventoryGainAccountName(name)) {
+      inventoryAdjustment += -net;
+      continue;
+    }
+    if (isInventoryLossAccountName(name)) {
+      inventoryAdjustment -= net;
+      continue;
+    }
+
     const kind = classifyForBalanceSheet(type, name);
 
     if (kind === 'asset') {
@@ -1898,6 +1912,15 @@ const buildBalanceSheetFromGl = async (branchId: number, asOfDate: string): Prom
       amount: netIncome,
       row_type: 'detail',
     });
+  }
+
+  if (!isApproxZero(inventoryAdjustment)) {
+    const inventoryRow = currentAssets.find((row) => isInventoryAccount(String(row.line_item || '')));
+    if (inventoryRow) {
+      inventoryRow.amount = Number(inventoryRow.amount || 0) + inventoryAdjustment;
+    } else {
+      currentAssets.push({ section: 'Current Assets', line_item: 'Inventory', amount: inventoryAdjustment, row_type: 'detail' });
+    }
   }
 
   const totalCurrentAssets = currentAssets.reduce((sum, row) => sum + Number(row.amount || 0), 0);
@@ -2128,12 +2151,30 @@ const buildIncomeStatementFromLedger = async (
         AND LOWER(COALESCE(p.status::text, '')) <> 'void'`,
     [branchId, fromDate, toDate]
   );
+  // Sales Revenue is posted to the GL net of discount already (subtotal - discount) -
+  // this is only queried to show that deduction as its own visible line instead of a
+  // number baked silently into "Sales Revenue"; it does not change Total Revenue.
+  const salesDiscount = await queryAmount(
+    `SELECT COALESCE(SUM(s.discount), 0)::double precision AS amount
+       FROM ims.sales s
+      WHERE s.branch_id = $1
+        AND s.sale_date::date BETWEEN $2::date AND $3::date
+        AND LOWER(COALESCE(s.status::text, '')) <> 'void'
+        AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'`,
+    [branchId, fromDate, toDate]
+  );
 
   type PnlKind = 'revenue' | 'cogs' | 'payroll' | 'expense' | 'ignore';
 
   const classify = (accountType: string, accountName: string): PnlKind => {
     const t = normalizeAccountName(accountType);
     const n = normalizeAccountName(accountName);
+
+    // Inventory Gain/Loss adjust the Inventory asset's book value directly on the
+    // Balance Sheet (a physical count correction) instead of flowing through Net
+    // Income - keep them out of the Income Statement entirely so the two reports
+    // don't disagree about where that value lives.
+    if (isInventoryGainAccountName(accountName) || isInventoryLossAccountName(accountName)) return 'ignore';
 
     // Trust an explicit, correct account_type first - the name-based "ignore" and
     // heuristic rules below are only a fallback for mis-typed charts of accounts and
@@ -2195,6 +2236,18 @@ const buildIncomeStatementFromLedger = async (
 
   const plSignal = [...revenue, ...cogs, ...payroll, ...expenses].reduce((sum, row) => sum + Math.abs(row.amount), 0);
   if (plSignal <= 0.000001) return null;
+
+  // Split the discount back out of "Sales Revenue" for display - the GL amount is
+  // already net of it (subtotal - discount), so this only makes the deduction visible;
+  // the two lines still sum to exactly what "Sales Revenue" showed before the split.
+  const salesDiscountApplied = Math.max(salesDiscount, 0);
+  if (salesDiscountApplied > 0.005) {
+    const salesRevenueLine = revenue.find((row) => row.name.toLowerCase() === 'sales revenue');
+    if (salesRevenueLine) {
+      salesRevenueLine.amount = Math.round((salesRevenueLine.amount + salesDiscountApplied) * 100) / 100;
+      revenue.push({ name: 'Sales Discount', amount: -salesDiscountApplied });
+    }
+  }
 
   const sum = (rows: Array<{ amount: number }>) => rows.reduce((s, r) => s + Number(r.amount || 0), 0);
   const totalRevenue = sum(revenue);

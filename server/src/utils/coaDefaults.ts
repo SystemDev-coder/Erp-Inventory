@@ -117,6 +117,20 @@ export const ensureCoaAccount = async (
   return createAccount(client, branchId, spec.name, spec.accountType);
 };
 
+// Find (or create) an asset account by an arbitrary, caller-supplied name - for accounts
+// that aren't part of the fixed CoaKey set (e.g. a "Prepaid <category>" account named after
+// a user-defined expense category).
+export const ensureNamedAssetAccount = async (
+  client: PoolClient,
+  branchId: number,
+  name: string
+): Promise<number> => {
+  const trimmed = name.trim();
+  const existing = await findAccountByName(client, branchId, trimmed);
+  if (existing) return existing;
+  return createAccount(client, branchId, trimmed, 'asset');
+};
+
 export const ensureCoaAccounts = async (
   client: PoolClient,
   branchId: number,

@@ -571,14 +571,18 @@ export const assetsService = {
     }
 
     return withTransaction(async (client) => {
-      const deleted = await client.query<{ asset_id: number; branch_id: number }>(
-        `DELETE FROM ims.assets
-          WHERE asset_id = $1${scopeSql}
-          RETURNING asset_id, branch_id`,
+      // ims.assets has a soft-delete trigger that intercepts the DELETE, performs its
+      // own UPDATE ... SET is_deleted = 1, and returns NULL to cancel the actual delete
+      // - so `DELETE ... RETURNING` always comes back empty here even on success, and
+      // can't be used to detect success or to learn the row's branch_id. Look it up first.
+      const existing = await client.query<{ asset_id: number; branch_id: number }>(
+        `SELECT asset_id, branch_id FROM ims.assets WHERE asset_id = $1${scopeSql}`,
         params
       );
-      const row = deleted.rows[0];
+      const row = existing.rows[0];
       if (!row) return false;
+
+      await client.query(`DELETE FROM ims.assets WHERE asset_id = $1`, [assetId]);
       await deleteGlByRef(client, { branchId: Number(row.branch_id), refTable: 'assets', refId: Number(row.asset_id) });
       return true;
     });
