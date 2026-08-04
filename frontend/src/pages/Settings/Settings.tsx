@@ -5,7 +5,6 @@ import {
   CircleDollarSign,
   Eye,
   History,
-  Home,
   Percent,
   Pencil,
   Plus,
@@ -17,7 +16,6 @@ import {
   settingsService,
   CapitalOwnerEquity,
   OwnerDrawing,
-  CompanyInfo,
   CapitalContribution,
   OpeningBalanceCleanupInfo,
   OwnerProfitPreview,
@@ -32,18 +30,6 @@ import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { useAuth } from '../../context/AuthContext';
 import { assetsService, AssetState } from '../../services/assets.service';
 import { accountService, Account } from '../../services/account.service';
-import { ImageUpload } from '../../components/common/ImageUpload';
-import { imageService } from '../../services/image.service';
-import { env } from '../../config/env';
-
-const emptyCompanyForm = {
-  company_name: '',
-  phone: '',
-  manager_name: '',
-  logo_img: '',
-  banner_img: '',
-  capital_amount: '0',
-};
 
 const today = () => new Date().toISOString().slice(0, 10);
 const coerceAssetState = (value?: string | null): AssetState => {
@@ -78,134 +64,7 @@ const Settings = () => {
   const modalBtnPrimaryClass =
     'px-4 py-2 rounded-xl bg-primary-600 text-white font-semibold hover:bg-primary-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed';
   const { showToast } = useToast();
-  const { user, permissions } = useAuth();
-  const allowRemoteImageUpload = true;
-  const logoStorageKey = 'erp.company.logo_img';
-  const bannerStorageKey = 'erp.company.banner_img';
-
-  const [company, setCompany] = useState<CompanyInfo | null>(null);
-  const [companyDisplayed, setCompanyDisplayed] = useState(false);
-  const [companyLoading, setCompanyLoading] = useState(false);
-  const [companyModalOpen, setCompanyModalOpen] = useState(false);
-  const [companySaving, setCompanySaving] = useState(false);
-  const [companyDeleting, setCompanyDeleting] = useState(false);
-  const [companyDeleteConfirmOpen, setCompanyDeleteConfirmOpen] = useState(false);
-  const [companyForm, setCompanyForm] = useState(emptyCompanyForm);
-
-  const readFileAsDataUrl = (file: File): Promise<string> =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(String(reader.result || ''));
-      reader.onerror = () => reject(new Error('Failed to read file'));
-      reader.readAsDataURL(file);
-    });
-
-  const saveLocalImage = (key: string, value: string) => {
-    try {
-      window.localStorage.setItem(key, value);
-    } catch (error) {
-      console.warn('Failed to save image in localStorage:', error);
-    }
-  };
-
-  const clearLocalImage = (key: string) => {
-    try {
-      window.localStorage.removeItem(key);
-    } catch (error) {
-      console.warn('Failed to clear image from localStorage:', error);
-    }
-  };
-
-  const handleLogoUpload = async (file: File) => {
-    if (!allowRemoteImageUpload) {
-      const dataUrl = await readFileAsDataUrl(file);
-      setCompanyForm((prev) => ({ ...prev, logo_img: dataUrl }));
-      saveLocalImage(logoStorageKey, dataUrl);
-      return dataUrl;
-    }
-    const res = await imageService.uploadSystemLogo(file);
-    if (!res.success) {
-      throw new Error(res.error || 'Failed to upload logo');
-    }
-    const payload: any = res.data || {};
-    const logoUrl =
-      payload.logoUrl ||
-      payload.logo_url ||
-      payload.systemInfo?.logo_url ||
-      payload.systemInfo?.logoUrl ||
-      '';
-    if (!logoUrl) {
-      throw new Error('Logo upload did not return a URL');
-    }
-    saveLocalImage(logoStorageKey, logoUrl);
-    setCompanyForm((prev) => ({ ...prev, logo_img: logoUrl }));
-    return logoUrl;
-  };
-
-  const handleBannerUpload = async (file: File) => {
-    if (!allowRemoteImageUpload) {
-      const dataUrl = await readFileAsDataUrl(file);
-      setCompanyForm((prev) => ({ ...prev, banner_img: dataUrl }));
-      saveLocalImage(bannerStorageKey, dataUrl);
-      return dataUrl;
-    }
-    const res = await imageService.uploadSystemBanner(file);
-    if (!res.success) {
-      throw new Error(res.error || 'Failed to upload banner');
-    }
-    const payload: any = res.data || {};
-    const bannerUrl =
-      payload.bannerImageUrl ||
-      payload.banner_image_url ||
-      payload.systemInfo?.banner_image_url ||
-      payload.systemInfo?.bannerImageUrl ||
-      '';
-    if (!bannerUrl) {
-      throw new Error('Banner upload did not return a URL');
-    }
-    saveLocalImage(bannerStorageKey, bannerUrl);
-    setCompanyForm((prev) => ({ ...prev, banner_img: bannerUrl }));
-    return bannerUrl;
-  };
-
-  const handleLogoDelete = async () => {
-    if (!allowRemoteImageUpload) {
-      setCompanyForm((prev) => ({ ...prev, logo_img: '' }));
-      clearLocalImage(logoStorageKey);
-      return;
-    }
-    const res = await imageService.deleteSystemLogo();
-    if (!res.success) {
-      throw new Error(res.error || 'Failed to delete logo');
-    }
-    setCompanyForm((prev) => ({ ...prev, logo_img: '' }));
-    clearLocalImage(logoStorageKey);
-  };
-
-  const handleBannerDelete = async () => {
-    if (!allowRemoteImageUpload) {
-      setCompanyForm((prev) => ({ ...prev, banner_img: '' }));
-      clearLocalImage(bannerStorageKey);
-      return;
-    }
-    const res = await imageService.deleteSystemBanner();
-    if (!res.success) {
-      throw new Error(res.error || 'Failed to delete banner');
-    }
-    setCompanyForm((prev) => ({ ...prev, banner_img: '' }));
-    clearLocalImage(bannerStorageKey);
-  };
-
-  const resolveImageUrl = (value?: string | null) => {
-    const raw = (value || '').trim();
-    if (!raw) return '';
-    if (/^data:/i.test(raw)) return raw;
-    if (/^https?:\/\//i.test(raw)) return raw;
-    if (raw.startsWith('/images/') || raw === '/favicon.png') return raw;
-    if (raw.startsWith('uploads/')) return `${env.API_URL}/${raw}`;
-    if (raw.startsWith('/')) return `${env.API_URL}${raw}`;
-    return raw;
-  };
+  const { permissions } = useAuth();
 
   const [capitalRows, setCapitalRows] = useState<CapitalContribution[]>([]);
   const [capitalOwnerRows, setCapitalOwnerRows] = useState<CapitalOwnerEquity[]>([]);
@@ -369,39 +228,6 @@ const Settings = () => {
     return current;
   }, [capitalOwnerRows, drawingForm.ownerName, editingDrawing]);
 
-  const loadCompany = async () => {
-    setCompanyLoading(true);
-    const res = await settingsService.getCompany();
-    setCompanyLoading(false);
-    if (!res.success || !res.data?.company) {
-      showToast('error', 'Company Info', res.error || 'Failed to load company info');
-      return;
-    }
-    const loaded = res.data.company;
-    const hasValues =
-      !!loaded.company_name?.trim() ||
-      !!loaded.phone?.trim() ||
-      !!loaded.manager_name?.trim() ||
-      !!loaded.logo_img?.trim() ||
-      !!loaded.banner_img?.trim() ||
-      Number(loaded.capital_amount || 0) > 0;
-    setCompany(hasValues ? loaded : null);
-    const fallbackLogo =
-      loaded.logo_img || window.localStorage.getItem(logoStorageKey) || '';
-    const fallbackBanner =
-      loaded.banner_img || window.localStorage.getItem(bannerStorageKey) || '';
-    setCompanyForm({
-      company_name: loaded.company_name || '',
-      phone: loaded.phone || '',
-      manager_name: loaded.manager_name || '',
-      logo_img: fallbackLogo,
-      banner_img: fallbackBanner,
-      capital_amount: String(loaded.capital_amount ?? 0),
-    });
-    if (fallbackLogo) saveLocalImage(logoStorageKey, fallbackLogo);
-    if (fallbackBanner) saveLocalImage(bannerStorageKey, fallbackBanner);
-  };
-
   const loadCapitalOwnerSummary = async (): Promise<CapitalOwnerEquity[] | null> => {
     const ownerRes = await settingsService.listCapitalOwnerEquity({ search: capitalSearch || undefined });
     if (!ownerRes.success || !ownerRes.data) {
@@ -507,80 +333,6 @@ const Settings = () => {
   };
 
   const closeCleanupModal = () => setCleanupModalOpen(false);
-
-  const handleDisplayCompany = async () => {
-    setCompanyDisplayed(true);
-    await loadCompany();
-  };
-
-  const handleCompanyEdit = () => {
-    if (company) {
-      setCompanyForm({
-        company_name: company.company_name || '',
-        phone: company.phone || '',
-        manager_name: company.manager_name || '',
-        logo_img: company.logo_img || '',
-        banner_img: company.banner_img || '',
-        capital_amount: String(company.capital_amount ?? 0),
-      });
-    } else {
-      setCompanyForm(emptyCompanyForm);
-    }
-    setCompanyModalOpen(true);
-  };
-
-  const handleCompanySave = async () => {
-    const capitalAmount = Number(companyForm.capital_amount || 0);
-    if (!Number.isFinite(capitalAmount) || capitalAmount < 0) {
-      showToast('error', 'Company Info', 'Capital must be zero or greater');
-      return;
-    }
-    const normalizeImageValue = (value: string) => {
-      const trimmed = (value || '').trim();
-      if (!trimmed) return '';
-      if (trimmed.startsWith('data:') || trimmed.length > 2048) {
-        return '';
-      }
-      return trimmed;
-    };
-    const safeLogo = normalizeImageValue(companyForm.logo_img);
-    const safeBanner = normalizeImageValue(companyForm.banner_img);
-    setCompanySaving(true);
-    const res = await settingsService.updateCompany({
-      company_name: companyForm.company_name,
-      phone: companyForm.phone,
-      manager_name: companyForm.manager_name,
-      logo_img: safeLogo,
-      banner_img: safeBanner,
-      capital_amount: capitalAmount,
-    });
-    setCompanySaving(false);
-
-    if (!res.success || !res.data?.company) {
-      showToast('error', 'Company Info', res.error || 'Save failed');
-      return;
-    }
-
-    setCompany(res.data.company);
-    setCompanyModalOpen(false);
-    showToast('success', 'Company Info', 'Saved');
-    await loadCompany();
-  };
-
-  const handleCompanyDelete = async () => {
-    if (!company) return;
-    setCompanyDeleting(true);
-    const res = await settingsService.deleteCompany();
-    setCompanyDeleting(false);
-    if (!res.success) {
-      showToast('error', 'Company Info', res.error || 'Delete failed');
-      return;
-    }
-    setCompany(null);
-    setCompanyForm(emptyCompanyForm);
-    setCompanyDeleteConfirmOpen(false);
-    showToast('success', 'Company Info', 'Deleted');
-  };
 
   const openCreateCapital = () => {
     setEditingCapital(null);
@@ -1196,167 +948,6 @@ const Settings = () => {
     }
     void previewOwnerProfit(closingId, ownerName, sharePct);
   }, [profitForm.closingId, profitForm.ownerName, profitForm.sharePct, newProfitOwnerName, profitModalOpen]);
-
-  const companyContent = (
-    <div className="bg-white border border-black rounded-xl p-6 space-y-4 text-black">
-      <div className="flex items-center justify-between">
-        <h3 className="text-base font-semibold">Company Info</h3>
-        <div className="flex gap-2">
-          <button
-            onClick={handleDisplayCompany}
-            className="px-3 py-2 rounded border border-black bg-white text-black text-sm"
-            disabled={companyLoading}
-          >
-            {companyLoading ? 'Loading...' : 'Display'}
-          </button>
-          <button
-            onClick={handleCompanyEdit}
-            className="px-3 py-2 rounded border border-black bg-black text-white text-sm inline-flex items-center gap-2"
-          >
-            <Plus className="w-4 h-4" /> {company ? 'Edit' : 'Add'} Company
-          </button>
-        </div>
-      </div>
-
-      {!companyDisplayed ? (
-        <p className="text-sm">Click Display to load company info.</p>
-      ) : !company ? (
-        <p className="text-sm">No company profile yet.</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="text-left border-b border-black">
-                <th className="py-2 pr-4">Name</th>
-                <th className="py-2 pr-4">Manager</th>
-                <th className="py-2 pr-4">Phone</th>
-                <th className="py-2 pr-4">Capital</th>
-                <th className="py-2 pr-4">Logo</th>
-                <th className="py-2 pr-4">Banner</th>
-                <th className="py-2 pr-4">Updated</th>
-                <th className="py-2 pr-4">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td className="py-2 pr-4">{company.company_name || '-'}</td>
-                <td className="py-2 pr-4">{company.manager_name || '-'}</td>
-                <td className="py-2 pr-4">{company.phone || '-'}</td>
-                <td className="py-2 pr-4">{formatMoney(Number(company.capital_amount || 0))}</td>
-                <td className="py-2 pr-4">
-                  {company.logo_img ? (
-                    <img
-                      src={resolveImageUrl(company.logo_img)}
-                      alt="Logo"
-                      className="h-10 w-10 rounded object-cover border border-slate-200"
-                    />
-                  ) : (
-                    <img
-                      src={`https://ui-avatars.com/api/?name=${encodeURIComponent(company.company_name || 'Company')}&background=0b1a4d&color=ffffff&bold=true&size=64`}
-                      alt="Company avatar"
-                      className="h-10 w-10 rounded object-cover border border-slate-200"
-                    />
-                  )}
-                </td>
-                <td className="py-2 pr-4">
-                  {company.banner_img ? (
-                    <img
-                      src={resolveImageUrl(company.banner_img)}
-                      alt="Banner"
-                      className="h-10 w-24 rounded object-cover border border-slate-200"
-                    />
-                  ) : (
-                    <div className="h-10 w-24 rounded border border-slate-200 bg-slate-50 flex items-center justify-center text-[10px] font-semibold text-slate-500">
-                      No banner
-                    </div>
-                  )}
-                </td>
-                <td className="py-2 pr-4">{company.updated_at ? new Date(company.updated_at).toLocaleString() : '-'}</td>
-                <td className="py-2 pr-4">
-                  <div className="flex gap-2">
-                    <button onClick={handleCompanyEdit} className="px-2 py-1 rounded border border-black inline-flex items-center gap-1">
-                      <Pencil className="w-3.5 h-3.5" /> Edit
-                    </button>
-                    <button
-                      onClick={() => setCompanyDeleteConfirmOpen(true)}
-                      disabled={companyDeleting}
-                      className="px-2 py-1 rounded border border-black inline-flex items-center gap-1"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" /> Delete
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      <Modal isOpen={companyModalOpen} onClose={() => setCompanyModalOpen(false)} title={`${company ? 'Edit' : 'Add'} Company`} size="lg">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <label className="text-sm font-medium flex flex-col gap-1">
-            Company Name
-            <input className="rounded border border-black px-3 py-2" value={companyForm.company_name} onChange={(e) => setCompanyForm({ ...companyForm, company_name: e.target.value })} />
-          </label>
-          <label className="text-sm font-medium flex flex-col gap-1">
-            Manager Name
-            <input className="rounded border border-black px-3 py-2" value={companyForm.manager_name} onChange={(e) => setCompanyForm({ ...companyForm, manager_name: e.target.value })} />
-          </label>
-          <label className="text-sm font-medium flex flex-col gap-1">
-            Phone
-            <input className="rounded border border-black px-3 py-2" value={companyForm.phone} onChange={(e) => setCompanyForm({ ...companyForm, phone: e.target.value })} />
-          </label>
-          <label className="text-sm font-medium flex flex-col gap-1">
-            Capital
-            <input type="number" min="0" step="0.01" className="rounded border border-black px-3 py-2" value={companyForm.capital_amount} onChange={(e) => setCompanyForm({ ...companyForm, capital_amount: e.target.value })} />
-          </label>
-          <div className="md:col-span-2">
-            <ImageUpload
-              label="Company Logo"
-              currentImage={companyForm.logo_img || null}
-              aspectRatio="square"
-              maxWidthClass="max-w-full"
-              centered={false}
-              variant="inline"
-              onUpload={handleLogoUpload}
-              onDelete={allowRemoteImageUpload ? handleLogoDelete : undefined}
-            />
-          </div>
-          <div className="md:col-span-2">
-            <ImageUpload
-              label="Company Banner"
-              currentImage={companyForm.banner_img || null}
-              aspectRatio="landscape"
-              maxWidthClass="max-w-full"
-              centered={false}
-              variant="inline"
-              onUpload={handleBannerUpload}
-              onDelete={allowRemoteImageUpload ? handleBannerDelete : undefined}
-            />
-          </div>
-        </div>
-        <div className="flex justify-end gap-2 pt-4">
-          <button className="px-4 py-2 rounded border border-black" onClick={() => setCompanyModalOpen(false)}>Cancel</button>
-          <button className="px-4 py-2 rounded border border-black bg-black text-white" onClick={handleCompanySave} disabled={companySaving}>
-            {companySaving ? 'Saving...' : company ? 'Update' : 'Save'}
-          </button>
-        </div>
-      </Modal>
-
-      <ConfirmDialog
-        isOpen={companyDeleteConfirmOpen}
-        onClose={() => setCompanyDeleteConfirmOpen(false)}
-        onConfirm={handleCompanyDelete}
-        title="Delete Company Profile?"
-        highlightedName={company?.company_name || undefined}
-        message="This action will permanently remove company profile data."
-        confirmText="Delete"
-        cancelText="Cancel"
-        variant="danger"
-        isLoading={companyDeleting}
-      />
-    </div>
-  );
 
   const currentAssetRows = assetOverview?.current_assets || [];
   const fixedAssetRows = assetOverview?.fixed_assets || [];
@@ -2934,14 +2525,13 @@ const Settings = () => {
       permissions.includes('audit_logs.view') ||
       permissions.includes('system.settings');
     const result = [
-      { id: 'company', label: 'Company Info', icon: Home, content: companyContent },
       { id: 'capital', label: 'Capital', icon: CircleDollarSign, content: capitalContent },
       { id: 'account-cleanup', label: 'Accounting Cleanup', icon: ArrowLeftRight, content: cleanupContent },
       { id: 'closing-period', label: 'Closing Period', icon: CircleDollarSign, content: closingContent },
       { id: 'profit-sharing', label: 'Profit Sharing', icon: Percent, content: profitContent },
     ];
     if (canManageAssets) {
-      result.splice(2, 0, { id: 'assets', label: 'Assets', icon: BriefcaseBusiness, content: assetsContent });
+      result.splice(1, 0, { id: 'assets', label: 'Assets', icon: BriefcaseBusiness, content: assetsContent });
     }
     if (canViewLogs) {
       result.push({ id: 'activity-logs', label: 'Activity Logs', icon: History, content: logsContent });
@@ -2949,7 +2539,6 @@ const Settings = () => {
     return result;
   }, [
     permissions,
-    companyContent,
     assetsContent,
     capitalContent,
     cleanupContent,
@@ -2961,10 +2550,10 @@ const Settings = () => {
   return (
     <div>
       <PageHeader
-        title="Settings"
-        description="Configure company info, assets, capital, closing period, and profit sharing."
+        title="System & Security"
+        description="Manage capital, assets, closing periods, profit sharing, and activity logs."
       />
-      <Tabs tabs={tabs} defaultTab="company" />
+      <Tabs tabs={tabs} defaultTab="capital" />
       {/* NEW: Audit log details modal */}
       {auditLogDetailsModal}
     </div>

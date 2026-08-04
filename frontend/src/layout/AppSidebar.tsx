@@ -153,8 +153,8 @@ const AppSidebar: React.FC = () => {
       {
         title: 'System',
         items: [
-          { id: 'system', label: 'System', icon: Settings, to: '/system', permissionAny: ['users.view', 'roles.view', 'permissions.view', 'system.users.manage', 'system.roles.manage', 'system.permissions.manage'] },
-          { id: 'setting', label: 'Setting', icon: Cog, to: '/settings', permissionAny: ['system.settings'] },
+          { id: 'system', label: 'System', icon: Settings, to: '/system', permissionAny: ['system.settings'] },
+          { id: 'setting', label: 'Setting', icon: Cog, to: '/settings', permissionAny: ['system.settings', 'users.view', 'roles.view', 'permissions.view', 'system.users.manage', 'system.roles.manage', 'system.permissions.manage'] },
           { id: 'reports', label: 'Reports', icon: FileText, to: '/reports', permissionAny: ['reports.all'] },
           ...(isDeveloper ? [{ id: 'trash', label: 'Trash', icon: Trash2, to: '/trash', permissionAny: ['trash.view'] }] : []),
         ],

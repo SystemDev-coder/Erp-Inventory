@@ -172,10 +172,11 @@ function AppRoutes() {
           />
           <Route path="/assets" element={<ProtectedRoute permission="accounts.view"><Assets /></ProtectedRoute>} />
           <Route
-            path="/system"
+            path="/settings"
             element={
               <ProtectedRoute
                 permissionAny={[
+                  'system.settings',
                   'users.view',
                   'roles.view',
                   'permissions.view',
@@ -188,7 +189,7 @@ function AppRoutes() {
               </ProtectedRoute>
             }
           />
-          <Route path="/settings" element={<ProtectedRoute permission="system.settings"><Settings /></ProtectedRoute>} />
+          <Route path="/system" element={<ProtectedRoute permission="system.settings"><Settings /></ProtectedRoute>} />
           <Route path="/support" element={<ProtectedRoute><Support /></ProtectedRoute>} />
           <Route path="/trash" element={<ProtectedRoute permission="trash.view" roleAny={['developer']}><Trash /></ProtectedRoute>} />
         </Route>
