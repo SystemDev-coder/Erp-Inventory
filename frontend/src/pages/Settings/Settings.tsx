@@ -674,22 +674,22 @@ const Settings = () => {
     setAssetAccountsDisplayed(true);
   };
 
-  const createDefaultAssetAccounts = async () => {
-    try {
-      setAssetAccountsCreating(true);
-      const res = await settingsService.prepareAssetAccounts();
-      if (!res.success) {
-        showToast('error', 'Assets', res.error || 'Failed to prepare asset accounts');
-        return;
-      }
-      showToast('success', 'Assets', `Prepared accounts. New created: ${Number(res.data?.created || 0)}`);
-      await loadAssetAccounts();
-    } catch (error) {
-      showToast('error', 'Assets', error instanceof Error ? error.message : 'Failed to prepare asset accounts');
-    } finally {
-      setAssetAccountsCreating(false);
-    }
-  };
+  // const createDefaultAssetAccounts = async () => {
+  //   try {
+  //     setAssetAccountsCreating(true);
+  //     const res = await settingsService.prepareAssetAccounts();
+  //     if (!res.success) {
+  //       showToast('error', 'Assets', res.error || 'Failed to prepare asset accounts');
+  //       return;
+  //     }
+  //     showToast('success', 'Assets', `Prepared accounts. New created: ${Number(res.data?.created || 0)}`);
+  //     await loadAssetAccounts();
+  //   } catch (error) {
+  //     showToast('error', 'Assets', error instanceof Error ? error.message : 'Failed to prepare asset accounts');
+  //   } finally {
+  //     setAssetAccountsCreating(false);
+  //   }
+  // };
 
   const resetCurrentAssetModal = () => {
     setEditingCurrentAssetId(null);
@@ -967,14 +967,7 @@ const Settings = () => {
               disabled={assetAccountsLoading}
             >
               {assetAccountsLoading ? 'Loading...' : 'Display'}
-            </button>
-            <button
-              onClick={() => void createDefaultAssetAccounts()}
-              className="px-3 py-2 rounded border border-black bg-black text-white text-sm"
-              disabled={assetAccountsCreating}
-            >
-              {assetAccountsCreating ? 'Creating...' : 'Prepare Accounts'}
-            </button>
+            </button>            
             <button
               onClick={openCreateCurrentAssetModal}
               className="px-3 py-2 rounded border border-black bg-black text-white text-sm"
