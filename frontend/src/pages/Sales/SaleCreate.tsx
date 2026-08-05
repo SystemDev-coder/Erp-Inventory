@@ -109,6 +109,7 @@ const SaleCreate = () => {
     subtotal: 0,
     discount: 0,
     tax_rate: FIXED_TAX_RATE_PERCENT,
+    apply_tax: true,
     tax_amount: 0,
     total: 0,
     acc_id: '' as number | '',
@@ -202,6 +203,7 @@ const SaleCreate = () => {
         subtotal: Number(sale.subtotal || 0),
         discount: Number(sale.discount || 0),
         tax_rate: FIXED_TAX_RATE_PERCENT,
+        apply_tax: Number((sale as any).tax_amount || 0) > 0,
         tax_amount: Number((sale as any).tax_amount || 0),
         total: Number(sale.total || 0),
         acc_id: sale.pay_acc_id ?? '',
@@ -214,13 +216,18 @@ const SaleCreate = () => {
     void loadSale();
   }, [editId, isEditing, navigate, showToast]);
 
-  const recalcTotals = (nextItems: FormLine[], headerDiscount: number, headerTaxRate = saleForm.tax_rate) => {
+  const recalcTotals = (
+    nextItems: FormLine[],
+    headerDiscount: number,
+    headerTaxRate = saleForm.tax_rate,
+    applyTax = saleForm.apply_tax
+  ) => {
     const subtotal = nextItems.reduce(
       (sum, line) => sum + Number(line.quantity || 0) * Number(line.unit_price || 0),
       0
     );
     const discount = Number(headerDiscount || 0);
-    const taxRate = Number(headerTaxRate || 0);
+    const taxRate = applyTax ? Number(headerTaxRate || 0) : 0;
     const taxableAmount = Math.max(0, subtotal - discount);
     const taxAmount = (taxableAmount * taxRate) / 100;
     const total = taxableAmount + taxAmount;
@@ -386,7 +393,7 @@ const SaleCreate = () => {
           : undefined,
       subtotal: Number(saleForm.subtotal),
       discount: Number(saleForm.discount),
-      taxRate: saleForm.tax_rate ? Number(saleForm.tax_rate) : undefined,
+      taxRate: saleForm.apply_tax ? Number(saleForm.tax_rate) : 0,
       total: Number(saleForm.total),
       saleType: effectiveSaleType,
       status: effectiveStatus,
@@ -836,15 +843,26 @@ const SaleCreate = () => {
             />
           </div>
           <div className="flex flex-col items-end justify-end">
-            <span className="text-slate-500">Tax Rate</span>
+            <label className="flex items-center gap-1.5 text-slate-500 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={saleForm.apply_tax}
+                onChange={(e) => {
+                  const applyTax = e.target.checked;
+                  const next = { ...saleForm, apply_tax: applyTax };
+                  setSaleForm(next);
+                  recalcTotals(next.items, next.discount, next.tax_rate, applyTax);
+                }}
+                disabled={loading}
+                className="h-3.5 w-3.5 rounded border-slate-300 dark:border-slate-600 text-primary-600 focus:ring-primary-500"
+              />
+              VAT ({FIXED_TAX_RATE_PERCENT}% fixed)
+            </label>
             <span
-              className={`${controlCls} mt-1 h-10 w-40 flex items-center justify-end gap-1.5 bg-slate-50 dark:bg-slate-800/60 text-slate-600 dark:text-slate-300 cursor-not-allowed select-none`}
-              title="Tax rate is fixed by policy and can't be changed here"
+              className={`${controlCls} mt-1 h-10 w-36 flex items-center justify-end bg-slate-50 dark:bg-slate-800/60 text-slate-600 dark:text-slate-300 cursor-default select-none`}
+              title={saleForm.apply_tax ? 'Tax rate is fixed by policy and can\'t be changed here' : 'This sale is marked VAT-exempt'}
             >
-              Fixed at {FIXED_TAX_RATE_PERCENT}%
-              <span className="text-slate-400 dark:text-slate-500">
-                (${(saleForm.tax_amount || 0).toFixed(2)})
-              </span>
+              {saleForm.apply_tax ? `$${(saleForm.tax_amount || 0).toFixed(2)}` : 'No VAT'}
             </span>
           </div>
           <div className="flex flex-col items-end justify-end">
