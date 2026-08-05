@@ -827,6 +827,7 @@ export const systemService = {
           COUNT(rp.perm_id)::int AS permission_count
        FROM ims.roles r
        LEFT JOIN ims.role_permissions rp ON rp.role_id = r.role_id
+       WHERE r.is_system=true
        GROUP BY r.role_id, r.role_code, r.role_name, r.description, r.monthly_salary, r.is_system
        ORDER BY r.role_name`
     );
