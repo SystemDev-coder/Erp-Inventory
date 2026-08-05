@@ -1855,25 +1855,11 @@ const buildBalanceSheetFromGl = async (branchId: number, asOfDate: string): Prom
 
   let revenueTotal = 0;
   let expenseTotal = 0;
-  // Inventory Gain/Loss adjust the Inventory asset's book value directly (a physical
-  // count correction) rather than flowing through Net Income - folded into the
-  // "Inventory" line below instead of appearing as separate P&L rows.
-  let inventoryAdjustment = 0;
 
   for (const row of accountRows) {
     const type = String(row.account_type || 'asset').toLowerCase();
     const name = String(row.account_name || '').trim() || `Account #${row.acc_id}`;
     const net = Number(row.net || 0); // debit - credit
-
-    if (isInventoryGainAccountName(name)) {
-      inventoryAdjustment += -net;
-      continue;
-    }
-    if (isInventoryLossAccountName(name)) {
-      inventoryAdjustment -= net;
-      continue;
-    }
-
     const kind = classifyForBalanceSheet(type, name);
 
     if (kind === 'asset') {
@@ -1912,15 +1898,6 @@ const buildBalanceSheetFromGl = async (branchId: number, asOfDate: string): Prom
       amount: netIncome,
       row_type: 'detail',
     });
-  }
-
-  if (!isApproxZero(inventoryAdjustment)) {
-    const inventoryRow = currentAssets.find((row) => isInventoryAccount(String(row.line_item || '')));
-    if (inventoryRow) {
-      inventoryRow.amount = Number(inventoryRow.amount || 0) + inventoryAdjustment;
-    } else {
-      currentAssets.push({ section: 'Current Assets', line_item: 'Inventory', amount: inventoryAdjustment, row_type: 'detail' });
-    }
   }
 
   const totalCurrentAssets = currentAssets.reduce((sum, row) => sum + Number(row.amount || 0), 0);
@@ -2169,12 +2146,6 @@ const buildIncomeStatementFromLedger = async (
   const classify = (accountType: string, accountName: string): PnlKind => {
     const t = normalizeAccountName(accountType);
     const n = normalizeAccountName(accountName);
-
-    // Inventory Gain/Loss adjust the Inventory asset's book value directly on the
-    // Balance Sheet (a physical count correction) instead of flowing through Net
-    // Income - keep them out of the Income Statement entirely so the two reports
-    // don't disagree about where that value lives.
-    if (isInventoryGainAccountName(accountName) || isInventoryLossAccountName(accountName)) return 'ignore';
 
     // Trust an explicit, correct account_type first - the name-based "ignore" and
     // heuristic rules below are only a fallback for mis-typed charts of accounts and
