@@ -29,6 +29,10 @@ type FormErrors = {
 
 const todayString = () => new Date().toISOString().slice(0, 10);
 
+// Sales tax is a fixed policy rate, not something a cashier should be able to change
+// per-sale - shown as read-only text on the form instead of an editable field.
+const FIXED_TAX_RATE_PERCENT = 5;
+
 const parseDocType = (value: string | null): SaleDocType => {
   if (value === 'invoice' || value === 'quotation' || value === 'sale') return value;
   return 'sale';
@@ -104,7 +108,7 @@ const SaleCreate = () => {
     quote_valid_until: '',
     subtotal: 0,
     discount: 0,
-    tax_rate: 0,
+    tax_rate: FIXED_TAX_RATE_PERCENT,
     tax_amount: 0,
     total: 0,
     acc_id: '' as number | '',
@@ -197,13 +201,7 @@ const SaleCreate = () => {
         quote_valid_until: sale.quote_valid_until?.slice(0, 10) || '',
         subtotal: Number(sale.subtotal || 0),
         discount: Number(sale.discount || 0),
-        tax_rate: Number(
-          (sale as any).tax_amount
-            ? (((sale as any).tax_amount /
-                Math.max(1, (sale as any).total_before_tax || sale.subtotal || 1)) *
-                100)
-            : 0
-        ),
+        tax_rate: FIXED_TAX_RATE_PERCENT,
         tax_amount: Number((sale as any).tax_amount || 0),
         total: Number(sale.total || 0),
         acc_id: sale.pay_acc_id ?? '',
@@ -814,12 +812,14 @@ const SaleCreate = () => {
         </div>
 
         {/* ── Totals row ── */}
-        <div className="flex justify-end gap-6 text-sm mt-2">
-          <div className="flex flex-col items-end">
+        <div className="flex justify-end items-end gap-6 text-sm mt-2">
+          <div className="flex flex-col items-end justify-end">
             <span className="text-slate-500">Subtotal</span>
-            <span className="font-semibold">${saleForm.subtotal.toFixed(2)}</span>
+            <span className="mt-1 h-10 flex items-center font-semibold">
+              ${saleForm.subtotal.toFixed(2)}
+            </span>
           </div>
-          <div className="flex flex-col items-end">
+          <div className="flex flex-col items-end justify-end">
             <span className="text-slate-500">Discount</span>
             <input
               type="number"
@@ -835,27 +835,23 @@ const SaleCreate = () => {
               disabled={loading}
             />
           </div>
-          <div className="flex flex-col items-end">
-            <span className="text-slate-500">Tax %</span>
-            <input
-              type="number"
-              min={0}
-              step={0.01}
-              className={`${controlCls} mt-1 text-right h-10 w-28`}
-              value={saleForm.tax_rate}
-              onChange={(e) => {
-                const taxRate = Number(e.target.value || 0);
-                const next = { ...saleForm, tax_rate: taxRate };
-                setSaleForm(next);
-                recalcTotals(next.items, next.discount, taxRate);
-              }}
-              disabled={loading}
-            />
-            <span className="mt-1 text-xs text-slate-500">${(saleForm.tax_amount || 0).toFixed(2)}</span>
+          <div className="flex flex-col items-end justify-end">
+            <span className="text-slate-500">Tax Rate</span>
+            <span
+              className={`${controlCls} mt-1 h-10 w-40 flex items-center justify-end gap-1.5 bg-slate-50 dark:bg-slate-800/60 text-slate-600 dark:text-slate-300 cursor-not-allowed select-none`}
+              title="Tax rate is fixed by policy and can't be changed here"
+            >
+              Fixed at {FIXED_TAX_RATE_PERCENT}%
+              <span className="text-slate-400 dark:text-slate-500">
+                (${(saleForm.tax_amount || 0).toFixed(2)})
+              </span>
+            </span>
           </div>
-          <div className="flex flex-col items-end">
+          <div className="flex flex-col items-end justify-end">
             <span className="text-slate-500">Total</span>
-            <span className="font-semibold">${saleForm.total.toFixed(2)}</span>
+            <span className="mt-1 h-10 flex items-center font-semibold">
+              ${saleForm.total.toFixed(2)}
+            </span>
           </div>
         </div>
 
