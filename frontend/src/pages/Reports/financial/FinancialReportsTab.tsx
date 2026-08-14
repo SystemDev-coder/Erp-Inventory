@@ -118,6 +118,7 @@ const cogsByInvoiceColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'doc_type', header: 'Document' },
   { key: 'customer_name', header: 'Customer' },
   { key: 'total', header: 'Sales Total', align: 'right', render: (row) => formatCurrency(row.total) },
+  { key: 'tax_amount', header: 'VAT', align: 'right', render: (row) => formatCurrency(row.tax_amount) },
   { key: 'cogs', header: 'COGS', align: 'right', render: (row) => formatCurrency(row.cogs) },
   { key: 'gross_profit', header: 'Gross Profit', align: 'right', render: (row) => formatCurrency(row.gross_profit) },
 ];
@@ -297,6 +298,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
           label: 'Total',
           values: {
             total: formatCurrency(sumNumericField(rows, 'total')),
+            tax_amount: formatCurrency(sumNumericField(rows, 'tax_amount')),
             cogs: formatCurrency(sumNumericField(rows, 'cogs')),
             gross_profit: formatCurrency(sumNumericField(rows, 'gross_profit')),
           },

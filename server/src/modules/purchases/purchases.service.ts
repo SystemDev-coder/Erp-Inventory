@@ -270,8 +270,11 @@ const getOrCreateDefaultStoreId = async (client: PoolClient, branchId: number): 
   if (storeId > 0) return storeId;
 
   const created = await client.query<{ store_id: number }>(
+    // $1 is pinned to bigint in both slots; without the cast in LPAD, Postgres
+    // deduces text there and bigint in the column list and rejects the whole
+    // statement (42P08), which broke the very first purchase of a fresh branch.
     `INSERT INTO ims.stores (branch_id, store_name, store_code, is_active)
-     VALUES ($1, 'Main Store', 'MAIN-' || LPAD($1::text, 3, '0'), TRUE)
+     VALUES ($1::bigint, 'Main Store', 'MAIN-' || LPAD($1::bigint::text, 3, '0'), TRUE)
      ON CONFLICT (branch_id, store_name)
      DO UPDATE SET is_active = TRUE
      RETURNING store_id`,
@@ -1004,7 +1007,14 @@ export const purchasesService = {
         ? subtotalFromItems
         : Number(input.subtotal ?? 0);
       const discount = Number(input.discount ?? 0);
-      const total = input.total !== undefined ? Number(input.total) : subtotal - discount;
+      // When line items are present the totals are derived here rather than taken
+      // from the request: purchaseSchema defaults `total` to 0, so a caller that
+      // omits it (imports, integrations) recorded a 0-value purchase, and
+      // rewritePurchaseGl skips posting on a 0 total - leaving Inventory and
+      // Accounts Payable untouched while the stock still moved.
+      const total = preparedItems.length > 0
+        ? subtotal - discount
+        : (input.total !== undefined ? Number(input.total) : subtotal - discount);
       if (subtotal < 0 || discount < 0 || total < 0) {
         throw ApiError.badRequest('Purchase amounts cannot be negative');
       }
