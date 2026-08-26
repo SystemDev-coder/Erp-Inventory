@@ -168,6 +168,22 @@ const requireRefundRules = (params: {
     return { minRefund, balanceAdjustment, refundAmount, total };
 };
 
+// A sales return has one settlement path: refund all of it from an account, or
+// reduce the customer's outstanding balance by all of it. Partial splits are
+// deliberately not supported, so the account choice is the source of truth.
+const resolveSalesReturnSettlement = (total: number, rawRefundAccId: unknown) => {
+    if (rawRefundAccId === undefined || rawRefundAccId === null || rawRefundAccId === '') {
+        return { refundAccId: null, refundAmount: 0 };
+    }
+
+    const refundAccId = Number(rawRefundAccId);
+    if (!Number.isInteger(refundAccId) || refundAccId <= 0) {
+        throw ApiError.badRequest('Refund account is invalid');
+    }
+
+    return { refundAccId, refundAmount: roundMoney(total) };
+};
+
 let cachedSupplierNameColumn: 'name' | 'supplier_name' | null = null;
 let cachedSalesHasDocType: boolean | null = null;
 type BalanceColumns = { hasOpenBalance: boolean; hasRemainingBalance: boolean };
@@ -1564,11 +1580,11 @@ export const returnsService = {
                 branchId: context.branchId,
                 customerId: input.customerId,
             });
-            const refundAmountInput = Number(input.refundAmount || 0);
+            const settlement = resolveSalesReturnSettlement(total, input.refundAccId);
             const { balanceAdjustment, refundAmount } = requireRefundRules({
                 total,
                 outstanding: currentOutstanding,
-                refundAmount: refundAmountInput,
+                refundAmount: settlement.refundAmount,
                 label: 'customer',
             });
             const hasBalanceColumn = await hasSalesReturnBalanceAdjustment(client);
@@ -1577,9 +1593,8 @@ export const returnsService = {
             // `ledger_entry_enum` does not include 'refund' in this system; use a proper entry type.
             const refundEntryType = await pickLedgerEntryType(client, ['refund', 'payment', 'return', 'adjustment']);
 
-            let refundAccId: number | null = null;
+            const refundAccId = settlement.refundAccId;
             if (refundAmount > 0) {
-                refundAccId = Number(input.refundAccId || 0);
                 if (!refundAccId) throw ApiError.badRequest('Refund account is required');
                 await assertAccountInBranch(client, context.branchId, refundAccId);
             }
@@ -1816,15 +1831,11 @@ export const returnsService = {
             const total = roundMoney(subtotal);
             const oldCustomerId = Number(current.customer_id || 0);
 
-            const refundUpdateRequested =
-                Object.prototype.hasOwnProperty.call(input, 'refundAccId') ||
-                Object.prototype.hasOwnProperty.call(input, 'refundAmount');
             const previousRefundLines = await listSalesReturnRefundLines(client, {
                 branchId: Number(current.branch_id),
                 srId: id,
             });
             const previousRefundAmount = roundMoney(previousRefundLines.reduce((s, r) => s + r.amount, 0));
-            const refundAmountCandidate = refundUpdateRequested ? Number(input.refundAmount || 0) : previousRefundAmount;
 
             const previousTotal = roundMoney(Number(current?.total || 0));
             const previousCustomerEffect = roundMoney(previousTotal - previousRefundAmount);
@@ -1836,24 +1847,23 @@ export const returnsService = {
                     customerId: newCustomerId,
                 })
                 : 0;
+            const settlement = resolveSalesReturnSettlement(total, input.refundAccId);
             const { balanceAdjustment: newBalanceAdjustment, refundAmount } = requireRefundRules({
                 total,
                 outstanding: currentOutstanding,
-                refundAmount: refundAmountCandidate,
+                refundAmount: settlement.refundAmount,
                 label: 'customer',
             });
 
-            const nextRefundLines = refundUpdateRequested
-                ? refundAmount > 0
-                    ? [
-                          {
-                              accId: Number(input.refundAccId || 0),
-                              amount: roundMoney(refundAmount),
-                              accountName: null,
-                          },
-                      ]
-                    : []
-                : previousRefundLines;
+            const nextRefundLines = refundAmount > 0
+                ? [
+                      {
+                          accId: settlement.refundAccId as number,
+                          amount: roundMoney(refundAmount),
+                          accountName: null,
+                      },
+                  ]
+                : [];
             if (refundAmount > 0 && !nextRefundLines.length) {
                 throw ApiError.badRequest('Refund account is required');
             }
@@ -1941,22 +1951,20 @@ export const returnsService = {
                     note: 'Sales return',
                 });
             }
-            if (refundUpdateRequested) {
-                // Reverse previous refund cash impact (if any), then apply the new refund (if any).
-                for (const prev of previousRefundLines) {
-                    await applyAccountBalanceDelta(client, {
-                        branchId: Number(current.branch_id),
-                        accId: Number(prev.accId),
-                        delta: prev.amount,
-                    });
-                }
-                for (const next of nextRefundLines) {
-                    await applyAccountBalanceDelta(client, {
-                        branchId: Number(current.branch_id),
-                        accId: Number(next.accId),
-                        delta: -next.amount,
-                    });
-                }
+            // Always reverse the old cash impact, then apply the selected settlement path.
+            for (const prev of previousRefundLines) {
+                await applyAccountBalanceDelta(client, {
+                    branchId: Number(current.branch_id),
+                    accId: Number(prev.accId),
+                    delta: prev.amount,
+                });
+            }
+            for (const next of nextRefundLines) {
+                await applyAccountBalanceDelta(client, {
+                    branchId: Number(current.branch_id),
+                    accId: Number(next.accId),
+                    delta: -next.amount,
+                });
             }
             await client.query(
                 `DELETE FROM ims.customer_ledger
