@@ -413,9 +413,9 @@ export const settingsService = {
     return apiClient.get('/api/settings/assets/overview');
   },
 
-  async prepareAssetAccounts(input?: { branchId?: number }): Promise<ApiResponse<{ created: number }>> {
-    return apiClient.post('/api/settings/assets/prepare', input || {});
-  },
+  // async prepareAssetAccounts(input?: { branchId?: number }): Promise<ApiResponse<{ created: number }>> {
+  //   return apiClient.post('/api/settings/assets/prepare', input || {});
+  // },
 
   async getOpeningBalanceCleanupInfo(input?: { branchId?: number }): Promise<ApiResponse<{ info: OpeningBalanceCleanupInfo }>> {
     const params = new URLSearchParams();
