@@ -783,7 +783,7 @@ const SaleCreate = () => {
 
                   <input
                     type="number"
-                    min={0}
+                    min={1}
                     step={1}
                     className={`${controlReadonlyCls} text-right`}
                     value={line.unit_price}
@@ -831,7 +831,7 @@ const SaleCreate = () => {
             <span className="text-slate-500">Discount</span>
             <input
               type="number"
-              min={0}
+              min={1}
               step={1}
               className={`${controlCls} mt-1 text-right h-10`}
               value={saleForm.discount}
@@ -888,7 +888,7 @@ const SaleCreate = () => {
               </label>
               <input
                 type="number"
-                min={0}
+                min={1}
                 step={1}
                 className={`${fieldCls('paidAmount')} text-right`}
                 value={saleForm.paid_amount}
