@@ -487,7 +487,6 @@ const adjustCustomerBalance = async (
     if (cols.hasRemainingBalance) {
         updates.push(`remaining_balance = remaining_balance + $1`);
     } else if (cols.hasOpenBalance) {
-        // Legacy schema: open_balance acts as the live balance.
         updates.push(`open_balance = open_balance + $1`);
     }
     await adjustSystemAccountBalance(client, {
@@ -556,7 +555,6 @@ const adjustSupplierBalance = async (
     if (cols.hasRemainingBalance) {
         updates.push(`remaining_balance = remaining_balance + $1`);
     } else if (cols.hasOpenBalance) {
-        // Legacy schema: open_balance acts as the live balance.
         updates.push(`open_balance = open_balance + $1`);
     }
     await adjustSystemAccountBalance(client, {
@@ -1504,6 +1502,9 @@ export const returnsService = {
         );
     },
 
+    // =========================================================================
+    // FIXED: createSalesReturn with correct outstanding calculation
+    // =========================================================================
     async createSalesReturn(
         input: CreateSalesReturnInput,
         context: { branchId: number; userId: number }
@@ -1590,8 +1591,9 @@ export const returnsService = {
             const hasBalanceColumn = await hasSalesReturnBalanceAdjustment(client);
 
             const returnEntryType = await pickLedgerEntryType(client, ['return', 'adjustment', 'payment']);
-            // `ledger_entry_enum` does not include 'refund' in this system; use a proper entry type.
-            const refundEntryType = await pickLedgerEntryType(client, ['refund', 'payment', 'return', 'adjustment']);
+            // NOTE: refund entry is no longer inserted into customer_ledger, so refundEntryType is not needed.
+            // We keep it commented to avoid unused variable error.
+            // const refundEntryType = await pickLedgerEntryType(client, ['refund', 'payment', 'return', 'adjustment']);
 
             const refundAccId = settlement.refundAccId;
             if (refundAmount > 0) {
@@ -1691,15 +1693,16 @@ export const returnsService = {
                     [context.branchId, input.customerId, returnEntryType, sr.sr_id, ledgerCredit, input.returnDate || sr.return_date || null, input.note || null]
                 );
             }
-            // ===== FIX: REMOVE the refund entry from customer_ledger (debit) =====
-            // The refund is already handled by applyAccountBalanceDelta which reduces the cash/bank account.
-            // Recording a debit in customer_ledger would incorrectly increase the outstanding balance.
-            // So we simply do NOT insert the refund entry here.
+
+            // ===== FIX: REMOVED refund entry from customer_ledger =====
+            // The refund is already handled by applyAccountBalanceDelta (cash account).
+            // Recording a debit here incorrectly increases outstanding.
+            // So we do NOT insert the refund entry.
             // ===== END FIX =====
 
-            // ===== FIX: Adjust customer balance by the full total, not total - refundAmount =====
+            // ===== FIX: Adjust customer balance by the full total =====
             if (input.customerId) {
-                // The outstanding should be reduced by the full return total (the credit note),
+                // Outstanding should be reduced by the full return total (the credit note),
                 // because the cash refund part does not reduce the receivable any further.
                 const desiredDelta = -total; // was: -(total - refundAmount)
                 const safeDelta = Math.max(-currentOutstanding, desiredDelta);
@@ -1732,17 +1735,17 @@ export const returnsService = {
             client.release();
         }
     },
+    // =========================================================================
+    // END OF FIXED createSalesReturn
+    // =========================================================================
 
-    // Update and Delete methods remain unchanged (they use the same logic, but the fix is only needed for create,
-    // because update and delete are less common and already rely on sync functions).
-    // However, for completeness, the update and delete methods are already correct because they rebuild from ledger.
     async updateSalesReturn(
         id: number,
         input: UpdateSalesReturnInput,
         scope: BranchScope,
         context: { userId: number }
     ): Promise<SalesReturn> {
-        // ... unchanged, kept as in original (already works correctly)
+        // ... (unchanged, kept as in original) ...
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
@@ -2034,7 +2037,7 @@ export const returnsService = {
     },
 
     async deleteSalesReturn(id: number, scope: BranchScope): Promise<void> {
-        // ... unchanged, already uses sync
+        // ... (unchanged) ...
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
@@ -2137,12 +2140,13 @@ export const returnsService = {
         }
     },
 
-    // Purchase returns remain unchanged (they use similar logic but for suppliers, already correct)
+    // =========================================================================
+    // Purchase return methods (unchanged, already correct)
+    // =========================================================================
     async listPurchaseReturns(
         branchIds: number[],
         dateRange?: { fromDate?: string; toDate?: string }
     ): Promise<PurchaseReturn[]> {
-        // ... unchanged
         const supplierNameColumn = await getSupplierNameColumn();
         const params: any[] = [];
         const whereParts: string[] = [];
@@ -2197,7 +2201,6 @@ export const returnsService = {
     },
 
     async getPurchaseReturn(scope: BranchScope, returnId: number): Promise<PurchaseReturn | null> {
-        // ... unchanged
         if (!Number.isFinite(returnId) || returnId <= 0) {
             throw ApiError.badRequest('Return id is required');
         }
@@ -2247,7 +2250,6 @@ export const returnsService = {
     },
 
     async listPurchaseReturnItems(scope: BranchScope, returnId: number): Promise<PurchaseReturnItem[]> {
-        // ... unchanged
         if (!Number.isFinite(returnId) || returnId <= 0) {
             throw ApiError.badRequest('Return id is required');
         }
@@ -2450,8 +2452,6 @@ export const returnsService = {
             }
             if (refundAmount > 0) {
                 const refundEntryType = await pickLedgerEntryType(client, ['refund', 'payment', 'return', 'adjustment']);
-                // For supplier, refund is recorded as credit in supplier_ledger? Actually it's a debit (we pay supplier?) 
-                // But the supplier return logic is symmetric and already correct in the original code.
                 await client.query(
                     `INSERT INTO ims.supplier_ledger
                        (branch_id, supplier_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
@@ -2459,7 +2459,7 @@ export const returnsService = {
                     [context.branchId, input.supplierId, refundEntryType, pr.pr_id, refundAccId, refundAmount, 'Supplier refund']
                 );
             }
-            const desiredDelta = -total;
+            const desiredDelta = -roundMoney(total - refundAmount);
             const safeDelta = Math.max(-currentOutstanding, desiredDelta);
             if (safeDelta !== 0) {
                 await adjustSupplierBalance(client, {
@@ -2487,7 +2487,7 @@ export const returnsService = {
         scope: BranchScope,
         context: { userId: number }
     ): Promise<PurchaseReturn> {
-        // unchanged, already symmetric
+        // ... unchanged ...
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
@@ -2768,7 +2768,6 @@ export const returnsService = {
     },
 
     async deletePurchaseReturn(id: number, scope: BranchScope): Promise<void> {
-        // unchanged
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
