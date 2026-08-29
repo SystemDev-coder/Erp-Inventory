@@ -747,8 +747,8 @@ const SaleCreate = () => {
                   <div>
                     <input
                       type="number"
-                      min={0}
-                      step={0.001}
+                      min={1}
+                      step={1}
                       className={`${lineErr
                         ? `${baseCls} ${errBorder}`
                         : controlCls
@@ -783,7 +783,8 @@ const SaleCreate = () => {
 
                   <input
                     type="number"
-                    min={0}
+                    min={1}
+                    step={1}
                     className={`${controlReadonlyCls} text-right`}
                     value={line.unit_price}
                     readOnly
@@ -830,7 +831,8 @@ const SaleCreate = () => {
             <span className="text-slate-500">Discount</span>
             <input
               type="number"
-              min={0}
+              min={1}
+              step={1}  
               className={`${controlCls} mt-1 text-right h-10`}
               value={saleForm.discount}
               onChange={(e) => {
@@ -888,7 +890,7 @@ const SaleCreate = () => {
                 type="number"
                 className={`${fieldCls('paidAmount')} text-right`}
                 value={saleForm.paid_amount}
-                min={0}
+                min={1}
                 max={saleForm.total}
                 onChange={(e) => {
                   clearError('paidAmount');
