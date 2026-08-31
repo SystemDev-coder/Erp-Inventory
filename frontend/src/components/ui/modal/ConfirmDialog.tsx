@@ -1,11 +1,11 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, Trash2, CheckCircle, Info } from 'lucide-react';
 
 interface ConfirmDialogProps {
     isOpen: boolean;
     onClose: () => void;
-    onConfirm: () => void;
+    onConfirm: (reason?: string) => void;
     title: string;
     message: string;
     highlightedName?: string;
@@ -13,10 +13,9 @@ interface ConfirmDialogProps {
     cancelText?: string;
     variant?: 'danger' | 'warning' | 'info' | 'success';
     isLoading?: boolean;
-    /**
-     * When true, hide the Cancel button and only show a single confirm/OK button.
-     */
     hideCancel?: boolean;
+    requireReason?: boolean;
+    reasonLabel?: string;
 }
 
 export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
@@ -31,8 +30,19 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
     variant = 'warning',
     isLoading = false,
     hideCancel = false,
+    requireReason = false,
+    reasonLabel = 'Reason',
 }) => {
     const MODAL_Z_INDEX = 2147483000;
+    const [reason, setReason] = useState('');
+    const [reasonError, setReasonError] = useState('');
+
+    useEffect(() => {
+        if (!isOpen) {
+            setReason('');
+            setReasonError('');
+        }
+    }, [isOpen]);
 
     useEffect(() => {
         if (!isOpen) return;
@@ -81,7 +91,12 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
     const style = variantStyles[variant];
 
     const handleConfirm = () => {
-        onConfirm();
+        const trimmed = reason.trim();
+        if (requireReason && !trimmed) {
+            setReasonError('A reason is required');
+            return;
+        }
+        onConfirm(requireReason ? trimmed : undefined);
         onClose();
     };
 
@@ -121,6 +136,27 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
                         <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-300">
                             {message}
                         </p>
+                        {requireReason && (
+                            <div className="mt-4 text-left">
+                                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                                    {reasonLabel} <span className="text-red-500">*</span>
+                                </label>
+                                <textarea
+                                    value={reason}
+                                    onChange={(e) => {
+                                        setReason(e.target.value);
+                                        if (reasonError) setReasonError('');
+                                    }}
+                                    rows={3}
+                                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                                    placeholder="Enter reason..."
+                                    disabled={isLoading}
+                                />
+                                {reasonError ? (
+                                    <p className="mt-1 text-xs font-medium text-red-500">{reasonError}</p>
+                                ) : null}
+                            </div>
+                        )}
                     </div>
 
                     {/* Actions */}

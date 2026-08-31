@@ -6,6 +6,11 @@ import { PoolClient } from 'pg';
 import { adjustSystemAccountBalance } from '../../utils/systemAccounts';
 import { postGl } from '../../utils/glPosting';
 import { ensureCoaAccounts } from '../../utils/coaDefaults';
+import {
+  resolvePurchaseReturnRefund,
+  resolveSalesReturnRefund,
+  requireDeleteReason,
+} from '../../utils/refundRules';
 
 export interface SalesReturn {
     sr_id: number;
@@ -97,6 +102,7 @@ export interface CreateSalesReturnInput {
     note?: string;
     refundAccId?: number;
     refundAmount?: number;
+    refundViaAccount?: boolean;
     items: ReturnItemInput[];
 }
 
@@ -107,6 +113,7 @@ export interface CreatePurchaseReturnInput {
     note?: string;
     refundAccId?: number;
     refundAmount?: number;
+    refundViaAccount?: boolean;
     items: ReturnItemInput[];
 }
 
@@ -135,37 +142,6 @@ const normalizeReturnItems = (items: ReturnItemInput[] | undefined): ReturnItemI
 const roundMoney = (value: number): number => {
     const n = Number(value || 0);
     return Math.round((n + Number.EPSILON) * 100) / 100;
-};
-
-const requireRefundRules = (params: {
-    total: number;
-    outstanding: number;
-    refundAmount: number;
-    label: 'customer' | 'supplier';
-}) => {
-    const total = roundMoney(params.total);
-    const outstanding = Math.max(Number(params.outstanding || 0), 0);
-    const refundAmount = roundMoney(params.refundAmount);
-
-    if (refundAmount < 0) {
-        throw ApiError.badRequest('Refund amount cannot be negative');
-    }
-    if (refundAmount > total) {
-        throw ApiError.badRequest('Refund amount cannot exceed return total');
-    }
-
-    const minRefund = roundMoney(Math.max(0, total - outstanding));
-    if (refundAmount + 1e-9 < minRefund) {
-        const who = params.label === 'customer' ? 'Customer' : 'Supplier';
-        throw ApiError.badRequest(`${who} refund must be at least ${minRefund.toFixed(2)} to avoid negative balance`);
-    }
-
-    const balanceAdjustment = roundMoney(total - refundAmount);
-    if (balanceAdjustment - outstanding > 1e-6) {
-        throw ApiError.badRequest('Return would make balance negative; increase refund amount');
-    }
-
-    return { minRefund, balanceAdjustment, refundAmount, total };
 };
 
 let cachedSupplierNameColumn: 'name' | 'supplier_name' | null = null;
@@ -1564,23 +1540,22 @@ export const returnsService = {
                 branchId: context.branchId,
                 customerId: input.customerId,
             });
-            const refundAmountInput = Number(input.refundAmount || 0);
-            const { balanceAdjustment, refundAmount } = requireRefundRules({
+            const refundResolution = await resolveSalesReturnRefund(client, {
+                branchId: context.branchId,
+                saleId: input.saleId ?? null,
                 total,
-                outstanding: currentOutstanding,
-                refundAmount: refundAmountInput,
-                label: 'customer',
+                partyOutstanding: currentOutstanding,
+                refundViaAccount: input.refundViaAccount,
+                refundAccIdInput: input.refundAccId ?? null,
             });
+            const { balanceAdjustment, refundAmount } = refundResolution;
+            let refundAccId: number | null = refundResolution.refundAccId;
             const hasBalanceColumn = await hasSalesReturnBalanceAdjustment(client);
 
             const returnEntryType = await pickLedgerEntryType(client, ['return', 'adjustment', 'payment']);
-            // `ledger_entry_enum` does not include 'refund' in this system; use a proper entry type.
             const refundEntryType = await pickLedgerEntryType(client, ['refund', 'payment', 'return', 'adjustment']);
 
-            let refundAccId: number | null = null;
-            if (refundAmount > 0) {
-                refundAccId = Number(input.refundAccId || 0);
-                if (!refundAccId) throw ApiError.badRequest('Refund account is required');
+            if (refundAmount > 0 && refundAccId) {
                 await assertAccountInBranch(client, context.branchId, refundAccId);
             }
 
@@ -1733,6 +1708,7 @@ export const returnsService = {
             const existing = await client.query<{
                 sr_id: number;
                 branch_id: number;
+                sale_id: number | null;
                 customer_id: number | null;
                 return_date: string | null;
                 total: string;
@@ -1741,6 +1717,7 @@ export const returnsService = {
                 `SELECT
                     sr_id,
                     branch_id,
+                    sale_id,
                     customer_id,
                     return_date::text AS return_date,
                     total::text AS total,
@@ -1824,8 +1801,6 @@ export const returnsService = {
                 srId: id,
             });
             const previousRefundAmount = roundMoney(previousRefundLines.reduce((s, r) => s + r.amount, 0));
-            const refundAmountCandidate = refundUpdateRequested ? Number(input.refundAmount || 0) : previousRefundAmount;
-
             const previousTotal = roundMoney(Number(current?.total || 0));
             const previousCustomerEffect = roundMoney(previousTotal - previousRefundAmount);
 
@@ -1836,24 +1811,25 @@ export const returnsService = {
                     customerId: newCustomerId,
                 })
                 : 0;
-            const { balanceAdjustment: newBalanceAdjustment, refundAmount } = requireRefundRules({
+            const refundResolution = await resolveSalesReturnRefund(client, {
+                branchId: Number(current.branch_id),
+                saleId: input.saleId ?? current.sale_id ?? null,
                 total,
-                outstanding: currentOutstanding,
-                refundAmount: refundAmountCandidate,
-                label: 'customer',
+                partyOutstanding: currentOutstanding + previousCustomerEffect,
+                refundViaAccount: input.refundViaAccount ?? refundUpdateRequested,
+                refundAccIdInput: input.refundAccId ?? previousRefundLines[0]?.accId ?? null,
             });
+            const { balanceAdjustment: newBalanceAdjustment, refundAmount } = refundResolution;
 
-            const nextRefundLines = refundUpdateRequested
-                ? refundAmount > 0
-                    ? [
-                          {
-                              accId: Number(input.refundAccId || 0),
-                              amount: roundMoney(refundAmount),
-                              accountName: null,
-                          },
-                      ]
-                    : []
-                : previousRefundLines;
+            const nextRefundLines = refundAmount > 0 && refundResolution.refundAccId
+                ? [
+                      {
+                          accId: Number(refundResolution.refundAccId),
+                          amount: roundMoney(refundAmount),
+                          accountName: null,
+                      },
+                  ]
+                : [];
             if (refundAmount > 0 && !nextRefundLines.length) {
                 throw ApiError.badRequest('Refund account is required');
             }
@@ -2032,7 +2008,8 @@ export const returnsService = {
         }
     },
 
-    async deleteSalesReturn(id: number, scope: BranchScope): Promise<void> {
+    async deleteSalesReturn(id: number, scope: BranchScope, reason?: string): Promise<void> {
+        requireDeleteReason(reason);
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
@@ -2342,19 +2319,19 @@ export const returnsService = {
                 branchId: context.branchId,
                 supplierId: input.supplierId,
             });
-            const refundAmountInput = Number(input.refundAmount || 0);
-            const { balanceAdjustment, refundAmount } = requireRefundRules({
+            const refundResolution = await resolvePurchaseReturnRefund(client, {
+                branchId: context.branchId,
+                purchaseId: input.purchaseId ?? null,
                 total,
-                outstanding: currentOutstanding,
-                refundAmount: refundAmountInput,
-                label: 'supplier',
+                partyOutstanding: currentOutstanding,
+                refundViaAccount: input.refundViaAccount,
+                refundAccIdInput: input.refundAccId ?? null,
             });
+            const { balanceAdjustment, refundAmount } = refundResolution;
             const hasBalanceColumn = await hasPurchaseReturnBalanceAdjustment(client);
 
-            let refundAccId: number | null = null;
-            if (refundAmount > 0) {
-                refundAccId = Number(input.refundAccId || 0);
-                if (!refundAccId) throw ApiError.badRequest('Refund account is required');
+            let refundAccId: number | null = refundResolution.refundAccId;
+            if (refundAmount > 0 && refundAccId) {
                 await assertAccountInBranch(client, context.branchId, refundAccId);
             }
 
@@ -2488,6 +2465,7 @@ export const returnsService = {
             const existing = await client.query<{
                 pr_id: number;
                 branch_id: number;
+                purchase_id: number | null;
                 supplier_id: number | null;
                 return_date: string | null;
                 total: string;
@@ -2496,6 +2474,7 @@ export const returnsService = {
                 `SELECT
                     pr_id,
                     branch_id,
+                    purchase_id,
                     supplier_id,
                     return_date::text AS return_date,
                     total::text AS total,
@@ -2570,8 +2549,6 @@ export const returnsService = {
                 prId: id,
             });
             const previousRefundAmount = roundMoney(previousRefundLines.reduce((s, r) => s + r.amount, 0));
-            const refundAmountCandidate = refundUpdateRequested ? Number(input.refundAmount || 0) : previousRefundAmount;
-
             const previousTotal = roundMoney(Number(current?.total || 0));
             const previousSupplierEffect = roundMoney(previousTotal - previousRefundAmount);
             if (oldSupplierId && previousSupplierEffect > 0) {
@@ -2589,24 +2566,25 @@ export const returnsService = {
                     supplierId: newSupplierId,
                 })
                 : 0;
-            const { balanceAdjustment: newBalanceAdjustment, refundAmount } = requireRefundRules({
+            const refundResolution = await resolvePurchaseReturnRefund(client, {
+                branchId: Number(current.branch_id),
+                purchaseId: input.purchaseId ?? current.purchase_id ?? null,
                 total,
-                outstanding: currentOutstanding,
-                refundAmount: refundAmountCandidate,
-                label: 'supplier',
+                partyOutstanding: currentOutstanding + previousSupplierEffect,
+                refundViaAccount: input.refundViaAccount ?? refundUpdateRequested,
+                refundAccIdInput: input.refundAccId ?? previousRefundLines[0]?.accId ?? null,
             });
+            const { balanceAdjustment: newBalanceAdjustment, refundAmount } = refundResolution;
 
-            const nextRefundLines = refundUpdateRequested
-                ? refundAmount > 0
-                    ? [
-                          {
-                              accId: Number(input.refundAccId || 0),
-                              amount: roundMoney(refundAmount),
-                              accountName: null,
-                          },
-                      ]
-                    : []
-                : previousRefundLines;
+            const nextRefundLines = refundAmount > 0 && refundResolution.refundAccId
+                ? [
+                      {
+                          accId: Number(refundResolution.refundAccId),
+                          amount: roundMoney(refundAmount),
+                          accountName: null,
+                      },
+                  ]
+                : [];
             if (refundAmount > 0 && !nextRefundLines.length) {
                 throw ApiError.badRequest('Refund account is required');
             }
@@ -2760,7 +2738,8 @@ export const returnsService = {
         }
     },
 
-    async deletePurchaseReturn(id: number, scope: BranchScope): Promise<void> {
+    async deletePurchaseReturn(id: number, scope: BranchScope, reason?: string): Promise<void> {
+        requireDeleteReason(reason);
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
