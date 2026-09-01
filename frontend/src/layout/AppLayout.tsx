@@ -9,6 +9,9 @@ const LayoutContent: React.FC = () => {
 
   return (
     <div className="erp-main-shell min-h-screen xl:flex">
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
       <div>
         <AppSidebar />
         <Backdrop />
@@ -17,9 +20,9 @@ const LayoutContent: React.FC = () => {
         className={`flex-1 min-w-0 transition-all duration-300 ease-in-out ${isExpanded || isHovered ? 'lg:ml-[280px]' : 'lg:ml-[80px]'} ${isMobileOpen ? 'ml-0' : ''}`}
       >
         <AppHeader />
-        <div className="erp-main-content p-4 mx-auto max-w-(--breakpoint-2xl) md:p-6">
+        <main id="main-content" className="erp-main-content p-4 mx-auto max-w-(--breakpoint-2xl) md:p-6" tabIndex={-1}>
           <Outlet />
-        </div>
+        </main>
       </div>
     </div>
   );

@@ -512,20 +512,9 @@ export const ensureFinanceClosingSchema = async () => {
               ORDER BY cp.period_to DESC
               LIMIT 1;
 
-            UPDATE ims.finance_closing_periods
-               SET is_locked = CASE WHEN closing_id = v_period.closing_id THEN FALSE ELSE TRUE END,
-                   status = CASE WHEN closing_id = v_period.closing_id THEN 'reopened' ELSE status END,
-                   reopened_at = CASE WHEN closing_id = v_period.closing_id THEN NOW() ELSE reopened_at END,
-                   reopened_by = CASE WHEN closing_id = v_period.closing_id THEN reopened_by ELSE reopened_by END,
-                   note = CASE
-                     WHEN closing_id = v_period.closing_id
-                       AND COALESCE(note, '') NOT ILIKE '%auto reopened%'
-                       THEN COALESCE(note, '') || ' [Auto reopened]'
-                     ELSE note
-                   END,
-                   updated_at = NOW()
-             WHERE branch_id = v_branch_id
-               AND status IN ('closed', 'reopened');
+            RAISE EXCEPTION 'Finance period % to % is locked for branch %. Reopen the period explicitly before editing.',
+              v_period.period_from, v_period.period_to, v_branch_id
+              USING ERRCODE = 'P0001';
            END IF;
 
            IF TG_OP = 'DELETE' THEN

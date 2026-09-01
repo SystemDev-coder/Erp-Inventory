@@ -590,10 +590,13 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
     if (cardId === 'account-balances') {
       return (
         <div className="space-y-3">
-          <select
+          <label className="space-y-1 text-xs font-semibold text-slate-600">
+            <span>Account</span>
+            <select
             value={selectedAccountBalanceId}
             onChange={(event) => setSelectedAccountBalanceId(event.target.value)}
             disabled={optionsLoading}
+            aria-label="Account"
             className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"
           >
             <option value="">Select Account</option>
@@ -603,8 +606,10 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
               </option>
             ))}
           </select>
-          <div className="grid grid-cols-2 gap-3">
+          </label>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <button
+              type="button"
               onClick={() => handleAccountBalances('show')}
               disabled={loadingCardId === cardId}
               className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
@@ -612,6 +617,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
               Show
             </button>
             <button
+              type="button"
               onClick={() => handleAccountBalances('all')}
               disabled={loadingCardId === cardId}
               className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70"
@@ -643,21 +649,26 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
       return (
         <div className="space-y-3">
           {renderDateRange(statementRange, setStatementRange)}
-          <select
-            value={selectedAccountStatementId}
-            onChange={(event) => setSelectedAccountStatementId(event.target.value)}
-            disabled={optionsLoading}
-            className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"
-          >
-            <option value="">Select Account</option>
-            {accounts.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <div className="grid grid-cols-2 gap-3">
+          <label className="space-y-1 text-xs font-semibold text-slate-600">
+            <span>Account</span>
+            <select
+              value={selectedAccountStatementId}
+              onChange={(event) => setSelectedAccountStatementId(event.target.value)}
+              disabled={optionsLoading}
+              aria-label="Account"
+              className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"
+            >
+              <option value="">Select Account</option>
+              {accounts.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <button
+              type="button"
               onClick={() => handleAccountStatement('show')}
               disabled={loadingCardId === cardId}
               className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
@@ -665,6 +676,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
               Show
             </button>
             <button
+              type="button"
               onClick={() => handleAccountStatement('all')}
               disabled={loadingCardId === cardId}
               className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70"
@@ -721,24 +733,27 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
   };
 
   const renderCard = (card: { id: FinancialCardId; title: string }, index: number) => {
-    const cardKey = `${card.id}::${index}`;
+    const cardKey = `${card.id}-${index}`;
     const isOpen = expandedCardKey === cardKey;
     return (
       <div key={cardKey} className="self-start overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_8px_18px_rgba(15,23,42,0.08)]">
         <button
+          type="button"
+          aria-expanded={isOpen}
+          aria-controls={`${card.id}-${index}-panel`}
           onClick={() => {
             setCardErrors((prev) => ({ ...prev, [card.id]: '' }));
             setExpandedCardKey((prev) => (prev === cardKey ? null : cardKey));
           }}
-          className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-primary-900 to-primary-700 px-5 py-4 text-left text-white"
+          className="flex w-full min-h-11 items-center justify-between border-b border-slate-200 bg-gradient-to-r from-primary-900 to-primary-700 px-5 py-4 text-left text-white"
         >
           <div>
             <p className="text-xl font-semibold leading-tight">{card.title}</p>
           </div>
-          <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+          <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
         </button>
         {isOpen && (
-          <div className="space-y-3 bg-slate-50 px-5 py-4">
+          <div id={`${card.id}-${index}-panel`} className="space-y-3 bg-slate-50 px-5 py-4">
             {renderCardBody(card.id)}
             {cardErrors[card.id] && <p className="text-sm font-semibold text-red-600">{cardErrors[card.id]}</p>}
           </div>

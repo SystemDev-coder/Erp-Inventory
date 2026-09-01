@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ChevronDown, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
@@ -19,6 +19,9 @@ type Props<TValue extends string | number> = {
   allowCustom?: boolean;
   onCustomCommit?: (text: string) => void;
   className?: string;
+  id?: string;
+  'aria-label'?: string;
+  'aria-labelledby'?: string;
 };
 
 const normalize = (value: string) => value.toLowerCase().trim();
@@ -34,6 +37,9 @@ export function SearchableCombobox<TValue extends string | number>({
   allowCustom,
   onCustomCommit,
   className,
+  id,
+  'aria-label': ariaLabel,
+  'aria-labelledby': ariaLabelledBy,
 }: Props<TValue>) {
   const selected = useMemo(
     () => options.find((o) => String(o.value) === String(value)),
@@ -42,9 +48,11 @@ export function SearchableCombobox<TValue extends string | number>({
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
   const blurTimeoutRef = useRef<number | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const onSearchRef = useRef<Props<TValue>['onSearch']>(onSearch);
+  const listboxId = useId();
   const [menuRect, setMenuRect] = useState<{ left: number; top: number; width: number } | null>(
     null
   );
@@ -87,10 +95,17 @@ export function SearchableCombobox<TValue extends string | number>({
     return options.filter((o) => normalize(o.label).includes(q));
   }, [options, query]);
 
+  const visible = filtered.slice(0, 250);
+
+  useEffect(() => {
+    setHighlightedIndex(0);
+  }, [query, open]);
+
   const clear = () => {
     onChange('');
     setQuery('');
     setOpen(false);
+    inputRef.current?.focus();
   };
 
   const select = (next: ComboboxOption<TValue>) => {
@@ -120,12 +135,25 @@ export function SearchableCombobox<TValue extends string | number>({
     setOpen(true);
   };
 
+  const activeDescendant =
+    open && visible[highlightedIndex] ? `${listboxId}-opt-${highlightedIndex}` : undefined;
+
   return (
     <div className={`relative ${className || ''}`}>
       <div className="relative">
         <input
           ref={inputRef}
+          id={id}
           type="text"
+          role="combobox"
+          aria-expanded={open}
+          aria-haspopup="listbox"
+          aria-controls={listboxId}
+          aria-activedescendant={activeDescendant}
+          aria-autocomplete="list"
+          aria-invalid={hasError || undefined}
+          aria-label={ariaLabel || placeholder}
+          aria-labelledby={ariaLabelledBy}
           value={query}
           disabled={disabled}
           onFocus={onFocus}
@@ -133,6 +161,25 @@ export function SearchableCombobox<TValue extends string | number>({
           onChange={(e) => {
             setQuery(e.target.value);
             setOpen(true);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowDown') {
+              event.preventDefault();
+              setOpen(true);
+              setHighlightedIndex((prev) => (prev + 1) % Math.max(visible.length, 1));
+            } else if (event.key === 'ArrowUp') {
+              event.preventDefault();
+              setOpen(true);
+              setHighlightedIndex((prev) =>
+                prev <= 0 ? Math.max(visible.length - 1, 0) : prev - 1
+              );
+            } else if (event.key === 'Enter' && open && visible[highlightedIndex]) {
+              event.preventDefault();
+              select(visible[highlightedIndex]);
+            } else if (event.key === 'Escape') {
+              event.preventDefault();
+              setOpen(false);
+            }
           }}
           placeholder={placeholder}
           className={`h-12 w-full rounded-lg border bg-white px-3 pr-16 text-sm text-slate-900 shadow-sm outline-none transition-all focus:ring-2 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-slate-900 dark:text-slate-100 ${
@@ -148,13 +195,13 @@ export function SearchableCombobox<TValue extends string | number>({
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={clear}
-              className="rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:text-slate-300"
-              title="Clear"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:text-slate-300"
+              aria-label="Clear selection"
             >
-              <X className="h-4 w-4" />
+              <X className="h-4 w-4" aria-hidden="true" />
             </button>
           )}
-          <ChevronDown className="h-4 w-4 text-slate-500" />
+          <ChevronDown className="h-4 w-4 text-slate-500" aria-hidden="true" />
         </div>
       </div>
 
@@ -165,7 +212,6 @@ export function SearchableCombobox<TValue extends string | number>({
         createPortal(
           <div
             onMouseDown={(e) => e.preventDefault()}
-            // Must be above `Modal` which uses a very high z-index in this project.
             style={{
               position: 'fixed',
               left: menuRect.left,
@@ -175,26 +221,29 @@ export function SearchableCombobox<TValue extends string | number>({
             }}
             className="max-h-72 overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-800 dark:bg-slate-900"
           >
-            {filtered.length === 0 ? (
+            {visible.length === 0 ? (
               <div className="px-3 py-2 text-sm text-slate-500">No results</div>
             ) : (
-              <ul className="py-1">
-                {filtered.slice(0, 250).map((opt) => {
+              <ul id={listboxId} role="listbox" className="py-1">
+                {visible.map((opt, index) => {
                   const isActive = String(opt.value) === String(value);
+                  const isHighlighted = index === highlightedIndex;
                   return (
-                    <li key={String(opt.value)}>
-                      <button
-                        type="button"
-                        disabled={opt.disabled}
-                        onClick={() => select(opt)}
-                        className={`w-full px-3 py-2 text-left text-sm transition-colors ${
-                          isActive
-                            ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:text-primary-200'
-                            : 'text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800'
-                        } disabled:cursor-not-allowed disabled:opacity-60`}
-                      >
-                        {opt.label}
-                      </button>
+                    <li
+                      key={String(opt.value)}
+                      id={`${listboxId}-opt-${index}`}
+                      role="option"
+                      aria-selected={isActive}
+                      aria-disabled={opt.disabled || undefined}
+                      onClick={() => select(opt)}
+                      onMouseEnter={() => setHighlightedIndex(index)}
+                      className={`w-full cursor-pointer px-3 py-2.5 min-h-11 text-left text-sm transition-colors ${
+                        isHighlighted || isActive
+                          ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:text-primary-200'
+                          : 'text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800'
+                      } ${opt.disabled ? 'cursor-not-allowed opacity-60' : ''}`}
+                    >
+                      {opt.label}
                     </li>
                   );
                 })}

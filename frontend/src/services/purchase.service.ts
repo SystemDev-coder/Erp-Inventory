@@ -41,6 +41,7 @@ export interface Purchase {
   items?: PurchaseItem[];
   doc_type?: 'purchase' | 'order';
   expected_date?: string | null;
+  due_date?: string | null;
 }
 
 export interface PurchasePaymentSummary {
@@ -63,6 +64,7 @@ export interface PurchaseCreateInput {
   status?: 'ordered' | 'received' | 'partial' | 'unpaid' | 'void';
   docType?: 'purchase' | 'order';
   expectedDate?: string;
+  dueDate?: string | null;
   note?: string | null;
   fxRate?: number;
   /**
@@ -123,8 +125,8 @@ export const purchaseService = {
     return apiClient.put<{ purchase: Purchase }>(API.PURCHASES.ITEM(id), data);
   },
 
-  async remove(id: number) {
-    return apiClient.delete<{ message: string }>(API.PURCHASES.ITEM(id));
+  async remove(id: number, reason: string) {
+    return apiClient.delete<{ message: string }>(API.PURCHASES.ITEM(id), reason);
   },
 
   async receiveOrder(id: number, data: { status: 'received' | 'partial' | 'unpaid'; purchaseType?: 'cash' | 'credit'; note?: string | null }) {

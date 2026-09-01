@@ -157,6 +157,7 @@ const Customers = () => {
             fromDate: dateRange.fromDate,
             toDate: dateRange.toDate,
             branchId: activeBranchId ?? undefined,
+            limit: 500,
         });
         if (res.success && res.data?.customers) setCustomers(res.data.customers);
         else showToast('error', 'Load failed', res.error || 'Could not load customers');
@@ -222,10 +223,10 @@ const Customers = () => {
 
     const onDelete = (row: Customer) => { setCustomerToDelete(row); setDeleteConfirmOpen(true); };
 
-    const confirmDelete = async () => {
+    const confirmDelete = async (reason: string) => {
         if (!customerToDelete) return;
         setLoading(true);
-        const res = await customerService.remove(customerToDelete.customer_id);
+        const res = await customerService.remove(customerToDelete.customer_id, reason);
         if (res.success) {
             showToast('success', 'Deleted', `"${customerToDelete.full_name}" removed`);
             fetchCustomers();
@@ -526,7 +527,8 @@ const Customers = () => {
             <ConfirmDialog
                 isOpen={deleteConfirmOpen}
                 onClose={() => { setDeleteConfirmOpen(false); setCustomerToDelete(null); }}
-                onConfirm={confirmDelete}
+                onConfirm={(reason) => void confirmDelete(reason || '')}
+                requireReason
                 title="Delete Customer?"
                 highlightedName={customerToDelete?.full_name}
                 message={

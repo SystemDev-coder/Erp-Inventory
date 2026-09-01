@@ -7,6 +7,7 @@ import { AuthRequest } from '../../middlewares/requireAuth';
 import { z } from 'zod';
 import { pickBranchForWrite, resolveActiveBranchIds, resolveBranchScope } from '../../utils/branchScope';
 import { logAudit } from '../../utils/audit';
+import { listPaginationSchema, paginationMeta } from '../../utils/pagination';
 
 const supplierSchema = z.object({
   supplierName: z.string().min(1, 'Supplier name is required'),
@@ -61,8 +62,12 @@ export const listSuppliers = asyncHandler(async (req: AuthRequest, res: Response
   if (fromDate && toDate && fromDate > toDate) {
     throw ApiError.badRequest('fromDate cannot be after toDate');
   }
-  const suppliers = await suppliersService.listSuppliers(branchIds, search, { fromDate, toDate });
-  return ApiResponse.success(res, { suppliers });
+  const pagination = listPaginationSchema.parse(req.query);
+  const result = await suppliersService.listSuppliers(branchIds, search, { fromDate, toDate }, pagination);
+  return ApiResponse.success(res, {
+    suppliers: result.rows,
+    pagination: paginationMeta(result.total, result.page, result.limit),
+  });
 });
 
 export const lookupSuppliers = asyncHandler(async (req: AuthRequest, res: Response) => {

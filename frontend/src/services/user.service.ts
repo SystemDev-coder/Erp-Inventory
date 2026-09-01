@@ -53,8 +53,8 @@ export const userService = {
       isActive: data.is_active,
     });
   },
-  async remove(id: number) {
-    return apiClient.delete<{ message: string }>(`/api/users/${id}`);
+  async remove(id: number, reason: string) {
+    return apiClient.delete<{ message: string }>(`/api/users/${id}`, reason);
   },
   async generateFromEmployee(data: {
     emp_id: number;

@@ -48,7 +48,7 @@ export const receiptService = {
     });
   },
 
-  async remove(id: number) {
-    return apiClient.delete<{ message: string }>(API.RECEIPTS.ITEM(id));
+  async remove(id: number, reason: string) {
+    return apiClient.delete<{ message: string }>(API.RECEIPTS.ITEM(id), reason);
   },
 };

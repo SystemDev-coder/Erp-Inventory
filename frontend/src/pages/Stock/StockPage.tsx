@@ -483,10 +483,10 @@ const StockPage = () => {
     loadLocations();
   };
 
-  const confirmDeleteBranch = async () => {
+  const confirmDeleteBranch = async (reason: string) => {
     if (!branchToDelete) return;
     setDeletingBranch(true);
-    const res = await inventoryService.deleteBranch(branchToDelete.branch_id);
+    const res = await inventoryService.deleteBranch(branchToDelete.branch_id, reason);
     setDeletingBranch(false);
     if (!res.success) {
       showToast('error', 'Branch', res.error || 'Failed to delete branch');
@@ -524,10 +524,10 @@ const StockPage = () => {
     loadLocations();
   };
 
-  const confirmDeleteWarehouse = async () => {
+  const confirmDeleteWarehouse = async (reason: string) => {
     if (!warehouseToDelete) return;
     setDeletingWarehouse(true);
-    const res = await inventoryService.deleteWarehouse(warehouseToDelete.wh_id);
+    const res = await inventoryService.deleteWarehouse(warehouseToDelete.wh_id, reason);
     setDeletingWarehouse(false);
     if (!res.success) {
       showToast('error', 'Warehouse', res.error || 'Failed to delete warehouse');
@@ -730,7 +730,8 @@ const StockPage = () => {
       <ConfirmDialog
         isOpen={!!branchToDelete}
         onClose={() => setBranchToDelete(null)}
-        onConfirm={confirmDeleteBranch}
+        onConfirm={(reason) => void confirmDeleteBranch(reason || '')}
+        requireReason
         title="Delete Branch"
         message={`Are you sure you want to delete branch "${branchToDelete?.branch_name || ''}"?`}
         confirmText="Delete"
@@ -741,7 +742,8 @@ const StockPage = () => {
       <ConfirmDialog
         isOpen={!!warehouseToDelete}
         onClose={() => setWarehouseToDelete(null)}
-        onConfirm={confirmDeleteWarehouse}
+        onConfirm={(reason) => void confirmDeleteWarehouse(reason || '')}
+        requireReason
         title="Delete Warehouse"
         message={`Are you sure you want to delete warehouse "${warehouseToDelete?.wh_name || ''}"?`}
         confirmText="Delete"

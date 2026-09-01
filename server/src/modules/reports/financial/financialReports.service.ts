@@ -966,6 +966,14 @@ const normalizedAccountTransactionsCte = `
     FROM ims.journal_lines jl
     JOIN ims.journal_entries je ON je.journal_id = jl.journal_id
     WHERE je.branch_id = $1
+      AND NOT EXISTS (
+        SELECT 1
+          FROM ims.account_transactions at
+         WHERE at.branch_id = je.branch_id
+           AND COALESCE(at.ref_table, '') = 'journal_entries'
+           AND at.ref_id = je.journal_id
+           AND COALESCE(at.is_deleted, 0) = 0
+      )
   )
 `;
 

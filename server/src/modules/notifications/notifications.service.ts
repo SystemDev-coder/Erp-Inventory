@@ -1,4 +1,5 @@
 import { query, queryMany, queryOne } from '../../db/query';
+import { ensureCreditDueNotifications } from '../../utils/creditDueNotifications';
 
 export interface NotificationRow {
   notification_id: number;
@@ -121,6 +122,7 @@ export const notificationsService = {
   async list(input: NotificationListInput) {
     if (input.branchId) {
       await ensureLowStockNotifications(input.branchId, input.userId);
+      await ensureCreditDueNotifications(input.branchId);
     }
 
     const whereClauses = ['n.user_id = $1', 'COALESCE(n.is_deleted, FALSE) = FALSE'];

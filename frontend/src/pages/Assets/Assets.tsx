@@ -205,11 +205,11 @@ export default function Assets() {
     }
   };
 
-  const confirmDelete = async () => {
+  const confirmDelete = async (reason: string) => {
     if (!deleteTarget) return;
     setDeleting(true);
     try {
-      const response = await assetsService.delete(deleteTarget.asset_id);
+      const response = await assetsService.delete(deleteTarget.asset_id, reason);
       if (!response.success) {
         showToast('error', 'Assets', response.error || response.message || 'Failed to delete asset');
         return;
@@ -423,7 +423,8 @@ export default function Assets() {
       <ConfirmDialog
         isOpen={Boolean(deleteTarget)}
         onClose={() => setDeleteTarget(null)}
-        onConfirm={() => void confirmDelete()}
+        onConfirm={(reason) => void confirmDelete(reason || '')}
+        requireReason
         title="Delete Asset?"
         highlightedName={deleteTarget?.asset_name || undefined}
         message="This action will remove the asset from the register."

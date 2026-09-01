@@ -191,8 +191,8 @@ export const settingsService = {
     };
     return apiClient.put('/api/settings/company', payload);
   },
-  async deleteCompany(): Promise<ApiResponse> {
-    return apiClient.delete('/api/settings/company');
+  async deleteCompany(reason: string): Promise<ApiResponse> {
+    return apiClient.delete('/api/settings/company', reason);
   },
 
   async listBranches(): Promise<ApiResponse<{ branches: Branch[] }>> {
@@ -204,8 +204,8 @@ export const settingsService = {
   async updateBranch(id: number, input: { branchName?: string; location?: string; isActive?: boolean }): Promise<ApiResponse<{ branch: Branch }>> {
     return apiClient.put(`/api/settings/branches/${id}`, input);
   },
-  async deleteBranch(id: number): Promise<ApiResponse> {
-    return apiClient.delete(`/api/settings/branches/${id}`);
+  async deleteBranch(id: number, reason: string): Promise<ApiResponse> {
+    return apiClient.delete(`/api/settings/branches/${id}`, reason);
   },
 
   async listAudit(
@@ -271,8 +271,8 @@ export const settingsService = {
     return apiClient.put(`/api/settings/capital/${id}`, input);
   },
 
-  async deleteCapital(id: number): Promise<ApiResponse> {
-    return apiClient.delete(`/api/settings/capital/${id}`);
+  async deleteCapital(id: number, reason: string): Promise<ApiResponse> {
+    return apiClient.delete(`/api/settings/capital/${id}`, reason);
   },
 
   async getCapitalReport(input?: { owner?: string; fromDate?: string; toDate?: string }): Promise<ApiResponse<{ report: CapitalReport }>> {
@@ -338,8 +338,8 @@ export const settingsService = {
     return apiClient.put(`/api/settings/capital/drawings/${id}`, input);
   },
 
-  async deleteCapitalDrawing(id: number): Promise<ApiResponse> {
-    return apiClient.delete(`/api/settings/capital/drawings/${id}`);
+  async deleteCapitalDrawing(id: number, reason: string): Promise<ApiResponse> {
+    return apiClient.delete(`/api/settings/capital/drawings/${id}`, reason);
   },
 
   async listClosingPeriods(input?: {
