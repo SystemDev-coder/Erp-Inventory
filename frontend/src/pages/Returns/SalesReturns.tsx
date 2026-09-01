@@ -53,6 +53,7 @@ const SalesReturns = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [formError, setFormError] = useState('');
   const [touched, setTouched] = useState<Record<string, boolean>>({});
 
   const subtotal = useMemo(
@@ -117,12 +118,12 @@ const SalesReturns = () => {
     if (res.success && res.data?.accounts) setAccounts(res.data.accounts);
   };
 
-  const loadItemsForCustomer = async (customerId?: number) => {
+  const loadItemsForCustomer = async (customerId?: number, excludeReturnId?: number) => {
     if (!customerId) {
       setItems([]);
       return [];
     }
-    const res = await returnsService.listSalesItemsByCustomer(customerId);
+    const res = await returnsService.listSalesItemsByCustomer(customerId, excludeReturnId);
     if (res.success && res.data?.items) {
       const mapped = res.data.items.map((item) => ({
         ...item,
@@ -150,6 +151,7 @@ const SalesReturns = () => {
     setLines([defaultLine()]);
     setItems([]);
     setErrors({});
+    setFormError('');
     setTouched({});
   };
 
@@ -180,7 +182,7 @@ const SalesReturns = () => {
         refundAmount: Number(row.refund_amount || 0),
         refundViaAccount: Number(row.refund_amount || 0) > 0,
       });
-      await loadItemsForCustomer(row.customer_id ? Number(row.customer_id) : undefined);
+      await loadItemsForCustomer(row.customer_id ? Number(row.customer_id) : undefined, editingId);
       const itemsRes = await returnsService.getSalesReturnItems(editingId);
       if (itemsRes.success && itemsRes.data?.items) {
         const nextLines = itemsRes.data.items.map((item) => ({
@@ -204,7 +206,7 @@ const SalesReturns = () => {
     setLines([defaultLine()]);
     setErrors((prev) => ({ ...prev, customerId: '', items: '' }));
     setTouched((prev) => ({ ...prev, customerId: true }));
-    await loadItemsForCustomer(customerId ? Number(customerId) : undefined);
+    await loadItemsForCustomer(customerId ? Number(customerId) : undefined, editingId ?? undefined);
   };
 
   const setLineValue = (index: number, patch: Partial<ReturnLine>) => {
@@ -260,9 +262,11 @@ const SalesReturns = () => {
     const errs = validate();
     if (Object.keys(errs).length > 0) {
       setErrors(errs);
+      setFormError('Please fix the highlighted fields before saving.');
       setTouched({ customerId: true, items: true, refundAccId: true, refundAmount: true });
       return;
     }
+    setFormError('');
     const normalized = lines
       .filter((line) => line.itemId)
       .map((line) => ({
@@ -279,6 +283,7 @@ const SalesReturns = () => {
       const selected = items.find((it) => Number(it.item_id) === Number(unavailable.itemId));
       const maxQty = selected?.available_qty !== undefined ? Number(selected.available_qty || 0) : 0;
       showToast('error', 'Sales Return', `Return qty exceeds available (${maxQty}) for ${selected?.name || `item ${unavailable.itemId}`}`);
+      setFormError(`Return quantity exceeds available stock for ${selected?.name || `item ${unavailable.itemId}`}.`);
       return;
     }
     const payload: any = {
@@ -303,7 +308,7 @@ const SalesReturns = () => {
       showToast('success', 'Sales Return', editingId ? 'Return updated successfully' : 'Return recorded successfully');
       navigate('/returns');
     } else {
-      showToast('error', 'Sales Return', res.error || 'Failed to save return');
+      setFormError(res.error || 'Failed to save return');
     }
   };
 
@@ -338,6 +343,11 @@ const SalesReturns = () => {
           </button>
         </div>
         <form onSubmit={submitReturn} className="space-y-4 p-4">
+          {formError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-300" role="alert">
+              {formError}
+            </div>
+          )}
 	          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
 	            <div>
 	              <label className={labelClass}>Customer</label>

@@ -11,6 +11,7 @@ import { ensureCoaAccounts } from '../../utils/coaDefaults';
 import { financeClosingService } from '../finance/financeClosing.service';
 import { assertCustomerCreditAllowed } from '../../utils/creditRules';
 import { resolveSaleDueDate } from '../../utils/creditDueHelpers';
+import { syncCustomerOutstandingFromLedger } from '../../utils/customerOutstanding';
 import { requireDeleteReason } from '../../utils/refundRules';
 import {
   QuotationConvertInput,
@@ -1102,6 +1103,12 @@ export const salesService = {
             mode: 'add',
           });
         }
+        if (input.customerId) {
+          await syncCustomerOutstandingFromLedger(client, {
+            branchId: context.branchId,
+            customerId: input.customerId,
+          });
+        }
         await rewriteSaleGl(client, { branchId: context.branchId, saleId: sale.sale_id });
       }
 
@@ -1335,6 +1342,18 @@ export const salesService = {
           payDate: input.saleDate || current.sale_date,
         });
       }
+      if (current.customer_id) {
+        await syncCustomerOutstandingFromLedger(client, {
+          branchId: current.branch_id,
+          customerId: Number(current.customer_id),
+        });
+      }
+      if (nextCustomerId && nextCustomerId !== current.customer_id) {
+        await syncCustomerOutstandingFromLedger(client, {
+          branchId: current.branch_id,
+          customerId: Number(nextCustomerId),
+        });
+      }
 
       const updates: string[] = [];
       const values: Array<string | number | boolean | null> = [];
@@ -1507,6 +1526,13 @@ export const salesService = {
         branchId: current.branch_id,
         saleId: current.sale_id,
       });
+
+      if (current.customer_id) {
+        await syncCustomerOutstandingFromLedger(client, {
+          branchId: current.branch_id,
+          customerId: Number(current.customer_id),
+        });
+      }
 
       const updates: string[] = [];
       const values: Array<string | number | boolean | null> = [id];

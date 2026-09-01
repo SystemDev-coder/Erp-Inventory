@@ -53,9 +53,13 @@ export function SearchableCombobox<TValue extends string | number>({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const onSearchRef = useRef<Props<TValue>['onSearch']>(onSearch);
   const listboxId = useId();
-  const [menuRect, setMenuRect] = useState<{ left: number; top: number; width: number } | null>(
-    null
-  );
+  const [menuRect, setMenuRect] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    maxHeight: number;
+    placement: 'top' | 'bottom';
+  } | null>(null);
 
   useEffect(() => {
     onSearchRef.current = onSearch;
@@ -78,7 +82,19 @@ export function SearchableCombobox<TValue extends string | number>({
       const el = inputRef.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
-      setMenuRect({ left: rect.left, top: rect.bottom + 6, width: rect.width });
+      const maxMenuHeight = 288;
+      const spaceBelow = window.innerHeight - rect.bottom - 8;
+      const spaceAbove = rect.top - 8;
+      const openUpward = spaceBelow < 200 && spaceAbove > spaceBelow;
+      const available = openUpward ? spaceAbove : spaceBelow;
+      const height = Math.max(120, Math.min(maxMenuHeight, available));
+      setMenuRect({
+        left: rect.left,
+        top: openUpward ? rect.top - height - 6 : rect.bottom + 6,
+        width: rect.width,
+        maxHeight: height,
+        placement: openUpward ? 'top' : 'bottom',
+      });
     };
     update();
     window.addEventListener('resize', update);
@@ -217,9 +233,10 @@ export function SearchableCombobox<TValue extends string | number>({
               left: menuRect.left,
               top: menuRect.top,
               width: menuRect.width,
+              maxHeight: menuRect.maxHeight,
               zIndex: 2147483500,
             }}
-            className="max-h-72 overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-800 dark:bg-slate-900"
+            className="overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-800 dark:bg-slate-900"
           >
             {visible.length === 0 ? (
               <div className="px-3 py-2 text-sm text-slate-500">No results</div>
