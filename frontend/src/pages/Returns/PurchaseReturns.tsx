@@ -53,6 +53,7 @@ const PurchaseReturns = () => {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [formError, setFormError] = useState('');
   const [touched, setTouched] = useState<Record<string, boolean>>({});
 
   const subtotal = useMemo(
@@ -94,12 +95,12 @@ const PurchaseReturns = () => {
     if (res.success && res.data?.accounts) setAccounts(res.data.accounts);
   };
 
-  const loadItemsForSupplier = async (supplierId?: number) => {
+  const loadItemsForSupplier = async (supplierId?: number, excludeReturnId?: number) => {
     if (!supplierId) {
       setItems([]);
       return [];
     }
-    const res = await returnsService.listPurchaseItemsBySupplier(supplierId);
+    const res = await returnsService.listPurchaseItemsBySupplier(supplierId, excludeReturnId);
     if (res.success && res.data?.items) {
       const mapped = res.data.items.map((item) => ({
         ...item,
@@ -127,6 +128,7 @@ const PurchaseReturns = () => {
     setLines([defaultLine()]);
     setItems([]);
     setErrors({});
+    setFormError('');
     setTouched({});
   };
 
@@ -157,7 +159,7 @@ const PurchaseReturns = () => {
         refundAmount: Number(row.refund_amount || 0),
         refundViaAccount: Number(row.refund_amount || 0) > 0,
       });
-      await loadItemsForSupplier(row.supplier_id ? Number(row.supplier_id) : undefined);
+      await loadItemsForSupplier(row.supplier_id ? Number(row.supplier_id) : undefined, editingId);
       const itemsRes = await returnsService.getPurchaseReturnItems(editingId);
       if (itemsRes.success && itemsRes.data?.items) {
         const nextLines = itemsRes.data.items.map((item) => ({
@@ -181,7 +183,7 @@ const PurchaseReturns = () => {
     setLines([defaultLine()]);
     setErrors((prev) => ({ ...prev, supplierId: '', items: '' }));
     setTouched((prev) => ({ ...prev, supplierId: true }));
-    await loadItemsForSupplier(supplierId ? Number(supplierId) : undefined);
+    await loadItemsForSupplier(supplierId ? Number(supplierId) : undefined, editingId ?? undefined);
   };
 
   const setLineValue = (index: number, patch: Partial<ReturnLine>) => {
@@ -237,9 +239,11 @@ const PurchaseReturns = () => {
     const errs = validate();
     if (Object.keys(errs).length > 0) {
       setErrors(errs);
+      setFormError('Please fix the highlighted fields before saving.');
       setTouched({ supplierId: true, items: true, refundAccId: true, refundAmount: true });
       return;
     }
+    setFormError('');
     const normalized = lines
       .filter((line) => line.itemId)
       .map((line) => ({
@@ -256,6 +260,7 @@ const PurchaseReturns = () => {
       const selected = items.find((it) => Number(it.item_id) === Number(unavailable.itemId));
       const maxQty = selected?.available_qty !== undefined ? Number(selected.available_qty || 0) : 0;
       showToast('error', 'Purchase Return', `Return qty exceeds available stock (${maxQty}) for ${selected?.name || `item ${unavailable.itemId}`}`);
+      setFormError(`Return quantity exceeds available stock for ${selected?.name || `item ${unavailable.itemId}`}.`);
       return;
     }
     const payload: any = {
@@ -280,7 +285,7 @@ const PurchaseReturns = () => {
       showToast('success', 'Purchase Return', editingId ? 'Return updated successfully' : 'Return recorded successfully');
       navigate('/returns');
     } else {
-      showToast('error', 'Purchase Return', res.error || 'Failed to save return');
+      setFormError(res.error || 'Failed to save return');
     }
   };
 
@@ -315,6 +320,11 @@ const PurchaseReturns = () => {
           </button>
         </div>
         <form onSubmit={submitReturn} className="space-y-4 p-4">
+          {formError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-300" role="alert">
+              {formError}
+            </div>
+          )}
 	          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
 	            <div>
 	              <label className={labelClass}>Supplier</label>

@@ -86,6 +86,8 @@ const PurchaseEditor = () => {
   const [lineItems, setLineItems] = useState<LineItem[]>([emptyLine]);
   const [discountMode, setDiscountMode] = useState<'per_item' | 'all_items'>('all_items');
   const [productPickerOpen, setProductPickerOpen] = useState(false);
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [formError, setFormError] = useState('');
   const [products, setProducts] = useState<Product[]>([]);
   const [productSearch, setProductSearch] = useState('');
   const [productsLoaded, setProductsLoaded] = useState(false);
@@ -437,7 +439,7 @@ const PurchaseEditor = () => {
       showToast('success', 'Saved', isEdit ? 'Purchase updated' : 'Purchase created');
       navigate('/purchases');
     } else {
-      showToast('error', 'Save failed', res.error || 'Check the form');
+      setFormError(res.error || 'Check the form and try again.');
     }
   };
 
@@ -460,7 +462,8 @@ const PurchaseEditor = () => {
 
     if (supplierMode === 'new') {
       if (!newSupplier.supplier_name) {
-        showToast('error', 'Supplier name required', 'Enter supplier name');
+        setFormError('Supplier name is required.');
+        setFormErrors({ supplier_name: 'Enter supplier name' });
         return;
       }
       setLoading(true);
@@ -475,7 +478,7 @@ const PurchaseEditor = () => {
         is_active: true,
       });
       if (!res.success || !res.data?.supplier) {
-        showToast('error', 'Supplier save failed', res.error || 'Could not create supplier');
+        setFormError(res.error || 'Could not create supplier.');
         setLoading(false);
         return;
       }
@@ -499,15 +502,18 @@ const PurchaseEditor = () => {
         expiryDate: li.expiry_date || undefined,
       }));
     if (preparedItems.length === 0) {
-      showToast('error', 'Add items', 'A purchase needs at least one line');
+      setFormError('A purchase needs at least one line with a product selected.');
+      setFormErrors({ items: 'Select a product for each line or use “Select from products”.' });
       return;
     }
+    setFormError('');
+    setFormErrors({});
     if (shouldShowPaymentAccount && !form.acc_id) {
-      showToast('error', 'Account required', 'Select account for paid amount');
+      setFormError('Select an account for the paid amount.');
       return;
     }
     if (docType !== 'order' && effectiveStatus === 'partial' && Number(form.paid_amount || 0) <= 0) {
-      showToast('error', 'Paid amount required', 'Enter partial amount paid');
+      setFormError('Enter the partial amount paid.');
       return;
     }
 
@@ -531,27 +537,22 @@ const PurchaseEditor = () => {
         title={isEdit ? (docType === 'order' ? 'Edit Purchase Order' : 'Edit Purchase') : (docType === 'order' ? 'New Purchase Order' : 'New Purchase')}
         description={docType === 'order' ? 'Create a purchase order (no stock impact until received).' : 'Track incoming stock and supplier bills.'}
         actions={
-          <div className="flex gap-2">
-            <button
-              type="button"
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
-              onClick={() => navigate('/purchases')}
-            >
-              <ArrowLeft size={16} /> Back
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={loading}
-              className="px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50"
-            >
-              {isEdit ? 'Update' : 'Create'}
-            </button>
-          </div>
+          <button
+            type="button"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+            onClick={() => navigate('/purchases')}
+          >
+            <ArrowLeft size={16} /> Back
+          </button>
         }
       />
 
       <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-6">
+        {formError && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-300" role="alert">
+            {formError}
+          </div>
+        )}
 	        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 	          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
 	            Supplier
@@ -815,7 +816,7 @@ const PurchaseEditor = () => {
         </label>
       </div>
 
-      <div className="space-y-3">
+        <div className="space-y-3">
         <div className="flex items-center justify-between">
           <span className="font-semibold text-slate-800 dark:text-slate-200">Items</span>
           <div className="flex flex-wrap items-end gap-2 justify-end">
@@ -865,6 +866,9 @@ const PurchaseEditor = () => {
             </button>
           </div>
         </div>
+        {formErrors.items && (
+          <p className="text-sm font-medium text-red-600 dark:text-red-400" role="alert">{formErrors.items}</p>
+        )}
 
         {/* Product Picker Modal */}
         <Modal
@@ -1102,6 +1106,24 @@ const PurchaseEditor = () => {
             <span className="text-slate-500">Total</span>
             <span className="font-semibold">${form.total.toFixed(2)}</span>
           </div>
+        </div>
+
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            type="button"
+            className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+            onClick={() => navigate('/purchases')}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={loading}
+            className="px-5 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50"
+          >
+            {loading ? 'Saving…' : isEdit ? 'Update Purchase' : 'Create Purchase'}
+          </button>
         </div>
         </div>
       </div>

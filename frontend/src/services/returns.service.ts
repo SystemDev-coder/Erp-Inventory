@@ -85,11 +85,15 @@ export const returnsService = {
         const qs = params?.branchId ? `?branchId=${params.branchId}` : '';
         return apiClient.get<{ customers: any[] }>(`/api/returns/sales/customers${qs}`);
     },
-    listSalesItemsByCustomer(customerId: number) {
-        return apiClient.get<{ items: ReturnItemOption[] }>(`/api/returns/sales/customer-items?customerId=${customerId}`);
+    listSalesItemsByCustomer(customerId: number, excludeReturnId?: number) {
+        const qs = new URLSearchParams({ customerId: String(customerId) });
+        if (excludeReturnId) qs.set('excludeReturnId', String(excludeReturnId));
+        return apiClient.get<{ items: ReturnItemOption[] }>(`/api/returns/sales/customer-items?${qs.toString()}`);
     },
-    listPurchaseItemsBySupplier(supplierId: number) {
-        return apiClient.get<{ items: ReturnItemOption[] }>(`/api/returns/purchases/supplier-items?supplierId=${supplierId}`);
+    listPurchaseItemsBySupplier(supplierId: number, excludeReturnId?: number) {
+        const qs = new URLSearchParams({ supplierId: String(supplierId) });
+        if (excludeReturnId) qs.set('excludeReturnId', String(excludeReturnId));
+        return apiClient.get<{ items: ReturnItemOption[] }>(`/api/returns/purchases/supplier-items?${qs.toString()}`);
     },
     listSalesReturns(params?: { fromDate?: string; toDate?: string; branchId?: number }) {
         const qsParts: string[] = [];
