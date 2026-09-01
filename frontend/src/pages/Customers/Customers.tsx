@@ -23,6 +23,8 @@ type CustomerForm = {
     address: string;
     gender: 'male' | 'female';
     is_active: boolean;
+    credit_allowed: boolean;
+    credit_days: number;
     remaining_balance: number;
 };
 
@@ -35,6 +37,8 @@ const emptyForm: CustomerForm = {
     address: '',
     gender: 'male',
     is_active: true,
+    credit_allowed: true,
+    credit_days: 30,
     remaining_balance: 0,
 };
 
@@ -185,6 +189,8 @@ const Customers = () => {
             sex: form.gender,
             gender: form.gender,
             is_active: form.is_active,
+            credit_allowed: form.customer_type === 'regular' ? form.credit_allowed : false,
+            credit_days: form.credit_days,
             remaining_balance: Number(form.remaining_balance) || 0,
         };
         const res = form.customer_id
@@ -209,7 +215,9 @@ const Customers = () => {
             address: row.address || '',
             gender: (row.gender || row.sex || 'male') as 'male' | 'female',
             is_active: row.is_active,
-            remaining_balance: Number(row.remaining_balance ?? 0),
+            credit_allowed: row.credit_allowed !== false,
+            credit_days: Number(row.credit_days ?? 30),
+            remaining_balance: Number(row.open_balance ?? row.remaining_balance ?? 0),
         });
 
     const onDelete = (row: Customer) => { setCustomerToDelete(row); setDeleteConfirmOpen(true); };
@@ -377,7 +385,14 @@ const Customers = () => {
                             <select
                                 className={getInputCls()}
                                 value={form.customer_type}
-                                onChange={(ev) => set('customer_type', ev.target.value as 'regular' | 'one-time')}
+                                onChange={(ev) => {
+                                    const nextType = ev.target.value as 'regular' | 'one-time';
+                                    setForm((prev) => ({
+                                        ...prev,
+                                        customer_type: nextType,
+                                        credit_allowed: nextType === 'regular' ? prev.credit_allowed : false,
+                                    }));
+                                }}
                                 disabled={loading}
                             >
                                 <option value="regular">Regular Customer</option>
@@ -411,13 +426,13 @@ const Customers = () => {
                         />
                     </Field>
 
-                    {/* Row 4 – Balance / Active toggle */}
+                    {/* Row 4 – Balance / Credit / Active */}
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                         <Field
                             label="Opening Balance"
                             error={e.remaining_balance}
                             touched={t.remaining_balance}
-                            hint="Amount the customer already owes"
+                            hint="Amount the customer already owes (go-live balance)"
                         >
                             <input
                                 type="number"
@@ -431,6 +446,35 @@ const Customers = () => {
                                 disabled={loading}
                             />
                         </Field>
+
+                        {form.customer_type === 'regular' && (
+                            <>
+                                <Field label="Credit Days" hint="Payment due period for credit sales">
+                                    <input
+                                        type="number"
+                                        min={0}
+                                        step={1}
+                                        value={form.credit_days}
+                                        onChange={(ev) => set('credit_days', Number(ev.target.value || 0))}
+                                        className={getInputCls()}
+                                        disabled={loading}
+                                    />
+                                </Field>
+                                <div className="flex items-center gap-3 md:col-span-2">
+                                    <input
+                                        id="credit-allowed"
+                                        type="checkbox"
+                                        className="h-4 w-4 accent-primary-600"
+                                        checked={form.credit_allowed}
+                                        onChange={(ev) => set('credit_allowed', ev.target.checked)}
+                                        disabled={loading}
+                                    />
+                                    <label htmlFor="credit-allowed" className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                                        Credit Allowed
+                                    </label>
+                                </div>
+                            </>
+                        )}
 
                         {form.customer_id && (
                             <div className="flex items-center self-end pb-2">
@@ -487,7 +531,7 @@ const Customers = () => {
                 highlightedName={customerToDelete?.full_name}
                 message={
                     customerToDelete
-                        ? 'Deleting this customer will remove their balance history links. This cannot be undone.'
+                        ? `Cannot delete if outstanding balance exists. Current balance: $${Number(customerToDelete.balance || 0).toFixed(2)}`
                         : 'Are you sure you want to delete this customer?'
                 }
                 confirmText="Delete"

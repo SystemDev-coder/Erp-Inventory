@@ -78,7 +78,7 @@ export const saleUpdateSchema = z.object({
 });
 
 export const saleVoidSchema = z.object({
-  reason: z.string().max(240).optional(),
+  reason: z.string().trim().min(1, 'Reason is required').max(500),
 });
 
 export const quotationConvertSchema = z.object({

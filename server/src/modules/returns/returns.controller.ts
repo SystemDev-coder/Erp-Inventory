@@ -7,6 +7,11 @@ import {
     UpdateSalesReturnInput,
     UpdatePurchaseReturnInput,
 } from './returns.service';
+import {
+  createPurchaseReturnSchema,
+  createSalesReturnSchema,
+  deleteReturnSchema,
+} from './returns.schemas';
 import { resolveActiveBranchIds, resolveBranchScope } from '../../utils/branchScope';
 import { ApiError } from '../../utils/ApiError';
 import { logAudit } from '../../utils/audit';
@@ -70,7 +75,7 @@ export const createSalesReturn = async (req: AuthRequest, res: Response): Promis
     const scope = await resolveBranchScope(req);
     const branchId = scope.primaryBranchId;
     const userId = Number(req.user!.userId);
-    const input = req.body as CreateSalesReturnInput;
+    const input = createSalesReturnSchema.parse(req.body) as CreateSalesReturnInput;
 
     const result = await returnsService.createSalesReturn(input, { branchId, userId });
     res.status(201).json({ success: true, data: { return: result } });
@@ -79,7 +84,7 @@ export const createSalesReturn = async (req: AuthRequest, res: Response): Promis
 export const updateSalesReturn = async (req: AuthRequest, res: Response): Promise<void> => {
     const scope = await resolveBranchScope(req);
     const userId = Number(req.user!.userId);
-    const input = req.body as UpdateSalesReturnInput;
+    const input = createSalesReturnSchema.parse(req.body) as UpdateSalesReturnInput;
     const result = await returnsService.updateSalesReturn(Number(req.params.id), input, scope, { userId });
     res.json({ success: true, data: { return: result } });
 };
@@ -87,12 +92,14 @@ export const updateSalesReturn = async (req: AuthRequest, res: Response): Promis
 export const deleteSalesReturn = async (req: AuthRequest, res: Response): Promise<void> => {
     const scope = await resolveBranchScope(req);
     const id = Number(req.params.id);
-    await returnsService.deleteSalesReturn(Number(req.params.id), scope);
+    const { reason } = deleteReturnSchema.parse(req.body || {});
+    await returnsService.deleteSalesReturn(Number(req.params.id), scope, reason);
     await logAudit({
       userId: req.user?.userId ?? null,
       action: 'delete',
       entity: 'sales_returns',
       entityId: id,
+      newValue: { reason },
       ip: req.ip,
       userAgent: req.get('user-agent') || null,
     });
@@ -133,7 +140,7 @@ export const createPurchaseReturn = async (req: AuthRequest, res: Response): Pro
     const scope = await resolveBranchScope(req);
     const branchId = scope.primaryBranchId;
     const userId = Number(req.user!.userId);
-    const input = req.body as CreatePurchaseReturnInput;
+    const input = createPurchaseReturnSchema.parse(req.body) as CreatePurchaseReturnInput;
 
     const result = await returnsService.createPurchaseReturn(input, { branchId, userId });
     res.status(201).json({ success: true, data: { return: result } });
@@ -142,7 +149,7 @@ export const createPurchaseReturn = async (req: AuthRequest, res: Response): Pro
 export const updatePurchaseReturn = async (req: AuthRequest, res: Response): Promise<void> => {
     const scope = await resolveBranchScope(req);
     const userId = Number(req.user!.userId);
-    const input = req.body as UpdatePurchaseReturnInput;
+    const input = createPurchaseReturnSchema.parse(req.body) as UpdatePurchaseReturnInput;
     const result = await returnsService.updatePurchaseReturn(Number(req.params.id), input, scope, { userId });
     res.json({ success: true, data: { return: result } });
 };
@@ -150,12 +157,14 @@ export const updatePurchaseReturn = async (req: AuthRequest, res: Response): Pro
 export const deletePurchaseReturn = async (req: AuthRequest, res: Response): Promise<void> => {
     const scope = await resolveBranchScope(req);
     const id = Number(req.params.id);
-    await returnsService.deletePurchaseReturn(Number(req.params.id), scope);
+    const { reason } = deleteReturnSchema.parse(req.body || {});
+    await returnsService.deletePurchaseReturn(Number(req.params.id), scope, reason);
     await logAudit({
       userId: req.user?.userId ?? null,
       action: 'delete',
       entity: 'purchase_returns',
       entityId: id,
+      newValue: { reason },
       ip: req.ip,
       userAgent: req.get('user-agent') || null,
     });

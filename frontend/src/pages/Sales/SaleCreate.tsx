@@ -239,15 +239,36 @@ const SaleCreate = () => {
     }));
   };
 
+  const selectedCustomer = useMemo(
+    () => customers.find((c) => Number(c.customer_id) === Number(saleForm.customer_id)),
+    [customers, saleForm.customer_id]
+  );
+
+  const canUseCredit = useMemo(() => {
+    if (!saleForm.customer_id) return false;
+    if (selectedCustomer?.customer_type === 'one-time') return false;
+    return selectedCustomer?.credit_allowed !== false;
+  }, [saleForm.customer_id, selectedCustomer]);
+
   const effectiveDocType = saleForm.doc_type;
   const effectiveSaleType: 'cash' | 'credit' = effectiveDocType === 'quotation'
     ? 'credit'
     : isDebt
     ? 'credit'
     : saleForm.sale_type;
-  const effectiveStatus: SaleStatus = effectiveDocType === 'quotation' || effectiveSaleType === 'credit'
-    ? 'unpaid'
-    : saleForm.status;
+
+  const derivedCashStatus: SaleStatus = (() => {
+    const total = Number(saleForm.total || 0);
+    const paid = Math.max(0, Math.min(Number(saleForm.paid_amount || 0), total));
+    if (paid <= 0.005) return 'unpaid';
+    if (paid >= total - 0.005) return 'paid';
+    return 'partial';
+  })();
+
+  const effectiveStatus: SaleStatus =
+    effectiveDocType === 'quotation' || effectiveSaleType === 'credit'
+      ? 'unpaid'
+      : derivedCashStatus;
 
   const headerDocLabel =
     effectiveDocType === 'quotation' ? 'Quotation' : effectiveDocType === 'invoice' ? 'Invoice' : 'Sale';
@@ -560,19 +581,13 @@ const SaleCreate = () => {
 
           <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
             Status
-            <select
-              className={controlCls}
+            <input
+              className={controlReadonlyCls}
               value={effectiveStatus}
-              onChange={(e) =>
-                setSaleForm((prev) => ({ ...prev, status: e.target.value as SaleStatus }))
-              }
-              disabled={loading || saleForm.doc_type === 'quotation' || effectiveSaleType === 'credit'}
-            >
-              <option value="paid">Paid</option>
-              <option value="partial">Partial</option>
-              <option value="unpaid">Unpaid</option>
-              <option value="void">Void</option>
-            </select>
+              readOnly
+              disabled
+              title="Auto-calculated from amount paid vs total"
+            />
           </label>
         </div>
 
@@ -589,17 +604,21 @@ const SaleCreate = () => {
                   return {
                     ...prev,
                     sale_type: nextType,
-                    status: nextType === 'credit' ? 'unpaid' : prev.status === 'unpaid' ? 'paid' : prev.status,
                     acc_id: nextType === 'credit' ? '' : prev.acc_id,
                     paid_amount: nextType === 'credit' ? 0 : prev.paid_amount,
                   };
                 })
               }
-              disabled={loading || saleForm.doc_type === 'quotation' || isDebt}
+              disabled={loading || saleForm.doc_type === 'quotation' || isDebt || !canUseCredit}
             >
               <option value="cash">Cash</option>
               <option value="credit">Credit</option>
             </select>
+            {!canUseCredit && saleForm.doc_type !== 'quotation' && (
+              <span className="text-xs text-slate-500">
+                Credit requires a registered customer with credit enabled.
+              </span>
+            )}
           </label>
 
           {shouldShowAccount && (
@@ -627,7 +646,7 @@ const SaleCreate = () => {
         </div>
 
         {/* ── Debt toggle ── */}
-        {saleForm.customer_id && saleForm.doc_type !== 'quotation' && (
+        {saleForm.customer_id && saleForm.doc_type !== 'quotation' && canUseCredit && (
           <div className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-300">
             <input
               id="debt-toggle"
@@ -640,7 +659,6 @@ const SaleCreate = () => {
                 setSaleForm((prev) => ({
                   ...prev,
                   sale_type: checked ? 'credit' : 'cash',
-                  status: checked ? 'unpaid' : 'paid',
                   acc_id: checked ? '' : prev.acc_id,
                   paid_amount: checked ? 0 : prev.paid_amount,
                 }));
@@ -895,7 +913,12 @@ const SaleCreate = () => {
                 max={saleForm.total}
                 onChange={(e) => {
                   clearError('paidAmount');
-                  setSaleForm((prev) => ({ ...prev, paid_amount: Number(e.target.value || 0) }));
+                  const raw = Number(e.target.value || 0);
+                  setSaleForm((prev) => {
+                    const total = Number(prev.total || 0);
+                    const paid = Math.max(0, Math.min(raw, total));
+                    return { ...prev, paid_amount: paid };
+                  });
                 }}
                 disabled={loading}
               />

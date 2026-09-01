@@ -11,6 +11,8 @@ import { useBranch } from '../../context/BranchContext';
 
 const inputClass =
   'h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
+const errInputCls =
+  'h-11 w-full rounded-lg border border-red-400 bg-red-50/40 px-3 text-sm text-slate-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/20 dark:border-red-500 dark:bg-red-900/10 dark:text-slate-100';
 const labelClass = 'mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400';
 const tableHeadCls = 'px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400';
 const tableCellCls = 'px-3 py-2 text-sm text-slate-800 dark:text-slate-200';
@@ -43,6 +45,8 @@ const SalesReturns = () => {
     note: '',
     customerId: '',
     refundAccId: '',
+    refundAmount: 0,
+    refundViaAccount: false,
   });
   const [lines, setLines] = useState<ReturnLine[]>([defaultLine()]);
   const [items, setItems] = useState<ReturnItemOption[]>([]);
@@ -63,9 +67,10 @@ const SalesReturns = () => {
     const raw = (selectedCustomer as any)?.balance ?? (selectedCustomer as any)?.remaining_balance ?? 0;
     return Number(raw || 0);
   }, [selectedCustomer]);
-  const hasRefundAccount = Boolean(form.refundAccId);
-  const accountRefund = hasRefundAccount ? subtotal : 0;
-  const balanceReduction = hasRefundAccount ? 0 : subtotal;
+  const minRefund = useMemo(() => Math.max(0, Number((subtotal - Math.max(customerOutstanding, 0)).toFixed(2))), [subtotal, customerOutstanding]);
+  const canChooseRefundMethod = customerOutstanding + 0.005 >= subtotal && subtotal > 0;
+  const balanceReduction = useMemo(() => Math.max(0, Number((subtotal - Number(form.refundAmount || 0)).toFixed(2))), [subtotal, form.refundAmount]);
+
   useEffect(() => {
     void loadCustomers();
     void loadAccounts();
@@ -140,6 +145,7 @@ const SalesReturns = () => {
       customerId: '',
       refundAccId: '',
       refundAmount: 0,
+      refundViaAccount: false,
     });
     setLines([defaultLine()]);
     setItems([]);
@@ -152,9 +158,7 @@ const SalesReturns = () => {
     if (!form.customerId) errs.customerId = 'Customer is required';
     const hasValidLine = lines.some((l) => l.itemId && Number(l.quantity) > 0);
     if (!hasValidLine) errs.items = 'Add at least one item with a quantity greater than 0';
-    if (!form.refundAccId && subtotal > Math.max(customerOutstanding, 0) + 1e-9) {
-      errs.refundAccId = 'Customer debt is only ' + fmtCurrency(customerOutstanding) + '. Select a refund account to return ' + fmtCurrency(subtotal) + '.';
-    }
+    if (form.refundViaAccount && !form.refundAccId) errs.refundAccId = 'Select a refund account';
     return errs;
   };
 
@@ -173,6 +177,8 @@ const SalesReturns = () => {
         note: row.note || '',
         customerId,
         refundAccId: row.refund_acc_id ? String(row.refund_acc_id) : '',
+        refundAmount: Number(row.refund_amount || 0),
+        refundViaAccount: Number(row.refund_amount || 0) > 0,
       });
       await loadItemsForCustomer(row.customer_id ? Number(row.customer_id) : undefined);
       const itemsRes = await returnsService.getSalesReturnItems(editingId);
@@ -254,7 +260,7 @@ const SalesReturns = () => {
     const errs = validate();
     if (Object.keys(errs).length > 0) {
       setErrors(errs);
-      setTouched({ customerId: true, items: true, refundAccId: true });
+      setTouched({ customerId: true, items: true, refundAccId: true, refundAmount: true });
       return;
     }
     const normalized = lines
@@ -275,14 +281,20 @@ const SalesReturns = () => {
       showToast('error', 'Sales Return', `Return qty exceeds available (${maxQty}) for ${selected?.name || `item ${unavailable.itemId}`}`);
       return;
     }
-    setSaving(true);
     const payload: any = {
       customerId: Number(form.customerId),
       referenceNo: form.referenceNo || undefined,
       note: form.note || undefined,
       items: normalized,
+      refundViaAccount: form.refundViaAccount,
     };
-    payload.refundAccId = form.refundAccId ? Number(form.refundAccId) : undefined;
+    if (form.refundViaAccount) {
+      payload.refundAccId = form.refundAccId ? Number(form.refundAccId) : undefined;
+      payload.refundAmount = subtotal;
+    } else {
+      payload.refundAmount = 0;
+    }
+    setSaving(true);
     const res = editingId
       ? await returnsService.updateSalesReturn(editingId, payload)
       : await returnsService.createSalesReturn(payload);
@@ -469,41 +481,62 @@ const SalesReturns = () => {
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-200">
               <p className="text-xs uppercase text-slate-500">Balance Reduction</p>
               <p className="text-lg font-semibold">{fmtCurrency(balanceReduction)}</p>
-              <p className="mt-1 text-[11px] text-slate-500">
-                {hasRefundAccount ? 'No customer debt is reduced.' : 'Customer debt is reduced by the full return total.'}
-              </p>
+              {minRefund > 0 ? (
+                <p className="mt-1 text-[11px] text-amber-600">Min refund required: {fmtCurrency(minRefund)}</p>
+              ) : null}
             </div>
           </div>
 
-	          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-	            <div>
-	              <label className={`${labelClass} font-semibold`}>Refund Account (Optional)</label>
-	              <SearchableCombobox<number>
-	                value={form.refundAccId ? Number(form.refundAccId) : ''}
-	                options={accounts.filter((a) => a.is_active).map((a) => ({ value: a.acc_id, label: a.name }))}
-	                placeholder="No account - reduce customer debt"
-	                disabled={loading}
-	                hasError={!!(touched.refundAccId && errors.refundAccId)}
-	                onChange={(nextValue) => {
-	                  setForm((prev) => ({ ...prev, refundAccId: nextValue === '' ? '' : String(nextValue) }));
-	                  setErrors((prev) => ({ ...prev, refundAccId: '' }));
-	                  setTouched((prev) => ({ ...prev, refundAccId: true }));
-	                }}
-	              />
-	              {touched.refundAccId && errors.refundAccId && (
-	                <p className="mt-1 text-xs font-medium text-red-500 dark:text-red-400">{errors.refundAccId}</p>
-	              )}
-	            </div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-200">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Return Effect</p>
-              <p className="mt-1 font-semibold">
-                {hasRefundAccount
-                  ? fmtCurrency(accountRefund) + ' is deducted from the selected account.'
-                  : fmtCurrency(balanceReduction) + ' is deducted from customer debt.'}
-              </p>
-              <p className="mt-1 text-[11px] text-slate-500">Only one of these actions is applied per return.</p>
+          {(canChooseRefundMethod || customerOutstanding + 0.005 < subtotal) && (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {canChooseRefundMethod && (
+                <div className="flex items-center gap-3 md:col-span-2">
+                  <input
+                    id="refund-via-account"
+                    type="checkbox"
+                    className="h-4 w-4 accent-primary-600"
+                    checked={form.refundViaAccount}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setForm((prev) => ({
+                        ...prev,
+                        refundViaAccount: checked,
+                        refundAmount: checked ? subtotal : 0,
+                      }));
+                    }}
+                  />
+                  <label htmlFor="refund-via-account" className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                    Refund via account (instead of deducting from customer balance)
+                  </label>
+                </div>
+              )}
+              {(form.refundViaAccount || customerOutstanding + 0.005 < subtotal) && (
+                <div>
+                  <label className={`${labelClass} font-semibold`}>Refund Account</label>
+                  <SearchableCombobox<number>
+                    value={form.refundAccId ? Number(form.refundAccId) : ''}
+                    options={accounts.filter((a) => a.is_active).map((a) => ({ value: a.acc_id, label: a.name }))}
+                    placeholder="Select refund account"
+                    disabled={loading}
+                    hasError={!!(touched.refundAccId && errors.refundAccId)}
+                    onChange={(nextValue) => {
+                      setForm((prev) => ({ ...prev, refundAccId: nextValue === '' ? '' : String(nextValue) }));
+                      setErrors((prev) => ({ ...prev, refundAccId: '' }));
+                      setTouched((prev) => ({ ...prev, refundAccId: true }));
+                    }}
+                  />
+                  {touched.refundAccId && errors.refundAccId && (
+                    <p className="mt-1 text-xs font-medium text-red-500 dark:text-red-400">{errors.refundAccId}</p>
+                  )}
+                  {!canChooseRefundMethod && (
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      Customer balance is less than return total — full refund from account is required.
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
-          </div>
+          )}
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div>

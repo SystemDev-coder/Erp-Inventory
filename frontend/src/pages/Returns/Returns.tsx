@@ -84,9 +84,9 @@ const Returns = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeBranchId]);
 
-  const removeSalesReturn = async (id: number) => {
+  const removeSalesReturn = async (id: number, reason: string) => {
     setLoading(true);
-    const res = await returnsService.deleteSalesReturn(id);
+    const res = await returnsService.deleteSalesReturn(id, reason);
     setLoading(false);
     if (res.success) {
       showToast('success', 'Sales Return', 'Deleted successfully');
@@ -96,9 +96,9 @@ const Returns = () => {
     }
   };
 
-  const removePurchaseReturn = async (id: number) => {
+  const removePurchaseReturn = async (id: number, reason: string) => {
     setLoading(true);
-    const res = await returnsService.deletePurchaseReturn(id);
+    const res = await returnsService.deletePurchaseReturn(id, reason);
     setLoading(false);
     if (res.success) {
       showToast('success', 'Purchase Return', 'Deleted successfully');
@@ -124,14 +124,14 @@ const Returns = () => {
     });
   };
 
-  const confirmDeleteReturn = async () => {
+  const confirmDeleteReturn = async (reason: string) => {
     if (!deleteTarget) return;
     setDeletingReturn(true);
     try {
       if (deleteTarget.type === 'sales') {
-        await removeSalesReturn(deleteTarget.id);
+        await removeSalesReturn(deleteTarget.id, reason);
       } else {
-        await removePurchaseReturn(deleteTarget.id);
+        await removePurchaseReturn(deleteTarget.id, reason);
       }
     } finally {
       setDeletingReturn(false);
@@ -448,9 +448,11 @@ const Returns = () => {
         onClose={() => { if (!deletingReturn) setDeleteTarget(null); }}
         onConfirm={confirmDeleteReturn}
         title={deleteTarget?.type === 'sales' ? 'Delete Sales Return?' : 'Delete Purchase Return?'}
-        message="This action cannot be undone and will reverse the return record."
+        message="This will reverse stock, balances, and linked accounting entries."
         itemName={deleteTarget?.label}
         isDeleting={deletingReturn}
+        requireReason
+        reasonLabel="Reason for deletion"
       />
 
       <Modal

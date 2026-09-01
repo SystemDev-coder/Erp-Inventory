@@ -10,7 +10,10 @@ export interface Customer {
   sex?: string | null;
   gender?: string | null;
   is_active: boolean;
+  credit_allowed?: boolean;
+  credit_days?: number;
   balance: number;
+  open_balance?: number;
   remaining_balance?: number;
   registered_date?: string;
 }
@@ -39,11 +42,13 @@ export const customerService = {
       sex: data.sex ?? data.gender,
       gender: data.gender ?? data.sex,
       isActive: data.is_active,
+      creditAllowed: data.credit_allowed,
+      creditDays: data.credit_days,
       remainingBalance: data.remaining_balance,
     });
   },
 
-  async update(id: number, data: Partial<Customer>) {
+  async update(id: number, data: Partial<Customer> & { edit_reason?: string }) {
     return apiClient.put<{ customer: Customer }>(API.CUSTOMERS.ITEM(id), {
       fullName: data.full_name,
       phone: data.phone,
@@ -52,6 +57,10 @@ export const customerService = {
       sex: data.sex ?? data.gender,
       gender: data.gender ?? data.sex,
       isActive: data.is_active,
+      creditAllowed: data.credit_allowed,
+      creditDays: data.credit_days,
+      remainingBalance: data.remaining_balance,
+      editReason: data.edit_reason,
     });
   },
 
