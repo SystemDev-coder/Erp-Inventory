@@ -14,7 +14,10 @@ export interface Customer {
   gender: string | null;
   registered_date: string;
   is_active: boolean;
+  credit_allowed: boolean;
+  credit_days: number;
   balance: number;
+  open_balance: number;
   remaining_balance: number;
 }
 
@@ -26,15 +29,26 @@ export interface CustomerInput {
   sex?: string | null;
   gender?: string | null;
   isActive?: boolean;
+  creditAllowed?: boolean;
+  creditDays?: number;
   remainingBalance?: number;
+  editReason?: string;
 }
 
-let customerBalanceColumn: 'open_balance' | 'remaining_balance' | null = null;
-let customerHasGenderColumn: boolean | null = null;
-let customerHasTypeColumn: boolean | null = null;
+type CustomerColumnMeta = {
+  balanceColumn: 'open_balance' | 'remaining_balance';
+  hasOpenBalance: boolean;
+  hasRemainingBalance: boolean;
+  hasGender: boolean;
+  hasType: boolean;
+  hasCreditAllowed: boolean;
+  hasCreditDays: boolean;
+};
 
-const detectCustomerBalanceColumn = async (): Promise<'open_balance' | 'remaining_balance'> => {
-  if (customerBalanceColumn === 'remaining_balance') return customerBalanceColumn;
+let customerColumnMeta: CustomerColumnMeta | null = null;
+
+const detectCustomerColumns = async (): Promise<CustomerColumnMeta> => {
+  if (customerColumnMeta) return customerColumnMeta;
   const columns = await queryMany<{ column_name: string }>(
     `SELECT column_name
        FROM information_schema.columns
@@ -42,15 +56,18 @@ const detectCustomerBalanceColumn = async (): Promise<'open_balance' | 'remainin
         AND table_name = 'customers'`
   );
   const names = new Set(columns.map((row) => row.column_name));
-
-  // Prefer `remaining_balance` as the live outstanding; keep `open_balance` as opening balance.
-  // NOTE: The system can add `remaining_balance` at runtime (e.g. during "Prepare Accounts").
-  // So we must not permanently cache `open_balance` as the live column.
-  const next = names.has('remaining_balance') ? 'remaining_balance' : 'open_balance';
-  customerBalanceColumn = next;
-  customerHasGenderColumn = names.has('gender');
-  customerHasTypeColumn = names.has('customer_type');
-  return next;
+  const hasRemainingBalance = names.has('remaining_balance');
+  const hasOpenBalance = names.has('open_balance');
+  customerColumnMeta = {
+    hasOpenBalance,
+    hasRemainingBalance,
+    balanceColumn: hasRemainingBalance ? 'remaining_balance' : 'open_balance',
+    hasGender: names.has('gender'),
+    hasType: names.has('customer_type'),
+    hasCreditAllowed: names.has('credit_allowed'),
+    hasCreditDays: names.has('credit_days'),
+  };
+  return customerColumnMeta;
 };
 
 const mapCustomer = (row: {
@@ -63,7 +80,10 @@ const mapCustomer = (row: {
   registered_date: string;
   is_active: boolean;
   customer_type: string | null;
+  credit_allowed?: boolean | null;
+  credit_days?: number | string | null;
   balance_value: string | number;
+  open_balance_value?: string | number | null;
 }): Customer => ({
   customer_id: Number(row.customer_id),
   full_name: row.full_name,
@@ -74,21 +94,31 @@ const mapCustomer = (row: {
   gender: row.gender,
   registered_date: row.registered_date,
   is_active: Boolean(row.is_active),
+  credit_allowed: row.credit_allowed !== false,
+  credit_days: Number(row.credit_days ?? 30),
   balance: Number(row.balance_value || 0),
+  open_balance: Number(row.open_balance_value ?? row.balance_value ?? 0),
   remaining_balance: Number(row.balance_value || 0),
 });
 
-const getGenderSelect = () =>
-  customerHasGenderColumn ? 'COALESCE(gender, sex::text) AS gender' : 'sex::text AS gender';
-const getCustomerTypeSelect = () =>
-  customerHasTypeColumn ? 'customer_type' : `'regular'::text AS customer_type`;
+const getGenderSelect = (meta: CustomerColumnMeta) =>
+  meta.hasGender ? 'COALESCE(gender, sex::text) AS gender' : 'sex::text AS gender';
+const getCustomerTypeSelect = (meta: CustomerColumnMeta) =>
+  meta.hasType ? 'customer_type' : `'regular'::text AS customer_type`;
+const getCreditAllowedSelect = (meta: CustomerColumnMeta) =>
+  meta.hasCreditAllowed ? 'credit_allowed' : 'TRUE AS credit_allowed';
+const getCreditDaysSelect = (meta: CustomerColumnMeta) =>
+  meta.hasCreditDays ? 'credit_days' : '30 AS credit_days';
+const getOpenBalanceSelect = (meta: CustomerColumnMeta) =>
+  meta.hasOpenBalance ? 'open_balance::text AS open_balance_value' : 'NULL::text AS open_balance_value';
 
 const scopedCustomer = async (
   id: number,
   scope: BranchScope
 ): Promise<Customer | null> => {
-  const balanceColumn = await detectCustomerBalanceColumn();
-  const genderSelect = getGenderSelect();
+  const meta = await detectCustomerColumns();
+  const balanceColumn = meta.balanceColumn;
+  const genderSelect = getGenderSelect(meta);
   const row = scope.isAdmin
     ? await queryOne<{
         customer_id: number;
@@ -100,9 +130,12 @@ const scopedCustomer = async (
         registered_date: string;
         is_active: boolean;
         customer_type: string | null;
+        credit_allowed: boolean | null;
+        credit_days: number | null;
         balance_value: string;
+        open_balance_value: string | null;
       }>(
-        `SELECT customer_id, full_name, phone, sex::text AS sex, address, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect()}, ${balanceColumn}::text AS balance_value
+        `SELECT customer_id, full_name, phone, sex::text AS sex, address, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect(meta)}, ${getCreditAllowedSelect(meta)}, ${getCreditDaysSelect(meta)}, ${balanceColumn}::text AS balance_value, ${getOpenBalanceSelect(meta)}
            FROM ims.customers
           WHERE customer_id = $1
             AND COALESCE(is_deleted, 0)::int = 0`,
@@ -118,9 +151,12 @@ const scopedCustomer = async (
         registered_date: string;
         is_active: boolean;
         customer_type: string | null;
+        credit_allowed: boolean | null;
+        credit_days: number | null;
         balance_value: string;
+        open_balance_value: string | null;
       }>(
-        `SELECT customer_id, full_name, phone, sex::text AS sex, address, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect()}, ${balanceColumn}::text AS balance_value
+        `SELECT customer_id, full_name, phone, sex::text AS sex, address, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect(meta)}, ${getCreditAllowedSelect(meta)}, ${getCreditDaysSelect(meta)}, ${balanceColumn}::text AS balance_value, ${getOpenBalanceSelect(meta)}
            FROM ims.customers
           WHERE customer_id = $1
             AND branch_id = ANY($2)
@@ -129,6 +165,54 @@ const scopedCustomer = async (
       );
 
   return row ? mapCustomer(row) : null;
+};
+
+const findCustomerDeleteBlockReason = async (
+  client: PoolClient,
+  branchId: number,
+  customerId: number
+): Promise<string | null> => {
+  const meta = await detectCustomerColumns();
+  const balanceCol = meta.balanceColumn;
+  const balanceRow = await client.query<{ balance: string }>(
+    `SELECT COALESCE(${balanceCol}, 0)::text AS balance
+       FROM ims.customers
+      WHERE customer_id = $1
+        AND branch_id = $2`,
+    [customerId, branchId]
+  );
+  const balance = Math.abs(Number(balanceRow.rows[0]?.balance || 0));
+  if (balance > 0.005) {
+    return `Cannot delete — outstanding balance of ${balance.toFixed(2)} exists. Settle to zero first.`;
+  }
+
+  const saleLinked = await client.query<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM ims.sales
+        WHERE branch_id = $1 AND customer_id = $2
+     ) AS exists`,
+    [branchId, customerId]
+  );
+  if (Boolean(saleLinked.rows[0]?.exists)) {
+    return 'Cannot delete customer because it has sales transactions';
+  }
+
+  const returnLinked = await client.query<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM ims.sales_returns
+        WHERE branch_id = $1 AND customer_id = $2
+     ) AS exists`,
+    [branchId, customerId]
+  );
+  if (Boolean(returnLinked.rows[0]?.exists)) {
+    return 'Cannot delete customer because it has sales return transactions';
+  }
+
+  if (await hasCustomerNonOpeningLedger(client, branchId, customerId)) {
+    return 'Cannot delete customer because it has ledger transactions';
+  }
+
+  return null;
 };
 
 const hasCustomerNonOpeningLedger = async (
@@ -181,8 +265,9 @@ export const customersService = {
     search?: string,
     dateRange?: { fromDate?: string; toDate?: string }
   ): Promise<Customer[]> {
-    const balanceColumn = await detectCustomerBalanceColumn();
-    const genderSelect = getGenderSelect();
+    const meta = await detectCustomerColumns();
+    const balanceColumn = meta.balanceColumn;
+    const genderSelect = getGenderSelect(meta);
 
     return withTransaction(async (client) => {
       // Keep customer table balances aligned with refund/return ledger logic so the Customers page updates immediately.
@@ -274,7 +359,10 @@ export const customersService = {
         registered_date: string;
         is_active: boolean;
         customer_type: string | null;
+        credit_allowed: boolean | null;
+        credit_days: number | null;
         balance_value: string;
+        open_balance_value: string | null;
       }>(
         `SELECT
             customer_id,
@@ -285,8 +373,11 @@ export const customersService = {
             ${genderSelect},
             registered_date::text,
             is_active,
-            ${getCustomerTypeSelect()},
-            ${balanceColumn}::text AS balance_value
+            ${getCustomerTypeSelect(meta)},
+            ${getCreditAllowedSelect(meta)},
+            ${getCreditDaysSelect(meta)},
+            ${balanceColumn}::text AS balance_value,
+            ${getOpenBalanceSelect(meta)}
          FROM ims.customers
          ${whereSql}
          ORDER BY full_name`,
@@ -298,8 +389,9 @@ export const customersService = {
   },
 
   async lookupCustomers(branchIds: number[], search?: string, limit = 50): Promise<Customer[]> {
-    const balanceColumn = await detectCustomerBalanceColumn();
-    const genderSelect = getGenderSelect();
+    const meta = await detectCustomerColumns();
+    const balanceColumn = meta.balanceColumn;
+    const genderSelect = getGenderSelect(meta);
 
     const safeLimit = Math.max(1, Math.min(200, Math.floor(Number(limit) || 50)));
     const params: unknown[] = [branchIds];
@@ -326,7 +418,10 @@ export const customersService = {
       registered_date: string;
       is_active: boolean;
       customer_type: string | null;
+      credit_allowed: boolean | null;
+      credit_days: number | null;
       balance_value: string;
+      open_balance_value: string | null;
     }>(
       `SELECT
           customer_id,
@@ -337,8 +432,11 @@ export const customersService = {
           ${genderSelect},
           registered_date::text,
           is_active,
-          ${getCustomerTypeSelect()},
-          ${balanceColumn}::text AS balance_value
+          ${getCustomerTypeSelect(meta)},
+          ${getCreditAllowedSelect(meta)},
+          ${getCreditDaysSelect(meta)},
+          ${balanceColumn}::text AS balance_value,
+          ${getOpenBalanceSelect(meta)}
        FROM ims.customers
        ${whereSql}
        ORDER BY full_name
@@ -357,13 +455,14 @@ export const customersService = {
     input: CustomerInput,
     context: { branchId: number }
   ): Promise<Customer> {
-    const balanceColumn = await detectCustomerBalanceColumn();
-    const genderSelect = getGenderSelect();
-    const hasGender = Boolean(customerHasGenderColumn);
-    const hasType = Boolean(customerHasTypeColumn);
+    const meta = await detectCustomerColumns();
+    const genderSelect = getGenderSelect(meta);
     const genderValue = input.gender ?? input.sex ?? null;
     const customerType = input.customerType ?? 'regular';
     const opening = Math.max(0, Number(input.remainingBalance ?? 0));
+    const creditAllowed =
+      customerType === 'one-time' ? false : input.creditAllowed !== false;
+    const creditDays = Math.max(0, Number(input.creditDays ?? 30));
 
     return withTransaction(async (client) => {
       let insertColumns = `(branch_id, full_name, phone, sex, `;
@@ -376,20 +475,44 @@ export const customersService = {
       ];
       let p = 5;
 
-      if (hasGender) {
+      if (meta.hasGender) {
         insertColumns += `gender, `;
         insertValues += `$${p++}, `;
         values.push(genderValue);
       }
-      if (hasType) {
+      if (meta.hasType) {
         insertColumns += `customer_type, `;
         insertValues += `$${p++}, `;
         values.push(customerType);
       }
+      if (meta.hasCreditAllowed) {
+        insertColumns += `credit_allowed, `;
+        insertValues += `$${p++}, `;
+        values.push(creditAllowed);
+      }
+      if (meta.hasCreditDays) {
+        insertColumns += `credit_days, `;
+        insertValues += `$${p++}, `;
+        values.push(creditDays);
+      }
 
-      insertColumns += `address, ${balanceColumn}, is_active)`;
-      insertValues += `$${p++}, COALESCE($${p++}, 0), COALESCE($${p++}, TRUE))`;
-      values.push(input.address ?? null, opening, input.isActive ?? true);
+      insertColumns += `address, `;
+      insertValues += `$${p++}, `;
+      values.push(input.address ?? null);
+
+      if (meta.hasOpenBalance && meta.hasRemainingBalance) {
+        insertColumns += `open_balance, remaining_balance, `;
+        insertValues += `COALESCE($${p++}, 0), COALESCE($${p++}, 0), `;
+        values.push(opening, opening);
+      } else {
+        insertColumns += `${meta.balanceColumn}, `;
+        insertValues += `COALESCE($${p++}, 0), `;
+        values.push(opening);
+      }
+
+      insertColumns += `is_active)`;
+      insertValues += `COALESCE($${p++}, TRUE))`;
+      values.push(input.isActive ?? true);
 
       const rowRes = await client.query<{
         customer_id: number;
@@ -401,13 +524,16 @@ export const customersService = {
         registered_date: string;
         is_active: boolean;
         customer_type: string | null;
+        credit_allowed: boolean | null;
+        credit_days: number | null;
         balance_value: string;
+        open_balance_value: string | null;
       }>(
         `INSERT INTO ims.customers
            ${insertColumns}
          VALUES
            ${insertValues}
-         RETURNING customer_id, full_name, phone, address, sex::text AS sex, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect()}, ${balanceColumn}::text AS balance_value`,
+         RETURNING customer_id, full_name, phone, address, sex::text AS sex, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect(meta)}, ${getCreditAllowedSelect(meta)}, ${getCreditDaysSelect(meta)}, ${meta.balanceColumn}::text AS balance_value, ${getOpenBalanceSelect(meta)}`,
         values
       );
 
@@ -428,9 +554,7 @@ export const customersService = {
     input: Partial<CustomerInput>,
     scope: BranchScope
   ): Promise<Customer | null> {
-    const balanceColumn = await detectCustomerBalanceColumn();
-    const hasGender = Boolean(customerHasGenderColumn);
-    const hasType = Boolean(customerHasTypeColumn);
+    const meta = await detectCustomerColumns();
     const updates: string[] = [];
     const values: unknown[] = [];
     let parameter = 1;
@@ -451,7 +575,7 @@ export const customersService = {
       const val = (input.gender ?? input.sex ?? null) as 'male' | 'female' | null;
       updates.push(`sex = $${parameter++}::ims.sex_enum`);
       values.push(val);
-      if (hasGender) {
+      if (meta.hasGender) {
         updates.push(`gender = $${parameter++}`);
         values.push(input.gender ?? input.sex ?? null);
       }
@@ -460,14 +584,36 @@ export const customersService = {
       updates.push(`is_active = $${parameter++}`);
       values.push(input.isActive);
     }
-    if (input.customerType !== undefined && hasType) {
+    if (input.customerType !== undefined && meta.hasType) {
       updates.push(`customer_type = $${parameter++}`);
       values.push(input.customerType);
+      if (meta.hasCreditAllowed && input.customerType === 'one-time') {
+        updates.push(`credit_allowed = $${parameter++}`);
+        values.push(false);
+      }
+    }
+    if (input.creditAllowed !== undefined && meta.hasCreditAllowed) {
+      updates.push(`credit_allowed = $${parameter++}`);
+      values.push(input.creditAllowed);
+    }
+    if (input.creditDays !== undefined && meta.hasCreditDays) {
+      updates.push(`credit_days = $${parameter++}`);
+      values.push(Math.max(0, Number(input.creditDays ?? 30)));
     }
     const wantsOpeningUpdate = input.remainingBalance !== undefined;
+    const openingAmount = Math.max(0, Number(input.remainingBalance ?? 0));
     if (wantsOpeningUpdate) {
-      updates.push(`${balanceColumn} = $${parameter++}`);
-      values.push(Math.max(0, Number(input.remainingBalance ?? 0)));
+      if (meta.hasOpenBalance) {
+        updates.push(`open_balance = $${parameter++}`);
+        values.push(openingAmount);
+      }
+      if (meta.hasRemainingBalance) {
+        updates.push(`remaining_balance = $${parameter++}`);
+        values.push(openingAmount);
+      } else if (!meta.hasOpenBalance) {
+        updates.push(`${meta.balanceColumn} = $${parameter++}`);
+        values.push(openingAmount);
+      }
     }
 
     if (!updates.length) {
@@ -492,15 +638,16 @@ export const customersService = {
       if (!branchId) return null;
 
       if (wantsOpeningUpdate) {
-        if (await hasCustomerNonOpeningLedger(client, branchId, id)) {
-          throw ApiError.badRequest('Customer has transactions; cannot change opening balance');
+        const hasTransactions = await hasCustomerNonOpeningLedger(client, branchId, id);
+        if (hasTransactions) {
+          const reason = String(input.editReason || '').trim();
+          if (!reason) {
+            throw ApiError.badRequest(
+              'Customer has transactions; provide a reason to change opening balance'
+            );
+          }
         }
-        await upsertCustomerOpeningLedger(
-          client,
-          branchId,
-          id,
-          Math.max(0, Number(input.remainingBalance ?? 0))
-        );
+        await upsertCustomerOpeningLedger(client, branchId, id, openingAmount);
       }
 
       const rowRes = await client.query<{
@@ -513,12 +660,15 @@ export const customersService = {
         registered_date: string;
         is_active: boolean;
         customer_type: string | null;
+        credit_allowed: boolean | null;
+        credit_days: number | null;
         balance_value: string;
+        open_balance_value: string | null;
       }>(
         `UPDATE ims.customers
             SET ${updates.join(', ')}
           WHERE ${whereSql}
-          RETURNING customer_id, full_name, phone, address, sex::text AS sex, ${getGenderSelect()}, registered_date::text, is_active, ${getCustomerTypeSelect()}, ${balanceColumn}::text AS balance_value`,
+          RETURNING customer_id, full_name, phone, address, sex::text AS sex, ${getGenderSelect(meta)}, registered_date::text, is_active, ${getCustomerTypeSelect(meta)}, ${getCreditAllowedSelect(meta)}, ${getCreditDaysSelect(meta)}, ${meta.balanceColumn}::text AS balance_value, ${getOpenBalanceSelect(meta)}`,
         values
       );
 
@@ -528,16 +678,24 @@ export const customersService = {
   },
 
   async deleteCustomer(id: number, scope: BranchScope): Promise<void> {
-    if (scope.isAdmin) {
-      await queryOne(`DELETE FROM ims.customers WHERE customer_id = $1`, [id]);
-      return;
-    }
+    await withTransaction(async (client) => {
+      const row = await client.query<{ branch_id: number }>(
+        scope.isAdmin
+          ? `SELECT branch_id FROM ims.customers WHERE customer_id = $1`
+          : `SELECT branch_id FROM ims.customers WHERE customer_id = $1 AND branch_id = ANY($2)`,
+        scope.isAdmin ? [id] : [id, scope.branchIds]
+      );
+      const branchId = Number(row.rows[0]?.branch_id || 0);
+      if (!branchId) throw ApiError.notFound('Customer not found');
 
-    await queryOne(
-      `DELETE FROM ims.customers
-        WHERE customer_id = $1
-          AND branch_id = ANY($2)`,
-      [id, scope.branchIds]
-    );
+      const blockReason = await findCustomerDeleteBlockReason(client, branchId, id);
+      if (blockReason) throw ApiError.badRequest(blockReason);
+
+      await client.query(`DELETE FROM ims.customer_ledger WHERE customer_id = $1 AND branch_id = $2`, [
+        id,
+        branchId,
+      ]);
+      await client.query(`DELETE FROM ims.customers WHERE customer_id = $1`, [id]);
+    });
   },
 };

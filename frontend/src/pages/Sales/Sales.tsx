@@ -120,10 +120,10 @@ const Sales = () => {
     [showToast]
   );
 
-  const confirmVoid = useCallback(async () => {
+  const confirmVoid = useCallback(async (reason?: string) => {
     if (!saleToVoid) return;
     setLoading(true);
-    const res = await salesService.void(saleToVoid.sale_id, 'Voided from sales list');
+    const res = await salesService.void(saleToVoid.sale_id, reason || 'Voided from sales list');
     if (res.success) {
       showToast('success', 'Sales', 'Document voided');
       await loadSales();
@@ -439,10 +439,12 @@ const Sales = () => {
           setVoidOpen(false);
           setSaleToVoid(null);
         }}
-        onConfirm={() => {
-          void confirmVoid();
+        onConfirm={(reason) => {
+          void confirmVoid(reason);
         }}
         title="Void Sale Document?"
+        requireReason
+        reasonLabel="Reason for voiding"
         message={
           saleToVoid
             ? `Void #${getDocRef(saleToVoid)}? ${

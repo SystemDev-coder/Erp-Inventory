@@ -8,6 +8,8 @@ import { adjustSystemAccountBalance } from '../../utils/systemAccounts';
 import { postGl } from '../../utils/glPosting';
 import { ensureCoaAccounts } from '../../utils/coaDefaults';
 import { financeClosingService } from '../finance/financeClosing.service';
+import { assertCustomerCreditAllowed } from '../../utils/creditRules';
+import { requireDeleteReason } from '../../utils/refundRules';
 import {
   QuotationConvertInput,
   SaleInput,
@@ -963,6 +965,14 @@ export const salesService = {
         total: totalWithTax,
         paidAmount: payment.paidAmount,
       });
+
+      await assertCustomerCreditAllowed(client, {
+        customerId: input.customerId ?? null,
+        docType,
+        saleType,
+        status,
+      });
+
       const shouldApplyStock = canApplyStock(docType, status);
 
       await ensureAccount(client, context.branchId, payment.payAccId);
@@ -1101,6 +1111,12 @@ export const salesService = {
         return null;
       }
 
+      if ((current.doc_type || 'sale') === 'sale' && current.status === 'paid') {
+        throw ApiError.badRequest(
+          'Paid invoices cannot be edited. Use a sales return or void instead.'
+        );
+      }
+
       await financeClosingService.autoUnlockPeriodForDate(
         client,
         Number(current.branch_id),
@@ -1173,6 +1189,14 @@ export const salesService = {
         total: totalWithTax,
         paidAmount: payment.paidAmount,
       });
+
+      await assertCustomerCreditAllowed(client, {
+        customerId: input.customerId ?? current.customer_id ?? null,
+        docType: nextDocType,
+        saleType: nextSaleType,
+        status: finalNextStatus,
+      });
+
       const nextApplyStock = canApplyStock(nextDocType, finalNextStatus);
       const nextFinancialApplied = finalNextStatus !== 'void' && nextDocType !== 'quotation';
 
@@ -1364,6 +1388,7 @@ export const salesService = {
     scope: BranchScope,
     context: { userId?: number | null }
   ): Promise<Sale | null> {
+    requireDeleteReason(reason);
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
