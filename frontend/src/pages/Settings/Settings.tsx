@@ -937,17 +937,31 @@ const Settings = () => {
       setProfitPreview(null);
       return;
     }
-    if (!isNewOwner || !sharePctText) {
-      void previewOwnerProfit(closingId, ownerName);
+
+    const period = profitPeriods.find((row) => Number(row.closing_id) === closingId);
+    const netIncome = Number(period?.summary_json?.netIncome || 0);
+
+    if (isNewOwner) {
+      if (!sharePctText) {
+        setProfitPreview(netIncome ? { netIncome, sharePct: 0, shareAmount: 0, source: 'input' } : null);
+        return;
+      }
+      const sharePct = Number(sharePctText);
+      if (!Number.isFinite(sharePct) || sharePct < 0 || sharePct > 100) {
+        setProfitPreview(null);
+        return;
+      }
+      setProfitPreview({
+        netIncome,
+        sharePct,
+        shareAmount: (netIncome * sharePct) / 100,
+        source: 'input',
+      });
       return;
     }
-    const sharePct = Number(sharePctText);
-    if (!Number.isFinite(sharePct) || sharePct < 0 || sharePct > 100) {
-      setProfitPreview(null);
-      return;
-    }
-    void previewOwnerProfit(closingId, ownerName, sharePct);
-  }, [profitForm.closingId, profitForm.ownerName, profitForm.sharePct, newProfitOwnerName, profitModalOpen]);
+
+    void previewOwnerProfit(closingId, ownerName);
+  }, [profitForm.closingId, profitForm.ownerName, profitForm.sharePct, newProfitOwnerName, profitModalOpen, profitPeriods]);
 
   const currentAssetRows = assetOverview?.current_assets || [];
   const fixedAssetRows = assetOverview?.fixed_assets || [];
@@ -2126,8 +2140,8 @@ const Settings = () => {
         )}
       </div>
 
-      <Modal isOpen={profitModalOpen} onClose={() => setProfitModalOpen(false)} title="Owner Profit Preview" size="md">
-        <div className="space-y-4">
+      <Modal isOpen={profitModalOpen} onClose={() => setProfitModalOpen(false)} title="Owner Profit Preview" size="lg">
+        <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
           <label className="text-sm font-medium flex flex-col gap-1">
             Closing Period *
             <select

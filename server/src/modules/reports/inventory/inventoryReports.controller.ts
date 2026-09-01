@@ -38,10 +38,13 @@ export const getLowStockAlertReport = asyncHandler(async (req: AuthRequest, res:
 
 export const getInventoryValuationReport = asyncHandler(async (req: AuthRequest, res: Response) => {
   const branchId = await resolveBranchIdForReports(req);
-  const rows = await inventoryReportsService.getInventoryValuation(branchId);
+  const rawMethod = String(req.query.method || 'average').toLowerCase();
+  const method = (['fifo', 'lifo', 'average'].includes(rawMethod) ? rawMethod : 'average') as 'fifo' | 'lifo' | 'average';
+  const rows = await inventoryReportsService.getInventoryValuationByMethod(branchId, method);
   return ApiResponse.success(res, {
     branchId,
-    reportKey: 'inventory-valuation',
+    reportKey: `inventory-valuation-${method}`,
+    method,
     rows,
   });
 });

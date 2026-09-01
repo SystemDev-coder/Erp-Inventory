@@ -59,14 +59,16 @@ export const listReturnItems = async (req: AuthRequest, res: Response): Promise<
 export const listSalesItemsByCustomer = async (req: AuthRequest, res: Response): Promise<void> => {
     const scope = await resolveBranchScope(req);
     const customerId = Number(req.query.customerId);
-    const items = await returnsService.listSalesItemsByCustomer(scope, customerId);
+    const excludeReturnId = req.query.excludeReturnId ? Number(req.query.excludeReturnId) : undefined;
+    const items = await returnsService.listSalesItemsByCustomer(scope, customerId, excludeReturnId);
     res.json({ success: true, data: { items } });
 };
 
 export const listPurchaseItemsBySupplier = async (req: AuthRequest, res: Response): Promise<void> => {
     const scope = await resolveBranchScope(req);
     const supplierId = Number(req.query.supplierId);
-    const items = await returnsService.listPurchaseItemsBySupplier(scope, supplierId);
+    const excludeReturnId = req.query.excludeReturnId ? Number(req.query.excludeReturnId) : undefined;
+    const items = await returnsService.listPurchaseItemsBySupplier(scope, supplierId, excludeReturnId);
     res.json({ success: true, data: { items } });
 };
 

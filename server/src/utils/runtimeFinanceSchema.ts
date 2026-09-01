@@ -307,5 +307,15 @@ export const ensureRuntimeFinanceSchema = async (): Promise<void> => {
   // manual rebuild, use the admin "Reconcile Balances" action instead of
   // running this unconditionally on every server start.
 
+  // Credit due dates for overdue reports.
+  await adminQueryMany(`
+    ALTER TABLE ims.sales
+      ADD COLUMN IF NOT EXISTS due_date DATE
+  `);
+  await adminQueryMany(`
+    ALTER TABLE ims.purchases
+      ADD COLUMN IF NOT EXISTS due_date DATE
+  `);
+
   runtimeFinanceSchemaReady = true;
 };

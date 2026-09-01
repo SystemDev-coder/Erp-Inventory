@@ -158,6 +158,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
 
   const [cashFlowRange, setCashFlowRange] = useState<DateRange>(defaultReportRange());
   const [balanceRange, setBalanceRange] = useState<DateRange>(defaultReportRange());
+  const [accountBalanceRange, setAccountBalanceRange] = useState<DateRange>(defaultReportRange());
   const [cogsRange, setCogsRange] = useState<DateRange>(defaultReportRange());
   const [expenseRange, setExpenseRange] = useState<DateRange>(defaultReportRange());
   const [receivableRange, setReceivableRange] = useState<DateRange>(defaultReportRange());
@@ -233,9 +234,8 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
   const handleBalanceSheet = () =>
     runCardAction('balance-sheet', async () => {
       ensureRangeValid(balanceRange, 'Balance Sheet');
-      const asOfDate = balanceRange.toDate;
       const response = await financialReportsService.getBalanceSheet({
-        asOfDate,
+        asOfDate: balanceRange.toDate,
         fromDate: balanceRange.fromDate,
         branchId: activeBranchId ?? undefined,
       });
@@ -247,7 +247,11 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
         variant: 'balance-sheet',
         data: toRecordRows(response.data.rows || []),
         columns: statementColumns,
-        filters: { 'From Date': balanceRange.fromDate, 'To Date': balanceRange.toDate, 'As Of Date': asOfDate },
+        filters: {
+          'From Date': balanceRange.fromDate,
+          'To Date': balanceRange.toDate,
+          'As Of Date': balanceRange.toDate,
+        },
       });
     });
 
@@ -308,11 +312,13 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
 
   const handleAccountBalances = (mode: 'show' | 'all') =>
     runCardAction('account-balances', async () => {
+      ensureRangeValid(accountBalanceRange, 'Account Balances');
       const accountId = mode === 'show' ? Number(selectedAccountBalanceId || 0) : undefined;
       if (mode === 'show' && !accountId) throw new Error('Select an account first');
       const response = await financialReportsService.getAccountBalances({
         mode,
         accountId,
+        asOfDate: accountBalanceRange.toDate,
         branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load account balances');
@@ -343,6 +349,9 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
           },
         },
         filters: {
+          'From Date': accountBalanceRange.fromDate,
+          'To Date': accountBalanceRange.toDate,
+          'As Of Date': accountBalanceRange.toDate,
           Mode: mode === 'show' ? 'Show' : 'All',
           Account: mode === 'show' ? selectedAccountBalanceLabel || 'Selected Account' : 'All Accounts',
         },
@@ -382,19 +391,20 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
     });
 
 
-  const handleAccountStatement = (mode: 'show' | 'all') =>
+  const handleAccountStatement = () =>
     runCardAction('account-statement', async () => {
       ensureRangeValid(statementRange, 'Account Statement');
-      const accountId = mode === 'show' ? Number(selectedAccountStatementId || 0) : undefined;
-      if (mode === 'show' && !accountId) throw new Error('Select an account first');
+      const accountId = Number(selectedAccountStatementId || 0);
+      if (!accountId) throw new Error('Select an account first');
       const response = await financialReportsService.getAccountStatement({
         fromDate: statementRange.fromDate,
         toDate: statementRange.toDate,
-        mode,
         accountId,
         branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load account statement');
+      const truncated = Boolean(response.data.truncated);
+      const totalCount = Number(response.data.totalCount || 0);
       const rows = toRecordRows(response.data.rows || []).map((row) => ({
         ...row,
         type_display: formatAccountStatementType(row.txn_type, row.ref_table),
@@ -406,13 +416,17 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
       }));
       const totalDebit = sumNumericField(rows, 'debit');
       const totalCredit = sumNumericField(rows, 'credit');
-      const closingBalance = mode === 'show' && rows.length > 0 ? Number(rows[rows.length - 1].closing_balance || 0) : null;
+      const closingBalance = rows.length > 0 ? Number(rows[rows.length - 1].closing_balance || 0) : null;
+      const truncationNote =
+        truncated && totalCount > 0
+          ? `Showing first 5,000 of ${totalCount.toLocaleString()} transactions`
+          : '';
       onOpenModal({
         title: 'Account Statement',
-        subtitle: `${formatDateOnly(statementRange.fromDate)} - ${formatDateOnly(statementRange.toDate)}`,
+        subtitle: `${formatDateOnly(statementRange.fromDate)} - ${formatDateOnly(statementRange.toDate)}${truncationNote ? ` — ${truncationNote}` : ''}`,
         fileName: 'account-statement',
         data: rows,
-        columns: mode === 'show' ? accountStatementShowColumns : accountStatementAllColumns,
+        columns: accountStatementShowColumns,
         tableTotals: {
           label: 'Total',
           values: {
@@ -424,8 +438,8 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
         filters: {
           'From Date': statementRange.fromDate,
           'To Date': statementRange.toDate,
-          Mode: mode === 'show' ? 'Show' : 'All',
-          Account: mode === 'show' ? selectedAccountStatementLabel || 'Selected Account' : 'All Accounts',
+          Account: selectedAccountStatementLabel || 'Selected Account',
+          ...(truncationNote ? { Notice: truncationNote } : {}),
         },
       });
     });
@@ -590,6 +604,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
     if (cardId === 'account-balances') {
       return (
         <div className="space-y-3">
+          {renderDateRange(accountBalanceRange, setAccountBalanceRange)}
           <label className="space-y-1 text-xs font-semibold text-slate-600">
             <span>Account</span>
             <select
@@ -666,24 +681,14 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
               ))}
             </select>
           </label>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <button
-              type="button"
-              onClick={() => handleAccountStatement('show')}
-              disabled={loadingCardId === cardId}
-              className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              Show
-            </button>
-            <button
-              type="button"
-              onClick={() => handleAccountStatement('all')}
-              disabled={loadingCardId === cardId}
-              className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              All
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={handleAccountStatement}
+            disabled={loadingCardId === cardId}
+            className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            Show
+          </button>
         </div>
       );
     }

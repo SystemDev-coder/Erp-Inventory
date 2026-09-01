@@ -1156,7 +1156,11 @@ export const returnsService = {
         );
     },
 
-    async listSalesItemsByCustomer(scope: BranchScope, customerId: number): Promise<ReturnItemOption[]> {
+    async listSalesItemsByCustomer(
+        scope: BranchScope,
+        customerId: number,
+        excludeReturnId?: number
+    ): Promise<ReturnItemOption[]> {
         if (!Number.isFinite(customerId) || customerId <= 0) {
             throw ApiError.badRequest('Customer is required');
         }
@@ -1174,6 +1178,10 @@ export const returnsService = {
             where += ` AND s.branch_id = ANY($${params.length})`;
         }
         const returnedBranchClause = scope.isAdmin ? '' : `AND sr.branch_id = ANY($${params.length})`;
+        const excludeReturnClause =
+            excludeReturnId && Number.isFinite(excludeReturnId) && excludeReturnId > 0
+                ? `AND sr.sr_id <> ${Number(excludeReturnId)}`
+                : '';
         return queryMany<ReturnItemOption>(
             `WITH sold AS (
                 SELECT si.item_id, COALESCE(SUM(si.quantity), 0) AS sold_qty
@@ -1188,6 +1196,7 @@ export const returnsService = {
                   JOIN ims.sales_return_items sri ON sri.sr_id = sr.sr_id
                  WHERE sr.customer_id = $1
                   ${returnedBranchClause}
+                  ${excludeReturnClause}
                  GROUP BY sri.item_id
              ),
              price AS (
@@ -1228,7 +1237,11 @@ export const returnsService = {
         );
     },
 
-    async listPurchaseItemsBySupplier(scope: BranchScope, supplierId: number): Promise<ReturnItemOption[]> {
+    async listPurchaseItemsBySupplier(
+        scope: BranchScope,
+        supplierId: number,
+        excludeReturnId?: number
+    ): Promise<ReturnItemOption[]> {
         if (!Number.isFinite(supplierId) || supplierId <= 0) {
             throw ApiError.badRequest('Supplier is required');
         }
@@ -1242,6 +1255,10 @@ export const returnsService = {
             where += ` AND p.branch_id = ANY($${params.length})`;
         }
         const returnedBranchClause = scope.isAdmin ? '' : `AND pr.branch_id = ANY($${params.length})`;
+        const excludeReturnClause =
+            excludeReturnId && Number.isFinite(excludeReturnId) && excludeReturnId > 0
+                ? `AND pr.pr_id <> ${Number(excludeReturnId)}`
+                : '';
         return queryMany<ReturnItemOption>(
             `WITH purchased AS (
                 SELECT pi.item_id, COALESCE(SUM(pi.quantity), 0) AS purchased_qty
@@ -1256,6 +1273,7 @@ export const returnsService = {
                   JOIN ims.purchase_return_items pri ON pri.pr_id = pr.pr_id
                  WHERE pr.supplier_id = $1
                   ${returnedBranchClause}
+                  ${excludeReturnClause}
                  GROUP BY pri.item_id
              ),
               price AS (
@@ -2127,6 +2145,7 @@ export const returnsService = {
                 [current.branch_id, id]
             );
 
+            await client.query(`DELETE FROM ims.sales_return_items WHERE sr_id = $1`, [id]);
             await client.query(`DELETE FROM ims.sales_returns WHERE sr_id = $1`, [id]);
             await client.query('COMMIT');
         } catch (err) {
