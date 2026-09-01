@@ -103,6 +103,17 @@ export interface PurchasePriceVarianceRow {
   purchase_lines: number;
 }
 
+export interface CreditOverduePurchaseRow {
+  purchase_id: number;
+  invoice_number: string;
+  supplier_id: number | null;
+  supplier_name: string;
+  purchase_date: string;
+  appointment_date: string;
+  days_overdue: number;
+  total: number;
+}
+
 export const purchaseReportsService = {
   async getPurchaseReportOptions(branchId: number): Promise<{ suppliers: PurchaseReportOption[]; products: PurchaseReportOption[] }> {
     const [suppliers, products] = await Promise.all([
@@ -474,6 +485,41 @@ export const purchaseReportsService = {
       GROUP BY i.item_id, i.name
       ORDER BY variance_amount DESC, i.name
       LIMIT 500`,
+      params
+    );
+  },
+
+  async getCreditOverduePurchases(branchId: number, supplierId?: number): Promise<CreditOverduePurchaseRow[]> {
+    const params: Array<number> = [branchId];
+    let filter = '';
+
+    if (supplierId) {
+      params.push(supplierId);
+      filter = `AND p.supplier_id = $${params.length}`;
+    }
+
+    return queryMany<CreditOverduePurchaseRow>(
+      `SELECT
+         p.purchase_id,
+         ('#' || p.purchase_id::text) AS invoice_number,
+         p.supplier_id,
+         COALESCE(s.name, s.supplier_name, 'Supplier') AS supplier_name,
+         p.purchase_date::date::text AS purchase_date,
+         p.due_date::date::text AS appointment_date,
+         GREATEST((CURRENT_DATE - p.due_date)::int, 0) AS days_overdue,
+         COALESCE(p.total, 0)::double precision AS total
+       FROM ims.purchases p
+       LEFT JOIN ims.suppliers s ON s.supplier_id = p.supplier_id
+      WHERE p.branch_id = $1
+        AND COALESCE(p.purchase_type::text, '') = 'credit'
+        AND p.due_date IS NOT NULL
+        AND p.due_date <= CURRENT_DATE
+        AND COALESCE(p.status::text, '') NOT IN ('void', 'paid')
+        AND COALESCE(p.doc_type::text, 'purchase') = 'purchase'
+        AND COALESCE(p.is_deleted, 0)::int = 0
+        ${filter}
+      ORDER BY days_overdue DESC, p.due_date ASC, p.purchase_id ASC
+      LIMIT 2000`,
       params
     );
   },

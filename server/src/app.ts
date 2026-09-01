@@ -34,6 +34,7 @@ import assetsRoutes from './modules/assets/assets.routes';
 import trashRoutes from './modules/trash/trash.routes';
 // import scheduleRoutes from './modules/schedules/schedules.routes'; // TEMP: Disabled - has import errors
 import { config } from './config/env';
+import { requireDeleteReasonMiddleware } from './middlewares/requireDeleteReason';
 
 const app = express();
 
@@ -50,6 +51,9 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+
+// Require a reason body on all DELETE /api/* routes (with narrow exemptions).
+app.use('/api', requireDeleteReasonMiddleware);
 
 // Logging
 if (config.isDev) {

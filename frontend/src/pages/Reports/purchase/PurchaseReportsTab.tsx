@@ -382,7 +382,7 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
   );
 
   const renderShowAllButtons = (onShow: () => void, onAll: () => void, cardId: PurchaseCardId) => (
-    <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <button
         onClick={onShow}
         disabled={loadingCardId === cardId}
@@ -407,7 +407,7 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
     if (cardId === 'supplier-wise') return <div className="space-y-3">{renderSupplierSelector(selectedWiseSupplierId, setSelectedWiseSupplierId)}{renderShowAllButtons(() => handleSupplierWisePurchases('show'), () => handleSupplierWisePurchases('all'), cardId)}</div>;
     if (cardId === 'best-suppliers') return <div className="space-y-3">{renderDateRange(bestSuppliersRange, setBestSuppliersRange)}<button onClick={handleBestSuppliers} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
 
-    return <div className="space-y-3">{renderDateRange(priceVarianceRange, setPriceVarianceRange)}<select value={selectedVarianceProductId} onChange={(event) => setSelectedVarianceProductId(event.target.value)} className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"><option value="">Select Product</option>{products.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select><div className="grid grid-cols-2 gap-3"><button onClick={() => handlePriceVariance('show')} disabled={loadingCardId === cardId} className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button><button onClick={() => handlePriceVariance('all')} disabled={loadingCardId === cardId} className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70">All</button></div></div>;
+    return <div className="space-y-3">{renderDateRange(priceVarianceRange, setPriceVarianceRange)}<select value={selectedVarianceProductId} onChange={(event) => setSelectedVarianceProductId(event.target.value)} aria-label="Select product" className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"><option value="">Select Product</option>{products.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><button onClick={() => handlePriceVariance('show')} disabled={loadingCardId === cardId} className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button><button onClick={() => handlePriceVariance('all')} disabled={loadingCardId === cardId} className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70">All</button></div></div>;
   };
 
   const renderCard = (card: { id: PurchaseCardId; title: string; hint: string }) => {

@@ -22,7 +22,7 @@ const DeleteConfirmModal = ({
   message,
   itemName,
   isDeleting = false,
-  requireReason = false,
+  requireReason = true,
   reasonLabel = 'Reason for deletion',
 }: Props) => {
   const [reason, setReason] = useState('');
@@ -65,27 +65,28 @@ const DeleteConfirmModal = ({
           </p>
         )}
 
-        {requireReason && (
-          <div className="mb-4 text-left">
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              {reasonLabel} <span className="text-red-500">*</span>
-            </label>
-            <textarea
-              value={reason}
-              onChange={(e) => {
-                setReason(e.target.value);
-                if (reasonError) setReasonError('');
-              }}
-              rows={3}
-              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              placeholder="Explain why this record is being deleted..."
-              disabled={isDeleting}
-            />
-            {reasonError ? (
-              <p className="mt-1 text-xs font-medium text-red-500">{reasonError}</p>
-            ) : null}
-          </div>
-        )}
+        <div className="mb-4 text-left">
+          <label htmlFor="delete-reason" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+            {reasonLabel} {requireReason ? <span className="text-red-500">*</span> : null}
+          </label>
+          <textarea
+            id="delete-reason"
+            value={reason}
+            onChange={(e) => {
+              setReason(e.target.value);
+              if (reasonError) setReasonError('');
+            }}
+            rows={3}
+            aria-invalid={Boolean(reasonError)}
+            aria-describedby={reasonError ? 'delete-reason-error' : undefined}
+            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            placeholder="Explain why this record is being deleted..."
+            disabled={isDeleting}
+          />
+          {reasonError ? (
+            <p id="delete-reason-error" className="mt-1 text-xs font-medium text-red-500" role="alert">{reasonError}</p>
+          ) : null}
+        </div>
 
         <p className="text-xs text-red-600 dark:text-red-400 mb-6">
           This action cannot be undone.

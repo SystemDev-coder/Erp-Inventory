@@ -291,8 +291,8 @@ export const financeService = {
       note: payload.note,
     });
   },
-  async deleteCustomerReceipt(id: number) {
-    return apiClient.delete<{ message: string }>(`${API.FINANCE.CUSTOMER_RECEIPTS}/${id}`);
+  async deleteCustomerReceipt(id: number, reason: string) {
+    return apiClient.delete<{ message: string }>(`${API.FINANCE.CUSTOMER_RECEIPTS}/${id}`, reason);
   },
   async getCustomerCombinedBalance(customerId: number, branchId?: number) {
     const qs = branchId ? `?branchId=${branchId}` : '';
@@ -345,8 +345,8 @@ export const financeService = {
       note: payload.note,
     });
   },
-  async deleteSupplierReceipt(id: number) {
-    return apiClient.delete<{ message: string }>(`${API.FINANCE.SUPPLIER_RECEIPTS}/${id}`);
+  async deleteSupplierReceipt(id: number, reason: string) {
+    return apiClient.delete<{ message: string }>(`${API.FINANCE.SUPPLIER_RECEIPTS}/${id}`, reason);
   },
 
   // Expense charges
@@ -381,8 +381,8 @@ export const financeService = {
       isOpeningPaid: payload.is_opening_paid,
     });
   },
-  async deleteExpenseCharge(id: number) {
-    return apiClient.delete<{ message: string }>(`${API.FINANCE.EXPENSE_CHARGES}/${id}`);
+  async deleteExpenseCharge(id: number, reason: string) {
+    return apiClient.delete<{ message: string }>(`${API.FINANCE.EXPENSE_CHARGES}/${id}`, reason);
   },
 
   async createExpensePayment(payload: { branch_id?: number; exp_ch_id: number; acc_id: number; amount?: number; pay_date?: string; reference_no?: string; note?: string }) {
@@ -429,8 +429,8 @@ export const financeService = {
       note: payload.note,
     });
   },
-  async deleteExpenseBudget(id: number) {
-    return apiClient.delete<{ message: string }>(`${API.FINANCE.EXPENSE_BUDGETS}/${id}`);
+  async deleteExpenseBudget(id: number, reason: string) {
+    return apiClient.delete<{ message: string }>(`${API.FINANCE.EXPENSE_BUDGETS}/${id}`, reason);
   },
 
   async chargeExpenseBudget(payload: { budget_id: number; branch_id?: number; pay_date?: string; note?: string }) {
@@ -509,8 +509,8 @@ export const financeService = {
       note: payload.note || '',
     });
   },
-  async deleteOtherIncome(id: number) {
-    return apiClient.delete<{ message: string }>(`${API.FINANCE.OTHER_INCOME}/${id}`);
+  async deleteOtherIncome(id: number, reason: string) {
+    return apiClient.delete<{ message: string }>(`${API.FINANCE.OTHER_INCOME}/${id}`, reason);
   },
 
   // Expenses
@@ -534,8 +534,8 @@ export const financeService = {
       name: payload.name,
     });
   },
-  async deleteExpense(id: number) {
-    return apiClient.delete<{ message: string }>(`${API.FINANCE.EXPENSES}/${id}`);
+  async deleteExpense(id: number, reason: string) {
+    return apiClient.delete<{ message: string }>(`${API.FINANCE.EXPENSES}/${id}`, reason);
   },
 
   // Closing finance & profit sharing

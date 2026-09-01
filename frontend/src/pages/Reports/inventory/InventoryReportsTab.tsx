@@ -690,7 +690,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
             <option value="">Select Store</option>
             {stores.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <button onClick={() => handleStoreStockReport('show')} disabled={loadingCardId === cardId} className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button>
             <button onClick={() => handleStoreStockReport('all')} disabled={loadingCardId === cardId} className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70">All</button>
           </div>
@@ -706,7 +706,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
             <option value="">Select Store</option>
             {stores.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <button onClick={() => handleStoreMovementSummary('show')} disabled={loadingCardId === cardId} className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button>
             <button onClick={() => handleStoreMovementSummary('all')} disabled={loadingCardId === cardId} className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70">All</button>
           </div>
@@ -726,7 +726,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
             <option value="">All Items</option>
             {products.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <button onClick={() => handleStoreMovementDetail('show')} disabled={loadingCardId === cardId} className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button>
             <button onClick={() => handleStoreMovementDetail('all')} disabled={loadingCardId === cardId} className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70">All</button>
           </div>
@@ -740,7 +740,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
           <option value="">Select Store</option>
           {stores.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
         </select>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <button onClick={() => handleStoreWiseStock('show')} disabled={loadingCardId === cardId} className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button>
           <button onClick={() => handleStoreWiseStock('all')} disabled={loadingCardId === cardId} className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70">All</button>
         </div>

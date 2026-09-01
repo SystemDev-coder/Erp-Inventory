@@ -6,8 +6,9 @@ import { purchasesService } from './purchases.service';
 import { purchaseSchema } from './purchases.schemas';
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { assertBranchAccess, pickBranchForWrite, resolveBranchScope } from '../../utils/branchScope';
-import { logAudit } from '../../utils/audit';
+import { logDeleteAudit } from '../../utils/logDeleteAudit';
 import { queryMany, queryOne } from '../../db/query';
+import { listPaginationSchema, paginationMeta } from '../../utils/pagination';
 
 const loadSheetJs = () => {
   try {
@@ -86,8 +87,21 @@ export const listPurchases = asyncHandler(async (req: AuthRequest, res: Response
     assertBranchAccess(scope, branchId);
   }
   const docType = (req.query.docType as string) || undefined;
-  const purchases = await purchasesService.listPurchases(scope, search, status, branchId, fromDate, toDate, docType);
-  return ApiResponse.success(res, { purchases });
+  const pagination = listPaginationSchema.parse(req.query);
+  const result = await purchasesService.listPurchases(
+    scope,
+    search,
+    status,
+    branchId,
+    fromDate,
+    toDate,
+    docType,
+    pagination
+  );
+  return ApiResponse.success(res, {
+    purchases: result.rows,
+    pagination: paginationMeta(result.total, result.page, result.limit),
+  });
 });
 
 export const getPurchase = asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -160,14 +174,7 @@ export const deletePurchase = asyncHandler(async (req: AuthRequest, res: Respons
   const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
   await purchasesService.deletePurchase(id, scope);
-  await logAudit({
-    userId: req.user?.userId ?? null,
-    action: 'delete',
-    entity: 'purchases',
-    entityId: id,
-    ip: req.ip,
-    userAgent: req.get('user-agent') || null,
-  });
+  await logDeleteAudit(req, 'purchases', id);
 
   return ApiResponse.success(res, null, 'Purchase deleted');
 });
@@ -207,7 +214,17 @@ export const exportPurchasesXlsx = asyncHandler(async (req: AuthRequest, res: Re
     assertBranchAccess(scope, branchId);
   }
 
-  const purchases = await purchasesService.listPurchases(scope, search, status, branchId, fromDate, toDate);
+  const result = await purchasesService.listPurchases(
+    scope,
+    search,
+    status,
+    branchId,
+    fromDate,
+    toDate,
+    undefined,
+    { page: 1, limit: 500 }
+  );
+  const purchases = result.rows;
   const XLSX = loadSheetJs();
 
   const rows = purchases.map((p: any) => ({

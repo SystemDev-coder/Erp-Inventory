@@ -492,8 +492,8 @@ const Receipts = () => {
         }
     };
 
-    const deleteCustReceipt = async (id: number) => {
-        const res = await financeService.deleteCustomerReceipt(id);
+    const deleteCustReceipt = async (id: number, reason: string) => {
+        const res = await financeService.deleteCustomerReceipt(id, reason);
         if (res.success) {
             showToast('success', 'Receipts', 'Receipt deleted');
             await loadAll();
@@ -545,8 +545,8 @@ const Receipts = () => {
         }
     };
 
-    const deleteSupReceipt = async (id: number) => {
-        const res = await financeService.deleteSupplierReceipt(id);
+    const deleteSupReceipt = async (id: number, reason: string) => {
+        const res = await financeService.deleteSupplierReceipt(id, reason);
         if (res.success) {
             showToast('success', 'Receipts', 'Receipt deleted');
             await loadAll();
@@ -571,14 +571,14 @@ const Receipts = () => {
         });
     };
 
-    const confirmDeleteReceipt = async () => {
+    const confirmDeleteReceipt = async (reason: string) => {
         if (!deleteTarget) return;
         setDeletingReceipt(true);
         try {
             if (deleteTarget.type === 'customer') {
-                await deleteCustReceipt(deleteTarget.id);
+                await deleteCustReceipt(deleteTarget.id, reason);
             } else {
-                await deleteSupReceipt(deleteTarget.id);
+                await deleteSupReceipt(deleteTarget.id, reason);
             }
         } finally {
             setDeletingReceipt(false);

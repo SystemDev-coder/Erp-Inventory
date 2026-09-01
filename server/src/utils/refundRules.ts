@@ -259,13 +259,4 @@ export const resolvePurchaseReturnRefund = async (
   };
 };
 
-export const requireDeleteReason = (reason: string | undefined | null): string => {
-  const trimmed = String(reason || '').trim();
-  if (!trimmed) {
-    throw ApiError.badRequest('A reason is required to delete or void this transaction');
-  }
-  if (trimmed.length > 500) {
-    throw ApiError.badRequest('Reason must be 500 characters or less');
-  }
-  return trimmed;
-};
+export { requireDeleteReason } from './deleteReason';
