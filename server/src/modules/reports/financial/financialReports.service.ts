@@ -2419,7 +2419,7 @@ export const financialReportsService = {
     return buildBalanceSheetGuaranteedBalanced(branchId, asOfDate);
   },
 
-  async getBalanceSheet(branchId: number, asOfDate: string, _fromDate?: string): Promise<BalanceSheetRow[]> {
+  async getBalanceSheet(branchId: number, asOfDate: string): Promise<BalanceSheetRow[]> {
     return buildBalanceSheetGuaranteedBalanced(branchId, asOfDate);
   },
 
@@ -3963,8 +3963,9 @@ export const financialReportsService = {
          (COALESCE(at.credit, 0) - COALESCE(at.debit, 0))::double precision AS net_effect,
          COALESCE(at.note, '') AS note
        FROM normalized_txn at
-        LEFT JOIN accounts_norm a ON a.acc_id = at.acc_id
-       WHERE at.txn_date::date BETWEEN $2::date AND $3::date
+        LEFT JOIN accounts_norm a ON a.acc_id = at.acc_id AND a.branch_id = $1
+       WHERE at.branch_id = $1
+         AND at.txn_date::date BETWEEN $2::date AND $3::date
          ${filter}
        ORDER BY at.txn_date ASC, at.sort_id ASC, at.txn_id ASC
        LIMIT 3000`,
