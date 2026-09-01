@@ -966,6 +966,14 @@ const normalizedAccountTransactionsCte = `
     FROM ims.journal_lines jl
     JOIN ims.journal_entries je ON je.journal_id = jl.journal_id
     WHERE je.branch_id = $1
+      AND NOT EXISTS (
+        SELECT 1
+          FROM ims.account_transactions at
+         WHERE at.branch_id = je.branch_id
+           AND COALESCE(at.ref_table, '') = 'journal_entries'
+           AND at.ref_id = je.journal_id
+           AND COALESCE(at.is_deleted, 0) = 0
+      )
   )
 `;
 
@@ -3851,15 +3859,15 @@ export const financialReportsService = {
       const updated = rows.map((row) => {
         if (!inventoryAccountIds.includes(Number(row.account_id))) return row;
 
-        // Replace the Inventory asset account(s) balance with on-hand valuation.
-        // Keep it simple: put the full on-hand value on the primary inventory account id.
+        // Replace the Inventory asset account(s) closing balance with on-hand
+        // valuation. Opening and period movement stay as posted: blanking them
+        // left the row reading "no movement, closing 500", which is unreadable
+        // as a trial balance. Any gap between posted movement and the physical
+        // count is carried by the Opening Balance Equity row below, so the
+        // statement still balances.
         const closingDebit = Number(row.account_id) === targetId ? onHand : 0;
         return {
           ...row,
-          opening_debit: 0,
-          opening_credit: 0,
-          period_debit: 0,
-          period_credit: 0,
           closing_debit: closingDebit,
           closing_credit: 0,
         };
@@ -4022,7 +4030,15 @@ export const financialReportsService = {
          SELECT
            m.item_id,
            m.quantity,
-           m.line_total,
+           -- The header discount is stored once on the sale, never on its lines.
+           -- Allocate it across lines by value so these margins agree with the
+           -- Income Statement's discounted revenue. Tax never enters line_total,
+           -- so VAT is already excluded here.
+           CASE
+             WHEN COALESCE(s.subtotal, 0) > 0
+               THEN m.line_total - (COALESCE(s.discount, 0) * m.line_total / s.subtotal)
+             ELSE m.line_total
+           END AS line_total,
            -- Use the cost actually recorded at sale time (inventory_movements),
            -- not the item's CURRENT cost_price - that changes over time via
            -- moving-average costing on later purchases, which would silently
@@ -4122,7 +4138,13 @@ export const financialReportsService = {
            COALESCE(c.full_name, 'Walk-in Customer') AS customer_name,
            m.item_id,
            m.quantity,
-           m.line_total,
+           -- See getProfitByItem: allocate the sale's header discount across
+           -- its lines so this agrees with the Income Statement.
+           CASE
+             WHEN COALESCE(s.subtotal, 0) > 0
+               THEN m.line_total - (COALESCE(s.discount, 0) * m.line_total / s.subtotal)
+             ELSE m.line_total
+           END AS line_total,
            -- See getProfitByItem: use the cost recorded at sale time, not
            -- the item's current (possibly since-changed) cost_price.
            CASE
@@ -4215,7 +4237,13 @@ export const financialReportsService = {
            s.store_id,
            m.item_id,
            m.quantity,
-           m.line_total,
+           -- See getProfitByItem: allocate the sale's header discount across
+           -- its lines so this agrees with the Income Statement.
+           CASE
+             WHEN COALESCE(s.subtotal, 0) > 0
+               THEN m.line_total - (COALESCE(s.discount, 0) * m.line_total / s.subtotal)
+             ELSE m.line_total
+           END AS line_total,
            -- See getProfitByItem: use the cost recorded at sale time, not
            -- the item's current (possibly since-changed) cost_price.
            CASE

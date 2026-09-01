@@ -70,6 +70,7 @@ const cogsByInvoiceColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'doc_type', header: 'Document' },
   { key: 'customer_name', header: 'Customer' },
   { key: 'total', header: 'Sales Total', align: 'right', render: (row) => formatCurrency(row.total) },
+  { key: 'tax_amount', header: 'VAT', align: 'right', render: (row) => formatCurrency(row.tax_amount) },
   { key: 'cogs', header: 'COGS', align: 'right', render: (row) => formatCurrency(row.cogs) },
   { key: 'gross_profit', header: 'Gross Profit', align: 'right', render: (row) => formatCurrency(row.gross_profit) },
 ];
@@ -638,6 +639,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
           label: 'Total',
           values: {
             total: formatCurrency(sumNumericField(rows, 'total')),
+            tax_amount: formatCurrency(sumNumericField(rows, 'tax_amount')),
             cogs: formatCurrency(sumNumericField(rows, 'cogs')),
             gross_profit: formatCurrency(sumNumericField(rows, 'gross_profit')),
           },
@@ -977,11 +979,11 @@ export function SalesReportsTab({ onOpenModal }: Props) {
     if (cardId === 'sales-by-customer') {
       return (
         <div className="space-y-3">
-          <select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)} className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none">
+          <select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)} aria-label="Select customer" className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none">
             <option value="">Select Customer</option>
             {salesOptions.customers.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <button onClick={() => handleSalesByCustomer('show')} disabled={loadingCardId === cardId} className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button>
             <button onClick={() => handleSalesByCustomer('all')} disabled={loadingCardId === cardId} className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70">All</button>
           </div>
@@ -992,11 +994,11 @@ export function SalesReportsTab({ onOpenModal }: Props) {
     if (cardId === 'sales-by-product') {
       return (
         <div className="space-y-3">
-          <select value={selectedProductId} onChange={(event) => setSelectedProductId(event.target.value)} className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none">
+          <select value={selectedProductId} onChange={(event) => setSelectedProductId(event.target.value)} aria-label="Select product" className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none">
             <option value="">Select Product</option>
             {salesOptions.products.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <button onClick={() => handleSalesByProduct('show')} disabled={loadingCardId === cardId} className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button>
             <button onClick={() => handleSalesByProduct('all')} disabled={loadingCardId === cardId} className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70">All</button>
           </div>
@@ -1008,11 +1010,11 @@ export function SalesReportsTab({ onOpenModal }: Props) {
       return (
         <div className="space-y-3">
           {renderDateRange(salesByStoreRange, setSalesByStoreRange)}
-          <select value={selectedStoreId} onChange={(event) => setSelectedStoreId(event.target.value)} className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none">
+          <select value={selectedStoreId} onChange={(event) => setSelectedStoreId(event.target.value)} aria-label="Select store" className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none">
             <option value="">Select Store</option>
             {salesOptions.stores.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <button onClick={() => handleSalesByStore('show')} disabled={loadingCardId === cardId} className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button>
             <button onClick={() => handleSalesByStore('all')} disabled={loadingCardId === cardId} className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70">All</button>
           </div>
@@ -1048,20 +1050,23 @@ export function SalesReportsTab({ onOpenModal }: Props) {
     return (
       <div key={card.id} className="self-start overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_8px_18px_rgba(15,23,42,0.08)]">
         <button
+          type="button"
+          aria-expanded={isOpen}
+          aria-controls={`${card.id}-panel`}
           onClick={() => {
             setCardErrors((prev) => ({ ...prev, [card.id]: '' }));
             setExpandedCardId((prev) => (prev === card.id ? null : card.id));
           }}
-          className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-primary-900 to-primary-700 px-5 py-4 text-left text-white"
+          className="flex w-full min-h-11 items-center justify-between border-b border-slate-200 bg-gradient-to-r from-primary-900 to-primary-700 px-5 py-4 text-left text-white"
         >
           <div>
             <p className="text-xl font-semibold leading-tight">{card.title}</p>
             <p className="mt-1 text-xs font-medium text-white/85">{card.hint}</p>
           </div>
-          <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+          <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
         </button>
         {isOpen && (
-          <div className="space-y-3 bg-slate-50 px-5 py-4">
+          <div id={`${card.id}-panel`} className="space-y-3 bg-slate-50 px-5 py-4">
             {renderCardBody(card.id)}
             {cardErrors[card.id] && <p className="text-sm font-semibold text-red-600">{cardErrors[card.id]}</p>}
           </div>

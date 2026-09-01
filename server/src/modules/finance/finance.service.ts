@@ -2439,8 +2439,12 @@ export const financeService = {
         throw ApiError.badRequest('Opening balance expense is already paid and cannot be paid again');
       }
       assertBranchAccess(scope, charge.branch_id);
-      const branchId =
-        input.branchId && input.branchId !== charge.branch_id ? (() => { throw ApiError.badRequest('Branch mismatch'); })() : charge.branch_id;
+      // charge.branch_id arrives as a string (bigint), so compare numerically -
+      // a strict !== against the numeric input rejected every correct branchId.
+      if (input.branchId && Number(input.branchId) !== Number(charge.branch_id)) {
+        throw ApiError.badRequest('Branch mismatch');
+      }
+      const branchId = Number(charge.branch_id);
 
       const paidRow = (
         await client.query<{ paid_sum: string }>(

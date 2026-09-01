@@ -9,6 +9,7 @@ import { inventoryService, InventoryItem } from '../../services/inventory.servic
 import { SaleDocType, SaleStatus, salesService } from '../../services/sales.service';
 import { formatAvailableQty, itemLabelWithAvailability } from '../../utils/itemAvailability';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
+import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { useBranch } from '../../context/BranchContext';
 
 type FormLine = {
@@ -28,6 +29,12 @@ type FormErrors = {
 };
 
 const todayString = () => new Date().toISOString().slice(0, 10);
+
+const addDaysToDate = (baseDate: string, days: number) => {
+  const dt = new Date(`${baseDate}T00:00:00`);
+  dt.setDate(dt.getDate() + Math.max(0, Math.floor(days)));
+  return dt.toISOString().slice(0, 10);
+};
 
 // Sales tax is a fixed policy rate, not something a cashier should be able to change
 // per-sale - shown as read-only text on the form instead of an editable field.
@@ -66,6 +73,8 @@ const SaleCreate = () => {
   const [itemOptions, setItemOptions] = useState<SaleItemOption[]>([]);
   const [isDebt, setIsDebt] = useState(false);
   const [formErrors, setFormErrors] = useState<FormErrors>({});
+  const [confirmStep, setConfirmStep] = useState<'balance' | 'account' | null>(null);
+  const [pendingPayload, setPendingPayload] = useState<Record<string, unknown> | null>(null);
 
   // ── CSS helpers ───────────────────────────────────────────────────────────
   const baseCls =
@@ -114,6 +123,7 @@ const SaleCreate = () => {
     total: 0,
     acc_id: '' as number | '',
     paid_amount: 0,
+    due_date: '',
     note: '',
     items: [{ item_id: '' as number | '', quantity: 1, unit_price: 0 }] as FormLine[],
   });
@@ -135,7 +145,7 @@ const SaleCreate = () => {
         customerService.list({ branchId: activeBranchId ?? undefined }),
         accountService.list({ branchId: activeBranchId ?? undefined }),
         inventoryService.listItems({ branchId: activeBranchId ?? undefined }),
-        inventoryService.listStock({ page: 1, limit: 5000, branchId: activeBranchId ?? undefined }),
+        inventoryService.listStock({ page: 1, limit: 100, branchId: activeBranchId ?? undefined }),
       ]);
 
       if (cRes.success && cRes.data?.customers) setCustomers(cRes.data.customers);
@@ -208,6 +218,7 @@ const SaleCreate = () => {
         total: Number(sale.total || 0),
         acc_id: sale.pay_acc_id ?? '',
         paid_amount: Number(sale.paid_amount || 0),
+        due_date: (sale as { due_date?: string | null }).due_date?.slice(0, 10) || '',
         note: sale.note || '',
         items: items.length ? items : [{ item_id: '', quantity: 1, unit_price: 0 }],
       });
@@ -239,15 +250,36 @@ const SaleCreate = () => {
     }));
   };
 
+  const selectedCustomer = useMemo(
+    () => customers.find((c) => Number(c.customer_id) === Number(saleForm.customer_id)),
+    [customers, saleForm.customer_id]
+  );
+
+  const canUseCredit = useMemo(() => {
+    if (!saleForm.customer_id) return false;
+    if (selectedCustomer?.customer_type === 'one-time') return false;
+    return selectedCustomer?.credit_allowed !== false;
+  }, [saleForm.customer_id, selectedCustomer]);
+
   const effectiveDocType = saleForm.doc_type;
   const effectiveSaleType: 'cash' | 'credit' = effectiveDocType === 'quotation'
     ? 'credit'
     : isDebt
     ? 'credit'
     : saleForm.sale_type;
-  const effectiveStatus: SaleStatus = effectiveDocType === 'quotation' || effectiveSaleType === 'credit'
-    ? 'unpaid'
-    : saleForm.status;
+
+  const derivedCashStatus: SaleStatus = (() => {
+    const total = Number(saleForm.total || 0);
+    const paid = Math.max(0, Math.min(Number(saleForm.paid_amount || 0), total));
+    if (paid <= 0.005) return 'unpaid';
+    if (paid >= total - 0.005) return 'paid';
+    return 'partial';
+  })();
+
+  const effectiveStatus: SaleStatus =
+    effectiveDocType === 'quotation' || effectiveSaleType === 'credit'
+      ? 'unpaid'
+      : derivedCashStatus;
 
   const headerDocLabel =
     effectiveDocType === 'quotation' ? 'Quotation' : effectiveDocType === 'invoice' ? 'Invoice' : 'Sale';
@@ -262,6 +294,16 @@ const SaleCreate = () => {
     effectiveSaleType !== 'credit' &&
     effectiveStatus !== 'void' &&
     effectiveStatus !== 'unpaid';
+
+  const shouldShowDueDate =
+    effectiveDocType !== 'quotation' && (effectiveSaleType === 'credit' || isDebt);
+
+  useEffect(() => {
+    if (!shouldShowDueDate) return;
+    const days = Math.max(0, Number(selectedCustomer?.credit_days ?? 30));
+    const nextDue = addDaysToDate(saleForm.sale_date || todayString(), days);
+    setSaleForm((prev) => (prev.due_date === nextDue ? prev : { ...prev, due_date: nextDue }));
+  }, [shouldShowDueDate, selectedCustomer?.credit_days, saleForm.sale_date]);
 
   const itemOptionsMap = useMemo(() => {
     const map = new Map<number, SaleItemOption>();
@@ -368,21 +410,9 @@ const SaleCreate = () => {
     return errors;
   };
 
-  const handleSaveSale = async () => {
-    const errors = validate();
-    if (Object.keys(errors).length > 0) {
-      setFormErrors(errors);
-      // scroll to first error
-      setTimeout(() => {
-        document.querySelector('[data-field-error]')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }, 50);
-      return;
-    }
-    setFormErrors({});
-
+  const buildPayload = () => {
     const validItems = saleForm.items.filter((line) => line.item_id && line.quantity > 0);
-
-    const payload = {
+    return {
       branchId: activeBranchId ?? undefined,
       customerId: saleForm.customer_id || undefined,
       saleDate: saleForm.sale_date,
@@ -398,6 +428,7 @@ const SaleCreate = () => {
       saleType: effectiveSaleType,
       status: effectiveStatus,
       note: saleForm.note || undefined,
+      dueDate: shouldShowDueDate && saleForm.due_date ? saleForm.due_date : undefined,
       items: validItems.map((line) => ({
         itemId: Number(line.item_id),
         quantity: Number(line.quantity),
@@ -412,7 +443,17 @@ const SaleCreate = () => {
           )
         : undefined,
     };
+  };
 
+  const needsBalanceConfirm = () =>
+    effectiveDocType !== 'quotation' &&
+    Boolean(saleForm.customer_id) &&
+    (effectiveSaleType === 'credit' || isDebt || effectiveStatus === 'unpaid' || effectiveStatus === 'partial');
+
+  const needsAccountConfirm = () =>
+    effectiveDocType !== 'quotation' && shouldShowAccount && Boolean(saleForm.acc_id);
+
+  const executeSaveSale = async (payload: ReturnType<typeof buildPayload>) => {
     if (effectiveDocType === 'quotation') {
       setSubmitting(true);
       try {
@@ -456,6 +497,45 @@ const SaleCreate = () => {
     } else {
       showToast('error', 'Sales', res.error || 'Save failed');
     }
+  };
+
+  const handleConfirmSave = () => {
+    if (!pendingPayload) return;
+    if (confirmStep === 'balance' && needsAccountConfirm()) {
+      setConfirmStep('account');
+      return;
+    }
+    const payload = pendingPayload as ReturnType<typeof buildPayload>;
+    setConfirmStep(null);
+    setPendingPayload(null);
+    void executeSaveSale(payload);
+  };
+
+  const handleSaveSale = async () => {
+    const errors = validate();
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors);
+      setTimeout(() => {
+        document.querySelector('[data-field-error]')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 50);
+      return;
+    }
+    setFormErrors({});
+
+    const payload = buildPayload();
+
+    if (needsBalanceConfirm()) {
+      setPendingPayload(payload);
+      setConfirmStep('balance');
+      return;
+    }
+    if (needsAccountConfirm()) {
+      setPendingPayload(payload);
+      setConfirmStep('account');
+      return;
+    }
+
+    await executeSaveSale(payload);
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -560,19 +640,13 @@ const SaleCreate = () => {
 
           <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
             Status
-            <select
-              className={controlCls}
+            <input
+              className={controlReadonlyCls}
               value={effectiveStatus}
-              onChange={(e) =>
-                setSaleForm((prev) => ({ ...prev, status: e.target.value as SaleStatus }))
-              }
-              disabled={loading || saleForm.doc_type === 'quotation' || effectiveSaleType === 'credit'}
-            >
-              <option value="paid">Paid</option>
-              <option value="partial">Partial</option>
-              <option value="unpaid">Unpaid</option>
-              <option value="void">Void</option>
-            </select>
+              readOnly
+              disabled
+              title="Auto-calculated from amount paid vs total"
+            />
           </label>
         </div>
 
@@ -589,17 +663,21 @@ const SaleCreate = () => {
                   return {
                     ...prev,
                     sale_type: nextType,
-                    status: nextType === 'credit' ? 'unpaid' : prev.status === 'unpaid' ? 'paid' : prev.status,
                     acc_id: nextType === 'credit' ? '' : prev.acc_id,
                     paid_amount: nextType === 'credit' ? 0 : prev.paid_amount,
                   };
                 })
               }
-              disabled={loading || saleForm.doc_type === 'quotation' || isDebt}
+              disabled={loading || saleForm.doc_type === 'quotation' || isDebt || !canUseCredit}
             >
               <option value="cash">Cash</option>
               <option value="credit">Credit</option>
             </select>
+            {!canUseCredit && saleForm.doc_type !== 'quotation' && (
+              <span className="text-xs text-slate-500">
+                Credit requires a registered customer with credit enabled.
+              </span>
+            )}
           </label>
 
           {shouldShowAccount && (
@@ -624,10 +702,23 @@ const SaleCreate = () => {
               <FieldError field="account" />
             </div>
           )}
+
+          {shouldShowDueDate && (
+            <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+              Credit Return Date (Ballanta)
+              <input
+                type="date"
+                className={controlCls}
+                value={saleForm.due_date}
+                onChange={(e) => setSaleForm((prev) => ({ ...prev, due_date: e.target.value }))}
+                disabled={loading}
+              />
+            </label>
+          )}
         </div>
 
         {/* ── Debt toggle ── */}
-        {saleForm.customer_id && saleForm.doc_type !== 'quotation' && (
+        {saleForm.customer_id && saleForm.doc_type !== 'quotation' && canUseCredit && (
           <div className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-300">
             <input
               id="debt-toggle"
@@ -640,7 +731,6 @@ const SaleCreate = () => {
                 setSaleForm((prev) => ({
                   ...prev,
                   sale_type: checked ? 'credit' : 'cash',
-                  status: checked ? 'unpaid' : 'paid',
                   acc_id: checked ? '' : prev.acc_id,
                   paid_amount: checked ? 0 : prev.paid_amount,
                 }));
@@ -895,7 +985,12 @@ const SaleCreate = () => {
                 max={saleForm.total}
                 onChange={(e) => {
                   clearError('paidAmount');
-                  setSaleForm((prev) => ({ ...prev, paid_amount: Number(e.target.value || 0) }));
+                  const raw = Number(e.target.value || 0);
+                  setSaleForm((prev) => {
+                    const total = Number(prev.total || 0);
+                    const paid = Math.max(0, Math.min(raw, total));
+                    return { ...prev, paid_amount: paid };
+                  });
                 }}
                 disabled={loading}
               />
@@ -929,6 +1024,25 @@ const SaleCreate = () => {
           </button>
         </div>
       </div>
+
+      <ConfirmDialog
+        isOpen={confirmStep !== null}
+        onClose={() => {
+          setConfirmStep(null);
+          setPendingPayload(null);
+        }}
+        onConfirm={handleConfirmSave}
+        title="Xaqiiji"
+        message={
+          confirmStep === 'balance'
+            ? 'Ma hubtaa inaad lacagta ka jareyso haraaga macmiilka?'
+            : 'Ma hubtaa lacagta inaad account-ka ka jareyso?'
+        }
+        confirmText="Haa, kaydi"
+        cancelText="Maya"
+        variant="warning"
+        isLoading={submitting}
+      />
     </div>
   );
 };

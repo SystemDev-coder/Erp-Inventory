@@ -26,6 +26,12 @@ const defaultPreferences = (): UserPreferences => ({
 
 const preferenceStore = new Map<number, UserPreferences>();
 
+const PERMISSION_CACHE_TTL_MS = 5 * 60 * 1000;
+
+type PermissionCacheEntry = { permissions: string[]; expiresAt: number };
+
+const permissionCache = new Map<number, PermissionCacheEntry>();
+
 export class SessionService {
   async createSession(): Promise<string> {
     return 'local-session';
@@ -87,13 +93,26 @@ export class SessionService {
     _input: UpdateSessionLimitInput
   ): Promise<void> {}
 
-  async getCachedPermissions(_userId: number): Promise<string[] | null> {
-    return null;
+  async getCachedPermissions(userId: number): Promise<string[] | null> {
+    const entry = permissionCache.get(userId);
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) {
+      permissionCache.delete(userId);
+      return null;
+    }
+    return entry.permissions;
   }
 
-  async cachePermissions(_userId: number, _permissions: string[]): Promise<void> {}
+  async cachePermissions(userId: number, permissions: string[]): Promise<void> {
+    permissionCache.set(userId, {
+      permissions,
+      expiresAt: Date.now() + PERMISSION_CACHE_TTL_MS,
+    });
+  }
 
-  async invalidatePermissionCache(_userId: number): Promise<void> {}
+  async invalidatePermissionCache(userId: number): Promise<void> {
+    permissionCache.delete(userId);
+  }
 
   async cleanExpiredSessions(): Promise<{ deleted: number }> {
     return { deleted: 0 };

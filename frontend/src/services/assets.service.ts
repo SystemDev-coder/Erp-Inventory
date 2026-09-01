@@ -64,8 +64,8 @@ export const assetsService = {
     return apiClient.put<{ asset: Asset }>(API.ASSETS.ITEM(id), input);
   },
 
-  async delete(id: number) {
-    return apiClient.delete(API.ASSETS.ITEM(id));
+  async delete(id: number, reason: string) {
+    return apiClient.delete(API.ASSETS.ITEM(id), reason);
   },
 };
 

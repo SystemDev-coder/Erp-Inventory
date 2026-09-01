@@ -98,6 +98,17 @@ export interface PurchasePriceVarianceRow {
   purchase_lines: number;
 }
 
+export interface CreditOverduePurchaseRow {
+  purchase_id: number;
+  invoice_number: string;
+  supplier_id: number | null;
+  supplier_name: string;
+  purchase_date: string;
+  appointment_date: string;
+  days_overdue: number;
+  total: number;
+}
+
 export interface PurchaseOptionsResponse {
   branchId: number;
   suppliers: ReportOption[];
@@ -188,6 +199,15 @@ export const purchaseReportsService = {
       productId: input.mode === 'show' ? input.productId : undefined,
     });
     return apiClient.get<RowsResponse<PurchasePriceVarianceRow>>(`${API.REPORTS.PURCHASE_PRICE_VARIANCE}${query}`);
+  },
+
+  async getCreditOverduePurchases(input: { mode: ReportSelectionMode; supplierId?: number; branchId?: number }) {
+    const query = toQuery({
+      branchId: input.branchId,
+      mode: input.mode,
+      supplierId: input.mode === 'show' ? input.supplierId : undefined,
+    });
+    return apiClient.get<RowsResponse<CreditOverduePurchaseRow>>(`${API.REPORTS.PURCHASE_CREDIT_OVERDUE}${query}`);
   },
 };
 

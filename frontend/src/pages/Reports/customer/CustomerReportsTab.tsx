@@ -12,6 +12,7 @@ type CustomerCardId =
   | 'outstanding-balances'
   | 'payment-history'
   | 'credit-customers'
+  | 'credit-overdue'
   | 'new-customers'
   | 'customer-activity';
 
@@ -21,6 +22,7 @@ const customerCards: Array<{ id: CustomerCardId; title: string; hint: string }> 
   { id: 'outstanding-balances', title: 'Outstanding Balances', hint: 'Dropdown + Show / All' },
   { id: 'payment-history', title: 'Customer Payment History', hint: 'Date range + Show / All' },
   { id: 'credit-customers', title: 'Credit Customers', hint: 'Dropdown + Show / All' },
+  { id: 'credit-overdue', title: 'Overdue Credit Sales', hint: 'Long days overdue + Show / All' },
   { id: 'new-customers', title: 'New Customers (by date)', hint: 'Between two dates' },
   { id: 'customer-activity', title: 'Customer Activity', hint: 'Date range + Show / All' },
 ];
@@ -98,6 +100,15 @@ const creditCustomersColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'status', header: 'Status' },
 ];
 
+const creditOverdueColumns: ReportColumn<Record<string, unknown>>[] = [
+  { key: 'invoice_number', header: 'Invoice #' },
+  { key: 'customer_name', header: 'Customer' },
+  { key: 'sale_date', header: 'Sale Date', render: (row) => formatDateOnly(row.sale_date) },
+  { key: 'appointment_date', header: 'Appointment Date', render: (row) => formatDateOnly(row.appointment_date) },
+  { key: 'days_overdue', header: 'Days Overdue', align: 'right' },
+  { key: 'total', header: 'Amount', align: 'right', render: (row) => formatCurrency(row.total) },
+];
+
 const newCustomersColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'customer_id', header: 'Customer #' },
   { key: 'full_name', header: 'Customer' },
@@ -148,6 +159,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
   const [selectedOutstandingCustomerId, setSelectedOutstandingCustomerId] = useState('');
   const [selectedPaymentCustomerId, setSelectedPaymentCustomerId] = useState('');
   const [selectedCreditCustomerId, setSelectedCreditCustomerId] = useState('');
+  const [selectedOverdueCustomerId, setSelectedOverdueCustomerId] = useState('');
   const [selectedActivityCustomerId, setSelectedActivityCustomerId] = useState('');
 
   const [ledgerRange, setLedgerRange] = useState<DateRange>(defaultReportRange());
@@ -392,6 +404,37 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
       });
     });
 
+  const handleCreditOverdue = (mode: 'show' | 'all') =>
+    runCardAction('credit-overdue', async () => {
+      const customerId = mode === 'show' ? Number(selectedOverdueCustomerId || 0) : undefined;
+      if (mode === 'show' && !customerId) throw new Error('Select a customer first');
+      const response = await customerReportsService.getCreditOverdue({
+        mode,
+        customerId,
+        branchId: activeBranchId ?? undefined,
+      });
+      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load overdue credit report');
+      const rows = toRecordRows(response.data.rows || []);
+      onOpenModal({
+        title: 'Overdue Credit Sales',
+        subtitle: mode === 'show' ? customerNameById.get(selectedOverdueCustomerId) || 'Selected Customer' : 'All Customers',
+        fileName: 'credit-overdue',
+        data: rows,
+        columns: creditOverdueColumns,
+        filters: {
+          Mode: mode === 'show' ? 'Show' : 'All',
+          Customer: mode === 'show' ? customerNameById.get(selectedOverdueCustomerId) || 'Selected Customer' : 'All Customers',
+        },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            total: formatCurrency(sumByKey(rows, 'total')),
+          },
+        },
+        totals: [moneyTotal('Total Overdue', sumByKey(rows, 'total'))],
+      });
+    });
+
   const handleNewCustomers = () =>
     runCardAction('new-customers', async () => {
       ensureRangeValid(newCustomersRange, 'New Customers');
@@ -511,7 +554,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
   );
 
   const renderShowAllButtons = (onShow: () => void, onAll: () => void, cardId: CustomerCardId) => (
-    <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <button
         onClick={onShow}
         disabled={loadingCardId === cardId}
@@ -573,6 +616,15 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
         <div className="space-y-3">
           {renderCustomerSelector(selectedCreditCustomerId, setSelectedCreditCustomerId)}
           {renderShowAllButtons(() => handleCreditCustomers('show'), () => handleCreditCustomers('all'), cardId)}
+        </div>
+      );
+    }
+
+    if (cardId === 'credit-overdue') {
+      return (
+        <div className="space-y-3">
+          {renderCustomerSelector(selectedOverdueCustomerId, setSelectedOverdueCustomerId)}
+          {renderShowAllButtons(() => handleCreditOverdue('show'), () => handleCreditOverdue('all'), cardId)}
         </div>
       );
     }

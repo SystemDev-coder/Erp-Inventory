@@ -148,6 +148,7 @@ export interface FinancialCogsByInvoiceRow {
   customer_name: string;
   cashier_name: string;
   total: number;
+  tax_amount: number;
   cogs: number;
   gross_profit: number;
 }

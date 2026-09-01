@@ -8,6 +8,8 @@ import { PoolClient } from 'pg';
 import { adjustSystemAccountBalance } from '../../utils/systemAccounts';
 import { postGl } from '../../utils/glPosting';
 import { ensureCoaAccounts } from '../../utils/coaDefaults';
+import { resolvePurchaseDueDate } from '../../utils/creditDueHelpers';
+import { offsetOf, type Paged } from '../../utils/pagination';
 
 export interface Purchase {
   purchase_id: number;
@@ -270,8 +272,11 @@ const getOrCreateDefaultStoreId = async (client: PoolClient, branchId: number): 
   if (storeId > 0) return storeId;
 
   const created = await client.query<{ store_id: number }>(
+    // $1 is pinned to bigint in both slots; without the cast in LPAD, Postgres
+    // deduces text there and bigint in the column list and rejects the whole
+    // statement (42P08), which broke the very first purchase of a fresh branch.
     `INSERT INTO ims.stores (branch_id, store_name, store_code, is_active)
-     VALUES ($1, 'Main Store', 'MAIN-' || LPAD($1::text, 3, '0'), TRUE)
+     VALUES ($1::bigint, 'Main Store', 'MAIN-' || LPAD($1::bigint::text, 3, '0'), TRUE)
      ON CONFLICT (branch_id, store_name)
      DO UPDATE SET is_active = TRUE
      RETURNING store_id`,
@@ -714,8 +719,11 @@ export const purchasesService = {
     branchId?: number,
     fromDate?: string,
     toDate?: string,
-    docType?: string
-  ): Promise<Purchase[]> {
+    docType?: string,
+    pagination?: { page: number; limit: number }
+  ): Promise<Paged<Purchase>> {
+    const page = pagination?.page ?? 1;
+    const limit = pagination?.limit ?? 100;
     const params: any[] = [];
     const clauses: string[] = [];
     if (branchId) {
@@ -746,14 +754,30 @@ export const purchasesService = {
 
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 
-    return queryMany<Purchase>(
+    const countRow = await queryOne<{ total: string }>(
+      `SELECT COUNT(*)::text AS total
+         FROM ims.purchases p
+         LEFT JOIN ims.suppliers s ON s.supplier_id = p.supplier_id
+         ${where}`,
+      params
+    );
+
+    const rows = await queryMany<Purchase>(
       `SELECT p.*, s.name AS supplier_name
          FROM ims.purchases p
          LEFT JOIN ims.suppliers s ON s.supplier_id = p.supplier_id
          ${where}
-        ORDER BY p.purchase_date DESC`,
-      params
+        ORDER BY p.purchase_date DESC
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offsetOf(page, limit)]
     );
+
+    return {
+      rows,
+      total: Number(countRow?.total || 0),
+      page,
+      limit,
+    };
   },
 
   async receiveOrder(
@@ -1004,7 +1028,14 @@ export const purchasesService = {
         ? subtotalFromItems
         : Number(input.subtotal ?? 0);
       const discount = Number(input.discount ?? 0);
-      const total = input.total !== undefined ? Number(input.total) : subtotal - discount;
+      // When line items are present the totals are derived here rather than taken
+      // from the request: purchaseSchema defaults `total` to 0, so a caller that
+      // omits it (imports, integrations) recorded a 0-value purchase, and
+      // rewritePurchaseGl skips posting on a 0 total - leaving Inventory and
+      // Accounts Payable untouched while the stock still moved.
+      const total = preparedItems.length > 0
+        ? subtotal - discount
+        : (input.total !== undefined ? Number(input.total) : subtotal - discount);
       if (subtotal < 0 || discount < 0 || total < 0) {
         throw ApiError.badRequest('Purchase amounts cannot be negative');
       }
@@ -1020,13 +1051,18 @@ export const purchasesService = {
         branchId: context.branchId,
         storeId: input.storeId ?? null,
       });
+      const dueDate = await resolvePurchaseDueDate(client, {
+        purchaseType,
+        purchaseDate: input.purchaseDate || null,
+        dueDateInput: input.dueDate ?? null,
+      });
 
       const purchaseResult = await client.query<Purchase>(
       `INSERT INTO ims.purchases (
          branch_id, store_id, user_id, supplier_id, fx_rate,
          purchase_date, purchase_type, subtotal, discount, total, status, note,
-         doc_type, expected_date
-       ) VALUES ($1, $2, $3, $4, $5, COALESCE($6, NOW()), $7, $8, $9, $10, $11, $12, $13, $14)
+         doc_type, expected_date, due_date
+       ) VALUES ($1, $2, $3, $4, $5, COALESCE($6, NOW()), $7, $8, $9, $10, $11, $12, $13, $14, $15)
        RETURNING *`,
       [
         context.branchId,
@@ -1043,6 +1079,7 @@ export const purchasesService = {
         input.note || null,
         docType,
         (input as any).expectedDate || null,
+        dueDate,
       ]
       );
 
@@ -1366,6 +1403,15 @@ export const purchasesService = {
         }
       }
 
+      const nextDueDate =
+        input.dueDate !== undefined
+          ? await resolvePurchaseDueDate(client, {
+              purchaseType: nextPurchaseType,
+              purchaseDate: input.purchaseDate || current.purchase_date,
+              dueDateInput: input.dueDate ?? null,
+            })
+          : null;
+
       await client.query(
         `UPDATE ims.purchases
             SET supplier_id = $2,
@@ -1378,7 +1424,8 @@ export const purchasesService = {
                 fx_rate = $9,
                 note = $10,
                 store_id = COALESCE($11, store_id),
-                expected_date = COALESCE($12::date, expected_date)
+                expected_date = COALESCE($12::date, expected_date),
+                due_date = COALESCE($13::date, due_date)
           WHERE purchase_id = $1`,
         [
           id,
@@ -1393,6 +1440,7 @@ export const purchasesService = {
           input.note !== undefined ? input.note : current.note,
           storeId,
           (input as any).expectedDate ?? null,
+          nextDueDate,
         ]
       );
 

@@ -46,6 +46,7 @@ const SalesReturns = () => {
     customerId: '',
     refundAccId: '',
     refundAmount: 0,
+    refundViaAccount: false,
   });
   const [lines, setLines] = useState<ReturnLine[]>([defaultLine()]);
   const [items, setItems] = useState<ReturnItemOption[]>([]);
@@ -67,6 +68,7 @@ const SalesReturns = () => {
     return Number(raw || 0);
   }, [selectedCustomer]);
   const minRefund = useMemo(() => Math.max(0, Number((subtotal - Math.max(customerOutstanding, 0)).toFixed(2))), [subtotal, customerOutstanding]);
+  const canChooseRefundMethod = customerOutstanding + 0.005 >= subtotal && subtotal > 0;
   const balanceReduction = useMemo(() => Math.max(0, Number((subtotal - Number(form.refundAmount || 0)).toFixed(2))), [subtotal, form.refundAmount]);
 
   useEffect(() => {
@@ -143,6 +145,7 @@ const SalesReturns = () => {
       customerId: '',
       refundAccId: '',
       refundAmount: 0,
+      refundViaAccount: false,
     });
     setLines([defaultLine()]);
     setItems([]);
@@ -155,10 +158,7 @@ const SalesReturns = () => {
     if (!form.customerId) errs.customerId = 'Customer is required';
     const hasValidLine = lines.some((l) => l.itemId && Number(l.quantity) > 0);
     if (!hasValidLine) errs.items = 'Add at least one item with a quantity greater than 0';
-    const refundAmt = Number(form.refundAmount || 0);
-    if (refundAmt > 0 && !form.refundAccId) errs.refundAccId = 'Select a refund account';
-    if (refundAmt > subtotal) errs.refundAmount = 'Refund amount cannot exceed the return total';
-    if (refundAmt + 1e-9 < minRefund) errs.refundAmount = `Refund must be at least ${fmtCurrency(minRefund)}`;
+    if (form.refundViaAccount && !form.refundAccId) errs.refundAccId = 'Select a refund account';
     return errs;
   };
 
@@ -178,6 +178,7 @@ const SalesReturns = () => {
         customerId,
         refundAccId: row.refund_acc_id ? String(row.refund_acc_id) : '',
         refundAmount: Number(row.refund_amount || 0),
+        refundViaAccount: Number(row.refund_amount || 0) > 0,
       });
       await loadItemsForCustomer(row.customer_id ? Number(row.customer_id) : undefined);
       const itemsRes = await returnsService.getSalesReturnItems(editingId);
@@ -280,17 +281,20 @@ const SalesReturns = () => {
       showToast('error', 'Sales Return', `Return qty exceeds available (${maxQty}) for ${selected?.name || `item ${unavailable.itemId}`}`);
       return;
     }
-    const refundAmount = Number(form.refundAmount || 0);
-
-    setSaving(true);
     const payload: any = {
       customerId: Number(form.customerId),
       referenceNo: form.referenceNo || undefined,
       note: form.note || undefined,
       items: normalized,
+      refundViaAccount: form.refundViaAccount,
     };
-    payload.refundAccId = form.refundAccId ? Number(form.refundAccId) : undefined;
-    payload.refundAmount = refundAmount;
+    if (form.refundViaAccount) {
+      payload.refundAccId = form.refundAccId ? Number(form.refundAccId) : undefined;
+      payload.refundAmount = subtotal;
+    } else {
+      payload.refundAmount = 0;
+    }
+    setSaving(true);
     const res = editingId
       ? await returnsService.updateSalesReturn(editingId, payload)
       : await returnsService.createSalesReturn(payload);
@@ -483,48 +487,56 @@ const SalesReturns = () => {
             </div>
           </div>
 
-	          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-	            <div>
-	              <label className={`${labelClass} font-semibold`}>Refund Account</label>
-	              <SearchableCombobox<number>
-	                value={form.refundAccId ? Number(form.refundAccId) : ''}
-	                options={accounts.filter((a) => a.is_active).map((a) => ({ value: a.acc_id, label: a.name }))}
-	                placeholder={minRefund > 0 ? 'Select refund account' : 'No refund'}
-	                disabled={loading}
-	                hasError={!!(touched.refundAccId && errors.refundAccId)}
-	                onChange={(nextValue) => {
-	                  setForm((prev) => ({ ...prev, refundAccId: nextValue === '' ? '' : String(nextValue) }));
-	                  setErrors((prev) => ({ ...prev, refundAccId: '' }));
-	                  setTouched((prev) => ({ ...prev, refundAccId: true }));
-	                }}
-	              />
-	              {touched.refundAccId && errors.refundAccId && (
-	                <p className="mt-1 text-xs font-medium text-red-500 dark:text-red-400">{errors.refundAccId}</p>
-	              )}
-	            </div>
-            <div>
-              <label className={`${labelClass} font-semibold`}>Refund Amount</label>
-              <input
-                type="number"
-                min={minRefund}
-                step={0.01}
-                className={touched.refundAmount && errors.refundAmount ? errInputCls : inputClass}
-                value={form.refundAmount}
-                onBlur={() => setTouched((prev) => ({ ...prev, refundAmount: true }))}
-                onChange={(e) => {
-                  setForm((prev) => ({ ...prev, refundAmount: Number(e.target.value) }));
-                  setErrors((prev) => ({ ...prev, refundAmount: '' }));
-                }}
-                placeholder="0.00"
-              />
-              {touched.refundAmount && errors.refundAmount && (
-                <p className="mt-1 text-xs font-medium text-red-500 dark:text-red-400">{errors.refundAmount}</p>
+          {(canChooseRefundMethod || customerOutstanding + 0.005 < subtotal) && (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {canChooseRefundMethod && (
+                <div className="flex items-center gap-3 md:col-span-2">
+                  <input
+                    id="refund-via-account"
+                    type="checkbox"
+                    className="h-4 w-4 accent-primary-600"
+                    checked={form.refundViaAccount}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setForm((prev) => ({
+                        ...prev,
+                        refundViaAccount: checked,
+                        refundAmount: checked ? subtotal : 0,
+                      }));
+                    }}
+                  />
+                  <label htmlFor="refund-via-account" className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                    Refund via account (instead of deducting from customer balance)
+                  </label>
+                </div>
               )}
-              {minRefund > 0 ? (
-                <p className="mt-1 text-[11px] text-slate-500">Refund must be at least {fmtCurrency(minRefund)} (customer outstanding not enough).</p>
-              ) : null}
+              {(form.refundViaAccount || customerOutstanding + 0.005 < subtotal) && (
+                <div>
+                  <label className={`${labelClass} font-semibold`}>Refund Account</label>
+                  <SearchableCombobox<number>
+                    value={form.refundAccId ? Number(form.refundAccId) : ''}
+                    options={accounts.filter((a) => a.is_active).map((a) => ({ value: a.acc_id, label: a.name }))}
+                    placeholder="Select refund account"
+                    disabled={loading}
+                    hasError={!!(touched.refundAccId && errors.refundAccId)}
+                    onChange={(nextValue) => {
+                      setForm((prev) => ({ ...prev, refundAccId: nextValue === '' ? '' : String(nextValue) }));
+                      setErrors((prev) => ({ ...prev, refundAccId: '' }));
+                      setTouched((prev) => ({ ...prev, refundAccId: true }));
+                    }}
+                  />
+                  {touched.refundAccId && errors.refundAccId && (
+                    <p className="mt-1 text-xs font-medium text-red-500 dark:text-red-400">{errors.refundAccId}</p>
+                  )}
+                  {!canChooseRefundMethod && (
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      Customer balance is less than return total — full refund from account is required.
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
-          </div>
+          )}
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div>

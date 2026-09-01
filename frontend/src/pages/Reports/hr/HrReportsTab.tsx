@@ -376,7 +376,7 @@ export function HrReportsTab({ onOpenModal }: Props) {
   );
 
   const renderShowAllButtons = (onShow: () => void, onAll: () => void, cardId: HrCardId) => (
-    <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <button
         onClick={onShow}
         disabled={loadingCardId === cardId}

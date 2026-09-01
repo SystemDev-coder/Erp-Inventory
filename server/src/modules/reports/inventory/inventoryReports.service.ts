@@ -469,7 +469,7 @@ export const inventoryReportsService = {
       `SELECT
          p.purchase_id,
          p.purchase_date::text AS purchase_date,
-         COALESCE(sp.full_name, 'Unknown Supplier') AS supplier_name,
+         COALESCE(sp.name, 'Unknown Supplier') AS supplier_name,
          i.item_id,
          i.name AS item_name,
          COALESCE(pi.batch_no, '') AS batch_no,

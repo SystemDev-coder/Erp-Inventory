@@ -356,10 +356,10 @@ const Purchases = () => {
     setSupplierDeleteOpen(true);
   };
 
-  const confirmDeleteSupplier = async () => {
+  const confirmDeleteSupplier = async (reason: string) => {
     if (!supplierToDelete) return;
     setLoading(true);
-    const res = await supplierService.remove(supplierToDelete.supplier_id);
+    const res = await supplierService.remove(supplierToDelete.supplier_id, reason);
     if (res.success) {
       showToast('success', 'Supplier deleted');
       if (suppliersDisplayed) loadSuppliers(search);
@@ -372,10 +372,10 @@ const Purchases = () => {
   };
 
 
-  const confirmDelete = async () => {
+  const confirmDelete = async (reason: string) => {
     if (!purchaseToDelete) return;
     setLoading(true);
-    const res = await purchaseService.remove(purchaseToDelete.purchase_id);
+    const res = await purchaseService.remove(purchaseToDelete.purchase_id, reason);
     if (res.success) {
       showToast('success', 'Deleted', `Purchase #${purchaseToDelete.purchase_id} removed`);
       if (purchasesDisplayed) loadPurchases(search, statusFilter);
@@ -426,10 +426,10 @@ const Purchases = () => {
     }
   };
 
-  const confirmDeleteOrder = async () => {
+  const confirmDeleteOrder = async (reason: string) => {
     if (!orderToDelete) return;
     setOrdersLoading(true);
-    const res = await purchaseService.remove(orderToDelete.purchase_id);
+    const res = await purchaseService.remove(orderToDelete.purchase_id, reason);
     if (res.success) {
       showToast('success', 'Deleted', `Order #${orderToDelete.purchase_id} removed`);
       if (ordersDisplayed) void loadOrders();
@@ -798,7 +798,8 @@ const Purchases = () => {
       <ConfirmDialog
         isOpen={deleteOpen}
         onClose={() => { setDeleteOpen(false); setPurchaseToDelete(null); }}
-        onConfirm={confirmDelete}
+        onConfirm={(reason) => void confirmDelete(reason || '')}
+        requireReason
         title="Delete Purchase?"
         message={
           purchaseToDelete
@@ -879,7 +880,8 @@ const Purchases = () => {
       <ConfirmDialog
         isOpen={orderDeleteOpen}
         onClose={() => { setOrderDeleteOpen(false); setOrderToDelete(null); }}
-        onConfirm={confirmDeleteOrder}
+        onConfirm={(reason) => void confirmDeleteOrder(reason || '')}
+        requireReason
         title="Delete Order?"
         message={
           orderToDelete
@@ -895,7 +897,8 @@ const Purchases = () => {
       <ConfirmDialog
         isOpen={supplierDeleteOpen}
         onClose={() => { setSupplierDeleteOpen(false); setSupplierToDelete(null); }}
-        onConfirm={confirmDeleteSupplier}
+        onConfirm={(reason) => void confirmDeleteSupplier(reason || '')}
+        requireReason
         title="Delete Supplier?"
         message={
           supplierToDelete

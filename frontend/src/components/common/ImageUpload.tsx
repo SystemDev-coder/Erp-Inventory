@@ -6,7 +6,7 @@ import { ConfirmDialog } from '../ui/modal/ConfirmDialog';
 interface ImageUploadProps {
   currentImage?: string | null;
   onUpload: (file: File) => Promise<string>;
-  onDelete?: () => Promise<void>;
+  onDelete?: (reason: string) => Promise<void>;
   label?: string;
   aspectRatio?: 'square' | 'landscape' | 'portrait';
   maxSizeMB?: number;
@@ -82,11 +82,11 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
     }
   };
 
-  const confirmDelete = async () => {
+  const confirmDelete = async (reason: string) => {
     if (!onDelete) return;
     try {
       setDeleting(true);
-      await onDelete();
+      await onDelete(reason);
       setPreview(null);
       showToast('success', 'Deleted', 'Image deleted successfully');
     } catch (error: any) {
@@ -155,9 +155,10 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
           onClose={() => {
             if (!deleting) setDeleteConfirmOpen(false);
           }}
-          onConfirm={() => {
-            void confirmDelete();
+          onConfirm={(reason) => {
+            void confirmDelete(reason || '');
           }}
+          requireReason
           title="Delete Image?"
           message="Are you sure you want to delete this image?"
           confirmText="Delete"
@@ -259,9 +260,10 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
         onClose={() => {
           if (!deleting) setDeleteConfirmOpen(false);
         }}
-        onConfirm={() => {
-          void confirmDelete();
+        onConfirm={(reason) => {
+          void confirmDelete(reason || '');
         }}
+        requireReason
         title="Delete Image?"
         message="Are you sure you want to delete this image?"
         confirmText="Delete"

@@ -7,6 +7,7 @@ export interface CogsByInvoiceRow {
   customer_name: string;
   cashier_name: string;
   total: number;
+  tax_amount: number;
   cogs: number;
   gross_profit: number;
 }
@@ -38,8 +39,16 @@ export const cogsReportsService = {
          COALESCE(cu.full_name, 'Walk-in') AS customer_name,
          COALESCE(u.full_name, u.name, u.username, 'Unknown') AS cashier_name,
          COALESCE(s.total, 0)::double precision AS total,
+         COALESCE(NULLIF(to_jsonb(s) ->> 'tax_amount', '')::numeric, 0)::double precision AS tax_amount,
          COALESCE(cg.cogs, 0)::double precision AS cogs,
-         (COALESCE(s.total, 0) - COALESCE(cg.cogs, 0))::double precision AS gross_profit
+         -- VAT is collected on behalf of the tax authority, so it is stripped out
+         -- before margin: including it inflated gross profit by the tax amount and
+         -- disagreed with the Income Statement, which books tax as a liability.
+         (
+           COALESCE(s.total, 0)
+           - COALESCE(NULLIF(to_jsonb(s) ->> 'tax_amount', '')::numeric, 0)
+           - COALESCE(cg.cogs, 0)
+         )::double precision AS gross_profit
        FROM ims.sales s
        LEFT JOIN cogs cg ON cg.sale_id = s.sale_id
        LEFT JOIN ims.customers cu ON cu.customer_id = s.customer_id

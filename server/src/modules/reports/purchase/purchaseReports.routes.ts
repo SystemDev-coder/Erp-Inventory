@@ -7,6 +7,7 @@ import {
   getPurchasePriceVarianceReport,
   getPurchaseReportOptions,
   getPurchaseReturnsReport,
+  getCreditOverduePurchasesReport,
   getSupplierLedgerReport,
   getSupplierWisePurchasesReport,
 } from './purchaseReports.controller';
@@ -22,5 +23,6 @@ router.get('/supplier-ledger', getSupplierLedgerReport);
 router.get('/by-date-range', getPurchaseByDateRangeReport);
 router.get('/best-suppliers', getBestSuppliersReport);
 router.get('/price-variance', getPurchasePriceVarianceReport);
+router.get('/credit-overdue', getCreditOverduePurchasesReport);
 
 export default router;
