@@ -560,8 +560,8 @@ const Dashboard = () => {
 
         <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <p className="text-[11px] uppercase tracking-[0.32em] text-primary-700 dark:text-primary-200">Inventory ERP</p>
-            <h1 className="mt-2 text-4xl font-semibold tracking-tight text-slate-900 dark:text-white">Dashboard</h1>
+            <p className="text-xs uppercase tracking-[0.2em] text-primary-700 dark:text-primary-200">Inventory ERP</p>
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl lg:text-4xl dark:text-white">Dashboard</h1>
             <p className="mt-1 text-sm text-slate-700 dark:text-white/80">
               {hasLoaded
                 ? `Live metrics loaded | ${lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : ''}`
@@ -635,7 +635,7 @@ const Dashboard = () => {
                   <div className={`absolute left-0 top-0 h-1.5 w-full bg-gradient-to-r ${tone.stripe}`} />
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="truncate text-[11px] font-semibold uppercase tracking-[0.17em] text-slate-500 dark:text-slate-300">
+                      <p className="truncate text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-300">
                         {card.title}
                       </p>
                       <p className="mt-2 truncate text-[1.7rem] font-semibold leading-tight text-slate-900 dark:text-slate-100">
@@ -692,18 +692,18 @@ const Dashboard = () => {
                         : 'border-error-200 bg-error-50 text-error-700 dark:border-error-800 dark:bg-error-900/30 dark:text-error-200';
 
                     return (
-                      <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${toneClass}`}>
+                      <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-wide ${toneClass}`}>
                         {`${change >= 0 ? '+' : ''}${change.toFixed(1)}% vs first month`}
                       </span>
                     );
                   })()}
                 </div>
-                <div className="mt-4">
+                <div className="mt-4 overflow-hidden">
                   <Chart
                     options={chartOptions[incomeTrendChart.id]}
                     series={incomeTrendChart.series}
                     type="line"
-                    height={320}
+                    height={260}
                   />
                 </div>
               </article>
@@ -728,12 +728,12 @@ const Dashboard = () => {
                             </p>
                           </div>
                         </div>
-                        <div className="mt-4">
+                        <div className="mt-4 overflow-hidden">
                           <Chart
                             options={chartOptions[salesBottomChart.id]}
                             series={salesBottomChart.series}
                             type={salesBottomChart.type === 'bar' ? 'bar' : 'line'}
-                            height={300}
+                            height={240}
                           />
                         </div>
                       </article>
@@ -748,7 +748,7 @@ const Dashboard = () => {
                               Items at or below reorder level
                             </p>
                           </div>
-                          <span className="rounded-full border border-primary-200 bg-primary-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-primary-700 dark:border-primary-800 dark:bg-primary-900/30 dark:text-primary-200">
+                          <span className="rounded-full border border-primary-200 bg-primary-50 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-primary-700 dark:border-primary-800 dark:bg-primary-900/30 dark:text-primary-200">
                             {lowStockItems.length} items
                           </span>
                         </div>
@@ -771,7 +771,7 @@ const Dashboard = () => {
                                     Stock: {item.quantity} / Alert: {item.stock_alert}
                                   </p>
                                 </div>
-                                <span className="ml-3 rounded-full border border-warning-200 bg-warning-50 px-2 py-0.5 text-[11px] font-semibold text-warning-700 dark:border-warning-800 dark:bg-warning-900/30 dark:text-warning-200">
+                                <span className="ml-3 rounded-full border border-warning-200 bg-warning-50 px-2 py-0.5 text-xs font-semibold text-warning-700 dark:border-warning-800 dark:bg-warning-900/30 dark:text-warning-200">
                                   Need {item.shortage}
                                 </span>
                               </div>
@@ -799,12 +799,12 @@ const Dashboard = () => {
                                 <p className="text-xs text-slate-600 dark:text-slate-300">{getChartSubtitle(chart.id)}</p>
                               </div>
                             </div>
-                            <div className="mt-4">
+                            <div className="mt-4 overflow-hidden">
                               <Chart
                                 options={options}
                                 series={chart.series}
                                 type={chart.type === 'bar' ? 'bar' : 'line'}
-                                height={300}
+                                height={240}
                               />
                             </div>
                           </article>
@@ -830,15 +830,38 @@ const Dashboard = () => {
                   <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Recent Activity</h3>
                   <p className="text-xs text-slate-500 dark:text-slate-300">Latest sales and purchase transactions</p>
                 </div>
-                <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-300">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-300">
                   Last {Math.min(10, data.recent.length)} records
                 </span>
               </div>
 
-              <div className="mt-4 overflow-x-auto custom-scrollbar">
-                <table className="min-w-[680px] w-full">
+              <div className="mt-4 md:hidden space-y-3">
+                {data.recent.map((row) => (
+                  <article key={row.id} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{row.type}</p>
+                      <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${statusTone(row.status)}`}>
+                        {row.status}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-300">{row.ref}</p>
+                    <div className="mt-2 flex items-center justify-between text-sm">
+                      <span className="text-slate-700 dark:text-slate-200">{formatValue(row.amount, 'currency')}</span>
+                      <span className="text-slate-500 dark:text-slate-300">{formatDateTime(row.date)}</span>
+                    </div>
+                  </article>
+                ))}
+                {data.recent.length === 0 && (
+                  <p className="px-2 py-8 text-center text-sm text-slate-500 dark:text-slate-300">
+                    No recent activity found.
+                  </p>
+                )}
+              </div>
+
+              <div className="mt-4 hidden overflow-x-auto custom-scrollbar md:block">
+                <table className="w-full">
                   <thead>
-                    <tr className="border-b border-slate-200 text-left text-[11px] uppercase tracking-[0.18em] text-slate-500 dark:border-slate-700 dark:text-slate-300">
+                    <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500 dark:border-slate-700 dark:text-slate-300">
                       <th className="px-2 py-3">Type</th>
                       <th className="px-2 py-3">Reference</th>
                       <th className="px-2 py-3">Amount</th>

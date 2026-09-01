@@ -179,11 +179,11 @@ export default function StockAdjustmentsPage() {
     setDeleteTarget(row);
   };
 
-  const confirmDelete = async () => {
+  const confirmDelete = async (reason: string) => {
     if (!deleteTarget) return;
     try {
       setDeleting(true);
-      const res = await inventoryService.deleteAdjustment(deleteTarget.adj_id);
+      const res = await inventoryService.deleteAdjustment(deleteTarget.adj_id, reason);
       if (!res.success) {
         throw new Error(res.error || 'Failed to delete adjustment');
       }

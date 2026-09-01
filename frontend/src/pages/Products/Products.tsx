@@ -305,9 +305,9 @@ const Products = () => {
     }
   };
 
-  const removeItem = async () => {
+  const removeItem = async (reason: string) => {
     if (!itemToDelete) return;
-    const res = await productService.remove(itemToDelete.product_id);
+    const res = await productService.remove(itemToDelete.product_id, reason);
     if (res.success) {
       showToast('success', 'Items', 'Item deleted');
       setItemToDelete(null);
@@ -753,7 +753,7 @@ const Products = () => {
         </div>
       </Modal>
 
-      <ConfirmDialog isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={removeItem} title="Delete Item" message={`Delete "${itemToDelete?.name || ''}"?`} confirmText="Delete" variant="danger" isLoading={loading} />
+      <ConfirmDialog isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={(reason) => void removeItem(reason || '')} requireReason title="Delete Item" message={`Delete "${itemToDelete?.name || ''}"?`} confirmText="Delete" variant="danger" isLoading={loading} />
 
       <ImportUploadModal
         isOpen={itemImportOpen}

@@ -123,11 +123,11 @@ const ScheduleModal = ({ isOpen, onClose, selectedEmployee }: Props) => {
     }
   };
 
-  const confirmDeleteSchedule = async () => {
+  const confirmDeleteSchedule = async (reason: string) => {
     if (!pendingDeleteScheduleId) return;
     setDeletingSchedule(true);
     try {
-      const response = await scheduleService.delete(pendingDeleteScheduleId);
+      const response = await scheduleService.delete(pendingDeleteScheduleId, reason);
       if (response.success) {
         showToast('success', 'Success', 'Schedule deleted');
         fetchSchedules(selectedEmpId ? Number(selectedEmpId) : undefined);
@@ -397,9 +397,10 @@ const ScheduleModal = ({ isOpen, onClose, selectedEmployee }: Props) => {
             setPendingDeleteScheduleId(null);
           }
         }}
-        onConfirm={() => {
-          void confirmDeleteSchedule();
+        onConfirm={(reason) => {
+          void confirmDeleteSchedule(reason || '');
         }}
+        requireReason
         title="Delete Schedule?"
         message="Are you sure you want to delete this schedule?"
         confirmText="Delete"

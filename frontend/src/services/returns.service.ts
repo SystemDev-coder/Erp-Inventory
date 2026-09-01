@@ -128,10 +128,7 @@ export const returnsService = {
         return apiClient.put<{ return: SalesReturn }>(`/api/returns/sales/${id}`, payload);
     },
     deleteSalesReturn(id: number, reason: string) {
-        return apiClient.delete(`/api/returns/sales/${id}`, {
-            body: JSON.stringify({ reason }),
-            headers: { 'Content-Type': 'application/json' },
-        });
+        return apiClient.delete(`/api/returns/sales/${id}`, reason);
     },
     listPurchaseReturns(params?: { fromDate?: string; toDate?: string; branchId?: number }) {
         const qsParts: string[] = [];
@@ -170,9 +167,6 @@ export const returnsService = {
         return apiClient.put<{ return: PurchaseReturn }>(`/api/returns/purchases/${id}`, payload);
     },
     deletePurchaseReturn(id: number, reason: string) {
-        return apiClient.delete(`/api/returns/purchases/${id}`, {
-            body: JSON.stringify({ reason }),
-            headers: { 'Content-Type': 'application/json' },
-        });
+        return apiClient.delete(`/api/returns/purchases/${id}`, reason);
     },
 };

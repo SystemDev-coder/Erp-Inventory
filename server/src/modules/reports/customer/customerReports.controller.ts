@@ -105,6 +105,20 @@ export const getCreditCustomersReport = asyncHandler(async (req: AuthRequest, re
   });
 });
 
+export const getCreditOverdueReport = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const branchId = await resolveBranchIdForReports(req);
+  const mode = parseSelectionMode(req.query.mode);
+  const customerId = mode === 'show' ? parseNumericId(req.query.customerId, 'customerId') : undefined;
+  const rows = await customerReportsService.getCreditOverdue(branchId, customerId);
+  return ApiResponse.success(res, {
+    branchId,
+    reportKey: 'credit-overdue',
+    mode,
+    customerId: customerId ?? null,
+    rows,
+  });
+});
+
 export const getNewCustomersReport = asyncHandler(async (req: AuthRequest, res: Response) => {
   const branchId = await resolveBranchIdForReports(req);
   const { fromDate, toDate } = parseDateRange(req);

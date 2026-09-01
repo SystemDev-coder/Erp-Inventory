@@ -5,6 +5,7 @@ import { PageHeader } from '../../../components/ui/layout';
 import { useToast } from '../../../components/ui/toast/Toast';
 import { AccountsReceivableRow, financialReportsService } from '../../../services/reports/financialReports.service';
 import { defaultReportRange } from '../reportUtils';
+import { useBranch } from '../../../context/BranchContext';
 
 const money = (value: number) =>
   `$${Number(value || 0).toLocaleString(undefined, {
@@ -20,6 +21,7 @@ const formatDate = (value: string) => {
 
 export default function AccountsReceivableReportPage() {
   const { showToast } = useToast();
+  const { activeBranchId } = useBranch();
   const [range, setRange] = useState(defaultReportRange());
   const [rows, setRows] = useState<AccountsReceivableRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -40,7 +42,10 @@ export default function AccountsReceivableReportPage() {
     setHasDisplayed(true);
     setError('');
     try {
-      const response = await financialReportsService.getAccountsReceivable(range);
+      const response = await financialReportsService.getAccountsReceivable({
+        ...range,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) {
         setRows([]);
         setError(response.error || response.message || 'Failed to load receivable report');
@@ -107,9 +112,10 @@ export default function AccountsReceivableReportPage() {
 
       <div className="rounded-xl border border-zinc-300 bg-white p-4 shadow-sm">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-          <label className="space-y-1 text-sm font-medium text-black">
+          <label htmlFor="ar-from-date" className="space-y-1 text-sm font-medium text-black">
             <span>From Date</span>
             <input
+              id="ar-from-date"
               type="date"
               value={range.fromDate}
               onChange={(event) =>
@@ -118,9 +124,10 @@ export default function AccountsReceivableReportPage() {
               className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-black focus:border-black focus:outline-none"
             />
           </label>
-          <label className="space-y-1 text-sm font-medium text-black">
+          <label htmlFor="ar-to-date" className="space-y-1 text-sm font-medium text-black">
             <span>To Date</span>
             <input
+              id="ar-to-date"
               type="date"
               value={range.toDate}
               onChange={(event) =>
@@ -134,7 +141,7 @@ export default function AccountsReceivableReportPage() {
               type="button"
               onClick={() => void loadReport()}
               disabled={loading}
-              className="w-full rounded-md border border-black bg-black px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+              className="w-full min-h-11 rounded-md border border-black bg-black px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
             >
               {loading ? 'Loading...' : 'Display'}
             </button>

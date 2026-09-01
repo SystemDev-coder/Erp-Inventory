@@ -11,6 +11,7 @@ import {
   resolveSalesReturnRefund,
   requireDeleteReason,
 } from '../../utils/refundRules';
+import { resolvePurchaseReturnPricing, resolveSalesReturnPricing } from '../../utils/returnPricing';
 
 export interface SalesReturn {
     sr_id: number;
@@ -1192,15 +1193,17 @@ export const returnsService = {
              price AS (
                 SELECT
                     si.item_id,
-                    MAX(
-                        COALESCE(
-                          NULLIF(si.unit_price, 0),
+                    ROUND(
+                      (
+                        SUM(
                           CASE
-                            WHEN COALESCE(si.quantity, 0) > 0
-                              THEN NULLIF(si.line_total, 0) / si.quantity
-                            ELSE NULL
+                            WHEN COALESCE(s.subtotal, 0) > 0
+                              THEN (si.line_total / s.subtotal) * s.total
+                            ELSE si.line_total
                           END
-                        )
+                        ) / NULLIF(SUM(si.quantity), 0)
+                      )::numeric,
+                      2
                     ) AS unit_price
                   FROM ims.sales s
                   JOIN ims.sale_items si ON si.sale_id = s.sale_id
@@ -1258,15 +1261,17 @@ export const returnsService = {
               price AS (
                  SELECT
                      pi.item_id,
-                    MAX(
-                        COALESCE(
-                          NULLIF(pi.unit_cost, 0),
+                    ROUND(
+                      (
+                        SUM(
                           CASE
-                            WHEN COALESCE(pi.quantity, 0) > 0
-                              THEN NULLIF(pi.line_total, 0) / pi.quantity
-                            ELSE NULL
+                            WHEN COALESCE(p.subtotal, 0) > 0
+                              THEN (pi.line_total / p.subtotal) * p.total
+                            ELSE pi.line_total
                           END
-                        )
+                        ) / NULLIF(SUM(pi.quantity), 0)
+                      )::numeric,
+                      2
                     ) AS unit_cost
                   FROM ims.purchases p
                   JOIN ims.purchase_items pi ON pi.purchase_id = p.purchase_id
@@ -1531,11 +1536,18 @@ export const returnsService = {
                 }
             }
 
-            const subtotal = items.reduce(
-                (s, i) => s + Number(i.quantity) * Number(i.unitPrice || 0),
-                0
-            );
-            const total = roundMoney(subtotal);
+            const pricedReturn = await resolveSalesReturnPricing(client, {
+                branchId: context.branchId,
+                customerId: input.customerId,
+                saleId: input.saleId ?? null,
+                items: items.map((item) => ({
+                    itemId: item.itemId,
+                    quantity: Number(item.quantity),
+                })),
+            });
+            const subtotal = pricedReturn.subtotal;
+            const total = pricedReturn.total;
+            const pricedByItemId = new Map(pricedReturn.lines.map((line) => [line.itemId, line]));
             const currentOutstanding = await getCustomerOutstandingForUpdate(client, {
                 branchId: context.branchId,
                 customerId: input.customerId,
@@ -1598,8 +1610,9 @@ export const returnsService = {
             const sr = returnRes.rows[0];
 
             for (const item of items) {
-                const unitPrice = Number(item.unitPrice || 0);
-                const lineTotal = Number(item.quantity) * unitPrice;
+                const pricedLine = pricedByItemId.get(item.itemId);
+                const unitPrice = pricedLine?.unitPrice ?? Number(item.unitPrice || 0);
+                const lineTotal = pricedLine?.lineTotal ?? Number(item.quantity) * unitPrice;
 
                 await client.query(
                     `INSERT INTO ims.sales_return_items (branch_id, sr_id, item_id, quantity, unit_price, line_total)
@@ -1789,8 +1802,18 @@ export const returnsService = {
                 });
             }
 
-            const subtotal = items.reduce((s, i) => s + Number(i.quantity) * Number(i.unitPrice || 0), 0);
-            const total = roundMoney(subtotal);
+            const pricedReturn = await resolveSalesReturnPricing(client, {
+                branchId: Number(current.branch_id),
+                customerId: Number(input.customerId),
+                saleId: input.saleId ?? current.sale_id ?? null,
+                items: items.map((item) => ({
+                    itemId: item.itemId,
+                    quantity: Number(item.quantity),
+                })),
+            });
+            const subtotal = pricedReturn.subtotal;
+            const total = pricedReturn.total;
+            const pricedByItemId = new Map(pricedReturn.lines.map((line) => [line.itemId, line]));
             const oldCustomerId = Number(current.customer_id || 0);
 
             const refundUpdateRequested =
@@ -1871,7 +1894,9 @@ export const returnsService = {
             await client.query(`DELETE FROM ims.sales_return_items WHERE sr_id = $1`, [id]);
             await client.query(`SET app.include_deleted = '0'`);
             for (const item of items) {
-                const unitPrice = Number(item.unitPrice || 0);
+                const pricedLine = pricedByItemId.get(item.itemId);
+                const unitPrice = pricedLine?.unitPrice ?? Number(item.unitPrice || 0);
+                const lineTotal = pricedLine?.lineTotal ?? Number(item.quantity) * unitPrice;
                 await client.query(
                     `INSERT INTO ims.sales_return_items (branch_id, sr_id, item_id, quantity, unit_price, line_total)
                      VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -1881,7 +1906,7 @@ export const returnsService = {
                         item.itemId,
                         item.quantity,
                         unitPrice,
-                        Number(item.quantity) * unitPrice,
+                        lineTotal,
                     ]
                 );
             }
@@ -2310,11 +2335,18 @@ export const returnsService = {
                 }
             }
 
-            const subtotal = items.reduce(
-                (s, i) => s + Number(i.quantity) * Number(i.unitCost || 0),
-                0
-            );
-            const total = roundMoney(subtotal);
+            const pricedReturn = await resolvePurchaseReturnPricing(client, {
+                branchId: context.branchId,
+                supplierId: input.supplierId,
+                purchaseId: input.purchaseId ?? null,
+                items: items.map((item) => ({
+                    itemId: item.itemId,
+                    quantity: Number(item.quantity),
+                })),
+            });
+            const subtotal = pricedReturn.subtotal;
+            const total = pricedReturn.total;
+            const pricedByItemId = new Map(pricedReturn.lines.map((line) => [line.itemId, line]));
             const currentOutstanding = await getSupplierOutstandingForUpdate(client, {
                 branchId: context.branchId,
                 supplierId: input.supplierId,
@@ -2374,8 +2406,9 @@ export const returnsService = {
             const pr = returnRes.rows[0];
 
             for (const item of items) {
-                const unitCost = Number(item.unitCost || 0);
-                const lineTotal = Number(item.quantity) * unitCost;
+                const pricedLine = pricedByItemId.get(item.itemId);
+                const unitCost = pricedLine?.unitPrice ?? Number(item.unitCost || 0);
+                const lineTotal = pricedLine?.lineTotal ?? Number(item.quantity) * unitCost;
 
                 await client.query(
                     `INSERT INTO ims.purchase_return_items (branch_id, pr_id, item_id, quantity, unit_cost, line_total)
@@ -2537,8 +2570,18 @@ export const returnsService = {
                 });
             }
 
-            const subtotal = items.reduce((s, i) => s + Number(i.quantity) * Number(i.unitCost || 0), 0);
-            const total = roundMoney(subtotal);
+            const pricedReturn = await resolvePurchaseReturnPricing(client, {
+                branchId: Number(current.branch_id),
+                supplierId: Number(input.supplierId),
+                purchaseId: input.purchaseId ?? current.purchase_id ?? null,
+                items: items.map((item) => ({
+                    itemId: item.itemId,
+                    quantity: Number(item.quantity),
+                })),
+            });
+            const subtotal = pricedReturn.subtotal;
+            const total = pricedReturn.total;
+            const pricedByItemId = new Map(pricedReturn.lines.map((line) => [line.itemId, line]));
             const oldSupplierId = Number(current.supplier_id || 0);
 
             const refundUpdateRequested =
@@ -2626,7 +2669,9 @@ export const returnsService = {
             await client.query(`DELETE FROM ims.purchase_return_items WHERE pr_id = $1`, [id]);
             await client.query(`SET app.include_deleted = '0'`);
             for (const item of items) {
-                const unitCost = Number(item.unitCost || 0);
+                const pricedLine = pricedByItemId.get(item.itemId);
+                const unitCost = pricedLine?.unitPrice ?? Number(item.unitCost || 0);
+                const lineTotal = pricedLine?.lineTotal ?? Number(item.quantity) * unitCost;
                 await client.query(
                     `INSERT INTO ims.purchase_return_items (branch_id, pr_id, item_id, quantity, unit_cost, line_total)
                      VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -2636,7 +2681,7 @@ export const returnsService = {
                         item.itemId,
                         item.quantity,
                         unitCost,
-                        Number(item.quantity) * unitCost,
+                        lineTotal,
                     ]
                 );
             }
@@ -2652,6 +2697,8 @@ export const returnsService = {
 
             const effectiveReturnDate = input.returnDate || current.return_date || null;
             for (const item of items) {
+                const pricedLine = pricedByItemId.get(item.itemId);
+                const unitCost = pricedLine?.unitPrice ?? Number(item.unitCost || 0);
                 await insertReturnMovement(client, {
                     branchId: Number(current.branch_id),
                     itemId: item.itemId,
@@ -2659,7 +2706,7 @@ export const returnsService = {
                     refTable: 'purchase_returns',
                     refId: id,
                     qtyOut: Number(item.quantity),
-                    unitCost: Number(item.unitCost || 0),
+                    unitCost,
                     moveDate: effectiveReturnDate,
                     note: 'Purchase return',
                 });

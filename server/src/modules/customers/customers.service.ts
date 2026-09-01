@@ -263,129 +263,87 @@ export const customersService = {
   async listCustomers(
     branchIds: number[],
     search?: string,
-    dateRange?: { fromDate?: string; toDate?: string }
-  ): Promise<Customer[]> {
+    dateRange?: { fromDate?: string; toDate?: string },
+    pagination?: { page: number; limit: number }
+  ): Promise<{ rows: Customer[]; total: number; page: number; limit: number }> {
     const meta = await detectCustomerColumns();
     const balanceColumn = meta.balanceColumn;
     const genderSelect = getGenderSelect(meta);
+    const page = pagination?.page ?? 1;
+    const limit = pagination?.limit ?? 100;
 
-    return withTransaction(async (client) => {
-      // Keep customer table balances aligned with refund/return ledger logic so the Customers page updates immediately.
-      // Only applies when the system is using `remaining_balance` as the live outstanding column.
-      if (balanceColumn === 'remaining_balance' && branchIds.length) {
-        await client.query(
-          `WITH touched AS (
-             SELECT DISTINCT l.customer_id
-               FROM ims.customer_ledger l
-              WHERE l.branch_id = ANY($1)
-                AND (
-                  COALESCE(l.ref_table, '') = 'sales_returns'
-                  OR COALESCE(l.entry_type::text, '') = 'refund'
-                  OR COALESCE(l.note, '') ILIKE '%refund%'
-                )
-           ),
-           ledger AS (
-             SELECT
-               l.customer_id,
-               COALESCE(
-                 SUM(
-                   CASE
-                     WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%')
-                       THEN -ABS(COALESCE(l.debit, 0) + COALESCE(l.credit, 0))
-                     ELSE COALESCE(l.debit, 0) - COALESCE(l.credit, 0)
-                   END
-                 ),
-                 0
-               ) AS amount
-              FROM ims.customer_ledger l
-              JOIN touched t ON t.customer_id = l.customer_id
-             WHERE l.branch_id = ANY($1)
-               AND NOT (
-                 COALESCE(l.ref_table, '') = 'sales'
-                 AND l.ref_id IS NOT NULL
-                 AND NOT EXISTS (
-                   SELECT 1
-                     FROM ims.sales s
-                    WHERE s.branch_id = l.branch_id
-                      AND s.sale_id = l.ref_id
-                      AND LOWER(COALESCE(s.status::text, '')) <> 'void'
-                      AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
-                 )
-               )
-             GROUP BY l.customer_id
-           )
-           UPDATE ims.customers c
-              SET remaining_balance = GREATEST(COALESCE(l.amount, 0), 0)::numeric(14,2)
-             FROM ledger l
-            WHERE c.branch_id = ANY($1)
-              AND c.customer_id = l.customer_id
-              AND c.is_active = TRUE`,
-          [branchIds]
-        );
-      }
+    const params: unknown[] = [];
+    const where: string[] = [];
 
-      const params: unknown[] = [];
-      const where: string[] = [];
+    // UPDATED: Explicitly hide soft-deleted rows even when DB user bypasses RLS (e.g., postgres/superuser).
+    where.push(`COALESCE(is_deleted, 0)::int = 0`);
 
-      // UPDATED: Explicitly hide soft-deleted rows even when DB user bypasses RLS (e.g., postgres/superuser).
-      where.push(`COALESCE(is_deleted, 0)::int = 0`);
+    params.push(branchIds);
+    where.push(`branch_id = ANY($${params.length})`);
 
-      params.push(branchIds);
-      where.push(`branch_id = ANY($${params.length})`);
-
-      if (search) {
-        params.push(`%${search}%`);
-        where.push(
-          `(full_name ILIKE $${params.length} OR COALESCE(phone, '') ILIKE $${params.length})`
-        );
-      }
-
-      if (dateRange?.fromDate && dateRange?.toDate) {
-        params.push(dateRange.fromDate);
-        where.push(`registered_date >= $${params.length}::date`);
-        params.push(dateRange.toDate);
-        where.push(`registered_date <= $${params.length}::date`);
-      }
-
-      const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-
-      const result = await client.query<{
-        customer_id: number;
-        full_name: string;
-        phone: string | null;
-        address: string | null;
-        sex: string | null;
-        gender: string | null;
-        registered_date: string;
-        is_active: boolean;
-        customer_type: string | null;
-        credit_allowed: boolean | null;
-        credit_days: number | null;
-        balance_value: string;
-        open_balance_value: string | null;
-      }>(
-        `SELECT
-            customer_id,
-            full_name,
-            phone,
-            address,
-            sex::text AS sex,
-            ${genderSelect},
-            registered_date::text,
-            is_active,
-            ${getCustomerTypeSelect(meta)},
-            ${getCreditAllowedSelect(meta)},
-            ${getCreditDaysSelect(meta)},
-            ${balanceColumn}::text AS balance_value,
-            ${getOpenBalanceSelect(meta)}
-         FROM ims.customers
-         ${whereSql}
-         ORDER BY full_name`,
-        params
+    if (search) {
+      params.push(`%${search}%`);
+      where.push(
+        `(full_name ILIKE $${params.length} OR COALESCE(phone, '') ILIKE $${params.length})`
       );
+    }
 
-      return result.rows.map(mapCustomer);
-    });
+    if (dateRange?.fromDate && dateRange?.toDate) {
+      params.push(dateRange.fromDate);
+      where.push(`registered_date >= $${params.length}::date`);
+      params.push(dateRange.toDate);
+      where.push(`registered_date <= $${params.length}::date`);
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const countResult = await queryOne<{ total: string }>(
+      `SELECT COUNT(*)::text AS total FROM ims.customers ${whereSql}`,
+      params
+    );
+
+    const result = await queryMany<{
+      customer_id: number;
+      full_name: string;
+      phone: string | null;
+      address: string | null;
+      sex: string | null;
+      gender: string | null;
+      registered_date: string;
+      is_active: boolean;
+      customer_type: string | null;
+      credit_allowed: boolean | null;
+      credit_days: number | null;
+      balance_value: string;
+      open_balance_value: string | null;
+    }>(
+      `SELECT
+          customer_id,
+          full_name,
+          phone,
+          address,
+          sex::text AS sex,
+          ${genderSelect},
+          registered_date::text,
+          is_active,
+          ${getCustomerTypeSelect(meta)},
+          ${getCreditAllowedSelect(meta)},
+          ${getCreditDaysSelect(meta)},
+          ${balanceColumn}::text AS balance_value,
+          ${getOpenBalanceSelect(meta)}
+       FROM ims.customers
+       ${whereSql}
+       ORDER BY full_name
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, (page - 1) * limit]
+    );
+
+    return {
+      rows: result.map(mapCustomer),
+      total: Number(countResult?.total || 0),
+      page,
+      limit,
+    };
   },
 
   async lookupCustomers(branchIds: number[], search?: string, limit = 50): Promise<Customer[]> {

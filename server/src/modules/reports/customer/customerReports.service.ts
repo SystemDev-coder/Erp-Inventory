@@ -69,6 +69,17 @@ export interface CreditCustomerRow {
   status: string;
 }
 
+export interface CreditOverdueRow {
+  sale_id: number;
+  invoice_number: string;
+  customer_id: number | null;
+  customer_name: string;
+  sale_date: string;
+  appointment_date: string;
+  days_overdue: number;
+  total: number;
+}
+
 export interface NewCustomerRow {
   customer_id: number;
   full_name: string;
@@ -445,6 +456,41 @@ export const customerReportsService = {
          ) > 0
        ORDER BY current_credit DESC, c.full_name
        LIMIT 2000`,
+      params
+    );
+  },
+
+  async getCreditOverdue(branchId: number, customerId?: number): Promise<CreditOverdueRow[]> {
+    const params: Array<number> = [branchId];
+    let filter = '';
+
+    if (customerId) {
+      params.push(customerId);
+      filter = `AND s.customer_id = $${params.length}`;
+    }
+
+    return queryMany<CreditOverdueRow>(
+      `SELECT
+         s.sale_id,
+         ('#' || s.sale_id::text) AS invoice_number,
+         s.customer_id,
+         COALESCE(c.full_name, 'Walk-in') AS customer_name,
+         s.sale_date::date::text AS sale_date,
+         s.due_date::date::text AS appointment_date,
+         GREATEST((CURRENT_DATE - s.due_date)::int, 0) AS days_overdue,
+         COALESCE(s.total, 0)::double precision AS total
+       FROM ims.sales s
+       LEFT JOIN ims.customers c ON c.customer_id = s.customer_id
+      WHERE s.branch_id = $1
+        AND COALESCE(s.sale_type::text, '') = 'credit'
+        AND s.due_date IS NOT NULL
+        AND s.due_date <= CURRENT_DATE
+        AND COALESCE(s.status::text, '') NOT IN ('void', 'paid')
+        AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
+        AND COALESCE(s.is_deleted, 0)::int = 0
+        ${filter}
+      ORDER BY days_overdue DESC, s.due_date ASC, s.sale_id ASC
+      LIMIT 2000`,
       params
     );
   },

@@ -25,4 +25,20 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('apexcharts') || id.includes('react-apexcharts')) return 'charts';
+            if (id.includes('@mui')) return 'mui';
+            if (id.includes('@fullcalendar')) return 'calendar';
+            if (id.includes('@tanstack')) return 'table';
+            if (id.includes('lucide-react')) return 'icons';
+            if (id.includes('react-dom') || id.includes('react-router')) return 'react-vendor';
+          }
+        },
+      },
+    },
+  },
 });

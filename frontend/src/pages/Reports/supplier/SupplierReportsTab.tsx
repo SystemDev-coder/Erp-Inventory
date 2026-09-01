@@ -13,12 +13,14 @@ type SupplierCardId =
   | 'supplier-list'
   | 'supplier-ledger'
   | 'supplier-payments'
-  | 'supplier-outstanding';
+  | 'supplier-outstanding'
+  | 'credit-overdue';
 const supplierCards: Array<{ id: SupplierCardId; title: string; hint: string }> = [
   { id: 'supplier-list', title: 'Supplier List', hint: 'Dropdown + Show / All' },
   { id: 'supplier-ledger', title: 'Supplier Ledger', hint: 'Dropdown + Show / All' },
   { id: 'supplier-payments', title: 'Supplier Payments', hint: 'Date range + Show / All' },
   { id: 'supplier-outstanding', title: 'Outstanding Purchases', hint: 'Dropdown + Show / All' },
+  { id: 'credit-overdue', title: 'Overdue Credit Purchases', hint: 'Long days overdue + Show / All' },
 ];
 const supplierListColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'supplier_id', header: 'Supplier #' },
@@ -92,6 +94,15 @@ const supplierOutstandingColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'status', header: 'Status' },
 ];
 
+const creditOverdueColumns: ReportColumn<Record<string, unknown>>[] = [
+  { key: 'invoice_number', header: 'Invoice #' },
+  { key: 'supplier_name', header: 'Supplier' },
+  { key: 'purchase_date', header: 'Purchase Date', render: (row) => formatDateOnly(row.purchase_date) },
+  { key: 'appointment_date', header: 'Appointment Date', render: (row) => formatDateOnly(row.appointment_date) },
+  { key: 'days_overdue', header: 'Days Overdue', align: 'right' },
+  { key: 'total', header: 'Amount', align: 'right', render: (row) => formatCurrency(row.total) },
+];
+
 type Props = {
   onOpenModal: (report: ModalReportState) => void;
 };
@@ -118,6 +129,7 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
   const [selectedLedgerSupplierId, setSelectedLedgerSupplierId] = useState('');
   const [selectedPaymentSupplierId, setSelectedPaymentSupplierId] = useState('');
   const [selectedOutstandingSupplierId, setSelectedOutstandingSupplierId] = useState('');
+  const [selectedOverdueSupplierId, setSelectedOverdueSupplierId] = useState('');
 
   const [paymentRange, setPaymentRange] = useState<DateRange>(defaultReportRange());
 
@@ -308,6 +320,37 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
       });
     });
 
+  const handleCreditOverdue = (mode: 'show' | 'all') =>
+    runCardAction('credit-overdue', async () => {
+      const supplierId = mode === 'show' ? Number(selectedOverdueSupplierId || 0) : undefined;
+      if (mode === 'show' && !supplierId) throw new Error('Select a supplier first');
+      const response = await purchaseReportsService.getCreditOverduePurchases({
+        mode,
+        supplierId,
+        branchId: activeBranchId ?? undefined,
+      });
+      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load overdue credit report');
+      const rows = toRecordRows(response.data.rows || []);
+      onOpenModal({
+        title: 'Overdue Credit Purchases',
+        subtitle: mode === 'show' ? supplierNameById.get(selectedOverdueSupplierId) || 'Selected Supplier' : 'All Suppliers',
+        fileName: 'supplier-credit-overdue',
+        data: rows,
+        columns: creditOverdueColumns,
+        filters: {
+          Mode: mode === 'show' ? 'Show' : 'All',
+          Supplier: mode === 'show' ? supplierNameById.get(selectedOverdueSupplierId) || 'Selected Supplier' : 'All Suppliers',
+        },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            total: formatCurrency(sumByKey(rows, 'total')),
+          },
+        },
+        totals: [moneyTotal('Total Overdue', sumByKey(rows, 'total'))],
+      });
+    });
+
   const renderDateRange = (range: DateRange, onChange: (next: DateRange) => void) => (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <label className="space-y-1 text-xs font-semibold text-slate-600">
@@ -347,7 +390,7 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
   );
 
   const renderShowAllButtons = (onShow: () => void, onAll: () => void, cardId: SupplierCardId) => (
-    <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <button
         onClick={onShow}
         disabled={loadingCardId === cardId}
@@ -403,7 +446,12 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
       );
     }
 
-    return null;
+    return (
+      <div className="space-y-3">
+        {renderSupplierSelector(selectedOverdueSupplierId, setSelectedOverdueSupplierId)}
+        {renderShowAllButtons(() => handleCreditOverdue('show'), () => handleCreditOverdue('all'), cardId)}
+      </div>
+    );
   };
 
   const renderCard = (card: { id: SupplierCardId; title: string; hint: string }) => {

@@ -6,7 +6,9 @@ import { ApiError } from '../../utils/ApiError';
 import { customersService } from './customers.service';
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { pickBranchForWrite, resolveActiveBranchIds, resolveBranchScope } from '../../utils/branchScope';
+import { logDeleteAudit } from '../../utils/logDeleteAudit';
 import { logAudit } from '../../utils/audit';
+import { listPaginationSchema, paginationMeta } from '../../utils/pagination';
 
 const genderSchema = z.enum(['male', 'female']);
 
@@ -52,8 +54,17 @@ export const listCustomers = asyncHandler(async (req: AuthRequest, res: Response
   if (fromDate && toDate && fromDate > toDate) {
     throw ApiError.badRequest('fromDate cannot be after toDate');
   }
-  const customers = await customersService.listCustomers(branchIds, search, { fromDate, toDate });
-  return ApiResponse.success(res, { customers });
+  const pagination = listPaginationSchema.parse(req.query);
+  const customersResult = await customersService.listCustomers(
+    branchIds,
+    search,
+    { fromDate, toDate },
+    pagination
+  );
+  return ApiResponse.success(res, {
+    customers: customersResult.rows,
+    pagination: paginationMeta(customersResult.total, customersResult.page, customersResult.limit),
+  });
 });
 
 export const lookupCustomers = asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -122,14 +133,6 @@ export const deleteCustomer = asyncHandler(async (req: AuthRequest, res: Respons
   const id = Number(req.params.id);
   const before = await customersService.getCustomer(id, scope);
   await customersService.deleteCustomer(id, scope);
-  await logAudit({
-    userId: req.user?.userId ?? null,
-    action: 'delete',
-    entity: 'customers',
-    entityId: id,
-    oldValue: before,
-    ip: req.ip,
-    userAgent: req.get('user-agent') || null,
-  });
+  await logDeleteAudit(req, 'customers', id, before ? { deleted: before } : undefined);
   return ApiResponse.success(res, null, 'Customer deleted');
 });

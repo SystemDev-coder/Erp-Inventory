@@ -33,7 +33,7 @@ export const accountService = {
   async update(id: number, data: AccountPayload) {
     return apiClient.put<{ account: Account }>(`/api/accounts/${id}`, data);
   },
-  async remove(id: number) {
-    return apiClient.delete<{ message: string }>(`/api/accounts/${id}`);
+  async remove(id: number, reason: string) {
+    return apiClient.delete<{ message: string }>(`/api/accounts/${id}`, reason);
   },
 };

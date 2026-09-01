@@ -3,6 +3,7 @@ import { queryMany, queryOne } from '../../db/query';
 import { withTransaction } from '../../db/withTx';
 import { ApiError } from '../../utils/ApiError';
 import { BranchScope } from '../../utils/branchScope';
+import { offsetOf, type Paged } from '../../utils/pagination';
 
 export interface Supplier {
   supplier_id: number;
@@ -226,9 +227,12 @@ export const suppliersService = {
   async listSuppliers(
     branchIds: number[],
     search?: string,
-    dateRange?: { fromDate?: string; toDate?: string }
-  ): Promise<Supplier[]> {
+    dateRange?: { fromDate?: string; toDate?: string },
+    pagination?: { page: number; limit: number }
+  ): Promise<Paged<Supplier>> {
     const shape = await detectSupplierShape();
+    const page = pagination?.page ?? 1;
+    const limit = pagination?.limit ?? 100;
     const params: unknown[] = [];
     const where: string[] = [];
 
@@ -253,6 +257,12 @@ export const suppliersService = {
     }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const countRow = await queryOne<{ total: string }>(
+      `SELECT COUNT(*)::text AS total FROM ims.suppliers ${whereSql}`,
+      params
+    );
+
     const rows = await queryMany<{
       supplier_id: number;
       supplier_name_value: string;
@@ -272,11 +282,17 @@ export const suppliersService = {
           created_at::text
          FROM ims.suppliers
          ${whereSql}
-        ORDER BY ${shape.nameColumn}`,
-      params
+        ORDER BY ${shape.nameColumn}
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offsetOf(page, limit)]
     );
 
-    return rows.map(mapSupplier);
+    return {
+      rows: rows.map(mapSupplier),
+      total: Number(countRow?.total || 0),
+      page,
+      limit,
+    };
   },
 
   async lookupSuppliers(branchIds: number[], search?: string, limit = 50): Promise<Supplier[]> {
