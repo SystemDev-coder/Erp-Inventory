@@ -10,6 +10,9 @@ type InventoryCardId =
   | 'current-stock'
   | 'low-stock'
   | 'valuation'
+  | 'valuation-fifo'
+  | 'valuation-lifo'
+  | 'valuation-average'
   | 'adjustments'
   | 'inventory-loss'
   | 'inventory-ledger'
@@ -22,6 +25,9 @@ const inventoryCards: Array<{ id: InventoryCardId; title: string; hint: string }
   { id: 'current-stock', title: 'Current Stock Levels', hint: 'All items with stock' },
   { id: 'low-stock', title: 'Low Stock Alert', hint: 'Only below threshold' },
   { id: 'valuation', title: 'Stock Value', hint: 'Total value of current stock' },
+  { id: 'valuation-fifo', title: 'Stock Value (FIFO)', hint: 'First-in, first-out costing' },
+  { id: 'valuation-lifo', title: 'Stock Value (LIFO)', hint: 'Last-in, first-out costing' },
+  { id: 'valuation-average', title: 'Stock Value (Average)', hint: 'Moving average cost' },
   { id: 'adjustments', title: 'Stock Adjustment Log', hint: 'Between two dates' },
   { id: 'inventory-loss', title: 'Inventory Loss', hint: 'Lost/damaged adjustments' },
   { id: 'inventory-ledger', title: 'Inventory Found', hint: 'Increase adjustments (found stock)' },
@@ -51,8 +57,7 @@ const lowStockColumns: ReportColumn<Record<string, unknown>>[] = [
 const valuationColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'item_name', header: 'Item' },
   { key: 'total_qty', header: 'Qty', align: 'right', render: (row) => formatQuantity(row.total_qty) },
-  { key: 'cost_price', header: 'Cost', align: 'right', render: (row) => formatCurrency(row.cost_price) },
-  { key: 'sell_price', header: 'Sale', align: 'right', render: (row) => formatCurrency(row.sell_price) },
+  { key: 'unit_cost_used', header: 'Unit Cost', align: 'right', render: (row) => formatCurrency(row.unit_cost_used ?? row.cost_price) },
   { key: 'cost_value', header: 'Cost Value', align: 'right', render: (row) => formatCurrency(row.cost_value) },
   { key: 'retail_value', header: 'Retail Value', align: 'right', render: (row) => formatCurrency(row.retail_value) },
 ];
@@ -332,18 +337,18 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
       });
     });
 
-  const handleInventoryValuation = () =>
-    runCardAction('valuation', async () => {
-      const response = await inventoryReportsService.getInventoryValuation(activeBranchId ?? undefined);
+  const openInventoryValuation = (method: 'fifo' | 'lifo' | 'average', cardId: InventoryCardId, title: string) =>
+    runCardAction(cardId, async () => {
+      const response = await inventoryReportsService.getInventoryValuation(activeBranchId ?? undefined, method);
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load valuation');
       const rows = toRecordRows(response.data.rows || []);
       onOpenModal({
-        title: 'Stock Value',
-        subtitle: 'Current inventory value',
-        fileName: 'inventory-valuation',
+        title,
+        subtitle: `${title} — current inventory value`,
+        fileName: `inventory-valuation-${method}`,
         data: rows,
         columns: valuationColumns,
-        filters: { Action: 'View Stock Value' },
+        filters: { Method: method.toUpperCase() },
         tableTotals: {
           label: 'Total',
           values: {
@@ -360,6 +365,11 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
         ],
       });
     });
+
+  const handleInventoryValuation = () => openInventoryValuation('average', 'valuation', 'Stock Value');
+  const handleInventoryValuationFifo = () => openInventoryValuation('fifo', 'valuation-fifo', 'Stock Value (FIFO)');
+  const handleInventoryValuationLifo = () => openInventoryValuation('lifo', 'valuation-lifo', 'Stock Value (LIFO)');
+  const handleInventoryValuationAverage = () => openInventoryValuation('average', 'valuation-average', 'Stock Value (Average)');
 
   const handleStockAdjustmentLog = () =>
     runCardAction('adjustments', async () => {
@@ -679,6 +689,9 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
     if (cardId === 'current-stock') return <button onClick={handleCurrentStockLevels} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">All Current Stock</button>;
     if (cardId === 'low-stock') return <button onClick={handleLowStockAlert} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show Low Stock</button>;
     if (cardId === 'valuation') return <button onClick={handleInventoryValuation} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">View Stock Value</button>;
+    if (cardId === 'valuation-fifo') return <button onClick={handleInventoryValuationFifo} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">View FIFO Value</button>;
+    if (cardId === 'valuation-lifo') return <button onClick={handleInventoryValuationLifo} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">View LIFO Value</button>;
+    if (cardId === 'valuation-average') return <button onClick={handleInventoryValuationAverage} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">View Average Value</button>;
     if (cardId === 'adjustments') return <div className="space-y-3">{renderDateRange(adjustmentRange, setAdjustmentRange)}<button onClick={handleStockAdjustmentLog} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
     if (cardId === 'inventory-loss') return <div className="space-y-3">{renderDateRange(lossRange, setLossRange)}<button onClick={handleInventoryLoss} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
     if (cardId === 'inventory-ledger') return <div className="space-y-3">{renderDateRange(inventoryLedgerRange, setInventoryLedgerRange)}<button onClick={handleInventoryFound} disabled={loadingCardId === cardId} className="inline-flex min-w-[200px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show Found</button></div>;

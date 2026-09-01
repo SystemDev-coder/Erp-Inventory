@@ -226,11 +226,17 @@ export const financialReportsService = {
     return apiClient.get<RowsResponse<CashFlowRow>>(`${API.REPORTS.FINANCIAL_CASH_FLOW}${query}`);
   },
 
-  async getAccountBalances(input: { mode: ReportSelectionMode; accountId?: number; branchId?: number }) {
+  async getAccountBalances(input: {
+    mode: ReportSelectionMode;
+    accountId?: number;
+    branchId?: number;
+    asOfDate?: string;
+  }) {
     const query = toQuery({
       branchId: input.branchId,
       mode: input.mode,
       accountId: input.mode === 'show' ? input.accountId : undefined,
+      asOfDate: input.asOfDate,
     });
     return apiClient.get<RowsResponse<AccountBalanceRow>>(`${API.REPORTS.FINANCIAL_ACCOUNT_BALANCES}${query}`);
   },
@@ -371,18 +377,18 @@ export const financialReportsService = {
   async getAccountStatement(input: {
     fromDate: string;
     toDate: string;
-    mode: ReportSelectionMode;
-    accountId?: number;
+    accountId: number;
     branchId?: number;
   }) {
     const query = toQuery({
       branchId: input.branchId,
       fromDate: input.fromDate,
       toDate: input.toDate,
-      mode: input.mode,
-      accountId: input.mode === 'show' ? input.accountId : undefined,
+      accountId: input.accountId,
     });
-    return apiClient.get<RowsResponse<AccountStatementRow>>(`${API.REPORTS.FINANCIAL_ACCOUNT_STATEMENT}${query}`);
+    return apiClient.get<
+      RowsResponse<AccountStatementRow> & { truncated?: boolean; totalCount?: number }
+    >(`${API.REPORTS.FINANCIAL_ACCOUNT_STATEMENT}${query}`);
   },
 
   async getTrialBalance(input: { fromDate: string; toDate: string; branchId?: number }) {

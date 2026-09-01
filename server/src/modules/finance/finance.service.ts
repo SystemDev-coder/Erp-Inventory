@@ -7,6 +7,7 @@ import { softDeleteById } from '../../db/softDelete';
 import { adjustSystemAccountBalance } from '../../utils/systemAccounts';
 import { postGl } from '../../utils/glPosting';
 import { ensureCoaAccounts, ensureNamedAssetAccount } from '../../utils/coaDefaults';
+import { syncCustomerOutstandingFromLedger } from '../../utils/customerOutstanding';
 import {
   AccountTransferInput,
   accountTransferUpdateSchema,
@@ -489,6 +490,11 @@ export const financeService = {
          VALUES ($1, $2, 'payment', 'customer_receipts', $3, $4, 0, $5, $6)`,
         [branchId, input.customerId, receipt.receipt_id, input.accId, amount, input.note || null]
       );
+
+      await syncCustomerOutstandingFromLedger(client, {
+        branchId,
+        customerId: input.customerId,
+      });
 
       const coa = await ensureCoaAccounts(client, branchId, ['accountsReceivable', 'customerAdvances']);
       await client.query(

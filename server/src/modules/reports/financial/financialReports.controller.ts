@@ -78,12 +78,16 @@ export const getAccountBalancesReport = asyncHandler(async (req: AuthRequest, re
   const branchId = await resolveBranchIdForReports(req);
   const mode = parseSelectionMode(req.query.mode);
   const accountId = mode === 'show' ? parseNumericId(req.query.accountId, 'accountId') : undefined;
-  const rows = await financialReportsService.getAccountBalances(branchId, accountId);
+  const asOfDate = req.query.asOfDate
+    ? parseIsoDate(req.query.asOfDate as string | undefined, 'asOfDate')
+    : undefined;
+  const rows = await financialReportsService.getAccountBalances(branchId, accountId, asOfDate);
   return ApiResponse.success(res, {
     branchId,
     reportKey: 'account-balances',
     mode,
     accountId: accountId ?? null,
+    asOfDate: asOfDate ?? null,
     rows,
   });
 });
@@ -250,17 +254,18 @@ export const getAccountTransactionsReport = asyncHandler(async (req: AuthRequest
 export const getAccountStatementReport = asyncHandler(async (req: AuthRequest, res: Response) => {
   const branchId = await resolveBranchIdForReports(req);
   const { fromDate, toDate } = parseDateRange(req);
-  const mode = parseSelectionMode(req.query.mode);
-  const accountId = mode === 'show' ? parseNumericId(req.query.accountId, 'accountId') : undefined;
-  const rows = await financialReportsService.getAccountStatement(branchId, fromDate, toDate, accountId);
+  const accountId = parseNumericId(req.query.accountId, 'accountId');
+  const result = await financialReportsService.getAccountStatement(branchId, fromDate, toDate, accountId);
   return ApiResponse.success(res, {
     branchId,
     reportKey: 'account-statement',
     fromDate,
     toDate,
-    mode,
-    accountId: accountId ?? null,
-    rows,
+    mode: 'show',
+    accountId,
+    rows: result.rows,
+    truncated: result.truncated,
+    totalCount: result.totalCount,
   });
 });
 

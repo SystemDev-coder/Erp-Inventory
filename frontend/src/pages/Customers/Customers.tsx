@@ -218,7 +218,7 @@ const Customers = () => {
             is_active: row.is_active,
             credit_allowed: row.credit_allowed !== false,
             credit_days: Number(row.credit_days ?? 30),
-            remaining_balance: Number(row.open_balance ?? row.remaining_balance ?? 0),
+            remaining_balance: Number(row.remaining_balance ?? row.balance ?? row.open_balance ?? 0),
         });
 
     const onDelete = (row: Customer) => { setCustomerToDelete(row); setDeleteConfirmOpen(true); };
