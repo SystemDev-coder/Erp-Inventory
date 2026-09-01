@@ -11,6 +11,7 @@ import {
 } from '../reports.helpers';
 import { financialReportsService } from './financialReports.service';
 import { cogsReportsService } from '../common/cogsReports.service';
+import { withReportMeta } from '../../../utils/reportMeta';
 
 export const getFinancialReportOptions = asyncHandler(async (req: AuthRequest, res: Response) => {
   const branchId = await resolveBranchIdForReports(req);
@@ -193,26 +194,40 @@ export const getAccountsReceivableReport = asyncHandler(async (req: AuthRequest,
   const branchId = await resolveBranchIdForReports(req);
   const { fromDate, toDate } = parseDateRange(req);
   const rows = await financialReportsService.getAccountsReceivable(branchId, fromDate, toDate);
-  return ApiResponse.success(res, {
-    branchId,
-    reportKey: 'accounts-receivable',
-    fromDate,
-    toDate,
-    rows,
-  });
+  return ApiResponse.success(
+    res,
+    withReportMeta(
+      {
+        branchId,
+        reportKey: 'accounts-receivable',
+        fromDate,
+        toDate,
+        rows,
+      },
+      branchId,
+      rows
+    )
+  );
 });
 
 export const getAccountsPayableReport = asyncHandler(async (req: AuthRequest, res: Response) => {
   const branchId = await resolveBranchIdForReports(req);
   const { fromDate, toDate } = parseDateRange(req);
   const rows = await financialReportsService.getAccountsPayable(branchId, fromDate, toDate);
-  return ApiResponse.success(res, {
-    branchId,
-    reportKey: 'accounts-payable',
-    fromDate,
-    toDate,
-    rows,
-  });
+  return ApiResponse.success(
+    res,
+    withReportMeta(
+      {
+        branchId,
+        reportKey: 'accounts-payable',
+        fromDate,
+        toDate,
+        rows,
+      },
+      branchId,
+      rows
+    )
+  );
 });
 
 export const getAccountTransactionsReport = asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -254,12 +269,19 @@ export const getTrialBalanceReport = asyncHandler(async (req: AuthRequest, res: 
   const { fromDate, toDate } = parseDateRange(req);
   const includeZero = String(req.query.includeZero ?? '').toLowerCase() === 'true';
   const rows = await financialReportsService.getTrialBalance(branchId, fromDate, toDate, includeZero);
-  return ApiResponse.success(res, {
-    branchId,
-    reportKey: 'trial-balance',
-    fromDate,
-    toDate,
-    includeZero,
-    rows,
-  });
+  return ApiResponse.success(
+    res,
+    withReportMeta(
+      {
+        branchId,
+        reportKey: 'trial-balance',
+        fromDate,
+        toDate,
+        includeZero,
+        rows,
+      },
+      branchId,
+      rows
+    )
+  );
 });

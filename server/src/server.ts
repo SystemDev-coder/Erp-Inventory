@@ -5,6 +5,17 @@ import { ensureBaseSchema } from './utils/ensureBaseSchema';
 import { ensureRuntimeFinanceSchema } from './utils/runtimeFinanceSchema';
 import { syncSystemAccountBalances } from './utils/systemAccounts';
 import { syncLedgerBalances } from './utils/ledgerBalanceSync';
+import { ensurePerformanceIndexes } from './utils/ensurePerformanceIndexes';
+
+const LEDGER_SYNC_INTERVAL_MS = 60 * 60 * 1000;
+
+const startLedgerSyncSchedule = () => {
+  setInterval(() => {
+    void syncLedgerBalances().catch((error) => {
+      console.error('Scheduled ledger balance sync failed:', error);
+    });
+  }, LEDGER_SYNC_INTERVAL_MS);
+};
 
 const startServer = async () => {
   try {
@@ -12,8 +23,10 @@ const startServer = async () => {
     await testConnection();
     await ensureBaseSchema();
     await ensureRuntimeFinanceSchema();
+    await ensurePerformanceIndexes();
     await syncSystemAccountBalances();
     await syncLedgerBalances();
+    startLedgerSyncSchedule();
 
     // Start server
     app.listen(config.port, config.host, () => {

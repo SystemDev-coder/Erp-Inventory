@@ -398,10 +398,10 @@ const Settings = () => {
     await loadCapital(capitalPage);
   };
 
-  const confirmDeleteCapital = async () => {
+  const confirmDeleteCapital = async (reason: string) => {
     if (!capitalDeleteId) return;
     setCapitalDeleteLoading(true);
-    const res = await settingsService.deleteCapital(capitalDeleteId);
+    const res = await settingsService.deleteCapital(capitalDeleteId, reason);
     setCapitalDeleteLoading(false);
     if (!res.success) {
       showToast('error', 'Capital', res.error || 'Delete failed');
@@ -499,10 +499,10 @@ const Settings = () => {
     }
   };
 
-  const confirmDeleteDrawing = async () => {
+  const confirmDeleteDrawing = async (reason: string) => {
     if (!drawingDeleteId) return;
     setDrawingDeleteLoading(true);
-    const res = await settingsService.deleteCapitalDrawing(drawingDeleteId);
+    const res = await settingsService.deleteCapitalDrawing(drawingDeleteId, reason);
     setDrawingDeleteLoading(false);
     if (!res.success) {
       showToast('error', 'Capital Drawing', res.error || 'Delete failed');
@@ -762,10 +762,10 @@ const Settings = () => {
     await loadAssetAccounts();
   };
 
-  const deleteCurrentAsset = async () => {
+  const deleteCurrentAsset = async (reason: string) => {
     if (!currentAssetDeleteTarget) return;
     setCurrentAssetDeleting(true);
-    const res = await assetsService.delete(currentAssetDeleteTarget.asset_id);
+    const res = await assetsService.delete(currentAssetDeleteTarget.asset_id, reason);
     setCurrentAssetDeleting(false);
     if (!res.success) {
       showToast('error', 'Assets', res.error || 'Failed to delete current asset');
@@ -851,10 +851,10 @@ const Settings = () => {
     }
   };
 
-  const deleteFixedAsset = async () => {
+  const deleteFixedAsset = async (reason: string) => {
     if (!fixedAssetDeleteTarget) return;
     setFixedAssetDeleting(true);
-    const res = await assetsService.delete(fixedAssetDeleteTarget.asset_id);
+    const res = await assetsService.delete(fixedAssetDeleteTarget.asset_id, reason);
     setFixedAssetDeleting(false);
     if (!res.success) {
       showToast('error', 'Assets', res.error || 'Failed to delete fixed asset');
@@ -1229,7 +1229,8 @@ const Settings = () => {
       <ConfirmDialog
         isOpen={!!currentAssetDeleteTarget}
         onClose={() => setCurrentAssetDeleteTarget(null)}
-        onConfirm={deleteCurrentAsset}
+        onConfirm={(reason) => void deleteCurrentAsset(reason || '')}
+        requireReason
         title="Delete Current Asset?"
         highlightedName={currentAssetDeleteTarget?.asset_name}
         message="This action permanently removes the current asset."
@@ -1242,7 +1243,8 @@ const Settings = () => {
       <ConfirmDialog
         isOpen={!!fixedAssetDeleteTarget}
         onClose={() => setFixedAssetDeleteTarget(null)}
-        onConfirm={deleteFixedAsset}
+        onConfirm={(reason) => void deleteFixedAsset(reason || '')}
+        requireReason
         title="Delete Fixed Asset?"
         highlightedName={fixedAssetDeleteTarget?.asset_name}
         message="This action permanently removes the fixed asset."
@@ -1667,7 +1669,8 @@ const Settings = () => {
       <ConfirmDialog
         isOpen={capitalDeleteId !== null}
         onClose={() => setCapitalDeleteId(null)}
-        onConfirm={confirmDeleteCapital}
+        onConfirm={(reason) => void confirmDeleteCapital(reason || '')}
+        requireReason
         title="Delete Capital Entry?"
         message="This will reverse and remove linked accounting records."
         confirmText="Delete"
@@ -1679,7 +1682,8 @@ const Settings = () => {
       <ConfirmDialog
         isOpen={drawingDeleteId !== null}
         onClose={() => setDrawingDeleteId(null)}
-        onConfirm={confirmDeleteDrawing}
+        onConfirm={(reason) => void confirmDeleteDrawing(reason || '')}
+        requireReason
         title="Delete Drawing Entry?"
         message="This will refund the amount back to capital and remove linked accounting records."
         confirmText="Delete"

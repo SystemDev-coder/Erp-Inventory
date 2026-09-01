@@ -125,3 +125,17 @@ export const getPurchasePriceVarianceReport = asyncHandler(async (req: AuthReque
     rows,
   });
 });
+
+export const getCreditOverduePurchasesReport = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const branchId = await resolveBranchIdForReports(req);
+  const mode = parseSelectionMode(req.query.mode);
+  const supplierId = mode === 'show' ? parseNumericId(req.query.supplierId, 'supplierId') : undefined;
+  const rows = await purchaseReportsService.getCreditOverduePurchases(branchId, supplierId);
+  return ApiResponse.success(res, {
+    branchId,
+    reportKey: 'credit-overdue-purchases',
+    mode,
+    supplierId: supplierId ?? null,
+    rows,
+  });
+});

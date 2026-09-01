@@ -132,8 +132,8 @@ const [payHistory, setPayHistory] = useState<ExpensePayment[]>([]);
 const [payErrors, setPayErrors] = useState<{ acc?: string; amount?: string }>({});
 
 const [isBudgetChargeModalOpen, setIsBudgetChargeModalOpen] = useState(false);
-const [isDeleteChargeModalOpen, setIsDeleteChargeModalOpen] = useState(false);
 const [pendingDeleteChargeId, setPendingDeleteChargeId] = useState<number | null>(null);
+const [deletingCharge, setDeletingCharge] = useState(false);
 const [budgetChargeForm, setBudgetChargeForm] = useState<{ pay_date?: string; oper?: string }>({});
 const [budgetChargeError, setBudgetChargeError] = useState<string>('');
 
@@ -429,7 +429,6 @@ const [deletingBudget, setDeletingBudget] = useState(false);
               aria-label="Delete expense charge"
               onClick={() => {
                 setPendingDeleteChargeId(row.original.exp_ch_id);
-                setIsDeleteChargeModalOpen(true);
               }}
             >
               <Trash className="h-5 w-5" />
@@ -739,10 +738,24 @@ const [deletingBudget, setDeletingBudget] = useState(false);
     setPendingDeleteAccount(row);
   };
 
-  const confirmDeleteAccount = async () => {
+  const confirmDeleteCharge = async (reason: string) => {
+    if (!pendingDeleteChargeId) return;
+    setDeletingCharge(true);
+    const res = await financeService.deleteExpenseCharge(pendingDeleteChargeId, reason);
+    if (res.success) {
+      showToast('success', 'Finance', 'Expense charge deleted');
+      setPendingDeleteChargeId(null);
+      reloadIfDisplayed();
+    } else {
+      quickError(res.error || 'Delete failed');
+    }
+    setDeletingCharge(false);
+  };
+
+  const confirmDeleteAccount = async (reason: string) => {
     if (!pendingDeleteAccount) return;
     setDeletingAccount(true);
-    const res = await accountService.remove(pendingDeleteAccount.acc_id);
+    const res = await accountService.remove(pendingDeleteAccount.acc_id, reason);
     if (res.success) {
       showToast('success', 'Finance', 'Account deleted');
       setPendingDeleteAccount(null);
@@ -753,10 +766,10 @@ const [deletingBudget, setDeletingBudget] = useState(false);
     setDeletingAccount(false);
   };
 
-  const confirmDeleteBudget = async () => {
+  const confirmDeleteBudget = async (reason: string) => {
     if (!pendingDeleteBudget) return;
     setDeletingBudget(true);
-    const res = await financeService.deleteExpenseBudget(pendingDeleteBudget.budget_id);
+    const res = await financeService.deleteExpenseBudget(pendingDeleteBudget.budget_id, reason);
     if (res.success) {
       showToast('success', 'Finance', 'Budget deleted');
       setPendingDeleteBudget(null);
@@ -767,10 +780,10 @@ const [deletingBudget, setDeletingBudget] = useState(false);
     setDeletingBudget(false);
   };
 
-  const confirmDeleteOtherIncome = async () => {
+  const confirmDeleteOtherIncome = async (reason: string) => {
     if (!pendingDeleteOtherIncome) return;
     setDeletingOtherIncome(true);
-    const res = await financeService.deleteOtherIncome(pendingDeleteOtherIncome.other_income_id);
+    const res = await financeService.deleteOtherIncome(pendingDeleteOtherIncome.other_income_id, reason);
     if (res.success) {
       showToast('success', 'Finance', 'Other income deleted');
       setPendingDeleteOtherIncome(null);
@@ -1147,11 +1160,11 @@ const submitBudgetCharge = async () => {
       label: 'Accounts',
       content: (
         <div className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <span className="text-sm text-slate-600">
               Manage cash/bank accounts. Delete is available only for zero-balance current accounts.
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 disabled={loading}
@@ -1712,10 +1725,11 @@ const submitBudgetCharge = async () => {
         size="md"
       >
         <div className="space-y-4 text-slate-900 dark:text-slate-100">
-          <div className="grid grid-cols-2 gap-3">
-            <label className="text-sm">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label htmlFor="transfer-from-account" className="text-sm">
               <span className="mb-1 block font-medium">From Account</span>
               <select
+                id="transfer-from-account"
                 className={fieldClass}
                 value={transferForm.from_acc_id ?? ''}
                 onChange={(e) => setTransferForm({ ...transferForm, from_acc_id: Number(e.target.value) })}
@@ -1729,9 +1743,10 @@ const submitBudgetCharge = async () => {
               </select>
               {transferErrors.from && <p className="mt-1 text-xs text-red-500">{transferErrors.from}</p>}
             </label>
-            <label className="text-sm">
+            <label htmlFor="transfer-to-account" className="text-sm">
               <span className="mb-1 block font-medium">To Account</span>
               <select
+                id="transfer-to-account"
                 className={fieldClass}
                 value={transferForm.to_acc_id ?? ''}
                 onChange={(e) => setTransferForm({ ...transferForm, to_acc_id: Number(e.target.value) })}
@@ -1746,9 +1761,10 @@ const submitBudgetCharge = async () => {
               {transferErrors.to && <p className="mt-1 text-xs text-red-500">{transferErrors.to}</p>}
             </label>
           </div>
-            <label className="text-sm">
+            <label htmlFor="transfer-amount" className="text-sm">
               <span className="mb-1 block font-medium">Amount</span>
               <input
+                id="transfer-amount"
                 type="number"
                 step="0.01"
                 className={fieldClass}
@@ -2191,48 +2207,6 @@ const submitBudgetCharge = async () => {
       </Modal>
 
       <Modal
-        isOpen={isDeleteChargeModalOpen}
-        onClose={() => setIsDeleteChargeModalOpen(false)}
-        title="Delete Expense Charge"
-        size="sm"
-      >
-        <div className="space-y-4">
-          <p className="text-sm text-slate-600">Are you sure you want to delete this expense charge? This action cannot be undone.</p>
-          <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setIsDeleteChargeModalOpen(false)}
-              className="rounded border px-4 py-2"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={async () => {
-                if (!pendingDeleteChargeId) {
-                  setIsDeleteChargeModalOpen(false);
-                  return;
-                }
-                const res = await financeService.deleteExpenseCharge(pendingDeleteChargeId);
-                if (res.success) {
-                  showToast('success', 'Finance', 'Expense charge deleted');
-                  setPendingDeleteChargeId(null);
-                  setIsDeleteChargeModalOpen(false);
-                  reloadIfDisplayed();
-                } else {
-                  quickError(res.error || 'Delete failed');
-                  setIsDeleteChargeModalOpen(false);
-                }
-              }}
-              className="rounded bg-red-600 px-4 py-2 text-white"
-            >
-              Delete
-            </button>
-          </div>
-        </div>
-      </Modal>
-
-      <Modal
         isOpen={isBudgetModalOpen}
         onClose={() => {
           setIsBudgetModalOpen(false);
@@ -2654,6 +2628,17 @@ const submitBudgetCharge = async () => {
           </div>
         </div>
       </Modal>
+
+      <DeleteConfirmModal
+        isOpen={!!pendingDeleteChargeId}
+        onClose={() => {
+          if (!deletingCharge) setPendingDeleteChargeId(null);
+        }}
+        onConfirm={confirmDeleteCharge}
+        title="Delete Expense Charge?"
+        message="This expense charge will be deleted permanently."
+        isDeleting={deletingCharge}
+      />
 
       <DeleteConfirmModal
         isOpen={!!pendingDeleteOtherIncome}

@@ -9,7 +9,14 @@ import { accountService, Account } from '../../services/account.service';
 import { productService, Product } from '../../services/product.service';
 import { Modal } from '../../components/ui/modal/Modal';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
+import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { useBranch } from '../../context/BranchContext';
+
+const addDaysToDate = (baseDate: string, days: number) => {
+  const dt = new Date(`${baseDate}T00:00:00`);
+  dt.setDate(dt.getDate() + Math.max(0, Math.floor(days)));
+  return dt.toISOString().slice(0, 10);
+};
 
 type LineItem = {
   product_id: number | '';
@@ -73,6 +80,7 @@ const PurchaseEditor = () => {
     total: 0,
     status: (docType === 'order' ? 'ordered' : 'received') as 'ordered' | 'received' | 'partial' | 'unpaid' | 'void',
     expected_date: new Date().toISOString().slice(0, 10),
+    due_date: '',
     note: '',
   });
   const [lineItems, setLineItems] = useState<LineItem[]>([emptyLine]);
@@ -82,6 +90,8 @@ const PurchaseEditor = () => {
   const [productSearch, setProductSearch] = useState('');
   const [productsLoaded, setProductsLoaded] = useState(false);
   const [productsLoading, setProductsLoading] = useState(false);
+  const [confirmStep, setConfirmStep] = useState<'balance' | 'account' | null>(null);
+  const [pendingPayload, setPendingPayload] = useState<Record<string, unknown> | null>(null);
 
   const loadProducts = async (search?: string) => {
     const limit = 200; // server max for /api/products
@@ -205,6 +215,7 @@ const PurchaseEditor = () => {
           total: Number(p.total || 0),
         status: p.status as any,
         expected_date: p.expected_date ? p.expected_date.slice(0, 10) : new Date().toISOString().slice(0, 10),
+        due_date: p.due_date ? p.due_date.slice(0, 10) : '',
         note: p.note || '',
         acc_id: primaryPaymentAcc || '',
         paid_amount: totalPaid,
@@ -267,6 +278,7 @@ const PurchaseEditor = () => {
     effectiveStatus !== 'void' &&
     effectiveStatus !== 'unpaid' &&
     effectivePurchaseType !== 'credit';
+  const shouldShowDueDate = docType !== 'order' && effectivePurchaseType === 'credit';
   const totalValue = Number(form.total || 0);
   const paidValue = Number(form.paid_amount || 0);
   const remainingValue = Math.max(0, totalValue - paidValue);
@@ -290,6 +302,12 @@ const PurchaseEditor = () => {
       }
     }
   }, [effectivePurchaseType, effectiveStatus, form.total]);
+
+  useEffect(() => {
+    if (!shouldShowDueDate) return;
+    const nextDue = addDaysToDate(form.purchase_date || new Date().toISOString().slice(0, 10), 30);
+    setForm((prev) => (prev.due_date === nextDue ? prev : { ...prev, due_date: nextDue }));
+  }, [shouldShowDueDate, form.purchase_date]);
 
   const applyDiscountMode = (mode: 'per_item' | 'all_items') => {
     setDiscountMode(mode);
@@ -344,6 +362,99 @@ const PurchaseEditor = () => {
     setProductPickerOpen(false);
   };
 
+  const continueSaveAfterValidation = async (
+    supplierId: number | '',
+    preparedItems: Array<{
+      productId?: number;
+      quantity: number;
+      unitCost: number;
+      salePrice: number;
+      discount: number;
+      description?: string;
+      batchNo?: string;
+      expiryDate?: string;
+    }>
+  ) => {
+    const totals = calculateTotals(lineItems, effectiveHeaderDiscount);
+    setForm((prev) => ({ ...prev, subtotal: totals.subtotal, total: totals.total }));
+    const paidAmount =
+      docType === 'order'
+        ? undefined
+        : effectiveStatus === 'void'
+        ? undefined
+        : effectiveStatus === 'unpaid' || effectivePurchaseType === 'credit'
+        ? 0
+        : effectiveStatus === 'partial'
+        ? Number(form.paid_amount || 0)
+        : totals.total;
+    const payload = {
+      branchId: activeBranchId ?? undefined,
+      supplierId: supplierId ? Number(supplierId) : null,
+      docType,
+      expectedDate: docType === 'order' ? form.expected_date : undefined,
+      purchaseDate: form.purchase_date,
+      purchaseType: effectivePurchaseType,
+      subtotal: totals.subtotal,
+      discount: effectiveHeaderDiscount,
+      total: totals.total,
+      status: effectiveStatus,
+      note: form.note,
+      dueDate: shouldShowDueDate && form.due_date ? form.due_date : undefined,
+      items: preparedItems,
+      payFromAccId:
+        docType === 'order' || !shouldShowPaymentAccount || !form.acc_id
+          ? undefined
+          : Number(form.acc_id),
+      paidAmount,
+    };
+
+    const needsBalanceConfirm =
+      docType !== 'order' &&
+      (effectivePurchaseType === 'credit' || effectiveStatus === 'unpaid' || effectiveStatus === 'partial');
+    const needsAccountConfirm = docType !== 'order' && shouldShowPaymentAccount && Boolean(form.acc_id);
+
+    if (needsBalanceConfirm) {
+      setPendingPayload(payload);
+      setConfirmStep('balance');
+      return;
+    }
+    if (needsAccountConfirm) {
+      setPendingPayload(payload);
+      setConfirmStep('account');
+      return;
+    }
+
+    await executeSavePurchase(payload);
+  };
+
+  const executeSavePurchase = async (payload: Record<string, unknown>) => {
+    setLoading(true);
+    const res = isEdit
+      ? await purchaseService.update(Number(id), payload)
+      : await purchaseService.create(payload);
+    setLoading(false);
+    if (res.success) {
+      showToast('success', 'Saved', isEdit ? 'Purchase updated' : 'Purchase created');
+      navigate('/purchases');
+    } else {
+      showToast('error', 'Save failed', res.error || 'Check the form');
+    }
+  };
+
+  const handleConfirmSave = () => {
+    if (!pendingPayload) return;
+    const needsAccountConfirm =
+      docType !== 'order' && shouldShowPaymentAccount && Boolean(form.acc_id);
+    if (confirmStep === 'balance' && needsAccountConfirm) {
+      setConfirmStep('account');
+      return;
+    }
+    const payload = pendingPayload;
+    setConfirmStep(null);
+    setPendingPayload(null);
+    void executeSavePurchase(payload);
+  };
+
   const handleSave = async () => {
     let supplierId = form.supplier_id as number | '';
 
@@ -375,7 +486,6 @@ const PurchaseEditor = () => {
       setLoading(false);
     }
 
-    // supplierId can be empty - backend uses Walking Supplier
     const preparedItems = lineItems
       .filter((li) => (li.product_id !== '' || li.name.trim() !== '') && li.quantity > 0)
       .map((li) => ({
@@ -401,49 +511,7 @@ const PurchaseEditor = () => {
       return;
     }
 
-    const totals = calculateTotals(lineItems, effectiveHeaderDiscount);
-    setForm((prev) => ({ ...prev, subtotal: totals.subtotal, total: totals.total }));
-    setLoading(true);
-    const paidAmount =
-      docType === 'order'
-        ? undefined
-        : effectiveStatus === 'void'
-        ? undefined
-        : effectiveStatus === 'unpaid' || effectivePurchaseType === 'credit'
-        ? 0
-        : effectiveStatus === 'partial'
-        ? Number(form.paid_amount || 0)
-        : totals.total;
-    const payload = {
-      branchId: activeBranchId ?? undefined,
-      supplierId: supplierId ? Number(supplierId) : null,
-      docType,
-      expectedDate: docType === 'order' ? form.expected_date : undefined,
-      purchaseDate: form.purchase_date,
-      purchaseType: effectivePurchaseType,
-      subtotal: totals.subtotal,
-      discount: effectiveHeaderDiscount,
-      total: totals.total,
-      status: effectiveStatus,
-      note: form.note,
-      items: preparedItems,
-      // Inline payment info: optional, will update supplier remaining balance and account
-      payFromAccId:
-        docType === 'order' || !shouldShowPaymentAccount || !form.acc_id
-          ? undefined
-          : Number(form.acc_id),
-      paidAmount,
-    };
-    const res = isEdit
-      ? await purchaseService.update(Number(id), payload)
-      : await purchaseService.create(payload);
-    setLoading(false);
-    if (res.success) {
-      showToast('success', 'Saved', isEdit ? 'Purchase updated' : 'Purchase created');
-      navigate('/purchases');
-    } else {
-      showToast('error', 'Save failed', res.error || 'Check the form');
-    }
+    await continueSaveAfterValidation(supplierId, preparedItems);
   };
 
   const fieldCls =
@@ -621,6 +689,19 @@ const PurchaseEditor = () => {
               <option value="cash">Cash</option>
               <option value="credit">Credit</option>
             </select>
+          </label>
+        )}
+
+        {shouldShowDueDate && (
+          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+            Credit Return Date (Ballanta)
+            <input
+              type="date"
+              className={fieldCls}
+              value={form.due_date}
+              onChange={(e) => setForm((prev) => ({ ...prev, due_date: e.target.value }))}
+              disabled={loading}
+            />
           </label>
         )}
 
@@ -1024,6 +1105,25 @@ const PurchaseEditor = () => {
         </div>
         </div>
       </div>
+
+      <ConfirmDialog
+        isOpen={confirmStep !== null}
+        onClose={() => {
+          setConfirmStep(null);
+          setPendingPayload(null);
+        }}
+        onConfirm={handleConfirmSave}
+        title="Xaqiiji"
+        message={
+          confirmStep === 'balance'
+            ? 'Ma hubtaa inaad lacagta ka jareyso haraaga alaab-qeybiyaha?'
+            : 'Ma hubtaa lacagta inaad account-ka ka jareyso?'
+        }
+        confirmText="Haa, kaydi"
+        cancelText="Maya"
+        variant="warning"
+        isLoading={loading}
+      />
     </div>
   );
 };

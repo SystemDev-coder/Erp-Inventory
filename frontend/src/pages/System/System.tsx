@@ -139,13 +139,13 @@ const System = () => {
     return bannerUrl;
   };
 
-  const handleLogoDelete = async () => {
+  const handleLogoDelete = async (reason: string) => {
     if (!allowRemoteImageUpload) {
       setCompanyForm((prev) => ({ ...prev, logo_img: '' }));
       clearLocalImage(logoStorageKey);
       return;
     }
-    const res = await imageService.deleteSystemLogo();
+    const res = await imageService.deleteSystemLogo(reason);
     if (!res.success) {
       throw new Error(res.error || 'Failed to delete logo');
     }
@@ -153,13 +153,13 @@ const System = () => {
     clearLocalImage(logoStorageKey);
   };
 
-  const handleBannerDelete = async () => {
+  const handleBannerDelete = async (reason: string) => {
     if (!allowRemoteImageUpload) {
       setCompanyForm((prev) => ({ ...prev, banner_img: '' }));
       clearLocalImage(bannerStorageKey);
       return;
     }
-    const res = await imageService.deleteSystemBanner();
+    const res = await imageService.deleteSystemBanner(reason);
     if (!res.success) {
       throw new Error(res.error || 'Failed to delete banner');
     }
@@ -270,10 +270,10 @@ const System = () => {
     await loadCompany();
   };
 
-  const handleCompanyDelete = async () => {
+  const handleCompanyDelete = async (reason: string) => {
     if (!company) return;
     setCompanyDeleting(true);
-    const res = await settingsService.deleteCompany();
+    const res = await settingsService.deleteCompany(reason);
     setCompanyDeleting(false);
     if (!res.success) {
       showToast('error', 'Company Info', res.error || 'Delete failed');
@@ -629,11 +629,11 @@ const System = () => {
     setConfirmTarget({ type: 'permission', payload: permission });
 
 
-  const confirmAction = async () => {
+  const confirmAction = async (reason: string) => {
     if (!confirmTarget) return;
     setConfirmLoading(true);
     if (confirmTarget.type === 'user') {
-      const res = await systemService.deleteUser(confirmTarget.payload.user_id);
+      const res = await systemService.deleteUser(confirmTarget.payload.user_id, reason);
       if (!res.success) {
         showToast('error', 'Users', res.error || 'Delete failed');
       } else {
@@ -641,7 +641,7 @@ const System = () => {
         await loadUsers();
       }
     } else if (confirmTarget.type === 'role') {
-      const res = await systemService.deleteRole(confirmTarget.payload.role_id);
+      const res = await systemService.deleteRole(confirmTarget.payload.role_id, reason);
       if (!res.success) {
         showToast('error', 'Roles', res.error || 'Delete failed');
       } else {
@@ -649,7 +649,7 @@ const System = () => {
         await loadRoles();
       }
     } else if (confirmTarget.type === 'permission') {
-      const res = await systemService.deletePermission(confirmTarget.payload.perm_id);
+      const res = await systemService.deletePermission(confirmTarget.payload.perm_id, reason);
       if (!res.success) {
         showToast('error', 'Permissions', res.error || 'Delete failed');
       } else {
@@ -834,7 +834,8 @@ const System = () => {
       <ConfirmDialog
         isOpen={companyDeleteConfirmOpen}
         onClose={() => setCompanyDeleteConfirmOpen(false)}
-        onConfirm={handleCompanyDelete}
+        onConfirm={(reason) => void handleCompanyDelete(reason || '')}
+        requireReason
         title="Delete Company Profile?"
         highlightedName={company?.company_name || undefined}
         message="This action will permanently remove company profile data."
@@ -1390,7 +1391,8 @@ const System = () => {
       <ConfirmDialog
         isOpen={!!confirmTarget}
         onClose={() => setConfirmTarget(null)}
-        onConfirm={confirmAction}
+        onConfirm={(reason) => void confirmAction(reason || '')}
+        requireReason
         title={confirmTitle}
         highlightedName={confirmHighlightedName}
         message={confirmMessage}

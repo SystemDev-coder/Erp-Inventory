@@ -184,29 +184,34 @@ export default function Reports() {
       <div className="rounded-xl border border-zinc-300 bg-white px-5 py-4 text-black shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-[11px] uppercase tracking-[0.35em] text-zinc-500">Inventory ERP</p>
-            <h1 className="text-3xl font-bold leading-tight">Reports Control Center</h1>
+            <p className="text-xs uppercase tracking-wide text-zinc-500">Inventory ERP</p>
+            <h1 className="text-2xl font-bold leading-tight sm:text-3xl">Reports Control Center</h1>
             <p className="mt-1 text-sm text-zinc-700">Reports are organized by module tabs. Open any card to preview, print, or export.</p>
           </div>
         </div>
       </div>
 
       <div className="rounded-xl border border-zinc-300 bg-white p-4 shadow-sm">
-        <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
+        <div className="mb-4 flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Report modules">
           {visibleTabs.map((tab) => {
             const Icon = tab.icon;
             const active = activeTab === tab.id;
             return (
               <button
                 key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                aria-controls={`report-panel-${tab.id}`}
+                id={`report-tab-${tab.id}`}
                 onClick={() => setActiveTab(tab.id)}
-                className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition whitespace-nowrap ${
+                className={`inline-flex min-h-11 items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition whitespace-nowrap ${
                   active
                     ? 'border-black bg-black text-white shadow'
                     : 'border-zinc-300 bg-white text-black hover:bg-zinc-100'
                 }`}
               >
-                <Icon className="h-4 w-4" />
+                <Icon className="h-4 w-4" aria-hidden="true" />
                 {tab.title}
               </button>
             );
@@ -221,14 +226,14 @@ export default function Reports() {
           </div>
         )}
 
-        {activeTab === 'sales' && <SalesReportsTab onOpenModal={handleOpenModal} />}
-        {activeTab === 'inventory' && <InventoryReportsTab onOpenModal={handleOpenModal} />}
-        {activeTab === 'purchase' && <PurchaseReportsTab onOpenModal={handleOpenModal} />}
-        {activeTab === 'financial' && <FinancialReportsTab onOpenModal={handleOpenModal} />}
-        {activeTab === 'profit' && <ProfitReportsTab onOpenModal={handleOpenModal} />}
-        {activeTab === 'hr' && <HrReportsTab onOpenModal={handleOpenModal} />}
-        {activeTab === 'customer' && <CustomerReportsTab onOpenModal={handleOpenModal} />}
-        {activeTab === 'supplier' && <SupplierReportsTab onOpenModal={handleOpenModal} />}
+        {activeTab === 'sales' && <div id="report-panel-sales" role="tabpanel" aria-labelledby="report-tab-sales"><SalesReportsTab onOpenModal={handleOpenModal} /></div>}
+        {activeTab === 'inventory' && <div id="report-panel-inventory" role="tabpanel" aria-labelledby="report-tab-inventory"><InventoryReportsTab onOpenModal={handleOpenModal} /></div>}
+        {activeTab === 'purchase' && <div id="report-panel-purchase" role="tabpanel" aria-labelledby="report-tab-purchase"><PurchaseReportsTab onOpenModal={handleOpenModal} /></div>}
+        {activeTab === 'financial' && <div id="report-panel-financial" role="tabpanel" aria-labelledby="report-tab-financial"><FinancialReportsTab onOpenModal={handleOpenModal} /></div>}
+        {activeTab === 'profit' && <div id="report-panel-profit" role="tabpanel" aria-labelledby="report-tab-profit"><ProfitReportsTab onOpenModal={handleOpenModal} /></div>}
+        {activeTab === 'hr' && <div id="report-panel-hr" role="tabpanel" aria-labelledby="report-tab-hr"><HrReportsTab onOpenModal={handleOpenModal} /></div>}
+        {activeTab === 'customer' && <div id="report-panel-customer" role="tabpanel" aria-labelledby="report-tab-customer"><CustomerReportsTab onOpenModal={handleOpenModal} /></div>}
+        {activeTab === 'supplier' && <div id="report-panel-supplier" role="tabpanel" aria-labelledby="report-tab-supplier"><SupplierReportsTab onOpenModal={handleOpenModal} /></div>}
 
         {activeTab !== 'sales' &&
           activeTab !== 'inventory' &&

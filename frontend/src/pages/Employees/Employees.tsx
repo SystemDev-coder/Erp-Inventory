@@ -106,10 +106,10 @@ const Employees = () => {
     setIsSaving(false);
   };
 
-  const confirmDelete = async () => {
+  const confirmDelete = async (reason: string) => {
     if (!selectedEmployee) return;
     setIsDeleting(true);
-    const res = await employeeService.delete(selectedEmployee.emp_id);
+    const res = await employeeService.delete(selectedEmployee.emp_id, reason);
     if (res.success) {
       showToast('success', 'HR', 'Employee deleted');
       setIsDeleteOpen(false);

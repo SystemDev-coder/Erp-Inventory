@@ -11,8 +11,9 @@ import {
 } from './sales.schemas';
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { assertBranchAccess, pickBranchForWrite, resolveBranchScope } from '../../utils/branchScope';
-import { logAudit } from '../../utils/audit';
+import { logDeleteAudit } from '../../utils/logDeleteAudit';
 import { salesPrintService } from './salesPrint.service';
+import { listPaginationSchema, paginationMeta } from '../../utils/pagination';
 
 export const listSales = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
@@ -32,7 +33,8 @@ export const listSales = asyncHandler(async (req: AuthRequest, res: Response) =>
   if (branchId) {
     assertBranchAccess(scope, branchId);
   }
-  const sales = await salesService.listSales(scope, {
+  const pagination = listPaginationSchema.parse(req.query);
+  const result = await salesService.listSales(scope, {
     search,
     status,
     docType,
@@ -40,8 +42,13 @@ export const listSales = asyncHandler(async (req: AuthRequest, res: Response) =>
     branchId,
     fromDate,
     toDate,
+    page: pagination.page,
+    limit: pagination.limit,
   });
-  return ApiResponse.success(res, { sales });
+  return ApiResponse.success(res, {
+    sales: result.rows,
+    pagination: paginationMeta(result.total, result.page, result.limit),
+  });
 });
 
 export const listSaleItems = asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -113,14 +120,7 @@ export const deleteSale = asyncHandler(async (req: AuthRequest, res: Response) =
   const id = Number(req.params.id);
   if (!id) throw ApiError.badRequest('Invalid sale id');
   await salesService.deleteSale(id, scope, { userId: req.user?.userId ?? null });
-  await logAudit({
-    userId: req.user?.userId ?? null,
-    action: 'delete',
-    entity: 'sales',
-    entityId: id,
-    ip: req.ip,
-    userAgent: req.get('user-agent') || null,
-  });
+  await logDeleteAudit(req, 'sales', id);
 
   return ApiResponse.success(res, null, 'Sale deleted');
 });

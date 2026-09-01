@@ -689,12 +689,12 @@ export function ReportModal<T extends Record<string, any>>({
                   ) : null}
                   <div className="space-y-0.5">
                     <div className="text-[16px] font-semibold leading-tight">{cleanText(companyInfo?.name) || "Business Name"}</div>
-                    <div className="text-[12px] text-slate-600">
+                    <div className="text-xs text-slate-600">
                       {cleanText(title)}
                       {subtitle ? ` - ${cleanText(subtitle)}` : ""}
                     </div>
                     {companyInfo?.manager || companyInfo?.phone ? (
-                      <div className="text-[11px] text-slate-500">
+                      <div className="text-xs text-slate-500">
                         <span>Manager: {cleanText(companyInfo.manager) || "-"}</span> <span className="mx-1">{"\u00b7"}</span>
                         <span>Phone: {cleanText(companyInfo.phone) || "-"}</span>
                       </div>
@@ -702,7 +702,7 @@ export function ReportModal<T extends Record<string, any>>({
                   </div>
                 </div>
 
-                <div className="min-w-[160px] text-right text-[11px] text-slate-500">
+                <div className="min-w-[160px] text-right text-xs text-slate-500">
                   <div>Print Date: {formatStatementDate(reportDate)}</div>
                   {companyInfo?.updatedAt ? <div>Updated: {companyInfo.updatedAt}</div> : null}
                 </div>
@@ -717,11 +717,11 @@ export function ReportModal<T extends Record<string, any>>({
                   <p className="text-[14px] text-slate-600">{cleanText(periodLabel || subtitle) || `As of ${formatStatementDate(reportDate)}`}</p>
                 </div>
               ) : periodLabel || subtitle ? (
-                <div className="mb-3 text-right text-[12px] font-semibold text-slate-600">{cleanText(periodLabel || subtitle)}</div>
+                <div className="mb-3 text-right text-xs font-semibold text-slate-600">{cleanText(periodLabel || subtitle)}</div>
               ) : null}
 
               <div className="overflow-hidden rounded-md">
-                <table className="w-full table-fixed border-collapse text-[12px]">
+                <table className="w-full min-w-[520px] border-collapse text-sm">
                   <thead>
                     <tr className="text-zinc-900">
                       <th className="border-b border-slate-300 px-2 py-2 text-left font-semibold">Account Name</th>
@@ -970,7 +970,7 @@ export function ReportModal<T extends Record<string, any>>({
               </div>
 
               {Math.abs(balanceSheetData.balanceDelta) > 0.005 && (
-                <div className="mt-2 border border-red-200 px-3 py-2 text-[12px] font-semibold text-red-700">
+                <div className="mt-2 border border-red-200 px-3 py-2 text-xs font-semibold text-red-700">
                   Balance Sheet does not balance. Difference: {formatStatementCurrency(balanceSheetData.balanceDelta)}
                 </div>
               )}
@@ -983,11 +983,11 @@ export function ReportModal<T extends Record<string, any>>({
                   {cashFlowPeriodLabel && <p className="text-[14px] text-slate-600">{cashFlowPeriodLabel}</p>}
                 </div>
               ) : cashFlowPeriodLabel ? (
-                <div className="mb-3 text-right text-[12px] font-semibold text-slate-600">{cashFlowPeriodLabel}</div>
+                <div className="mb-3 text-right text-xs font-semibold text-slate-600">{cashFlowPeriodLabel}</div>
               ) : null}
 
               <div className="overflow-hidden rounded-md">
-                <table className="w-full table-fixed border-collapse text-[12px]">
+                <table className="w-full min-w-[520px] border-collapse text-sm">
                   <thead>
                     <tr className="text-zinc-900">
                       <th className="border-b border-slate-300 px-2 py-2 text-left font-semibold">Particulars</th>
@@ -1039,11 +1039,11 @@ export function ReportModal<T extends Record<string, any>>({
                   <p className="text-[14px] text-slate-600">{subtitle || periodLabel || ""}</p>
                 </div>
               ) : subtitle || periodLabel ? (
-                <div className="mb-3 text-right text-[12px] font-semibold text-slate-600">{subtitle || periodLabel}</div>
+                <div className="mb-3 text-right text-xs font-semibold text-slate-600">{subtitle || periodLabel}</div>
               ) : null}
 
               <div className="overflow-hidden rounded-md">
-                <table className="w-full table-fixed border-collapse text-[12px]">
+                <table className="w-full min-w-[520px] border-collapse text-sm">
                   <thead>
                     <tr className="text-zinc-900">
                       <th className="w-24 border-b border-slate-300 px-2 py-2 text-left font-semibold">Account #</th>
@@ -1085,7 +1085,7 @@ export function ReportModal<T extends Record<string, any>>({
                 </table>
               </div>
               {!trialBalanceData.totals.balanced && (
-                <div className="mt-2 border border-red-200 px-3 py-2 text-[12px] font-semibold text-red-700">
+                <div className="mt-2 border border-red-200 px-3 py-2 text-xs font-semibold text-red-700">
                   Trial Balance is not balanced. Difference: {formatTrialAmount(trialBalanceData.totals.difference)}
                 </div>
               )}
@@ -1094,7 +1094,7 @@ export function ReportModal<T extends Record<string, any>>({
             <>
               <div className="px-6 pb-6 pt-6">
                 <div className="overflow-x-auto">
-                  <table className="w-full table-fixed border-collapse text-[12px]">
+                  <table className="w-full min-w-[520px] border-collapse text-sm">
                     <thead>
                       <tr className="bg-slate-100 text-slate-900">
                         {columns.map((col) => (

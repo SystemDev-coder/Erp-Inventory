@@ -381,6 +381,20 @@ export const accountsService = {
       const prevBalance = Number(existing.balance || 0);
       const nextBalance = balanceProvided ? Number((input as Partial<AccountInput>).balance ?? 0) : prevBalance;
       const balanceDiff = balanceProvided ? nextBalance - prevBalance : 0;
+      if (balanceProvided && Math.abs(balanceDiff) > 0.000001) {
+        const txnExists = await client.query<{ exists: boolean }>(
+          `SELECT EXISTS (
+             SELECT 1 FROM ims.account_transactions
+              WHERE acc_id = $1 AND branch_id = $2
+           ) AS exists`,
+          [id, existing.branch_id]
+        );
+        if (Boolean(txnExists.rows[0]?.exists)) {
+          throw ApiError.badRequest(
+            'Account balance cannot be manually edited when transactions exist. Post a journal entry instead.'
+          );
+        }
+      }
       if (balanceProvided) {
         updates.push(`balance = $${p++}`);
         values.push(nextBalance);

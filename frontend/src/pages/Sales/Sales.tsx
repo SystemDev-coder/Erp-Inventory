@@ -1,6 +1,7 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
-import { Ban, Edit3, Eye, FileCheck2, FileText, Printer, ReceiptText, Trash2 } from 'lucide-react';
+import { Ban, Edit3, Eye, FileCheck2, FileText, MoreVertical, Printer, ReceiptText, Trash2 } from 'lucide-react';
+import { ActionDropdown } from '../../components/ui/dropdown/ActionDropdown';
 import { useNavigate } from 'react-router';
 import { PageHeader, TabActionToolbar } from '../../components/ui/layout';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
@@ -48,6 +49,7 @@ const Sales = () => {
       fromDate: dateRange.fromDate,
       toDate: dateRange.toDate,
       branchId: activeBranchId ?? undefined,
+      limit: 500,
     });
     if (res.success && res.data?.sales) {
       setSales(res.data.sales);
@@ -120,10 +122,10 @@ const Sales = () => {
     [showToast]
   );
 
-  const confirmVoid = useCallback(async () => {
+  const confirmVoid = useCallback(async (reason?: string) => {
     if (!saleToVoid) return;
     setLoading(true);
-    const res = await salesService.void(saleToVoid.sale_id, 'Voided from sales list');
+    const res = await salesService.void(saleToVoid.sale_id, reason || 'Voided from sales list');
     if (res.success) {
       showToast('success', 'Sales', 'Document voided');
       await loadSales();
@@ -153,9 +155,9 @@ const Sales = () => {
     setConvertOpen(true);
   }, []);
 
-  const confirmDelete = useCallback(async () => {
+  const confirmDelete = useCallback(async (reason: string) => {
     if (!saleToDelete) return;
-    const res = await salesService.remove(saleToDelete.sale_id);
+    const res = await salesService.remove(saleToDelete.sale_id, reason);
     if (res.success) {
       showToast('success', 'Sales', 'Document deleted');
       await loadSales();
@@ -249,84 +251,99 @@ const Sales = () => {
         header: 'Actions',
         cell: ({ row }) => {
           const sale = row.original;
-          return (
-            <div className="flex items-center gap-2 flex-wrap">
-              <button
-                type="button"
-                onClick={() => void handleView(sale)}
-                className="inline-flex items-center gap-1 rounded-lg border border-blue-200 px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-900/30"
-                title="View"
-              >
-                <Eye className="h-3.5 w-3.5" />
-                View
-              </button>
-
-              <button
-                type="button"
-                onClick={() => void printSaleInvoice(sale)}
-                className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-300 dark:hover:bg-indigo-900/30"
-                title={
-                  (sale.doc_type || 'sale') === 'quotation'
-                    ? 'Print quotation'
-                    : (sale.doc_type || 'sale') === 'invoice'
-                    ? 'Print invoice'
-                    : 'Print sale'
-                }
-              >
-                <Printer className="h-3.5 w-3.5" />
-                Print
-              </button>
-
-              {sale.status !== 'void' && (
-                <button
-                  type="button"
-                  onClick={() => navigate(`/sales/${sale.sale_id}/edit`)}
-                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-                  title="Edit"
-                >
-                  <Edit3 className="h-3.5 w-3.5" />
-                  Edit
-                </button>
-              )}
-
-              {sale.doc_type === 'quotation' && sale.status !== 'void' && (
-                <button
-                  type="button"
-                  onClick={() => void handleConvertQuotation(sale)}
-                  className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-900/30"
-                  title="Convert to invoice"
-                >
-                  <FileCheck2 className="h-3.5 w-3.5" />
-                  Convert
-                </button>
-              )}
-
-              {sale.status !== 'void' && (
-                <button
-                  type="button"
-                  onClick={() => {
+          const printLabel =
+            (sale.doc_type || 'sale') === 'quotation'
+              ? 'Print quotation'
+              : (sale.doc_type || 'sale') === 'invoice'
+              ? 'Print invoice'
+              : 'Print sale';
+          const menuItems = [
+            { label: 'View', icon: <Eye className="h-4 w-4" />, onClick: () => void handleView(sale) },
+            { label: printLabel, icon: <Printer className="h-4 w-4" />, onClick: () => void printSaleInvoice(sale) },
+            ...(sale.status !== 'void'
+              ? [{ label: 'Edit', icon: <Edit3 className="h-4 w-4" />, onClick: () => navigate(`/sales/${sale.sale_id}/edit`) }]
+              : []),
+            ...(sale.doc_type === 'quotation' && sale.status !== 'void'
+              ? [{ label: 'Convert to invoice', icon: <FileCheck2 className="h-4 w-4" />, onClick: () => void handleConvertQuotation(sale) }]
+              : []),
+            ...(sale.status !== 'void'
+              ? [{
+                  label: 'Void',
+                  icon: <Ban className="h-4 w-4" />,
+                  onClick: () => {
                     setSaleToVoid(sale);
                     setVoidOpen(true);
-                  }}
-                  className="inline-flex items-center gap-1 rounded-lg border border-amber-200 px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-900/30"
-                  title="Void"
-                >
-                  <Ban className="h-3.5 w-3.5" />
-                  Void
+                  },
+                }]
+              : []),
+            ...(sale.status === 'void' || sale.doc_type === 'quotation'
+              ? [{
+                  label: 'Delete',
+                  icon: <Trash2 className="h-4 w-4" />,
+                  variant: 'danger' as const,
+                  onClick: () => void handleDelete(sale),
+                }]
+              : []),
+          ];
+          const btn = 'inline-flex min-h-11 items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium';
+          return (
+            <div className="flex items-center justify-end">
+              <div className="hidden lg:flex items-center gap-2 flex-wrap">
+                <button type="button" onClick={() => void handleView(sale)} className={`${btn} border-blue-200 text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-900/30`} aria-label={`View ${getDocRef(sale)}`}>
+                  <Eye className="h-4 w-4" aria-hidden="true" />
+                  View
                 </button>
-              )}
-
-              {(sale.status === 'void' || sale.doc_type === 'quotation') && (
-                <button
-                  type="button"
-                  onClick={() => void handleDelete(sale)}
-                  className="inline-flex items-center gap-1 rounded-lg border border-rose-200 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-900/30"
-                  title="Delete"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  Delete
+                <button type="button" onClick={() => void printSaleInvoice(sale)} className={`${btn} border-indigo-200 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-300 dark:hover:bg-indigo-900/30`} aria-label={printLabel}>
+                  <Printer className="h-4 w-4" aria-hidden="true" />
+                  Print
                 </button>
-              )}
+                {sale.status !== 'void' && (
+                  <button type="button" onClick={() => navigate(`/sales/${sale.sale_id}/edit`)} className={`${btn} border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800`} aria-label={`Edit ${getDocRef(sale)}`}>
+                    <Edit3 className="h-4 w-4" aria-hidden="true" />
+                    Edit
+                  </button>
+                )}
+                {sale.doc_type === 'quotation' && sale.status !== 'void' && (
+                  <button type="button" onClick={() => void handleConvertQuotation(sale)} className={`${btn} border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-900/30`} aria-label="Convert to invoice">
+                    <FileCheck2 className="h-4 w-4" aria-hidden="true" />
+                    Convert
+                  </button>
+                )}
+                {sale.status !== 'void' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSaleToVoid(sale);
+                      setVoidOpen(true);
+                    }}
+                    className={`${btn} border-amber-200 text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-900/30`}
+                    aria-label={`Void ${getDocRef(sale)}`}
+                  >
+                    <Ban className="h-4 w-4" aria-hidden="true" />
+                    Void
+                  </button>
+                )}
+                {(sale.status === 'void' || sale.doc_type === 'quotation') && (
+                  <button type="button" onClick={() => void handleDelete(sale)} className={`${btn} border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-900/30`} aria-label={`Delete ${getDocRef(sale)}`}>
+                    <Trash2 className="h-4 w-4" aria-hidden="true" />
+                    Delete
+                  </button>
+                )}
+              </div>
+              <div className="lg:hidden">
+                <ActionDropdown
+                  trigger={
+                    <button
+                      type="button"
+                      aria-label={`Actions for ${getDocRef(sale)}`}
+                      className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                    >
+                      <MoreVertical className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  }
+                  items={menuItems}
+                />
+              </div>
             </div>
           );
         },
@@ -439,10 +456,12 @@ const Sales = () => {
           setVoidOpen(false);
           setSaleToVoid(null);
         }}
-        onConfirm={() => {
-          void confirmVoid();
+        onConfirm={(reason) => {
+          void confirmVoid(reason);
         }}
         title="Void Sale Document?"
+        requireReason
+        reasonLabel="Reason for voiding"
         message={
           saleToVoid
             ? `Void #${getDocRef(saleToVoid)}? ${
@@ -485,9 +504,10 @@ const Sales = () => {
           setDeleteOpen(false);
           setSaleToDelete(null);
         }}
-        onConfirm={() => {
-          void confirmDelete();
+        onConfirm={(reason) => {
+          void confirmDelete(reason || '');
         }}
+        requireReason
         title="Delete Document?"
         message={
           saleToDelete
