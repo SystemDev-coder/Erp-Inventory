@@ -144,53 +144,6 @@ const roundMoney = (value: number): number => {
     return Math.round((n + Number.EPSILON) * 100) / 100;
 };
 
-<<<<<<< HEAD
-const requireRefundRules = (params: {
-    total: number;
-    outstanding: number;
-    refundAmount: number;
-    label: 'customer' | 'supplier';
-}) => {
-    const total = roundMoney(params.total);
-    const outstanding = Math.max(Number(params.outstanding || 0), 0);
-    const refundAmount = roundMoney(params.refundAmount);
-
-    if (refundAmount < 0) {
-        throw ApiError.badRequest('Refund amount cannot be negative');
-    }
-    if (refundAmount > total) {
-        throw ApiError.badRequest('Refund amount cannot exceed return total');
-    }
-
-    const minRefund = roundMoney(Math.max(0, total - outstanding));
-    if (refundAmount + 1e-9 < minRefund) {
-        const who = params.label === 'customer' ? 'Customer' : 'Supplier';
-        throw ApiError.badRequest(`${who} refund must be at least ${minRefund.toFixed(2)} to avoid negative balance`);
-    }
-
-    const balanceAdjustment = roundMoney(total - refundAmount);
-    if (balanceAdjustment - outstanding > 1e-6) {
-        throw ApiError.badRequest('Return would make balance negative; increase refund amount');
-    }
-
-    return { minRefund, balanceAdjustment, refundAmount, total };
-};
-
-const resolveSalesReturnSettlement = (total: number, rawRefundAccId: unknown) => {
-    if (rawRefundAccId === undefined || rawRefundAccId === null || rawRefundAccId === '') {
-        return { refundAccId: null, refundAmount: 0 };
-    }
-
-    const refundAccId = Number(rawRefundAccId);
-    if (!Number.isInteger(refundAccId) || refundAccId <= 0) {
-        throw ApiError.badRequest('Refund account is invalid');
-    }
-
-    return { refundAccId, refundAmount: roundMoney(total) };
-};
-
-=======
->>>>>>> main
 let cachedSupplierNameColumn: 'name' | 'supplier_name' | null = null;
 let cachedSalesHasDocType: boolean | null = null;
 type BalanceColumns = { hasOpenBalance: boolean; hasRemainingBalance: boolean };
@@ -494,6 +447,7 @@ const adjustCustomerBalance = async (
     if (cols.hasRemainingBalance) {
         updates.push(`remaining_balance = remaining_balance + $1`);
     } else if (cols.hasOpenBalance) {
+        // Legacy schema: open_balance acts as the live balance.
         updates.push(`open_balance = open_balance + $1`);
     }
     await adjustSystemAccountBalance(client, {
@@ -562,6 +516,7 @@ const adjustSupplierBalance = async (
     if (cols.hasRemainingBalance) {
         updates.push(`remaining_balance = remaining_balance + $1`);
     } else if (cols.hasOpenBalance) {
+        // Legacy schema: open_balance acts as the live balance.
         updates.push(`open_balance = open_balance + $1`);
     }
     await adjustSystemAccountBalance(client, {
@@ -606,6 +561,7 @@ const resolveStoreForItem = async (
         if (scopedStore.rows[0]) return Number(scopedStore.rows[0].store_id);
     }
 
+    // Prefer a store where the item currently exists (highest quantity) to avoid false "insufficient stock".
     const storeWithStock = await client.query<{ store_id: number }>(
         `SELECT si.store_id
            FROM ims.store_items si
@@ -714,6 +670,7 @@ const applyStoreItemDelta = async (
         [storeId, itemId, nextQty]
     );
 
+    // Keep master item quantity in sync with store quantities.
     const storeSum = await client.query<{ qty: string }>(
         `SELECT COALESCE(SUM(si.quantity), 0)::text AS qty
            FROM ims.store_items si
@@ -856,6 +813,8 @@ const getPurchaseReturnLimit = async (
     );
     const returnedQty = Number(returned.rows[0]?.qty || 0);
 
+    // Supplier returns must be limited by on-hand stock (you cannot return what is already sold/consumed).
+    // UI previously showed `purchased - returned`, which can be higher than on-hand and leads to confusion.
     const stock = await client.query<{ qty: string }>(
         `SELECT COALESCE(SUM(si.quantity), 0)::text AS qty
            FROM ims.store_items si
@@ -969,6 +928,7 @@ const rewriteSalesReturnGl = async (client: PoolClient, params: { branchId: numb
     const total = roundMoney(Number(sr.total || 0));
     const refundLines = await listSalesReturnRefundLines(client, { branchId: params.branchId, srId: params.srId });
     const refundAmount = roundMoney(refundLines.reduce((s, r) => s + r.amount, 0));
+    // Always derive from the refund lines to keep GL balanced even if `balance_adjustment` has drifted.
     const balanceAdjustment = roundMoney(Math.max(total - refundAmount, 0));
 
     const costRes = await client.query<{ amount: string }>(
@@ -1079,6 +1039,7 @@ const rewritePurchaseReturnGl = async (client: PoolClient, params: { branchId: n
     const total = roundMoney(Number(pr.total || 0));
     const refundLines = await listPurchaseReturnRefundLines(client, { branchId: params.branchId, prId: params.prId });
     const refundAmount = roundMoney(refundLines.reduce((s, r) => s + r.amount, 0));
+    // Always derive from the refund lines to keep GL balanced even if `balance_adjustment` has drifted.
     const balanceAdjustment = roundMoney(Math.max(total - refundAmount, 0));
 
     const costRes = await client.query<{ amount: string }>(
@@ -1503,9 +1464,6 @@ export const returnsService = {
         );
     },
 
-    // ============================================================
-    // FIXED createSalesReturn
-    // ============================================================
     async createSalesReturn(
         input: CreateSalesReturnInput,
         context: { branchId: number; userId: number }
@@ -1533,6 +1491,7 @@ export const returnsService = {
                 throw ApiError.badRequest('Customer not found');
             }
 
+            // Validate items exist in this branch
             const docTypeFilter = (await hasSalesDocTypeColumn())
                 ? `AND COALESCE(s.doc_type::text, 'sale') <> 'quotation'`
                 : '';
@@ -1581,14 +1540,6 @@ export const returnsService = {
                 branchId: context.branchId,
                 customerId: input.customerId,
             });
-<<<<<<< HEAD
-            const settlement = resolveSalesReturnSettlement(total, input.refundAccId);
-            const { balanceAdjustment, refundAmount } = requireRefundRules({
-                total,
-                outstanding: currentOutstanding,
-                refundAmount: settlement.refundAmount,
-                label: 'customer',
-=======
             const refundResolution = await resolveSalesReturnRefund(client, {
                 branchId: context.branchId,
                 saleId: input.saleId ?? null,
@@ -1596,25 +1547,15 @@ export const returnsService = {
                 partyOutstanding: currentOutstanding,
                 refundViaAccount: input.refundViaAccount,
                 refundAccIdInput: input.refundAccId ?? null,
->>>>>>> main
             });
             const { balanceAdjustment, refundAmount } = refundResolution;
             let refundAccId: number | null = refundResolution.refundAccId;
             const hasBalanceColumn = await hasSalesReturnBalanceAdjustment(client);
 
             const returnEntryType = await pickLedgerEntryType(client, ['return', 'adjustment', 'payment']);
-<<<<<<< HEAD
-            // We don't need refundEntryType because we removed the refund entry from customer_ledger.
-            // It is only used for the GL rewrite.
-
-            const refundAccId = settlement.refundAccId;
-            if (refundAmount > 0) {
-                if (!refundAccId) throw ApiError.badRequest('Refund account is required');
-=======
             const refundEntryType = await pickLedgerEntryType(client, ['refund', 'payment', 'return', 'adjustment']);
 
             if (refundAmount > 0 && refundAccId) {
->>>>>>> main
                 await assertAccountInBranch(client, context.branchId, refundAccId);
             }
 
@@ -1694,7 +1635,6 @@ export const returnsService = {
                 });
             }
 
-            // Apply cash refund to the selected account (if any)
             if (refundAmount > 0) {
                 await applyAccountBalanceDelta(client, {
                     branchId: context.branchId,
@@ -1702,8 +1642,6 @@ export const returnsService = {
                     delta: -refundAmount,
                 });
             }
-
-            // Record credit note in customer_ledger (reduces receivable by total)
             const ledgerCredit = Number(total);
             if (input.customerId && ledgerCredit > 0) {
                 await client.query(
@@ -1713,13 +1651,20 @@ export const returnsService = {
                     [context.branchId, input.customerId, returnEntryType, sr.sr_id, ledgerCredit, input.returnDate || sr.return_date || null, input.note || null]
                 );
             }
-
-            // IMPORTANT: We do NOT insert a refund entry in customer_ledger.
-            // The refund is only a cash transaction (handled above) and does not affect outstanding beyond the credit note.
-
-            // Reduce customer outstanding by the full total (not total - refundAmount)
+            if (refundAmount > 0 && input.customerId) {
+                // Refund offsets the return credit note; record it as a debit so outstanding changes by `balance_adjustment`.
+                await client.query(
+                    `INSERT INTO ims.customer_ledger
+                       (branch_id, customer_id, entry_type, ref_table, ref_id, acc_id, debit, credit, entry_date, note)
+                     VALUES ($1, $2, $3, 'sales_returns', $4, $5, $6, 0, COALESCE($7::timestamptz, NOW()), $8)`,
+                    [context.branchId, input.customerId, refundEntryType, sr.sr_id, refundAccId, refundAmount, input.returnDate || sr.return_date || null, 'Customer refund']
+                );
+            }
             if (input.customerId) {
-                const desiredDelta = -total; // full reduction
+                // Keep customers table in sync with ledger logic used by reports:
+                // - Return credit reduces outstanding by `total`
+                // - Cash refund partially reverses that credit (that portion left as cash, not store credit)
+                const desiredDelta = -roundMoney(total - refundAmount);
                 const safeDelta = Math.max(-currentOutstanding, desiredDelta);
                 if (safeDelta !== 0) {
                     await adjustCustomerBalance(client, {
@@ -1729,8 +1674,6 @@ export const returnsService = {
                     });
                 }
             }
-
-            // Sync customers table with ledger to ensure consistency
             if (input.customerId) {
                 await syncCustomerOutstandingFromLedger(client, {
                     branchId: context.branchId,
@@ -1749,9 +1692,6 @@ export const returnsService = {
             client.release();
         }
     },
-    // ============================================================
-    // END OF FIXED createSalesReturn
-    // ============================================================
 
     async updateSalesReturn(
         id: number,
@@ -1759,10 +1699,10 @@ export const returnsService = {
         scope: BranchScope,
         context: { userId: number }
     ): Promise<SalesReturn> {
-        // ... (unchanged, already correct)
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
+            // Soft-delete triggers can toggle this session flag; keep deleted rows hidden for correct totals.
             await client.query(`SET app.include_deleted = '0'`);
             const hasBalanceColumn = await hasSalesReturnBalanceAdjustment(client);
             const existing = await client.query<{
@@ -1853,15 +1793,14 @@ export const returnsService = {
             const total = roundMoney(subtotal);
             const oldCustomerId = Number(current.customer_id || 0);
 
+            const refundUpdateRequested =
+                Object.prototype.hasOwnProperty.call(input, 'refundAccId') ||
+                Object.prototype.hasOwnProperty.call(input, 'refundAmount');
             const previousRefundLines = await listSalesReturnRefundLines(client, {
                 branchId: Number(current.branch_id),
                 srId: id,
             });
             const previousRefundAmount = roundMoney(previousRefundLines.reduce((s, r) => s + r.amount, 0));
-<<<<<<< HEAD
-
-=======
->>>>>>> main
             const previousTotal = roundMoney(Number(current?.total || 0));
             const previousCustomerEffect = roundMoney(previousTotal - previousRefundAmount);
 
@@ -1872,14 +1811,6 @@ export const returnsService = {
                     customerId: newCustomerId,
                 })
                 : 0;
-<<<<<<< HEAD
-            const settlement = resolveSalesReturnSettlement(total, input.refundAccId);
-            const { balanceAdjustment: newBalanceAdjustment, refundAmount } = requireRefundRules({
-                total,
-                outstanding: currentOutstanding,
-                refundAmount: settlement.refundAmount,
-                label: 'customer',
-=======
             const refundResolution = await resolveSalesReturnRefund(client, {
                 branchId: Number(current.branch_id),
                 saleId: input.saleId ?? current.sale_id ?? null,
@@ -1887,21 +1818,13 @@ export const returnsService = {
                 partyOutstanding: currentOutstanding + previousCustomerEffect,
                 refundViaAccount: input.refundViaAccount ?? refundUpdateRequested,
                 refundAccIdInput: input.refundAccId ?? previousRefundLines[0]?.accId ?? null,
->>>>>>> main
             });
             const { balanceAdjustment: newBalanceAdjustment, refundAmount } = refundResolution;
 
-<<<<<<< HEAD
-            const nextRefundLines = refundAmount > 0
-                ? [
-                      {
-                          accId: settlement.refundAccId as number,
-=======
             const nextRefundLines = refundAmount > 0 && refundResolution.refundAccId
                 ? [
                       {
                           accId: Number(refundResolution.refundAccId),
->>>>>>> main
                           amount: roundMoney(refundAmount),
                           accountName: null,
                       },
@@ -1994,20 +1917,22 @@ export const returnsService = {
                     note: 'Sales return',
                 });
             }
-            // Always reverse the old cash impact, then apply the selected settlement path.
-            for (const prev of previousRefundLines) {
-                await applyAccountBalanceDelta(client, {
-                    branchId: Number(current.branch_id),
-                    accId: Number(prev.accId),
-                    delta: prev.amount,
-                });
-            }
-            for (const next of nextRefundLines) {
-                await applyAccountBalanceDelta(client, {
-                    branchId: Number(current.branch_id),
-                    accId: Number(next.accId),
-                    delta: -next.amount,
-                });
+            if (refundUpdateRequested) {
+                // Reverse previous refund cash impact (if any), then apply the new refund (if any).
+                for (const prev of previousRefundLines) {
+                    await applyAccountBalanceDelta(client, {
+                        branchId: Number(current.branch_id),
+                        accId: Number(prev.accId),
+                        delta: prev.amount,
+                    });
+                }
+                for (const next of nextRefundLines) {
+                    await applyAccountBalanceDelta(client, {
+                        branchId: Number(current.branch_id),
+                        accId: Number(next.accId),
+                        delta: -next.amount,
+                    });
+                }
             }
             await client.query(
                 `DELETE FROM ims.customer_ledger
@@ -2027,7 +1952,17 @@ export const returnsService = {
                     [current.branch_id, input.customerId, returnEntryType, id, ledgerCredit, input.returnDate || null, input.note || null]
                 );
             }
-            // No refund entry in customer_ledger (same as create)
+            if (refundAmount > 0 && input.customerId) {
+                const refundEntryType = await pickLedgerEntryType(client, ['refund', 'payment', 'return', 'adjustment']);
+                for (const r of nextRefundLines) {
+                    await client.query(
+                        `INSERT INTO ims.customer_ledger
+                           (branch_id, customer_id, entry_type, ref_table, ref_id, acc_id, debit, credit, entry_date, note)
+                         VALUES ($1, $2, $3, 'sales_returns', $4, $5, $6, 0, COALESCE($7::timestamptz, NOW()), $8)`,
+                        [current.branch_id, input.customerId, refundEntryType, id, Number(r.accId), r.amount, input.returnDate || null, 'Customer refund']
+                    );
+                }
+            }
             // Update customer outstanding based on the same ledger interpretation used by reports.
             if (oldCustomerId && previousCustomerEffect > 0 && oldCustomerId !== newCustomerId) {
                 await adjustCustomerBalance(client, {
@@ -2073,13 +2008,8 @@ export const returnsService = {
         }
     },
 
-<<<<<<< HEAD
-    async deleteSalesReturn(id: number, scope: BranchScope): Promise<void> {
-        // ... unchanged
-=======
     async deleteSalesReturn(id: number, scope: BranchScope, reason?: string): Promise<void> {
         requireDeleteReason(reason);
->>>>>>> main
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
@@ -2182,9 +2112,6 @@ export const returnsService = {
         }
     },
 
-    // ============================================================
-    // Purchase return methods (unchanged)
-    // ============================================================
     async listPurchaseReturns(
         branchIds: number[],
         dateRange?: { fromDate?: string; toDate?: string }
@@ -2324,7 +2251,6 @@ export const returnsService = {
         input: CreatePurchaseReturnInput,
         context: { branchId: number; userId: number }
     ): Promise<PurchaseReturn> {
-        // ... unchanged (already correct)
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
@@ -2348,6 +2274,7 @@ export const returnsService = {
                 throw ApiError.badRequest('Supplier not found');
             }
 
+            // Validate items exist in branch
             for (const item of items) {
                 const row = await client.query<{ item_id: number }>(
                     `SELECT item_id FROM ims.items WHERE item_id = $1 AND branch_id = $2 LIMIT 1`,
@@ -2494,6 +2421,7 @@ export const returnsService = {
             }
             if (refundAmount > 0) {
                 const refundEntryType = await pickLedgerEntryType(client, ['refund', 'payment', 'return', 'adjustment']);
+                // Refund partially reverses the return's debit (that portion was paid back in cash, not kept as payable credit).
                 await client.query(
                     `INSERT INTO ims.supplier_ledger
                        (branch_id, supplier_id, entry_type, ref_table, ref_id, acc_id, debit, credit, note)
@@ -2501,6 +2429,7 @@ export const returnsService = {
                     [context.branchId, input.supplierId, refundEntryType, pr.pr_id, refundAccId, refundAmount, 'Supplier refund']
                 );
             }
+            // Keep suppliers table in sync with report expectations: refund partially reverses the return's reduction.
             const desiredDelta = -roundMoney(total - refundAmount);
             const safeDelta = Math.max(-currentOutstanding, desiredDelta);
             if (safeDelta !== 0) {
@@ -2529,7 +2458,6 @@ export const returnsService = {
         scope: BranchScope,
         context: { userId: number }
     ): Promise<PurchaseReturn> {
-        // ... unchanged
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
@@ -2737,6 +2665,7 @@ export const returnsService = {
                 });
             }
             if (refundUpdateRequested) {
+                // Reverse previous refund cash impact (if any), then apply the new refund (if any).
                 for (const prev of previousRefundLines) {
                     await applyAccountBalanceDelta(client, {
                         branchId: Number(current.branch_id),
@@ -2814,6 +2743,7 @@ export const returnsService = {
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
+            // Soft-delete triggers can toggle this session flag; keep deleted rows hidden for correct totals.
             await client.query(`SET app.include_deleted = '0'`);
             const hasBalanceColumn = await hasPurchaseReturnBalanceAdjustment(client);
             const existing = await client.query<{
@@ -2861,6 +2791,7 @@ export const returnsService = {
             const total = roundMoney(Number(current?.total || 0));
             const previousSupplierEffect = roundMoney(total - refundAmount);
             for (const r of refundLines) {
+                // Reverse the cash inflow for the refund.
                 await applyAccountBalanceDelta(client, {
                     branchId: Number(current.branch_id),
                     accId: Number(r.accId),
