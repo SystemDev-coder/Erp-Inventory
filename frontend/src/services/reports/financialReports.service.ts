@@ -208,10 +208,9 @@ export const financialReportsService = {
     return apiClient.get<RowsResponse<IncomeStatementRow>>(`${API.REPORTS.FINANCIAL_INCOME_STATEMENT}${query}`);
   },
 
-  async getBalanceSheet(input: { asOfDate: string; fromDate?: string; branchId?: number }) {
+  async getBalanceSheet(input: { asOfDate: string; branchId?: number }) {
     const query = toQuery({
       branchId: input.branchId,
-      fromDate: input.fromDate,
       asOfDate: input.asOfDate,
     });
     return apiClient.get<BalanceSheetResponse>(`${API.REPORTS.FINANCIAL_BALANCE_SHEET}${query}`);

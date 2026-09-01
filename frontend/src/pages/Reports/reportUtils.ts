@@ -16,6 +16,17 @@ export const defaultReportRange = () => ({
   toDate: todayDate(),
 });
 
+export const defaultAsOfDate = () => todayDate();
+
+export const ensureAsOfDateValid = (asOfDate: string, label: string) => {
+  if (!asOfDate) throw new Error(`${label}: as-of date is required`);
+};
+
+export const ensureDateRangeValid = (range: { fromDate: string; toDate: string }, label: string) => {
+  if (!range.fromDate || !range.toDate) throw new Error(`${label}: both start and end date are required`);
+  if (range.fromDate > range.toDate) throw new Error(`${label}: start date cannot be after end date`);
+};
+
 export const formatCurrency = (value: unknown) => {
   const amount = Number(value || 0);
   return amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
