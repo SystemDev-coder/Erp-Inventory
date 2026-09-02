@@ -1,4 +1,5 @@
 import { queryMany, queryOne } from '../../../db/query';
+import { customerInvoicePaymentsCteSql } from '../reports.helpers';
 
 export interface FinancialReportOption {
   id: number;
@@ -2423,29 +2424,7 @@ export const financialReportsService = {
     return buildBalanceSheetGuaranteedBalanced(branchId, asOfDate);
   },
 
-  async getAccountsReceivable(branchId: number, fromDate: string, toDate: string): Promise<AccountsReceivableRow[]> {
-    const customerBalanceColumn = await resolveBalanceColumn('customers');
-    const customerBalanceRows = await queryMany<AccountsReceivableRow>(
-      `SELECT
-         COALESCE(c.full_name, 'Customer') AS customer_name,
-         0::bigint AS invoice_no,
-         $2::date::text AS invoice_date,
-         $2::date::text AS due_date,
-         GREATEST(COALESCE(c.${customerBalanceColumn}, 0), 0)::double precision AS amount,
-         0::double precision AS paid,
-         GREATEST(COALESCE(c.${customerBalanceColumn}, 0), 0)::double precision AS balance,
-         'Open'::text AS status
-        FROM ims.customers c
-        WHERE c.branch_id = $1
-          AND GREATEST(COALESCE(c.${customerBalanceColumn}, 0), 0) > 0.000001
-        ORDER BY c.customer_id ASC`,
-       [branchId, toDate]
-     );
-    if (customerBalanceRows.length > 0) {
-      return customerBalanceRows;
-    }
-
-    // Fallback to invoice-based aging when customer balance column is not populated.
+  async getAccountsReceivable(branchId: number, asOfDate: string): Promise<AccountsReceivableRow[]> {
     return queryMany<AccountsReceivableRow>(
       `WITH sales_scope AS (
          SELECT
@@ -2457,50 +2436,32 @@ export const financialReportsService = {
          FROM ims.sales s
          LEFT JOIN ims.customers c ON c.customer_id = s.customer_id
          WHERE s.branch_id = $1
-           AND s.sale_date::date <= $3::date
+           AND s.sale_date::date <= $2::date
            AND LOWER(COALESCE(s.status::text, '')) <> 'void'
            AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
+           AND COALESCE(s.is_deleted, 0) = 0
        ),
-       sale_payments AS (
-         SELECT
-           sp.sale_id::bigint AS invoice_no,
-           COALESCE(SUM(sp.amount_paid), 0)::double precision AS paid
-         FROM ims.sale_payments sp
-         WHERE sp.branch_id = $1
-           AND sp.pay_date::date <= $3::date
-         GROUP BY sp.sale_id
-       ),
-       receipt_payments AS (
-         SELECT
-           cr.sale_id::bigint AS invoice_no,
-           COALESCE(SUM(cr.amount), 0)::double precision AS paid
-         FROM ims.customer_receipts cr
-         WHERE cr.branch_id = $1
-           AND cr.sale_id IS NOT NULL
-           AND cr.receipt_date::date <= $3::date
-         GROUP BY cr.sale_id
-       )
+       ${customerInvoicePaymentsCteSql('$1', '$2')}
        SELECT
          ss.customer_name,
          ss.invoice_no,
          ss.invoice_date::text AS invoice_date,
          ss.due_date::text AS due_date,
          ss.amount,
-         LEAST(ss.amount, COALESCE(sp.paid, 0) + COALESCE(rp.paid, 0))::double precision AS paid,
-         GREATEST(ss.amount - (COALESCE(sp.paid, 0) + COALESCE(rp.paid, 0)), 0)::double precision AS balance,
+         LEAST(ss.amount, COALESCE(ps.paid, 0))::double precision AS paid,
+         GREATEST(ss.amount - COALESCE(ps.paid, 0), 0)::double precision AS balance,
          CASE
-           WHEN GREATEST(ss.amount - (COALESCE(sp.paid, 0) + COALESCE(rp.paid, 0)), 0) <= 0.009 THEN 'Paid'
-           WHEN ss.due_date < $3::date THEN 'Overdue'
+           WHEN GREATEST(ss.amount - COALESCE(ps.paid, 0), 0) <= 0.009 THEN 'Paid'
+           WHEN ss.due_date < $2::date THEN 'Overdue'
            ELSE 'Open'
          END AS status
        FROM sales_scope ss
-       LEFT JOIN sale_payments sp ON sp.invoice_no = ss.invoice_no
-       LEFT JOIN receipt_payments rp ON rp.invoice_no = ss.invoice_no
-       WHERE ss.invoice_date::date BETWEEN $2::date AND $3::date
-        ORDER BY ss.invoice_date ASC, ss.invoice_no ASC
-        LIMIT 5000`,
-       [branchId, fromDate, toDate]
-     );
+       LEFT JOIN pay_sum ps ON ps.sale_id = ss.invoice_no
+       WHERE GREATEST(ss.amount - COALESCE(ps.paid, 0), 0) > 0.009
+       ORDER BY ss.invoice_date ASC, ss.invoice_no ASC
+       LIMIT 5000`,
+      [branchId, asOfDate]
+    );
   },
 
   async getAccountsPayable(branchId: number, fromDate: string, toDate: string): Promise<AccountsPayableRow[]> {
@@ -2630,13 +2591,11 @@ export const financialReportsService = {
     // Prefer ledger-based cash flow so it matches Accounts + Balance Sheet.
     // If the ledger is missing legacy postings, fall back to the legacy table-based estimator.
     const ledgerRows = await buildCashFlowFromLedger(branchId, fromDate, toDate);
-    const investingTotal = ledgerRows.find(
-      (r) => r.section === 'Cash Flow from Investing' && r.line_item === 'Net Cash Flow from Investing'
-    )?.amount ?? 0;
-    const financingTotal = ledgerRows.find(
-      (r) => r.section === 'Cash Flow from Financing' && r.line_item === 'Net Cash Flow from Financing'
-    )?.amount ?? 0;
-    if (!isApproxZero(investingTotal) || !isApproxZero(financingTotal)) {
+    const operatingTotal =
+      ledgerRows.find(
+        (r) => r.section === 'Cash Flow from Operations' && r.line_item === 'Net Cash Flow from Operations'
+      )?.amount ?? 0;
+    if (ledgerRows.length > 0 && !isApproxZero(operatingTotal)) {
       return ledgerRows;
     }
 

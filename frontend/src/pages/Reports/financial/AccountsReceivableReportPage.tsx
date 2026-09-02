@@ -4,7 +4,7 @@ import { DataTable } from '../../../components/ui/table/DataTable';
 import { PageHeader } from '../../../components/ui/layout';
 import { useToast } from '../../../components/ui/toast/Toast';
 import { AccountsReceivableRow, financialReportsService } from '../../../services/reports/financialReports.service';
-import { defaultReportRange } from '../reportUtils';
+import { defaultAsOfDate, truncationNote } from '../reportUtils';
 import { useBranch } from '../../../context/BranchContext';
 
 const money = (value: number) =>
@@ -22,19 +22,16 @@ const formatDate = (value: string) => {
 export default function AccountsReceivableReportPage() {
   const { showToast } = useToast();
   const { activeBranchId } = useBranch();
-  const [range, setRange] = useState(defaultReportRange());
+  const [asOfDate, setAsOfDate] = useState(defaultAsOfDate());
   const [rows, setRows] = useState<AccountsReceivableRow[]>([]);
+  const [meta, setMeta] = useState<{ truncated?: boolean; maxRows?: number; rowCount?: number }>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [hasDisplayed, setHasDisplayed] = useState(false);
 
   const loadReport = async () => {
-    if (!range.fromDate || !range.toDate) {
-      showToast('error', 'Accounts Receivable', 'From and To dates are required');
-      return;
-    }
-    if (range.fromDate > range.toDate) {
-      showToast('error', 'Accounts Receivable', 'From date cannot be after To date');
+    if (!asOfDate) {
+      showToast('error', 'Accounts Receivable', 'As-of date is required');
       return;
     }
 
@@ -43,22 +40,27 @@ export default function AccountsReceivableReportPage() {
     setError('');
     try {
       const response = await financialReportsService.getAccountsReceivable({
-        ...range,
+        asOfDate,
         branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) {
         setRows([]);
+        setMeta(undefined);
         setError(response.error || response.message || 'Failed to load receivable report');
         return;
       }
       setRows(response.data.rows || []);
+      setMeta(response.data.meta);
     } catch (e) {
       setRows([]);
+      setMeta(undefined);
       setError(e instanceof Error ? e.message : 'Failed to load receivable report');
     } finally {
       setLoading(false);
     }
   };
+
+  const trunc = truncationNote(meta, rows.length);
 
   const columns = useMemo<ColumnDef<AccountsReceivableRow>[]>(
     () => [
@@ -107,36 +109,22 @@ export default function AccountsReceivableReportPage() {
     <div className="space-y-4">
       <PageHeader
         title="Accounts Receivable Report"
-        description="Outstanding customer invoices and payment status."
+        description="Outstanding customer invoices as of a specific date."
       />
 
       <div className="rounded-xl border border-zinc-300 bg-white p-4 shadow-sm">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-          <label htmlFor="ar-from-date" className="space-y-1 text-sm font-medium text-black">
-            <span>From Date</span>
+          <label htmlFor="ar-as-of-date" className="space-y-1 text-sm font-medium text-black">
+            <span>As of Date</span>
             <input
-              id="ar-from-date"
+              id="ar-as-of-date"
               type="date"
-              value={range.fromDate}
-              onChange={(event) =>
-                setRange((prev) => ({ ...prev, fromDate: event.target.value }))
-              }
+              value={asOfDate}
+              onChange={(event) => setAsOfDate(event.target.value)}
               className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-black focus:border-black focus:outline-none"
             />
           </label>
-          <label htmlFor="ar-to-date" className="space-y-1 text-sm font-medium text-black">
-            <span>To Date</span>
-            <input
-              id="ar-to-date"
-              type="date"
-              value={range.toDate}
-              onChange={(event) =>
-                setRange((prev) => ({ ...prev, toDate: event.target.value }))
-              }
-              className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-black focus:border-black focus:outline-none"
-            />
-          </label>
-          <div className="md:col-span-2 flex items-end">
+          <div className="md:col-span-3 flex items-end">
             <button
               type="button"
               onClick={() => void loadReport()}
@@ -148,6 +136,12 @@ export default function AccountsReceivableReportPage() {
           </div>
         </div>
       </div>
+
+      {trunc && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          {trunc}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <div className="rounded-lg border border-zinc-300 bg-white p-3 shadow-sm">
@@ -186,4 +180,3 @@ export default function AccountsReceivableReportPage() {
     </div>
   );
 }
-

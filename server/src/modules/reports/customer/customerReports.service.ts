@@ -1,5 +1,6 @@
 import { queryMany, queryOne } from '../../../db/query';
 import { customerOutstandingLedgerCte } from '../../../utils/customerOutstanding';
+import { customerInvoicePaymentsCteSql } from '../reports.helpers';
 
 const columnExistsCache: Record<string, boolean> = {};
 
@@ -198,7 +199,16 @@ export const customerReportsService = {
     }
 
     return queryMany<CustomerLedgerRow>(
-      `WITH scoped AS (
+      `WITH opening AS (
+         SELECT
+           l.customer_id,
+           COALESCE(SUM(l.debit - l.credit), 0)::double precision AS opening_balance
+         FROM ims.customer_ledger l
+        WHERE l.branch_id = $1
+          AND l.entry_date::date < $2::date
+        GROUP BY l.customer_id
+       ),
+       scoped AS (
          SELECT
            l.cust_ledger_id,
            l.entry_date,
@@ -213,9 +223,6 @@ export const customerReportsService = {
            ) AS entry_type,
            COALESCE(l.ref_table, '') AS ref_table,
            l.ref_id,
-           -- Refunds are written as a debit that partially reverses the return's credit note
-           -- (that portion was paid back in cash, not kept as store credit) - use the ledger's
-           -- own signed debit/credit as-is so the running balance nets correctly.
            COALESCE(l.debit, 0)::double precision AS debit,
            COALESCE(l.credit, 0)::double precision AS credit,
            COALESCE(l.note, '') AS note
@@ -247,14 +254,18 @@ export const customerReportsService = {
         scoped.ref_id,
         scoped.debit,
         scoped.credit,
-        SUM(scoped.debit - scoped.credit)
-          OVER (
-            PARTITION BY scoped.customer_id
-            ORDER BY scoped.entry_date, scoped.cust_ledger_id
-            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-          )::double precision AS running_balance,
+        (
+          COALESCE(opening.opening_balance, 0)
+          + SUM(scoped.debit - scoped.credit)
+            OVER (
+              PARTITION BY scoped.customer_id
+              ORDER BY scoped.entry_date, scoped.cust_ledger_id
+              ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+            )
+        )::double precision AS running_balance,
         scoped.note
       FROM scoped
+      LEFT JOIN opening ON opening.customer_id = scoped.customer_id
       ORDER BY scoped.entry_date ASC, scoped.cust_ledger_id ASC
       LIMIT 4000`,
       params
@@ -456,7 +467,8 @@ export const customerReportsService = {
     }
 
     return queryMany<CreditOverdueRow>(
-      `SELECT
+      `WITH ${customerInvoicePaymentsCteSql('$1', 'CURRENT_DATE')}
+       SELECT
          s.sale_id,
          ('#' || s.sale_id::text) AS invoice_number,
          s.customer_id,
@@ -464,16 +476,18 @@ export const customerReportsService = {
          s.sale_date::date::text AS sale_date,
          s.due_date::date::text AS appointment_date,
          GREATEST((CURRENT_DATE - s.due_date)::int, 0) AS days_overdue,
-         COALESCE(s.total, 0)::double precision AS total
+         GREATEST(COALESCE(s.total, 0) - COALESCE(ps.paid, 0), 0)::double precision AS total
        FROM ims.sales s
+       LEFT JOIN pay_sum ps ON ps.sale_id = s.sale_id
        LEFT JOIN ims.customers c ON c.customer_id = s.customer_id
       WHERE s.branch_id = $1
         AND COALESCE(s.sale_type::text, '') = 'credit'
         AND s.due_date IS NOT NULL
         AND s.due_date <= CURRENT_DATE
-        AND COALESCE(s.status::text, '') NOT IN ('void', 'paid')
+        AND LOWER(COALESCE(s.status::text, '')) <> 'void'
         AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
         AND COALESCE(s.is_deleted, 0)::int = 0
+        AND GREATEST(COALESCE(s.total, 0) - COALESCE(ps.paid, 0), 0) > 0.009
         ${filter}
       ORDER BY days_overdue DESC, s.due_date ASC, s.sale_id ASC
       LIMIT 2000`,

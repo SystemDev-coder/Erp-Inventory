@@ -338,11 +338,10 @@ export const financialReportsService = {
     return apiClient.get<RowsResponse<SupplierPaymentRow>>(`${API.REPORTS.FINANCIAL_SUPPLIER_PAYMENTS}${query}`);
   },
 
-  async getAccountsReceivable(input: { fromDate: string; toDate: string; branchId?: number }) {
+  async getAccountsReceivable(input: { asOfDate: string; branchId?: number }) {
     const query = toQuery({
       branchId: input.branchId,
-      fromDate: input.fromDate,
-      toDate: input.toDate,
+      asOfDate: input.asOfDate,
     });
     return apiClient.get<RowsResponse<AccountsReceivableRow>>(`${API.REPORTS.FINANCIAL_ACCOUNTS_RECEIVABLE}${query}`);
   },

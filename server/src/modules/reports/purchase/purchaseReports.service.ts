@@ -1,4 +1,5 @@
 import { queryMany } from '../../../db/query';
+import { supplierPaymentsCteSql } from '../reports.helpers';
 
 export interface PurchaseReportOption {
   id: number;
@@ -140,19 +141,14 @@ export const purchaseReportsService = {
 
   async getPurchaseOrdersSummary(branchId: number, fromDate: string, toDate: string): Promise<PurchaseOrdersSummaryRow[]> {
     return queryMany<PurchaseOrdersSummaryRow>(
-      `WITH payments AS (
-         SELECT
-           sp.purchase_id,
-           COALESCE(SUM(sp.amount_paid), 0)::double precision AS paid_amount
-         FROM ims.supplier_payments sp
-         GROUP BY sp.purchase_id
-       ),
+      `WITH ${supplierPaymentsCteSql('$1')},
        returns AS (
          SELECT
            pr.purchase_id,
            COALESCE(SUM(pr.total), 0)::double precision AS returned_amount
          FROM ims.purchase_returns pr
          WHERE pr.purchase_id IS NOT NULL
+           AND COALESCE(pr.is_deleted, 0) = 0
          GROUP BY pr.purchase_id
        )
        SELECT
@@ -241,19 +237,14 @@ export const purchaseReportsService = {
 
   async getPurchasePaymentStatus(branchId: number, fromDate: string, toDate: string): Promise<PurchasePaymentStatusRow[]> {
     return queryMany<PurchasePaymentStatusRow>(
-      `WITH payments AS (
-         SELECT
-           sp.purchase_id,
-           COALESCE(SUM(sp.amount_paid), 0)::double precision AS paid_amount
-         FROM ims.supplier_payments sp
-         GROUP BY sp.purchase_id
-       ),
+      `WITH ${supplierPaymentsCteSql('$1')},
        returns AS (
          SELECT
            pr.purchase_id,
            COALESCE(SUM(pr.total), 0)::double precision AS returned_amount
          FROM ims.purchase_returns pr
          WHERE pr.purchase_id IS NOT NULL
+           AND COALESCE(pr.is_deleted, 0) = 0
          GROUP BY pr.purchase_id
        )
        SELECT
@@ -281,21 +272,33 @@ export const purchaseReportsService = {
     );
   },
 
-  async getSupplierLedger(branchId: number, supplierId?: number): Promise<SupplierLedgerRow[]> {
-    const params: Array<number> = [branchId];
-    const filters: string[] = ['l.branch_id = $1'];
-    const supplierFilters: string[] = ['s.branch_id = $1'];
+  async getSupplierLedger(
+    branchId: number,
+    fromDate: string,
+    toDate: string,
+    supplierId?: number
+  ): Promise<SupplierLedgerRow[]> {
+    const params: Array<number | string> = [branchId, fromDate, toDate];
+    let filter = '';
 
     if (supplierId) {
       params.push(supplierId);
-      filters.push(`l.supplier_id = $${params.length}`);
-      supplierFilters.push(`s.supplier_id = $${params.length}`);
+      filter = `AND l.supplier_id = $${params.length}`;
     }
 
-       return queryMany<SupplierLedgerRow>(
-      `WITH ledger_rows AS (
+    return queryMany<SupplierLedgerRow>(
+      `WITH opening AS (
          SELECT
-           l.sup_ledger_id::bigint AS sup_ledger_id,
+           l.supplier_id,
+           COALESCE(SUM(l.credit - l.debit), 0)::double precision AS opening_balance
+         FROM ims.supplier_ledger l
+        WHERE l.branch_id = $1
+          AND l.entry_date::date < $2::date
+        GROUP BY l.supplier_id
+       ),
+       scoped AS (
+         SELECT
+           l.sup_ledger_id,
            l.entry_date,
            l.supplier_id,
            COALESCE(s.name, 'Unknown Supplier') AS supplier_name,
@@ -307,63 +310,34 @@ export const purchaseReportsService = {
            COALESCE(l.note, '') AS note
          FROM ims.supplier_ledger l
          LEFT JOIN ims.suppliers s ON s.supplier_id = l.supplier_id
-        WHERE ${filters.join(' AND ')}
-       ),
-       opening_rows AS (
-         SELECT
-           (-s.supplier_id)::bigint AS sup_ledger_id,
-           COALESCE(s.created_at, NOW()) AS entry_date,
-           s.supplier_id,
-           COALESCE(NULLIF(to_jsonb(s) ->> 'name', ''), NULLIF(to_jsonb(s) ->> 'supplier_name', ''), 'Unknown Supplier') AS supplier_name,
-           'opening'::text AS entry_type,
-           'suppliers'::text AS ref_table,
-           NULL::bigint AS ref_id,
-           0::double precision AS debit,
-           GREATEST(
-             COALESCE(NULLIF(to_jsonb(s) ->> 'remaining_balance', '')::double precision, 0),
-             COALESCE(NULLIF(to_jsonb(s) ->> 'open_balance', '')::double precision, 0)
-           )::double precision AS credit,
-           'Opening payable balance'::text AS note
-         FROM ims.suppliers s
-        WHERE ${supplierFilters.join(' AND ')}
-          -- Only inject an opening row when there are no supplier ledger rows.
-          -- If ledger rows exist, remaining_balance already reflects the live outstanding and would double-count.
-          AND NOT EXISTS (
-            SELECT 1
-              FROM ims.supplier_ledger l
-             WHERE l.branch_id = $1
-               AND l.supplier_id = s.supplier_id
-          )
-          AND GREATEST(
-                COALESCE(NULLIF(to_jsonb(s) ->> 'remaining_balance', '')::double precision, 0),
-                COALESCE(NULLIF(to_jsonb(s) ->> 'open_balance', '')::double precision, 0)
-              ) > 0
-       ),
-       unioned AS (
-         SELECT * FROM opening_rows
-         UNION ALL
-         SELECT * FROM ledger_rows
+        WHERE l.branch_id = $1
+          AND l.entry_date::date BETWEEN $2::date AND $3::date
+          ${filter}
        )
        SELECT
-         u.sup_ledger_id,
-         u.entry_date::text AS entry_date,
-         u.supplier_id,
-         u.supplier_name,
-         u.entry_type,
-         u.ref_table,
-         u.ref_id,
-         u.debit,
-         u.credit,
-         SUM(COALESCE(u.credit, 0) - COALESCE(u.debit, 0))
-           OVER (
-             PARTITION BY u.supplier_id
-             ORDER BY u.entry_date, u.sup_ledger_id
-             ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-           )::double precision AS running_balance,
-         u.note
-        FROM unioned u
-      ORDER BY u.entry_date ASC, u.sup_ledger_id ASC
-      LIMIT 4000`,
+         scoped.sup_ledger_id,
+         scoped.entry_date::text AS entry_date,
+         scoped.supplier_id,
+         scoped.supplier_name,
+         scoped.entry_type,
+         scoped.ref_table,
+         scoped.ref_id,
+         scoped.debit,
+         scoped.credit,
+         (
+           COALESCE(opening.opening_balance, 0)
+           + SUM(scoped.credit - scoped.debit)
+             OVER (
+               PARTITION BY scoped.supplier_id
+               ORDER BY scoped.entry_date, scoped.sup_ledger_id
+               ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+             )
+         )::double precision AS running_balance,
+         scoped.note
+       FROM scoped
+       LEFT JOIN opening ON opening.supplier_id = scoped.supplier_id
+       ORDER BY scoped.entry_date ASC, scoped.sup_ledger_id ASC
+       LIMIT 4000`,
       params
     );
   },
@@ -404,19 +378,14 @@ export const purchaseReportsService = {
           AND p.purchase_date::date BETWEEN $2::date AND $3::date
           AND LOWER(COALESCE(p.status::text, '')) <> 'void'
        ),
-       payments AS (
-         SELECT
-           sp.purchase_id,
-           COALESCE(SUM(sp.amount_paid), 0)::double precision AS paid_amount
-         FROM ims.supplier_payments sp
-         GROUP BY sp.purchase_id
-       ),
+       ${supplierPaymentsCteSql('$1')},
        returns AS (
          SELECT
            pr.purchase_id,
            COALESCE(SUM(pr.total), 0)::double precision AS returned_amount
          FROM ims.purchase_returns pr
          WHERE pr.purchase_id IS NOT NULL
+           AND COALESCE(pr.is_deleted, 0) = 0
          GROUP BY pr.purchase_id
        )
        SELECT
@@ -499,7 +468,14 @@ export const purchaseReportsService = {
     }
 
     return queryMany<CreditOverduePurchaseRow>(
-      `SELECT
+      `WITH ${supplierPaymentsCteSql('$1')},
+       returns AS (
+         SELECT pr.purchase_id, COALESCE(SUM(pr.total), 0)::double precision AS returned_amount
+           FROM ims.purchase_returns pr
+          WHERE pr.purchase_id IS NOT NULL AND COALESCE(pr.is_deleted, 0) = 0
+          GROUP BY pr.purchase_id
+       )
+       SELECT
          p.purchase_id,
          ('#' || p.purchase_id::text) AS invoice_number,
          p.supplier_id,
@@ -507,16 +483,25 @@ export const purchaseReportsService = {
          p.purchase_date::date::text AS purchase_date,
          p.due_date::date::text AS appointment_date,
          GREATEST((CURRENT_DATE - p.due_date)::int, 0) AS days_overdue,
-         COALESCE(p.total, 0)::double precision AS total
+         GREATEST(
+           COALESCE(p.total, 0) - COALESCE(ret.returned_amount, 0) - COALESCE(pay.paid_amount, 0),
+           0
+         )::double precision AS total
        FROM ims.purchases p
+       LEFT JOIN payments pay ON pay.purchase_id = p.purchase_id
+       LEFT JOIN returns ret ON ret.purchase_id = p.purchase_id
        LEFT JOIN ims.suppliers s ON s.supplier_id = p.supplier_id
       WHERE p.branch_id = $1
         AND COALESCE(p.purchase_type::text, '') = 'credit'
         AND p.due_date IS NOT NULL
         AND p.due_date <= CURRENT_DATE
-        AND COALESCE(p.status::text, '') NOT IN ('void', 'paid')
+        AND LOWER(COALESCE(p.status::text, '')) <> 'void'
         AND COALESCE(p.doc_type::text, 'purchase') = 'purchase'
         AND COALESCE(p.is_deleted, 0)::int = 0
+        AND GREATEST(
+          COALESCE(p.total, 0) - COALESCE(ret.returned_amount, 0) - COALESCE(pay.paid_amount, 0),
+          0
+        ) > 0.009
         ${filter}
       ORDER BY days_overdue DESC, p.due_date ASC, p.purchase_id ASC
       LIMIT 2000`,
