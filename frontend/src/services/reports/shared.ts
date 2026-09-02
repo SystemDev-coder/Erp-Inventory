@@ -19,6 +19,13 @@ export interface RowsResponse<T> {
   supplierId?: number | null;
   productId?: number | null;
   storeId?: number | null;
+  meta?: {
+    branchId: number;
+    generatedAt: string;
+    rowCount: number;
+    truncated: boolean;
+    maxRows?: number;
+  };
 }
 
 export const toQuery = (params: Record<string, string | number | undefined>) => {

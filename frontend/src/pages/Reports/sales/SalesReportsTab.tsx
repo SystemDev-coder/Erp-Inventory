@@ -4,12 +4,11 @@ import type { ReportColumn } from '../../../components/reports/ReportModal';
 import { salesReportsService } from '../../../services/reports/salesReports.service';
 import { salesService, type Sale } from '../../../services/sales.service';
 import type { DateRange, ModalReportState } from '../types';
-import { formatCurrency, formatDateOnly, formatDateTime, formatQuantity, toRecordRows, defaultReportRange } from '../reportUtils';
+import { formatCurrency, formatDateOnly, formatDateTime, formatQuantity, toRecordRows, defaultReportRange, withReportTruncation, type ReportTruncationMeta } from '../reportUtils';
 import { useBranch } from '../../../context/BranchContext';
 
 type SalesCardId =
   | 'sales-summary'
-  | 'cogs-by-invoice'
   | 'invoice-status'
   | 'daily-sales'
   | 'sales-by-customer'
@@ -24,7 +23,6 @@ type SalesCardId =
 
 const salesCards: Array<{ id: SalesCardId; title: string; hint: string }> = [
   { id: 'sales-summary', title: 'Sales Summary', hint: 'Between two dates' },
-  { id: 'cogs-by-invoice', title: 'COGS (Cost of Goods Sold)', hint: 'Between two dates' },
   { id: 'invoice-status', title: 'Invoice Status', hint: 'Between two dates + status filter' },
   { id: 'daily-sales', title: 'Daily Sales Report', hint: 'Single action report' },
   { id: 'sales-by-customer', title: 'Sales by Customer', hint: 'Dropdown + Show / All' },
@@ -62,17 +60,6 @@ const salesSummaryDrilldownColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'paid_amount', header: 'Paid', align: 'right', render: (row) => formatCurrency(row.paid_amount) },
   { key: 'balance', header: 'Balance', align: 'right', render: (row) => formatCurrency(row.balance) },
   { key: 'status', header: 'Status' },
-];
-
-const cogsByInvoiceColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'sale_id', header: 'Invoice #', getHref: (row) => (row.sale_id ? `/sales/${row.sale_id}/edit` : null) },
-  { key: 'sale_date', header: 'Date', render: (row) => formatDateTime(row.sale_date) },
-  { key: 'doc_type', header: 'Document' },
-  { key: 'customer_name', header: 'Customer' },
-  { key: 'total', header: 'Sales Total', align: 'right', render: (row) => formatCurrency(row.total) },
-  { key: 'tax_amount', header: 'VAT', align: 'right', render: (row) => formatCurrency(row.tax_amount) },
-  { key: 'cogs', header: 'COGS', align: 'right', render: (row) => formatCurrency(row.cogs) },
-  { key: 'gross_profit', header: 'Gross Profit', align: 'right', render: (row) => formatCurrency(row.gross_profit) },
 ];
 
 const netAfterReturnsColumns: ReportColumn<Record<string, unknown>>[] = [
@@ -191,6 +178,9 @@ type Props = {
 };
 
 export function SalesReportsTab({ onOpenModal }: Props) {
+  const openReport = (report: ModalReportState, meta?: ReportTruncationMeta, legacy?: { truncated?: boolean; totalCount?: number; maxRows?: number }) =>
+    onOpenModal(withReportTruncation(report, meta, legacy));
+
   const { activeBranchId } = useBranch();
   const [expandedCardId, setExpandedCardId] = useState<SalesCardId | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<SalesCardId | null>(null);
@@ -202,7 +192,6 @@ export function SalesReportsTab({ onOpenModal }: Props) {
   const [invoiceStatusFilter, setInvoiceStatusFilter] = useState<'all' | 'paid' | 'partial' | 'unpaid'>('all');
 
   const [summaryRange, setSummaryRange] = useState<DateRange>(defaultReportRange());
-  const [cogsRange, setCogsRange] = useState<DateRange>(defaultReportRange());
   const [invoiceStatusRange, setInvoiceStatusRange] = useState<DateRange>(defaultReportRange());
   const [topSellingRange, setTopSellingRange] = useState<DateRange>(defaultReportRange());
   const [salesByStoreRange, setSalesByStoreRange] = useState<DateRange>(defaultReportRange());
@@ -333,7 +322,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
         });
         if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load invoice status');
         const rows = toRecordRows(response.data.rows || []);
-        onOpenModal({
+        openReport({
           title: `Sales Summary: ${metric}`,
           subtitle: `${formatDateOnly(range.fromDate)} - ${formatDateOnly(range.toDate)}`,
           fileName: 'sales-summary-invoices',
@@ -348,7 +337,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
               balance: formatCurrency(sumNumericField(rows, 'balance')),
             },
           },
-        });
+        }, response.data.meta);
         return;
       }
 
@@ -361,7 +350,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
         });
         if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load invoice status');
         const rows = toRecordRows(response.data.rows || []);
-        onOpenModal({
+        openReport({
           title: `Sales Summary: ${metric}`,
           subtitle: `${formatDateOnly(range.fromDate)} - ${formatDateOnly(range.toDate)}`,
           fileName: `sales-summary-invoices-${status}`,
@@ -376,7 +365,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
               balance: formatCurrency(sumNumericField(rows, 'balance')),
             },
           },
-        });
+        }, response.data.meta);
         return;
       }
 
@@ -387,7 +376,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
         });
         if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load sales returns');
         const rows = toRecordRows(response.data.rows || []);
-        onOpenModal({
+        openReport({
           title: `Sales Summary: ${metric}`,
           subtitle: `${formatDateOnly(range.fromDate)} - ${formatDateOnly(range.toDate)}`,
           fileName: 'sales-summary-returns',
@@ -401,7 +390,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
               total: formatCurrency(sumNumericField(rows, 'total')),
             },
           },
-        });
+        }, response.data.meta);
         return;
       }
 
@@ -573,7 +562,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
       const response = await salesReportsService.getDailySales(activeBranchId ?? undefined);
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load daily sales');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Daily Sales Report',
         subtitle: 'All Daily Sale',
         fileName: 'daily-sales-report',
@@ -586,7 +575,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
             total: formatCurrency(sumNumericField(rows, 'total')),
           },
         },
-      });
+      }, response.data.meta);
     });
 
   const handleSalesSummary = () =>
@@ -609,42 +598,14 @@ export function SalesReportsTab({ onOpenModal }: Props) {
         }
         return col;
       });
-      onOpenModal({
+      openReport({
         title: 'Sales Summary',
         subtitle: `${formatDateOnly(summaryRange.fromDate)} - ${formatDateOnly(summaryRange.toDate)}`,
         fileName: 'sales-summary',
         data: rows,
         columns: clickableColumns,
         filters: { 'From Date': summaryRange.fromDate, 'To Date': summaryRange.toDate },
-      });
-    });
-
-  const handleCogsByInvoice = () =>
-    runCardAction('cogs-by-invoice', async () => {
-      ensureRangeValid(cogsRange, 'COGS (Cost of Goods Sold)');
-      const response = await salesReportsService.getCogsByInvoice({
-        ...cogsRange,
-        branchId: activeBranchId ?? undefined,
-      });
-      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load COGS report');
-      const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
-        title: 'COGS (Cost of Goods Sold)',
-        subtitle: `${formatDateOnly(cogsRange.fromDate)} - ${formatDateOnly(cogsRange.toDate)}`,
-        fileName: 'cogs-by-invoice',
-        data: rows,
-        columns: cogsByInvoiceColumns,
-        filters: { 'From Date': cogsRange.fromDate, 'To Date': cogsRange.toDate },
-        tableTotals: {
-          label: 'Total',
-          values: {
-            total: formatCurrency(sumNumericField(rows, 'total')),
-            tax_amount: formatCurrency(sumNumericField(rows, 'tax_amount')),
-            cogs: formatCurrency(sumNumericField(rows, 'cogs')),
-            gross_profit: formatCurrency(sumNumericField(rows, 'gross_profit')),
-          },
-        },
-      });
+      }, response.data.meta);
     });
 
   const handleInvoiceStatus = () =>
@@ -657,7 +618,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load invoice status report');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Invoice Status',
         subtitle: `${formatDateOnly(invoiceStatusRange.fromDate)} - ${formatDateOnly(invoiceStatusRange.toDate)}`,
         fileName: 'invoice-status',
@@ -672,7 +633,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
             balance: formatCurrency(sumNumericField(rows, 'balance')),
           },
         },
-      });
+      }, response.data.meta);
     });
 
   const handleSalesByCustomer = (mode: 'show' | 'all') =>
@@ -686,7 +647,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load customer sales');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Sales by Customer',
         subtitle: mode === 'show' ? selectedCustomerLabel || 'Selected Customer' : 'All Customers',
         fileName: 'sales-by-customer',
@@ -699,7 +660,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
             total: formatCurrency(sumNumericField(rows, 'total')),
           },
         },
-      });
+      }, response.data.meta);
     });
 
   const handleSalesByProduct = (mode: 'show' | 'all') =>
@@ -713,7 +674,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load product sales');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Sales by Product',
         subtitle: mode === 'show' ? selectedProductLabel || 'Selected Product' : 'All Products',
         fileName: 'sales-by-product',
@@ -727,7 +688,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
             line_total: formatCurrency(sumNumericField(rows, 'line_total')),
           },
         },
-      });
+      }, response.data.meta);
     });
 
   const handleSalesByStore = (mode: 'show' | 'all') =>
@@ -743,7 +704,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load store sales report');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Sales by Store',
         subtitle: `${formatDateOnly(salesByStoreRange.fromDate)} - ${formatDateOnly(salesByStoreRange.toDate)}`,
         fileName: 'sales-by-store',
@@ -763,7 +724,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
             sales_amount: formatCurrency(sumNumericField(rows, 'sales_amount')),
           },
         },
-      });
+      }, response.data.meta);
     });
 
   const handleTopSellingItems = () =>
@@ -775,7 +736,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load top selling items');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Most Sold Items',
         subtitle: `${formatDateOnly(topSellingRange.fromDate)} - ${formatDateOnly(topSellingRange.toDate)}`,
         fileName: 'top-selling-items',
@@ -790,7 +751,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
             sales_amount: formatCurrency(sumNumericField(rows, 'sales_amount')),
           },
         },
-      });
+      }, response.data.meta);
     });
 
   const handleTopCustomers = () =>
@@ -802,7 +763,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load top customers report');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Top Customers',
         subtitle: `${formatDateOnly(topCustomersRange.fromDate)} - ${formatDateOnly(topCustomersRange.toDate)}`,
         fileName: 'top-customers',
@@ -819,7 +780,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
             net_sales: formatCurrency(sumNumericField(rows, 'net_sales')),
           },
         },
-      });
+      }, response.data.meta);
     });
 
   const handleSalesReturns = () =>
@@ -831,7 +792,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load sales returns');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Sales Returns Report',
         subtitle: `${formatDateOnly(returnsRange.fromDate)} - ${formatDateOnly(returnsRange.toDate)}`,
         fileName: 'sales-returns-report',
@@ -845,7 +806,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
             total: formatCurrency(sumNumericField(rows, 'total')),
           },
         },
-      });
+      }, response.data.meta);
     });
 
   const handlePaymentsByAccount = () =>
@@ -857,7 +818,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load payments by account report');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Sales Payments by Account',
         subtitle: `${formatDateOnly(paymentsRange.fromDate)} - ${formatDateOnly(paymentsRange.toDate)}`,
         fileName: 'sales-payments-by-account',
@@ -872,7 +833,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
             amount_paid: formatCurrency(sumNumericField(rows, 'amount_paid')),
           },
         },
-      });
+      }, response.data.meta);
     });
 
   const handleQuotations = () =>
@@ -884,7 +845,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load quotations report');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Quotations',
         subtitle: `${formatDateOnly(quotationsRange.fromDate)} - ${formatDateOnly(quotationsRange.toDate)}`,
         fileName: 'quotations',
@@ -897,7 +858,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
             total: formatCurrency(sumNumericField(rows, 'total')),
           },
         },
-      });
+      }, response.data.meta);
     });
 
   const handleCashierPerformance = () =>
@@ -909,7 +870,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load cashier performance');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Cashier Performance',
         subtitle: `${formatDateOnly(cashierRange.fromDate)} - ${formatDateOnly(cashierRange.toDate)}`,
         fileName: 'cashier-performance',
@@ -926,7 +887,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
             net_sales: formatCurrency(sumNumericField(rows, 'net_sales')),
           },
         },
-      });
+      }, response.data.meta);
     });
 
   const renderDateRange = (
@@ -948,10 +909,6 @@ export function SalesReportsTab({ onOpenModal }: Props) {
   const renderCardBody = (cardId: SalesCardId) => {
     if (cardId === 'sales-summary') {
       return <div className="space-y-3">{renderDateRange(summaryRange, setSummaryRange)}<button onClick={handleSalesSummary} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
-    }
-
-    if (cardId === 'cogs-by-invoice') {
-      return <div className="space-y-3">{renderDateRange(cogsRange, setCogsRange)}<button onClick={handleCogsByInvoice} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
     }
 
     if (cardId === 'invoice-status') {

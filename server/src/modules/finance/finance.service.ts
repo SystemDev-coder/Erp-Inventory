@@ -1454,7 +1454,7 @@ export const financeService = {
   },
 
   /* Supplier outstanding balances (purchases not fully paid) */
-  async listSupplierOutstandingPurchases(scope: BranchScope, supplierId?: number) {
+  async listSupplierOutstandingPurchases(scope: BranchScope, supplierId?: number, branchId?: number) {
     const supplierNameCol = await detectColumn('suppliers', 'name', ['name', 'supplier_name']);
     const params: any[] = [];
     let where = 'WHERE p.status != $1';
@@ -1463,7 +1463,10 @@ export const financeService = {
       params.push(supplierId);
       where += ` AND p.supplier_id = $${params.length}`;
     }
-    if (!scope.isAdmin) {
+    if (branchId) {
+      params.push(branchId);
+      where += ` AND p.branch_id = $${params.length}`;
+    } else if (!scope.isAdmin) {
       params.push(scope.branchIds);
       where += ` AND p.branch_id = ANY($${params.length})`;
     }

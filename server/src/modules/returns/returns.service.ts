@@ -718,6 +718,57 @@ const buildItemDelta = (
     return deltas;
 };
 
+const ACTIVE_SALES_RETURN = 'COALESCE(sr.is_deleted, 0) = 0';
+const ACTIVE_SALES_RETURN_ITEM = 'COALESCE(sri.is_deleted, 0) = 0';
+const ACTIVE_PURCHASE_RETURN = 'COALESCE(pr.is_deleted, 0) = 0';
+const ACTIVE_PURCHASE_RETURN_ITEM = 'COALESCE(pri.is_deleted, 0) = 0';
+
+const softDeleteSalesReturnItems = async (client: PoolClient, srId: number) => {
+    await client.query(
+        `UPDATE ims.sales_return_items
+            SET is_deleted = 1,
+                deleted_at = COALESCE(deleted_at, NOW())
+          WHERE sr_id = $1
+            AND COALESCE(is_deleted, 0) = 0`,
+        [srId]
+    );
+};
+
+const softDeleteSalesReturn = async (client: PoolClient, srId: number) => {
+    await softDeleteSalesReturnItems(client, srId);
+    await client.query(
+        `UPDATE ims.sales_returns
+            SET is_deleted = 1,
+                deleted_at = COALESCE(deleted_at, NOW())
+          WHERE sr_id = $1
+            AND COALESCE(is_deleted, 0) = 0`,
+        [srId]
+    );
+};
+
+const softDeletePurchaseReturnItems = async (client: PoolClient, prId: number) => {
+    await client.query(
+        `UPDATE ims.purchase_return_items
+            SET is_deleted = 1,
+                deleted_at = COALESCE(deleted_at, NOW())
+          WHERE pr_id = $1
+            AND COALESCE(is_deleted, 0) = 0`,
+        [prId]
+    );
+};
+
+const softDeletePurchaseReturn = async (client: PoolClient, prId: number) => {
+    await softDeletePurchaseReturnItems(client, prId);
+    await client.query(
+        `UPDATE ims.purchase_returns
+            SET is_deleted = 1,
+                deleted_at = COALESCE(deleted_at, NOW())
+          WHERE pr_id = $1
+            AND COALESCE(is_deleted, 0) = 0`,
+        [prId]
+    );
+};
+
 const getSalesReturnLimit = async (
     client: PoolClient,
     params: {
@@ -759,6 +810,8 @@ const getSalesReturnLimit = async (
           WHERE sr.branch_id = $1
             AND sr.customer_id = $2
             AND sri.item_id = $3
+            AND ${ACTIVE_SALES_RETURN}
+            AND ${ACTIVE_SALES_RETURN_ITEM}
             ${excludeFilter}
             ${returnSaleFilter}`,
         returnParams
@@ -808,6 +861,8 @@ const getPurchaseReturnLimit = async (
           WHERE pr.branch_id = $1
             AND pr.supplier_id = $2
             AND pri.item_id = $3
+            AND ${ACTIVE_PURCHASE_RETURN}
+            AND ${ACTIVE_PURCHASE_RETURN_ITEM}
             ${excludeFilter}
             ${returnPurchaseFilter}`,
         returnParams
@@ -825,8 +880,23 @@ const getPurchaseReturnLimit = async (
         [params.branchId, params.itemId]
     );
     const onHandQty = Number(stock.rows[0]?.qty || 0);
+    let effectiveOnHand = onHandQty;
+    if (params.excludeReturnId) {
+        const editingRes = await client.query<{ qty: string }>(
+            `SELECT COALESCE(SUM(pri.quantity), 0)::text AS qty
+               FROM ims.purchase_return_items pri
+               JOIN ims.purchase_returns pr ON pr.pr_id = pri.pr_id
+              WHERE pr.pr_id = $1
+                AND pri.item_id = $2
+                AND pr.branch_id = $3
+                AND ${ACTIVE_PURCHASE_RETURN}
+                AND ${ACTIVE_PURCHASE_RETURN_ITEM}`,
+            [params.excludeReturnId, params.itemId, params.branchId]
+        );
+        effectiveOnHand += Number(editingRes.rows[0]?.qty || 0);
+    }
     const byPurchase = Math.max(purchasedQty - returnedQty, 0);
-    return { purchasedQty, returnedQty, availableQty: Math.max(Math.min(byPurchase, onHandQty), 0) };
+    return { purchasedQty, returnedQty, availableQty: Math.max(Math.min(byPurchase, effectiveOnHand), 0) };
 };
 
 const assertAccountInBranch = async (client: PoolClient, branchId: number, accId: number) => {
@@ -950,7 +1020,8 @@ const rewriteSalesReturnGl = async (client: PoolClient, params: { branchId: numb
                FROM ims.sales_return_items sri
                JOIN ims.items i ON i.item_id = sri.item_id
               WHERE sri.branch_id = $1
-                AND sri.sr_id = $2`,
+                AND sri.sr_id = $2
+                AND COALESCE(sri.is_deleted, 0) = 0`,
             [params.branchId, params.srId]
         );
         costTotal = roundMoney(Number(fallback.rows[0]?.amount || 0));
@@ -1195,6 +1266,8 @@ export const returnsService = {
                   FROM ims.sales_returns sr
                   JOIN ims.sales_return_items sri ON sri.sr_id = sr.sr_id
                  WHERE sr.customer_id = $1
+                   AND ${ACTIVE_SALES_RETURN}
+                   AND ${ACTIVE_SALES_RETURN_ITEM}
                   ${returnedBranchClause}
                   ${excludeReturnClause}
                  GROUP BY sri.item_id
@@ -1259,6 +1332,26 @@ export const returnsService = {
             excludeReturnId && Number.isFinite(excludeReturnId) && excludeReturnId > 0
                 ? `AND pr.pr_id <> ${Number(excludeReturnId)}`
                 : '';
+        const editingCte =
+            excludeReturnId && Number.isFinite(excludeReturnId) && excludeReturnId > 0
+                ? `editing AS (
+                SELECT pri.item_id, COALESCE(SUM(pri.quantity), 0)::numeric AS editing_qty
+                  FROM ims.purchase_returns pr
+                  JOIN ims.purchase_return_items pri ON pri.pr_id = pr.pr_id
+                 WHERE pr.pr_id = ${Number(excludeReturnId)}
+                   AND ${ACTIVE_PURCHASE_RETURN}
+                   AND ${ACTIVE_PURCHASE_RETURN_ITEM}
+                 GROUP BY pri.item_id
+             ),`
+                : '';
+        const editingJoin =
+            excludeReturnId && Number.isFinite(excludeReturnId) && excludeReturnId > 0
+                ? 'LEFT JOIN editing ON editing.item_id = purchased.item_id'
+                : '';
+        const editingQtyExpr =
+            excludeReturnId && Number.isFinite(excludeReturnId) && excludeReturnId > 0
+                ? 'COALESCE(editing.editing_qty, 0)'
+                : '0';
         return queryMany<ReturnItemOption>(
             `WITH purchased AS (
                 SELECT pi.item_id, COALESCE(SUM(pi.quantity), 0) AS purchased_qty
@@ -1272,10 +1365,13 @@ export const returnsService = {
                   FROM ims.purchase_returns pr
                   JOIN ims.purchase_return_items pri ON pri.pr_id = pr.pr_id
                  WHERE pr.supplier_id = $1
+                   AND ${ACTIVE_PURCHASE_RETURN}
+                   AND ${ACTIVE_PURCHASE_RETURN_ITEM}
                   ${returnedBranchClause}
                   ${excludeReturnClause}
                  GROUP BY pri.item_id
              ),
+             ${editingCte}
               price AS (
                  SELECT
                      pi.item_id,
@@ -1307,12 +1403,12 @@ export const returnsService = {
                  GREATEST(
                    COALESCE(
                      CASE
-                       WHEN COALESCE(stock.cnt, 0) > 0 THEN stock.qty
+                       WHEN COALESCE(stock.cnt, 0) > 0 THEN stock.qty + ${editingQtyExpr}
                        ELSE COALESCE(
                          NULLIF(to_jsonb(i)->>'quantity','')::numeric,
                          NULLIF(to_jsonb(i)->>'opening_balance','')::numeric,
                          0
-                       )
+                       ) + ${editingQtyExpr}
                      END,
                      0
                    ),
@@ -1323,12 +1419,12 @@ export const returnsService = {
                    GREATEST(
                      COALESCE(
                        CASE
-                         WHEN COALESCE(stock.cnt, 0) > 0 THEN stock.qty
+                         WHEN COALESCE(stock.cnt, 0) > 0 THEN stock.qty + ${editingQtyExpr}
                          ELSE COALESCE(
                            NULLIF(to_jsonb(i)->>'quantity','')::numeric,
                            NULLIF(to_jsonb(i)->>'opening_balance','')::numeric,
                            0
-                         )
+                         ) + ${editingQtyExpr}
                        END,
                        0
                      ),
@@ -1347,6 +1443,7 @@ export const returnsService = {
                    AND si.product_id = i.item_id
               ) stock ON TRUE
               LEFT JOIN returned ON returned.item_id = purchased.item_id
+              ${editingJoin}
               LEFT JOIN price ON price.item_id = purchased.item_id
               ORDER BY i.name`,
             params
@@ -1361,6 +1458,7 @@ export const returnsService = {
         const whereParts: string[] = [];
         params.push(branchIds);
         whereParts.push(`sr.branch_id = ANY($${params.length})`);
+        whereParts.push(ACTIVE_SALES_RETURN);
         if (dateRange?.fromDate && dateRange?.toDate) {
             params.push(dateRange.fromDate);
             whereParts.push(`sr.return_date::date >= $${params.length}::date`);
@@ -1414,7 +1512,7 @@ export const returnsService = {
             throw ApiError.badRequest('Return id is required');
         }
         const params: any[] = [returnId];
-        let where = `WHERE sr.sr_id = $1`;
+        let where = `WHERE sr.sr_id = $1 AND ${ACTIVE_SALES_RETURN}`;
         if (!scope.isAdmin) {
             params.push(scope.branchIds);
             where += ` AND sr.branch_id = ANY($${params.length})`;
@@ -1481,7 +1579,7 @@ export const returnsService = {
                 sri.line_total
              FROM ims.sales_return_items sri
              JOIN ims.items i ON i.item_id = sri.item_id
-            WHERE sri.sr_id = $1
+            WHERE sri.sr_id = $1 AND ${ACTIVE_SALES_RETURN_ITEM}
             ORDER BY sri.sr_item_id`,
             [returnId]
         );
@@ -1769,6 +1867,18 @@ export const returnsService = {
 
             const items = normalizeReturnItems(input.items);
             if (!items.length) throw ApiError.badRequest('At least one item is required for a return');
+            const oldItemsRes = await client.query<{ item_id: number; quantity: string }>(
+                `SELECT item_id, quantity::text AS quantity
+                   FROM ims.sales_return_items
+                  WHERE sr_id = $1
+                    AND COALESCE(is_deleted, 0) = 0`,
+                [id]
+            );
+            const oldQtyByItem = new Map<number, number>();
+            for (const row of oldItemsRes.rows) {
+                const itemId = Number(row.item_id);
+                oldQtyByItem.set(itemId, (oldQtyByItem.get(itemId) || 0) + Math.round(Number(row.quantity || 0)));
+            }
             const docTypeFilter = (await hasSalesDocTypeColumn())
                 ? `AND COALESCE(s.doc_type::text, 'sale') <> 'quotation'`
                 : '';
@@ -1798,19 +1908,14 @@ export const returnsService = {
                     saleId: input.saleId ?? null,
                     excludeReturnId: id,
                 });
-                if (Number(item.quantity) > limit.availableQty) {
+                const maxAllowed = Math.max(limit.availableQty, oldQtyByItem.get(item.itemId) || 0);
+                if (Number(item.quantity) > maxAllowed) {
                     throw ApiError.badRequest(
-                        `Return qty exceeds sold qty for item #${item.itemId} (available ${limit.availableQty})`
+                        `Return qty exceeds sold qty for item #${item.itemId} (available ${maxAllowed})`
                     );
                 }
             }
 
-            const oldItemsRes = await client.query<{ item_id: number; quantity: string }>(
-                `SELECT item_id, quantity::text AS quantity
-                   FROM ims.sales_return_items
-                  WHERE sr_id = $1`,
-                [id]
-            );
             const deltas = buildItemDelta(oldItemsRes.rows, items);
             for (const d of deltas) {
                 await applyStoreItemDelta(client, {
@@ -1909,7 +2014,7 @@ export const returnsService = {
                 updateValues
             );
 
-            await client.query(`DELETE FROM ims.sales_return_items WHERE sr_id = $1`, [id]);
+            await softDeleteSalesReturnItems(client, id);
             await client.query(`SET app.include_deleted = '0'`);
             for (const item of items) {
                 const pricedLine = pricedByItemId.get(item.itemId);
@@ -2071,7 +2176,8 @@ export const returnsService = {
                     total::text AS total,
                     ${hasBalanceColumn ? `balance_adjustment::text AS balance_adjustment` : `NULL::text AS balance_adjustment`}
                    FROM ims.sales_returns
-                  WHERE sr_id = $1`,
+                  WHERE sr_id = $1
+                    AND COALESCE(is_deleted, 0) = 0`,
                 [id]
             );
             const current = existing.rows[0];
@@ -2081,7 +2187,8 @@ export const returnsService = {
             const lines = await client.query<{ item_id: number; quantity: string }>(
                 `SELECT item_id, quantity::text AS quantity
                    FROM ims.sales_return_items
-                  WHERE sr_id = $1`,
+                  WHERE sr_id = $1
+                    AND COALESCE(is_deleted, 0) = 0`,
                 [id]
             );
             for (const line of lines.rows) {
@@ -2145,8 +2252,7 @@ export const returnsService = {
                 [current.branch_id, id]
             );
 
-            await client.query(`DELETE FROM ims.sales_return_items WHERE sr_id = $1`, [id]);
-            await client.query(`DELETE FROM ims.sales_returns WHERE sr_id = $1`, [id]);
+            await softDeleteSalesReturn(client, id);
             await client.query('COMMIT');
         } catch (err) {
             await client.query('ROLLBACK');
@@ -2165,6 +2271,7 @@ export const returnsService = {
         const whereParts: string[] = [];
         params.push(branchIds);
         whereParts.push(`pr.branch_id = ANY($${params.length})`);
+        whereParts.push(ACTIVE_PURCHASE_RETURN);
         if (dateRange?.fromDate && dateRange?.toDate) {
             params.push(dateRange.fromDate);
             whereParts.push(`pr.return_date::date >= $${params.length}::date`);
@@ -2218,7 +2325,7 @@ export const returnsService = {
             throw ApiError.badRequest('Return id is required');
         }
         const params: any[] = [returnId];
-        let where = `WHERE pr.pr_id = $1`;
+        let where = `WHERE pr.pr_id = $1 AND ${ACTIVE_PURCHASE_RETURN}`;
         if (!scope.isAdmin) {
             params.push(scope.branchIds);
             where += ` AND pr.branch_id = ANY($${params.length})`;
@@ -2267,7 +2374,7 @@ export const returnsService = {
             throw ApiError.badRequest('Return id is required');
         }
         const row = await queryOne<{ branch_id: number }>(
-            `SELECT branch_id FROM ims.purchase_returns WHERE pr_id = $1`,
+            `SELECT branch_id FROM ims.purchase_returns WHERE pr_id = $1 AND COALESCE(is_deleted, 0) = 0`,
             [returnId]
         );
         if (!row) throw ApiError.notFound('Purchase return not found');
@@ -2285,7 +2392,7 @@ export const returnsService = {
                 pri.line_total
              FROM ims.purchase_return_items pri
              JOIN ims.items i ON i.item_id = pri.item_id
-            WHERE pri.pr_id = $1
+            WHERE pri.pr_id = $1 AND ${ACTIVE_PURCHASE_RETURN_ITEM}
             ORDER BY pri.pr_item_id`,
             [returnId]
         );
@@ -2513,6 +2620,7 @@ export const returnsService = {
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
+            await client.query(`SET app.include_deleted = '0'`);
             const hasBalanceColumn = await hasPurchaseReturnBalanceAdjustment(client);
             const existing = await client.query<{
                 pr_id: number;
@@ -2532,7 +2640,8 @@ export const returnsService = {
                     total::text AS total,
                     ${hasBalanceColumn ? `balance_adjustment::text AS balance_adjustment` : `NULL::text AS balance_adjustment`}
                    FROM ims.purchase_returns
-                  WHERE pr_id = $1`,
+                  WHERE pr_id = $1
+                    AND COALESCE(is_deleted, 0) = 0`,
                 [id]
             );
             const current = existing.rows[0];
@@ -2542,6 +2651,18 @@ export const returnsService = {
 
             const items = normalizeReturnItems(input.items);
             if (!items.length) throw ApiError.badRequest('At least one item is required for a return');
+            const oldItemsRes = await client.query<{ item_id: number; quantity: string }>(
+                `SELECT item_id, quantity::text AS quantity
+                   FROM ims.purchase_return_items
+                  WHERE pr_id = $1
+                    AND COALESCE(is_deleted, 0) = 0`,
+                [id]
+            );
+            const oldQtyByItem = new Map<number, number>();
+            for (const row of oldItemsRes.rows) {
+                const itemId = Number(row.item_id);
+                oldQtyByItem.set(itemId, (oldQtyByItem.get(itemId) || 0) + Math.round(Number(row.quantity || 0)));
+            }
             for (const item of items) {
                 const row = await client.query<{ item_id: number }>(
                     `SELECT item_id FROM ims.items WHERE item_id = $1 AND branch_id = $2 LIMIT 1`,
@@ -2567,19 +2688,14 @@ export const returnsService = {
                     purchaseId: input.purchaseId ?? null,
                     excludeReturnId: id,
                 });
-                if (Number(item.quantity) > limit.availableQty) {
+                const maxAllowed = Math.max(limit.availableQty, oldQtyByItem.get(item.itemId) || 0);
+                if (Number(item.quantity) > maxAllowed) {
                     throw ApiError.badRequest(
-                        `Return qty exceeds purchased qty for item #${item.itemId} (available ${limit.availableQty})`
+                        `Return qty exceeds purchased qty for item #${item.itemId} (available ${maxAllowed})`
                     );
                 }
             }
 
-            const oldItemsRes = await client.query<{ item_id: number; quantity: string }>(
-                `SELECT item_id, quantity::text AS quantity
-                   FROM ims.purchase_return_items
-                  WHERE pr_id = $1`,
-                [id]
-            );
             const deltas = buildItemDelta(oldItemsRes.rows, items);
             for (const d of deltas) {
                 await applyStoreItemDelta(client, {
@@ -2685,7 +2801,7 @@ export const returnsService = {
                 updateValues
             );
 
-            await client.query(`DELETE FROM ims.purchase_return_items WHERE pr_id = $1`, [id]);
+            await softDeletePurchaseReturnItems(client, id);
             await client.query(`SET app.include_deleted = '0'`);
             for (const item of items) {
                 const pricedLine = pricedByItemId.get(item.itemId);
@@ -2828,7 +2944,8 @@ export const returnsService = {
                     total::text AS total,
                     ${hasBalanceColumn ? `balance_adjustment::text AS balance_adjustment` : `NULL::text AS balance_adjustment`}
                    FROM ims.purchase_returns
-                  WHERE pr_id = $1`,
+                  WHERE pr_id = $1
+                    AND COALESCE(is_deleted, 0) = 0`,
                 [id]
             );
             const current = existing.rows[0];
@@ -2838,7 +2955,8 @@ export const returnsService = {
             const lines = await client.query<{ item_id: number; quantity: string }>(
                 `SELECT item_id, quantity::text AS quantity
                    FROM ims.purchase_return_items
-                  WHERE pr_id = $1`,
+                  WHERE pr_id = $1
+                    AND COALESCE(is_deleted, 0) = 0`,
                 [id]
             );
             for (const line of lines.rows) {
@@ -2896,9 +3014,7 @@ export const returnsService = {
                 [current.branch_id, id]
             );
 
-            await client.query(`DELETE FROM ims.purchase_return_items WHERE pr_id = $1`, [id]);
-
-            await client.query(`DELETE FROM ims.purchase_returns WHERE pr_id = $1`, [id]);
+            await softDeletePurchaseReturn(client, id);
             await client.query('COMMIT');
         } catch (err) {
             await client.query('ROLLBACK');

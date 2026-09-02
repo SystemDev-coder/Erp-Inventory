@@ -306,7 +306,8 @@ export const getSupplierCombinedBalance = asyncHandler(async (req: AuthRequest, 
 export const listSupplierOutstandingPurchases = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const supplierId = req.query.supplierId ? Number(req.query.supplierId) : undefined;
-  const purchases = await financeService.listSupplierOutstandingPurchases(scope, supplierId);
+  const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
+  const purchases = await financeService.listSupplierOutstandingPurchases(scope, supplierId, branchId);
   return ApiResponse.success(res, { purchases });
 });
 
