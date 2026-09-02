@@ -3,7 +3,7 @@ import { ChevronDown, Loader2 } from 'lucide-react';
 import type { ReportColumn } from '../../../components/reports/ReportModal';
 import { hrReportsService } from '../../../services/reports/hrReports.service';
 import type { DateRange, ModalReportState } from '../types';
-import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange } from '../reportUtils';
+import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange, withReportTruncation, type ReportTruncationMeta } from '../reportUtils';
 import { useBranch } from '../../../context/BranchContext';
 
 type HrCardId =
@@ -93,6 +93,9 @@ type Props = {
 };
 
 export function HrReportsTab({ onOpenModal }: Props) {
+  const openReport = (report: ModalReportState, meta?: ReportTruncationMeta, legacy?: { truncated?: boolean; totalCount?: number; maxRows?: number }) =>
+    onOpenModal(withReportTruncation(report, meta, legacy));
+
   const { activeBranchId } = useBranch();
   const [expandedCardKey, setExpandedCardKey] = useState<string | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<HrCardId | null>(null);
@@ -179,7 +182,7 @@ export function HrReportsTab({ onOpenModal }: Props) {
       const response = await hrReportsService.getEmployeeList({ mode, employeeId, branchId: activeBranchId ?? undefined });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load employee list');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Employee List',
         subtitle: mode === 'show' ? selectedEmployeeListLabel || 'Selected Employee' : 'All Employees',
         fileName: 'employee-list',
@@ -195,7 +198,7 @@ export function HrReportsTab({ onOpenModal }: Props) {
             salary_amount: formatCurrency(sumNumericField(rows, 'salary_amount')),
           },
         },
-      });
+      }, response.data.meta);
     });
 
   const handlePayrollSummary = () =>
@@ -207,7 +210,7 @@ export function HrReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load payroll summary');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Payroll Summary',
         subtitle: `${formatDateOnly(payrollSummaryRange.fromDate)} - ${formatDateOnly(payrollSummaryRange.toDate)}`,
         fileName: 'payroll-summary',
@@ -226,7 +229,7 @@ export function HrReportsTab({ onOpenModal }: Props) {
             outstanding_amount: formatCurrency(sumNumericField(rows, 'outstanding_amount')),
           },
         },
-      });
+      }, response.data.meta);
     });
 
   const handlePayrollEmployeeDetail = (mode: 'show' | 'all') =>
@@ -243,7 +246,7 @@ export function HrReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load payroll employee detail');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Payroll Employee Detail',
         subtitle: `${formatDateOnly(payrollEmployeeDetailRange.fromDate)} - ${formatDateOnly(payrollEmployeeDetailRange.toDate)}`,
         fileName: 'payroll-employee-detail',
@@ -266,7 +269,7 @@ export function HrReportsTab({ onOpenModal }: Props) {
             outstanding_amount: formatCurrency(sumNumericField(rows, 'outstanding_amount')),
           },
         },
-      });
+      }, response.data.meta);
     });
 
   const handleSalaryPayments = (mode: 'show' | 'all') =>
@@ -283,7 +286,7 @@ export function HrReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load salary payments');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Salary Payments',
         subtitle: `${formatDateOnly(salaryPaymentsRange.fromDate)} - ${formatDateOnly(salaryPaymentsRange.toDate)}`,
         fileName: 'salary-payments',
@@ -301,7 +304,7 @@ export function HrReportsTab({ onOpenModal }: Props) {
             amount_paid: formatCurrency(sumNumericField(rows, 'amount_paid')),
           },
         },
-      });
+      }, response.data.meta);
     });
 
   const handlePayrollByMonth = () =>
@@ -313,7 +316,7 @@ export function HrReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load payroll by month');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Payroll by Month',
         subtitle: `${formatDateOnly(payrollByMonthRange.fromDate)} - ${formatDateOnly(payrollByMonthRange.toDate)}`,
         fileName: 'payroll-by-month',
@@ -330,7 +333,7 @@ export function HrReportsTab({ onOpenModal }: Props) {
             outstanding_amount: formatCurrency(sumNumericField(rows, 'outstanding_amount')),
           },
         },
-      });
+      }, response.data.meta);
     });
 
   const renderDateRange = (range: DateRange, onChange: (next: DateRange) => void) => (

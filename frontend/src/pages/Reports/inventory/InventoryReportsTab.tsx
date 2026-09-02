@@ -3,13 +3,12 @@ import { ChevronDown, Loader2 } from 'lucide-react';
 import type { ReportColumn, ReportTotalItem } from '../../../components/reports/ReportModal';
 import { inventoryReportsService } from '../../../services/reports/inventoryReports.service';
 import type { DateRange, ModalReportState } from '../types';
-import { formatCurrency, formatDateOnly, formatDateTime, formatQuantity, toRecordRows, defaultReportRange } from '../reportUtils';
+import { formatCurrency, formatDateOnly, formatDateTime, formatQuantity, toRecordRows, defaultReportRange, withReportTruncation, type ReportTruncationMeta } from '../reportUtils';
 import { useBranch } from '../../../context/BranchContext';
 
 type InventoryCardId =
   | 'current-stock'
   | 'low-stock'
-  | 'valuation'
   | 'valuation-fifo'
   | 'valuation-lifo'
   | 'valuation-average'
@@ -24,7 +23,6 @@ type InventoryCardId =
 const inventoryCards: Array<{ id: InventoryCardId; title: string; hint: string }> = [
   { id: 'current-stock', title: 'Current Stock Levels', hint: 'All items with stock' },
   { id: 'low-stock', title: 'Low Stock Alert', hint: 'Only below threshold' },
-  { id: 'valuation', title: 'Stock Value', hint: 'Total value of current stock' },
   { id: 'valuation-fifo', title: 'Stock Value (FIFO)', hint: 'First-in, first-out costing' },
   { id: 'valuation-lifo', title: 'Stock Value (LIFO)', hint: 'Last-in, first-out costing' },
   { id: 'valuation-average', title: 'Stock Value (Average)', hint: 'Moving average cost' },
@@ -183,6 +181,9 @@ const moneyTotal = (label: string, value: number): ReportTotalItem => ({
 });
 
 export function InventoryReportsTab({ onOpenModal }: Props) {
+  const openReport = (report: ModalReportState, meta?: ReportTruncationMeta, legacy?: { truncated?: boolean; totalCount?: number; maxRows?: number }) =>
+    onOpenModal(withReportTruncation(report, meta, legacy));
+
   const { activeBranchId } = useBranch();
   const [expandedCardId, setExpandedCardId] = useState<InventoryCardId | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<InventoryCardId | null>(null);
@@ -283,7 +284,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
         0
       );
       const lowStockCount = rows.reduce((count, row) => count + (row.low_stock ? 1 : 0), 0);
-      onOpenModal({
+      openReport({
         title: 'Current Stock Levels',
         subtitle: 'All Active Items',
         fileName: 'current-stock-levels',
@@ -305,7 +306,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
           moneyTotal('Total Sale Value', totalSaleValue),
           countTotal('Low Stock Items', lowStockCount),
         ],
-      });
+      }, response.data.meta);
     });
 
   const handleLowStockAlert = () =>
@@ -313,7 +314,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
       const response = await inventoryReportsService.getLowStockAlert(activeBranchId ?? undefined);
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load low stock alert');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Low Stock Alert',
         subtitle: 'Below threshold items',
         fileName: 'low-stock-alert',
@@ -334,7 +335,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
           quantityTotal('Min Qty', sumByKey(rows, 'min_stock_threshold')),
           moneyTotal('Total Value', sumByKey(rows, 'stock_value')),
         ],
-      });
+      }, response.data.meta);
     });
 
   const openInventoryValuation = (method: 'fifo' | 'lifo' | 'average', cardId: InventoryCardId, title: string) =>
@@ -342,7 +343,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
       const response = await inventoryReportsService.getInventoryValuation(activeBranchId ?? undefined, method);
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load valuation');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title,
         subtitle: `${title} — current inventory value`,
         fileName: `inventory-valuation-${method}`,
@@ -363,10 +364,9 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
           moneyTotal('Cost Value', sumByKey(rows, 'cost_value')),
           moneyTotal('Retail Value', sumByKey(rows, 'retail_value')),
         ],
-      });
+      }, response.data.meta);
     });
 
-  const handleInventoryValuation = () => openInventoryValuation('average', 'valuation', 'Stock Value');
   const handleInventoryValuationFifo = () => openInventoryValuation('fifo', 'valuation-fifo', 'Stock Value (FIFO)');
   const handleInventoryValuationLifo = () => openInventoryValuation('lifo', 'valuation-lifo', 'Stock Value (LIFO)');
   const handleInventoryValuationAverage = () => openInventoryValuation('average', 'valuation-average', 'Stock Value (Average)');
@@ -388,7 +388,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
         const type = String(row.adjustment_type || '').toUpperCase();
         return type.includes('SUB') || type.includes('OUT') || type.includes('-') ? sum + Number(row.quantity || 0) : sum;
       }, 0);
-      onOpenModal({
+      openReport({
         title: 'Stock Adjustment Log',
         subtitle: `${formatDateOnly(adjustmentRange.fromDate)} - ${formatDateOnly(adjustmentRange.toDate)}`,
         fileName: 'stock-adjustment-log',
@@ -407,7 +407,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
           quantityTotal('Reduced Qty', subtractQty),
           quantityTotal('Net Change', addQty - subtractQty),
         ],
-      });
+      }, response.data.meta);
     });
 
   const handleInventoryLoss = () =>
@@ -421,7 +421,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
       const rows = toRecordRows(response.data.rows || []);
       const totalQty = sumByKey(rows, 'quantity');
       const totalLoss = sumByKey(rows, 'total_loss');
-      onOpenModal({
+      openReport({
         title: 'Inventory Loss',
         subtitle: `${formatDateOnly(lossRange.fromDate)} - ${formatDateOnly(lossRange.toDate)}`,
         fileName: 'inventory-loss',
@@ -440,7 +440,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
           quantityTotal('Total Qty Lost', totalQty),
           moneyTotal('Total Loss', totalLoss),
         ],
-      });
+      }, response.data.meta);
     });
 
   const handleInventoryFound = () =>
@@ -457,7 +457,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
       const totalQty = sumByKey(rows, 'quantity');
       const totalFound = sumByKey(rows, 'total_found');
 
-      onOpenModal({
+      openReport({
         title: 'Inventory Found',
         subtitle: `${formatDateOnly(inventoryLedgerRange.fromDate)} - ${formatDateOnly(inventoryLedgerRange.toDate)}`,
         fileName: 'inventory-found',
@@ -480,7 +480,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
           quantityTotal('Total Qty Found', totalQty),
           moneyTotal('Total Found', totalFound),
         ],
-      });
+      }, response.data.meta);
     });
 
   const handleStoreStockReport = (mode: 'show' | 'all') =>
@@ -494,7 +494,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load store stock report');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Store Stock Report',
         subtitle: mode === 'show' ? selectedStoreSummaryLabel || 'Selected Store' : 'All Stores',
         fileName: 'store-stock-report',
@@ -515,7 +515,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
           quantityTotal('Total Qty', sumByKey(rows, 'total_qty')),
           moneyTotal('Total Value', sumByKey(rows, 'stock_value')),
         ],
-      });
+      }, response.data.meta);
     });
 
   const handleStoreWiseStock = (mode: 'show' | 'all') =>
@@ -530,7 +530,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load store-wise stock');
       const rows = toRecordRows(response.data.rows || []);
       const uniqueItems = new Set(rows.map((row) => String(row.item_id || ''))).size;
-      onOpenModal({
+      openReport({
         title: 'Store-wise Stock',
         subtitle: mode === 'show' ? selectedStoreDetailsLabel || 'Selected Store' : 'All Stores',
         fileName: 'store-wise-stock',
@@ -550,7 +550,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
           quantityTotal('Total Qty', sumByKey(rows, 'quantity')),
           moneyTotal('Total Value', sumByKey(rows, 'stock_value')),
         ],
-      });
+      }, response.data.meta);
     });
 
   const handleStoreMovementSummary = (mode: 'show' | 'all') =>
@@ -567,7 +567,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load store movement summary');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Store Movement Summary',
         subtitle: mode === 'show' ? selectedStoreMovementLabel || 'Selected Store' : 'All Stores',
         fileName: 'store-movement-summary',
@@ -603,7 +603,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
           quantityTotal('Net Move', sumByKey(rows, 'net_movement_qty')),
           quantityTotal('Ending Qty', sumByKey(rows, 'ending_qty')),
         ],
-      });
+      }, response.data.meta);
     });
 
   const handleStoreMovementDetail = (mode: 'show' | 'all') =>
@@ -688,7 +688,6 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
   const renderCardBody = (cardId: InventoryCardId) => {
     if (cardId === 'current-stock') return <button onClick={handleCurrentStockLevels} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">All Current Stock</button>;
     if (cardId === 'low-stock') return <button onClick={handleLowStockAlert} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show Low Stock</button>;
-    if (cardId === 'valuation') return <button onClick={handleInventoryValuation} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">View Stock Value</button>;
     if (cardId === 'valuation-fifo') return <button onClick={handleInventoryValuationFifo} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">View FIFO Value</button>;
     if (cardId === 'valuation-lifo') return <button onClick={handleInventoryValuationLifo} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">View LIFO Value</button>;
     if (cardId === 'valuation-average') return <button onClick={handleInventoryValuationAverage} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">View Average Value</button>;

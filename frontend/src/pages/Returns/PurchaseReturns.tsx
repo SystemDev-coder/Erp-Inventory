@@ -27,6 +27,11 @@ type ReturnLine = {
 
 const defaultLine = (): ReturnLine => ({ itemId: '', quantity: 1, unitCost: 0 });
 
+const sumLineQtyForItem = (lineItems: ReturnLine[], itemId: number) =>
+  lineItems
+    .filter((line) => Number(line.itemId) === Number(itemId))
+    .reduce((sum, line) => sum + Math.round(Number(line.quantity || 0)), 0);
+
 const PurchaseReturns = () => {
   const { showToast } = useToast();
   const { activeBranchId } = useBranch();
@@ -84,6 +89,12 @@ const PurchaseReturns = () => {
       setItems([]);
     }
   }, [form.supplierId]);
+
+  const getMaxReturnQty = (item: ReturnItemOption | undefined, itemId?: number | '') => {
+    const base = item ? Number(item.available_qty || 0) : 0;
+    if (!isEditing || !itemId) return base;
+    return Math.max(base, sumLineQtyForItem(lines, Number(itemId)));
+  };
 
   const loadSuppliers = async () => {
     const res = await supplierService.list({ branchId: activeBranchId ?? undefined });
@@ -192,7 +203,7 @@ const PurchaseReturns = () => {
       const merged = { ...next[index], ...patch };
       if (Object.prototype.hasOwnProperty.call(patch, 'quantity')) {
         const selected = items.find((item) => Number(item.item_id) === Number(merged.itemId));
-        const maxQty = selected?.available_qty !== undefined ? Number(selected.available_qty || 0) : null;
+        const maxQty = selected ? getMaxReturnQty(selected, merged.itemId) : null;
         const rawQty = Math.round(Number((merged as any).quantity || 0));
         merged.quantity = maxQty === null ? Math.max(rawQty, 1) : Math.max(Math.min(rawQty, maxQty), 0);
       }
@@ -207,7 +218,7 @@ const PurchaseReturns = () => {
     setLineValue(index, {
       itemId,
       unitCost: selected ? Number(selected.cost_price || 0) : 0,
-      quantity: selected && Number(selected.available_qty || 0) > 0 ? 1 : 0,
+      quantity: selected && getMaxReturnQty(selected, itemId) > 0 ? 1 : 0,
     });
     setErrors((prev) => ({ ...prev, items: '' }));
   };
@@ -253,12 +264,12 @@ const PurchaseReturns = () => {
       }));
     const unavailable = normalized.find((line) => {
       const selected = items.find((it) => Number(it.item_id) === Number(line.itemId));
-      const maxQty = selected?.available_qty !== undefined ? Number(selected.available_qty || 0) : null;
+      const maxQty = selected ? getMaxReturnQty(selected, line.itemId) : null;
       return maxQty !== null && line.quantity > maxQty;
     });
     if (unavailable) {
       const selected = items.find((it) => Number(it.item_id) === Number(unavailable.itemId));
-      const maxQty = selected?.available_qty !== undefined ? Number(selected.available_qty || 0) : 0;
+      const maxQty = selected ? getMaxReturnQty(selected, unavailable.itemId) : 0;
       showToast('error', 'Purchase Return', `Return qty exceeds available stock (${maxQty}) for ${selected?.name || `item ${unavailable.itemId}`}`);
       setFormError(`Return quantity exceeds available stock for ${selected?.name || `item ${unavailable.itemId}`}.`);
       return;
@@ -377,7 +388,7 @@ const PurchaseReturns = () => {
 	                          value={line.itemId}
 	                          options={items.map((item) => ({
 	                            value: Number(item.item_id),
-	                            label: `${item.name} (Available: ${Number(item.available_qty || 0)})`,
+	                            label: `${item.name} (Available: ${getMaxReturnQty(item, item.item_id)})`,
 	                          }))}
 	                          placeholder={form.supplierId ? 'Select item' : 'Select supplier first'}
 	                          disabled={!form.supplierId}
@@ -388,7 +399,7 @@ const PurchaseReturns = () => {
 	                          if (!it) return null;
                            return (
                              <div className="text-[11px] text-slate-500">
-                              Purchased: {Number(it.sold_qty || 0)} | Returned: {Number(it.returned_qty || 0)} | On hand: {Number(it.on_hand_qty || 0)} | Available: {Number(it.available_qty || 0)}
+                              Purchased: {Number(it.sold_qty || 0)} | Returned: {Number(it.returned_qty || 0)} | On hand: {Number(it.on_hand_qty || 0)} | Available: {getMaxReturnQty(it, line.itemId)}
                               </div>
                            );
                          })() : null}

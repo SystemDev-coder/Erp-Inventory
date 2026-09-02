@@ -314,8 +314,11 @@ export const financeService = {
     const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
     return apiClient.get<{ unpaid: UnpaidSupplier[] }>(`${API.FINANCE.SUPPLIER_RECEIPTS_UNPAID}${qs}`);
   },
-  async listSupplierOutstandingPurchases(supplierId?: number) {
-    const qs = supplierId ? `?supplierId=${supplierId}` : '';
+  async listSupplierOutstandingPurchases(supplierId?: number, branchId?: number) {
+    const qsParts: string[] = [];
+    if (supplierId) qsParts.push(`supplierId=${supplierId}`);
+    if (branchId) qsParts.push(`branchId=${branchId}`);
+    const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
     return apiClient.get<{ purchases: SupplierOutstandingPurchase[] }>(`${API.FINANCE.SUPPLIER_OUTSTANDING}${qs}`);
   },
   async getSupplierCombinedBalance(supplierId: number, branchId?: number) {
