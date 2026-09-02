@@ -1,4 +1,5 @@
 import { queryMany } from '../../../db/query';
+import { ACTIVE_SALE_SQL, NON_QUOTATION_SALES_WHERE } from '../reports.helpers';
 
 export interface CogsByInvoiceRow {
   sale_id: number;
@@ -12,7 +13,7 @@ export interface CogsByInvoiceRow {
   gross_profit: number;
 }
 
-const nonQuotationSalesWhere = `COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'`;
+const nonQuotationSalesWhere = NON_QUOTATION_SALES_WHERE;
 
 /**
  * NEW: COGS by invoice report (uses inventory_movements * unit_cost).
@@ -56,8 +57,10 @@ export const cogsReportsService = {
        WHERE s.branch_id = $1
          AND s.status <> 'void'
          AND ${nonQuotationSalesWhere}
+         AND ${ACTIVE_SALE_SQL}
          AND s.sale_date::date BETWEEN $2::date AND $3::date
-       ORDER BY s.sale_date DESC, s.sale_id DESC`,
+       ORDER BY s.sale_date DESC, s.sale_id DESC
+       LIMIT 5000`,
       [branchId, fromDate, toDate]
     );
   },

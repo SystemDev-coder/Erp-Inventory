@@ -6,7 +6,7 @@ import { purchaseReportsService } from '../../../services/reports/purchaseReport
 import { financeService } from '../../../services/finance.service';
 import { supplierService } from '../../../services/supplier.service';
 import type { DateRange, ModalReportState } from '../types';
-import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange } from '../reportUtils';
+import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange, withReportTruncation, type ReportTruncationMeta } from '../reportUtils';
 import { useBranch } from '../../../context/BranchContext';
 
 type SupplierCardId =
@@ -17,10 +17,10 @@ type SupplierCardId =
   | 'credit-overdue';
 const supplierCards: Array<{ id: SupplierCardId; title: string; hint: string }> = [
   { id: 'supplier-list', title: 'Supplier List', hint: 'Dropdown + Show / All' },
-  { id: 'supplier-ledger', title: 'Supplier Ledger', hint: 'Dropdown + Show / All' },
+  { id: 'supplier-ledger', title: 'Supplier Ledger', hint: 'Date range + Show / All' },
   { id: 'supplier-payments', title: 'Supplier Payments', hint: 'Date range + Show / All' },
   { id: 'supplier-outstanding', title: 'Outstanding Purchases', hint: 'Dropdown + Show / All' },
-  { id: 'credit-overdue', title: 'Overdue Credit Purchases', hint: 'Long days overdue + Show / All' },
+  { id: 'credit-overdue', title: 'Overdue Credit Purchases', hint: 'Due date passed with balance remaining' },
 ];
 const supplierListColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'supplier_id', header: 'Supplier #' },
@@ -100,7 +100,7 @@ const creditOverdueColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'purchase_date', header: 'Purchase Date', render: (row) => formatDateOnly(row.purchase_date) },
   { key: 'appointment_date', header: 'Appointment Date', render: (row) => formatDateOnly(row.appointment_date) },
   { key: 'days_overdue', header: 'Days Overdue', align: 'right' },
-  { key: 'total', header: 'Amount', align: 'right', render: (row) => formatCurrency(row.total) },
+  { key: 'total', header: 'Balance Due', align: 'right', render: (row) => formatCurrency(row.total) },
 ];
 
 type Props = {
@@ -116,6 +116,9 @@ const moneyTotal = (label: string, value: number): ReportTotalItem => ({
 });
 
 export function SupplierReportsTab({ onOpenModal }: Props) {
+  const openReport = (report: ModalReportState, meta?: ReportTruncationMeta, legacy?: { truncated?: boolean; totalCount?: number; maxRows?: number }) =>
+    onOpenModal(withReportTruncation(report, meta, legacy));
+
   const { activeBranchId } = useBranch();
   const [expandedCardId, setExpandedCardId] = useState<SupplierCardId | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<SupplierCardId | null>(null);
@@ -132,6 +135,7 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
   const [selectedOverdueSupplierId, setSelectedOverdueSupplierId] = useState('');
 
   const [paymentRange, setPaymentRange] = useState<DateRange>(defaultReportRange());
+  const [ledgerRange, setLedgerRange] = useState<DateRange>(defaultReportRange());
 
   useEffect(() => {
     let alive = true;
@@ -220,9 +224,16 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
 
   const handleSupplierLedger = (mode: 'show' | 'all') =>
     runCardAction('supplier-ledger', async () => {
+      ensureRangeValid(ledgerRange, 'Supplier Ledger');
       const supplierId = mode === 'show' ? Number(selectedLedgerSupplierId || 0) : undefined;
       if (mode === 'show' && !supplierId) throw new Error('Select a supplier first');
-      const response = await purchaseReportsService.getSupplierLedger({ mode, supplierId });
+      const response = await purchaseReportsService.getSupplierLedger({
+        fromDate: ledgerRange.fromDate,
+        toDate: ledgerRange.toDate,
+        mode,
+        supplierId,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load supplier ledger');
       const rows = toRecordRows(response.data.rows || []);
       const totalDebit = sumByKey(rows, 'debit');
@@ -231,9 +242,9 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
         mode === 'all'
           ? Number(totalCredit - totalDebit)
           : (rows.length > 0 ? Number(rows[rows.length - 1].running_balance || 0) : 0);
-      onOpenModal({
+      openReport({
         title: 'Supplier Ledger',
-        subtitle: mode === 'show' ? supplierNameById.get(selectedLedgerSupplierId) || 'Selected Supplier' : 'All Suppliers',
+        subtitle: `${formatDateOnly(ledgerRange.fromDate)} - ${formatDateOnly(ledgerRange.toDate)}`,
         fileName: 'supplier-ledger',
         data: rows,
         columns: supplierLedgerColumns,
@@ -251,10 +262,12 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
           moneyTotal('Closing Balance', closingBalance),
         ],
         filters: {
+          'From Date': ledgerRange.fromDate,
+          'To Date': ledgerRange.toDate,
           Mode: mode === 'show' ? 'Show' : 'All',
           Supplier: mode === 'show' ? supplierNameById.get(selectedLedgerSupplierId) || 'Selected Supplier' : 'All Suppliers',
         },
-      });
+      }, response.data.meta);
     });
 
   const handleSupplierPayments = (mode: 'show' | 'all') =>
@@ -267,11 +280,12 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
         toDate: paymentRange.toDate,
         mode,
         supplierId,
+        branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load supplier payments');
       const rows = toRecordRows(response.data.rows || []);
       const totalAmount = sumByKey(rows, 'amount_paid');
-      onOpenModal({
+      openReport({
         title: 'Supplier Payments',
         subtitle: `${formatDateOnly(paymentRange.fromDate)} - ${formatDateOnly(paymentRange.toDate)}`,
         fileName: 'supplier-payments',
@@ -289,14 +303,14 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
           Mode: mode === 'show' ? 'Show' : 'All',
           Supplier: mode === 'show' ? supplierNameById.get(selectedPaymentSupplierId) || 'Selected Supplier' : 'All Suppliers',
         },
-      });
+      }, response.data.meta);
     });
 
   const handleOutstandingPurchases = (mode: 'show' | 'all') =>
     runCardAction('supplier-outstanding', async () => {
       const supplierId = mode === 'show' ? Number(selectedOutstandingSupplierId || 0) : undefined;
       if (mode === 'show' && !supplierId) throw new Error('Select a supplier first');
-      const response = await financeService.listSupplierOutstandingPurchases(supplierId);
+      const response = await financeService.listSupplierOutstandingPurchases(supplierId, activeBranchId ?? undefined);
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load outstanding purchases');
       const rows = toRecordRows(response.data.purchases || []);
       const totalOutstanding = sumByKey(rows, 'outstanding');
@@ -331,7 +345,7 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load overdue credit report');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Overdue Credit Purchases',
         subtitle: mode === 'show' ? supplierNameById.get(selectedOverdueSupplierId) || 'Selected Supplier' : 'All Suppliers',
         fileName: 'supplier-credit-overdue',
@@ -348,7 +362,7 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
           },
         },
         totals: [moneyTotal('Total Overdue', sumByKey(rows, 'total'))],
-      });
+      }, response.data.meta);
     });
 
   const renderDateRange = (range: DateRange, onChange: (next: DateRange) => void) => (
@@ -421,6 +435,7 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
     if (cardId === 'supplier-ledger') {
       return (
         <div className="space-y-3">
+          {renderDateRange(ledgerRange, setLedgerRange)}
           {renderSupplierSelector(selectedLedgerSupplierId, setSelectedLedgerSupplierId)}
           {renderShowAllButtons(() => handleSupplierLedger('show'), () => handleSupplierLedger('all'), cardId)}
         </div>

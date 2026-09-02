@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, Loader2 } from 'lucide-react';
 import type { ReportColumn } from '../../../components/reports/ReportModal';
 import { financialReportsService } from '../../../services/reports/financialReports.service';
 import { inventoryReportsService } from '../../../services/reports/inventoryReports.service';
 import { financeService } from '../../../services/finance.service';
 import type { DateRange, ModalReportState } from '../types';
-import { formatCurrency, formatDateOnly, formatQuantity, toRecordRows, defaultReportRange } from '../reportUtils';
+import { formatCurrency, formatDateOnly, formatQuantity, toRecordRows, defaultReportRange, withReportTruncation, type ReportTruncationMeta } from '../reportUtils';
+import { useBranch } from '../../../context/BranchContext';
 
 type ProfitCardId = 'income-statement' | 'profit-by-period' | 'profit-analysis';
 type ProfitGroupBy = 'customer' | 'item' | 'store';
@@ -75,6 +76,10 @@ const sumByKey = (rows: Record<string, unknown>[], key: string) =>
   rows.reduce((sum, row) => sum + Number(row[key] || 0), 0);
 
 export function ProfitReportsTab({ onOpenModal }: Props) {
+  const openReport = (report: ModalReportState, meta?: ReportTruncationMeta, legacy?: { truncated?: boolean; totalCount?: number; maxRows?: number }) =>
+    onOpenModal(withReportTruncation(report, meta, legacy));
+
+  const { activeBranchId } = useBranch();
   const [expandedCardId, setExpandedCardId] = useState<ProfitCardId | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<ProfitCardId | null>(null);
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
@@ -100,7 +105,10 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
     setOptionsLoading(true);
     setOptionsError('');
 
-    Promise.all([financialReportsService.getFinancialOptions(), inventoryReportsService.getInventoryOptions()])
+    Promise.all([
+      financialReportsService.getFinancialOptions(activeBranchId ?? undefined),
+      inventoryReportsService.getInventoryOptions(activeBranchId ?? undefined),
+    ])
       .then(([financial, inventory]) => {
         if (!alive) return;
         if (!financial.success || !financial.data) {
@@ -130,7 +138,7 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [activeBranchId]);
 
   const runCardAction = async (cardId: ProfitCardId, action: () => Promise<void>) => {
     setCardErrors((prev) => ({ ...prev, [cardId]: '' }));
@@ -201,9 +209,12 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
   const handleIncomeStatement = () =>
     runCardAction('income-statement', async () => {
       ensureRangeValid(incomeRange, 'Income Statement');
-      const response = await financialReportsService.getIncomeStatement(incomeRange);
+      const response = await financialReportsService.getIncomeStatement({
+        ...incomeRange,
+        branchId: activeBranchId ?? undefined,
+      });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load income statement');
-      onOpenModal({
+      openReport({
         title: 'Income Statement',
         subtitle: `${formatDateOnly(incomeRange.fromDate)} - ${formatDateOnly(incomeRange.toDate)}`,
         fileName: 'income-statement',
@@ -211,7 +222,7 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
         data: toRecordRows(response.data.rows || []),
         columns: statementColumns,
         filters: { 'From Date': incomeRange.fromDate, 'To Date': incomeRange.toDate },
-      });
+      }, response.data.meta);
     });
 
   const handleProfitByPeriod = () =>
@@ -221,6 +232,7 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
         status: 'closed',
         fromDate: profitRange.fromDate,
         toDate: profitRange.toDate,
+        branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load closing periods');
       const rows = (response.data.periods || []).map((period) => {
@@ -282,6 +294,7 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
         response = await financialReportsService.getProfitByCustomer({
           fromDate: analysisRange.fromDate,
           toDate: analysisRange.toDate,
+          branchId: activeBranchId ?? undefined,
           itemId: selectedItemId,
           storeId: selectedStoreId,
         });
@@ -298,6 +311,7 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
         response = await financialReportsService.getProfitByItem({
           fromDate: analysisRange.fromDate,
           toDate: analysisRange.toDate,
+          branchId: activeBranchId ?? undefined,
           customerId: selectedCustomerId,
           storeId: selectedStoreId,
         });
@@ -317,6 +331,7 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
         response = await financialReportsService.getProfitByStore({
           fromDate: analysisRange.fromDate,
           toDate: analysisRange.toDate,
+          branchId: activeBranchId ?? undefined,
           customerId: selectedCustomerId,
           itemId: selectedItemId,
         });
@@ -340,7 +355,7 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
       const totalQty = sumByKey(recordRows, 'quantity_sold');
       const totalMargin = totalSales > 0 ? (totalGross / totalSales) * 100 : 0;
 
-      onOpenModal({
+      openReport({
         title,
         subtitle: `${formatDateOnly(analysisRange.fromDate)} - ${formatDateOnly(analysisRange.toDate)}`,
         fileName,
@@ -357,7 +372,7 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
           },
         },
         filters,
-      });
+      }, response.data.meta);
     });
 
 

@@ -61,22 +61,31 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         <div
           style={{
             position: 'fixed',
-            top: '80px',
-            right: '16px',
-            zIndex: TOAST_Z_INDEX, // keep toast above any modal/backdrop
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            zIndex: TOAST_Z_INDEX,
             pointerEvents: 'none',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '8px',
+            width: 'max-content',
+            maxWidth: 'min(90vw, 420px)',
           }}
         >
-          {toasts.map((toast, index) => (
+          {toasts.map((toast) => (
             <Snackbar
               key={toast.id}
               open={true}
-              anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
-              style={{ 
+              anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+              style={{
                 position: 'relative',
-                marginBottom: index > 0 ? '8px' : '0',
                 transform: 'none',
-                top: `${index * 60}px`,
+                top: 'auto',
+                left: 'auto',
+                right: 'auto',
+                bottom: 'auto',
                 zIndex: TOAST_Z_INDEX,
                 pointerEvents: 'none',
               }}
@@ -90,7 +99,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                   zIndex: TOAST_Z_INDEX,
                   width: '100%',
                   minWidth: '280px',
-                  maxWidth: '320px',
+                  maxWidth: '420px',
                   boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
                   borderRadius: '8px',
                   padding: '6px 12px',

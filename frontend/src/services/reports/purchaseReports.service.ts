@@ -157,9 +157,17 @@ export const purchaseReportsService = {
     return apiClient.get<RowsResponse<PurchasePaymentStatusRow>>(`${API.REPORTS.PURCHASE_PAYMENT_STATUS}${query}`);
   },
 
-  async getSupplierLedger(input: { mode: ReportSelectionMode; supplierId?: number; branchId?: number }) {
+  async getSupplierLedger(input: {
+    fromDate: string;
+    toDate: string;
+    mode: ReportSelectionMode;
+    supplierId?: number;
+    branchId?: number;
+  }) {
     const query = toQuery({
       branchId: input.branchId,
+      fromDate: input.fromDate,
+      toDate: input.toDate,
       mode: input.mode,
       supplierId: input.mode === 'show' ? input.supplierId : undefined,
     });
