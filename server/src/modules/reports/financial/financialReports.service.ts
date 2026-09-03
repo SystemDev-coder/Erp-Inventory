@@ -2458,10 +2458,10 @@ export const financialReportsService = {
        FROM sales_scope ss
        LEFT JOIN pay_sum ps ON ps.sale_id = ss.invoice_no
        WHERE GREATEST(ss.amount - COALESCE(ps.paid, 0), 0) > 0.009
-       ORDER BY ss.invoice_date ASC, ss.invoice_no ASC
-       LIMIT 5000`,
+        ORDER BY ss.invoice_date ASC, ss.invoice_no ASC
+        LIMIT 5000`,
       [branchId, asOfDate]
-    );
+     );
   },
 
   async getAccountsPayable(branchId: number, fromDate: string, toDate: string): Promise<AccountsPayableRow[]> {
@@ -2594,7 +2594,7 @@ export const financialReportsService = {
     const operatingTotal =
       ledgerRows.find(
         (r) => r.section === 'Cash Flow from Operations' && r.line_item === 'Net Cash Flow from Operations'
-      )?.amount ?? 0;
+    )?.amount ?? 0;
     if (ledgerRows.length > 0 && !isApproxZero(operatingTotal)) {
       return ledgerRows;
     }
