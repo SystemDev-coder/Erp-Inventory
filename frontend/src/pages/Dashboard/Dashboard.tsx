@@ -701,6 +701,7 @@ const Dashboard = () => {
           </section>
 
           {valuesVisible ? (
+          <>
           <section className="space-y-5">
             {incomeTrendChart && chartOptions[incomeTrendChart.id] && chartHasData(incomeTrendChart) && (
               <article className="rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/80">
@@ -928,6 +929,7 @@ const Dashboard = () => {
               </div>
             </article>
           </section>
+          </>
           ) : (
             <section className="rounded-3xl border border-dashed border-slate-200 bg-white/95 p-8 text-center shadow-sm dark:border-slate-700 dark:bg-slate-900/80">
               <EyeOff className="mx-auto h-8 w-8 text-slate-400" />
