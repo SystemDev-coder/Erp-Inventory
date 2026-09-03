@@ -92,7 +92,7 @@ const PurchaseReturns = () => {
 
   const getMaxReturnQty = (item: ReturnItemOption | undefined, itemId?: number | '', lineIndex?: number) => {
     if (!item) return 0;
-    const sold = Math.max(0, Number(item.sold_qty || item.purchased_qty || 0));
+    const sold = Math.max(0, Number(item.sold_qty || 0));
     const available = Math.max(0, Number(item.available_qty || 0));
     const id = Number(itemId || item.item_id || 0);
     if (!isEditing || !id) return Math.min(sold || available, available);
