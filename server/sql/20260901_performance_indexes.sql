@@ -34,7 +34,7 @@ CREATE INDEX IF NOT EXISTS idx_inventory_movements_branch_item
   ON ims.inventory_movements (branch_id, item_id);
 
 CREATE INDEX IF NOT EXISTS idx_inventory_movements_branch_date
-  ON ims.inventory_movements (branch_id, movement_date DESC);
+  ON ims.inventory_movements (branch_id, move_date DESC);
 
 CREATE INDEX IF NOT EXISTS idx_account_transactions_branch_date
   ON ims.account_transactions (branch_id, txn_date DESC);
