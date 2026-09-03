@@ -229,7 +229,7 @@ const Customers = () => {
     };
 
     const onEdit = (row: Customer) => {
-        const openingBalance = Number(row.open_balance ?? row.remaining_balance ?? row.balance ?? 0);
+        const openingBalance = Number(row.remaining_balance ?? row.balance ?? row.open_balance ?? 0);
         openModal({
             customer_id: row.customer_id,
             full_name: row.full_name,
