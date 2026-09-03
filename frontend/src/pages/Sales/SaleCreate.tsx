@@ -277,6 +277,15 @@ const SaleCreate = () => {
 
   const statusLocked = effectiveDocType === 'quotation' || effectiveSaleType === 'credit';
 
+  const creditHint =
+    effectiveDocType === 'quotation' || canUseCredit
+      ? null
+      : saleForm.customer_id
+      ? 'This customer cannot use credit, so the sale stays cash.'
+      : effectiveSaleType === 'credit'
+      ? 'Pick a credit-enabled customer before saving this credit sale.'
+      : null;
+
   const headerDocLabel =
     effectiveDocType === 'quotation' ? 'Quotation' : effectiveDocType === 'invoice' ? 'Invoice' : 'Sale';
   const headerTitle = isEditing ? `Edit ${headerDocLabel}` : `New ${headerDocLabel}`;
@@ -293,6 +302,11 @@ const SaleCreate = () => {
 
   const shouldShowDueDate =
     effectiveDocType !== 'quotation' && (effectiveSaleType === 'credit' || isDebt);
+
+  useEffect(() => {
+    if (!saleForm.customer_id || canUseCredit) return;
+    setSaleForm((prev) => (prev.sale_type === 'credit' ? { ...prev, sale_type: 'cash' } : prev));
+  }, [saleForm.customer_id, canUseCredit]);
 
   useEffect(() => {
     const target =
@@ -697,16 +711,12 @@ const SaleCreate = () => {
                   };
                 })
               }
-              disabled={loading || saleForm.doc_type === 'quotation' || isDebt || !canUseCredit}
+              disabled={loading || saleForm.doc_type === 'quotation' || isDebt}
             >
               <option value="cash">Cash</option>
               <option value="credit">Credit</option>
             </select>
-            {!canUseCredit && saleForm.doc_type !== 'quotation' && (
-              <span className="text-xs text-slate-500">
-                Credit requires a registered customer with credit enabled.
-              </span>
-            )}
+            {creditHint && <span className="text-xs text-slate-500">{creditHint}</span>}
           </label>
 
           {shouldShowAccount && (
