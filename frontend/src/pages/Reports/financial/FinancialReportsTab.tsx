@@ -59,7 +59,7 @@ const expenseSummaryColumns: ReportColumn<Record<string, unknown>>[] = [
 
 const accountsReceivableColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'customer_name', header: 'Customer' },
-  { key: 'invoice_no', header: 'Invoice #' },
+  { key: 'invoice_no', header: 'Invoice #', render: (row) => (Number(row.invoice_no) > 0 ? String(row.invoice_no) : '—') },
   { key: 'invoice_date', header: 'Invoice Date', render: (row) => formatDateOnly(row.invoice_date) },
   { key: 'due_date', header: 'Due Date', render: (row) => formatDateOnly(row.due_date) },
   { key: 'amount', header: 'Amount', align: 'right', render: (row) => formatCurrency(row.amount) },
