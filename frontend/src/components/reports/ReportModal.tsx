@@ -72,6 +72,7 @@ export type ReportTableTotals = {
 type ReportModalProps<T> = {
   isOpen: boolean;
   onClose: () => void;
+  onBack?: () => void;
   title: string;
   subtitle?: string;
   companyInfo?: {
@@ -167,6 +168,7 @@ const parseSortableNumber = (value: unknown) => {
 export function ReportModal<T extends Record<string, any>>({
   isOpen,
   onClose,
+  onBack,
   title,
   subtitle,
   companyInfo,
@@ -627,6 +629,15 @@ export function ReportModal<T extends Record<string, any>>({
       <div className="space-y-4">
         {/* Screen controls (hidden on print) */}
         <div className="flex flex-col gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-black shadow-sm print:hidden dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end sm:gap-3 sm:px-6 sm:py-4">
+            {onBack ? (
+              <button
+                type="button"
+                onClick={onBack}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 sm:mr-auto sm:w-auto"
+              >
+                ← Back
+              </button>
+            ) : null}
             {enablePdf && !isIncomeStatement && !isBalanceSheet && (
               <button
                 onClick={handlePrint}

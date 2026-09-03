@@ -65,9 +65,11 @@ export const storesService = {
     if (!filters.includeInactive) {
       where.push('s.is_active = TRUE');
     }
-    if (filters.fromDate && filters.toDate) {
+    if (filters.fromDate) {
       params.push(filters.fromDate);
       where.push(`s.created_at::date >= $${params.length}::date`);
+    }
+    if (filters.toDate) {
       params.push(filters.toDate);
       where.push(`s.created_at::date <= $${params.length}::date`);
     }

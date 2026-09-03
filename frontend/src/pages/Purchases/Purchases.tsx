@@ -12,7 +12,7 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { PurchaseItem, purchaseService, Purchase, PurchaseItemView } from '../../services/purchase.service';
 import { supplierService, Supplier } from '../../services/supplier.service';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
-import { defaultDateRange } from '../../utils/dateRange';
+import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
 
 type SupplierFieldErrors = Partial<Record<string, string>>;
@@ -116,8 +116,8 @@ const Purchases = () => {
     const res = await purchaseService.list({
       search: term,
       status,
-      fromDate: dateRange.fromDate,
-      toDate: dateRange.toDate,
+      fromDate: optionalDateParam(dateRange.fromDate),
+      toDate: optionalDateParam(dateRange.toDate),
       branchId: activeBranchId ?? undefined,
     });
     if (res.success && res.data?.purchases) {
@@ -137,8 +137,8 @@ const Purchases = () => {
     setLoading(true);
     const res = await supplierService.list({
       search: term,
-      fromDate: dateRange.fromDate,
-      toDate: dateRange.toDate,
+      fromDate: optionalDateParam(dateRange.fromDate),
+      toDate: optionalDateParam(dateRange.toDate),
     });
     if (res.success && res.data?.suppliers) {
       setSuppliers(res.data.suppliers);
@@ -152,8 +152,8 @@ const Purchases = () => {
     setLoading(true);
     const res = await purchaseService.listItems({
       search: term,
-      from: dateRange.fromDate,
-      to: dateRange.toDate,
+      from: optionalDateParam(dateRange.fromDate),
+      to: optionalDateParam(dateRange.toDate),
     });
     if (res.success && res.data?.items) {
       setItems(res.data.items);
@@ -248,8 +248,8 @@ const Purchases = () => {
     const res = await purchaseService.exportXlsx({
       search,
       status: statusFilter,
-      fromDate: dateRange.fromDate,
-      toDate: dateRange.toDate,
+      fromDate: optionalDateParam(dateRange.fromDate),
+      toDate: optionalDateParam(dateRange.toDate),
     });
     setExporting(false);
 
@@ -391,8 +391,8 @@ const Purchases = () => {
     setOrdersLoading(true);
     const res = await purchaseService.list({
       docType: 'order',
-      fromDate: orderDateRange.fromDate,
-      toDate: orderDateRange.toDate,
+      fromDate: optionalDateParam(orderDateRange.fromDate),
+      toDate: optionalDateParam(orderDateRange.toDate),
     });
     if (res.success && res.data?.purchases) {
       setOrders(res.data.purchases);

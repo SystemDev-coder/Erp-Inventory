@@ -11,7 +11,7 @@ import { useToast } from '../../components/ui/toast/Toast';
 import Badge from '../../components/ui/badge/Badge';
 import { customerService, Customer } from '../../services/customer.service';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
-import { defaultDateRange } from '../../utils/dateRange';
+import { emptyDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -123,7 +123,7 @@ const Customers = () => {
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null);
     const [importModalOpen, setImportModalOpen] = useState(false);
-    const [dateRange, setDateRange] = useState(() => defaultDateRange());
+    const [dateRange, setDateRange] = useState(() => emptyDateRange());
 
     // touch a field on blur and validate immediately
     const touch = (field: keyof CustomerForm) => {
@@ -154,8 +154,8 @@ const Customers = () => {
     const fetchCustomers = async () => {
         setLoading(true);
         const res = await customerService.list({
-            fromDate: dateRange.fromDate,
-            toDate: dateRange.toDate,
+            fromDate: optionalDateParam(dateRange.fromDate),
+            toDate: optionalDateParam(dateRange.toDate),
             branchId: activeBranchId ?? undefined,
             limit: 500,
         });
@@ -266,8 +266,8 @@ const Customers = () => {
     const toolbarDateRange = {
         fromDate: dateRange.fromDate,
         toDate: dateRange.toDate,
-        onFromDateChange: (v: string) => { setDateRange((p) => ({ ...p, fromDate: v })); setHasDisplayed(false); },
-        onToDateChange: (v: string) => { setDateRange((p) => ({ ...p, toDate: v })); setHasDisplayed(false); },
+        onFromDateChange: (v: string) => setDateRange((p) => ({ ...p, fromDate: v })),
+        onToDateChange: (v: string) => setDateRange((p) => ({ ...p, toDate: v })),
     };
 
     const emptyHint = (

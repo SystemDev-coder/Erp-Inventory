@@ -6,7 +6,7 @@ import { storeService, Store as StoreType, StoreItem } from '../../services/stor
 import { productService, Product } from '../../services/product.service';
 import { Modal } from '../../components/ui/modal/Modal';
 import { itemLabelWithAvailability } from '../../utils/itemAvailability';
-import { defaultDateRange } from '../../utils/dateRange';
+import { emptyDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
 
 const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
@@ -16,7 +16,7 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const [loading, setLoading] = useState(false);
   const [hasDisplayed, setHasDisplayed] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [dateRange, setDateRange] = useState(() => defaultDateRange());
+  const [dateRange, setDateRange] = useState(() => emptyDateRange());
   const [storeItems, setStoreItems] = useState<Record<number, StoreItem[]>>({});
   const [editQty, setEditQty] = useState<Record<number, number>>({});
 
@@ -37,8 +37,8 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
     setLoading(true);
     setHasDisplayed(true);
     const res = await storeService.list({
-      fromDate: dateRange.fromDate,
-      toDate: dateRange.toDate,
+      fromDate: optionalDateParam(dateRange.fromDate),
+      toDate: optionalDateParam(dateRange.toDate),
       branchId: activeBranchId ?? undefined,
     });
     if (res.success && res.data?.stores) {

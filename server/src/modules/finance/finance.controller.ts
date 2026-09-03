@@ -31,9 +31,6 @@ export const listExpenses = ah(async (req: AuthRequest, res: Response) => {
   const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
   const fromDate = (req.query.fromDate as string) || undefined;
   const toDate = (req.query.toDate as string) || undefined;
-  if ((fromDate && !toDate) || (!fromDate && toDate)) {
-    throw ApiError.badRequest('Both fromDate and toDate are required together');
-  }
   if (fromDate && toDate && fromDate > toDate) {
     throw ApiError.badRequest('fromDate cannot be after toDate');
   }
@@ -81,9 +78,6 @@ export const listAccountTransfers = asyncHandler(async (req: AuthRequest, res: R
   const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
   const fromDate = (req.query.fromDate as string) || undefined;
   const toDate = (req.query.toDate as string) || undefined;
-  if ((fromDate && !toDate) || (!fromDate && toDate)) {
-    throw ApiError.badRequest('Both fromDate and toDate are required together');
-  }
   if (fromDate && toDate && fromDate > toDate) {
     throw ApiError.badRequest('fromDate cannot be after toDate');
   }
@@ -115,9 +109,6 @@ export const listCustomerReceipts = asyncHandler(async (req: AuthRequest, res: R
   const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
   const fromDate = (req.query.fromDate as string) || undefined;
   const toDate = (req.query.toDate as string) || undefined;
-  if ((fromDate && !toDate) || (!fromDate && toDate)) {
-    throw ApiError.badRequest('Both fromDate and toDate are required together');
-  }
   if (fromDate && toDate && fromDate > toDate) {
     throw ApiError.badRequest('fromDate cannot be after toDate');
   }
@@ -167,9 +158,6 @@ export const listSupplierReceipts = asyncHandler(async (req: AuthRequest, res: R
   const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
   const fromDate = (req.query.fromDate as string) || undefined;
   const toDate = (req.query.toDate as string) || undefined;
-  if ((fromDate && !toDate) || (!fromDate && toDate)) {
-    throw ApiError.badRequest('Both fromDate and toDate are required together');
-  }
   if (fromDate && toDate && fromDate > toDate) {
     throw ApiError.badRequest('fromDate cannot be after toDate');
   }
@@ -221,9 +209,6 @@ export const listOtherIncomes = asyncHandler(async (req: AuthRequest, res: Respo
   const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
   const fromDate = (req.query.fromDate as string) || undefined;
   const toDate = (req.query.toDate as string) || undefined;
-  if ((fromDate && !toDate) || (!fromDate && toDate)) {
-    throw ApiError.badRequest('Both fromDate and toDate are required together');
-  }
   if (fromDate && toDate && fromDate > toDate) {
     throw ApiError.badRequest('fromDate cannot be after toDate');
   }
@@ -318,9 +303,6 @@ export const listExpenseCharges = asyncHandler(async (req: AuthRequest, res: Res
   const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
   const fromDate = (req.query.fromDate as string) || undefined;
   const toDate = (req.query.toDate as string) || undefined;
-  if ((fromDate && !toDate) || (!fromDate && toDate)) {
-    throw ApiError.badRequest('Both fromDate and toDate are required together');
-  }
   if (fromDate && toDate && fromDate > toDate) {
     throw ApiError.badRequest('fromDate cannot be after toDate');
   }
@@ -372,9 +354,6 @@ export const listExpenseBudgets = asyncHandler(async (req: AuthRequest, res: Res
   const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
   const fromDate = (req.query.fromDate as string) || undefined;
   const toDate = (req.query.toDate as string) || undefined;
-  if ((fromDate && !toDate) || (!fromDate && toDate)) {
-    throw ApiError.badRequest('Both fromDate and toDate are required together');
-  }
   if (fromDate && toDate && fromDate > toDate) {
     throw ApiError.badRequest('fromDate cannot be after toDate');
   }
@@ -467,9 +446,6 @@ export const listPayroll = asyncHandler(async (req: AuthRequest, res: Response) 
   const period = req.query.period ? String(req.query.period) : undefined;
   const fromDate = (req.query.fromDate as string) || undefined;
   const toDate = (req.query.toDate as string) || undefined;
-  if ((fromDate && !toDate) || (!fromDate && toDate)) {
-    throw ApiError.badRequest('Both fromDate and toDate are required together');
-  }
   if (fromDate && toDate && fromDate > toDate) {
     throw ApiError.badRequest('fromDate cannot be after toDate');
   }

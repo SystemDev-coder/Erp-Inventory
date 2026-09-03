@@ -22,7 +22,7 @@ import {
 } from '../../services/finance.service';
 import { Modal } from '../../components/ui/modal/Modal';
 import DeleteConfirmModal from '../../components/ui/modal/DeleteConfirmModal';
-import { defaultDateRange } from '../../utils/dateRange';
+import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
 
 const Finance = () => {
@@ -585,16 +585,16 @@ const [deletingBudget, setDeletingBudget] = useState(false);
     setLoading(true);
     const [acc, tr, cr, sr, oi, ch, bd, ex, unpaidC, unpaidS, pr] = await Promise.all([
       accountService.list({ branchId: activeBranchId ?? undefined }),
-      financeService.listTransfers({ fromDate: dateRange.fromDate, toDate: dateRange.toDate, branchId: activeBranchId ?? undefined }),
-      financeService.listCustomerReceipts({ fromDate: dateRange.fromDate, toDate: dateRange.toDate, branchId: activeBranchId ?? undefined }),
-      financeService.listSupplierReceipts({ fromDate: dateRange.fromDate, toDate: dateRange.toDate, branchId: activeBranchId ?? undefined }),
-      financeService.listOtherIncome({ fromDate: dateRange.fromDate, toDate: dateRange.toDate, branchId: activeBranchId ?? undefined }),
-      financeService.listExpenseCharges({ fromDate: dateRange.fromDate, toDate: dateRange.toDate, branchId: activeBranchId ?? undefined }),
-      financeService.listExpenseBudgets({ fromDate: dateRange.fromDate, toDate: dateRange.toDate, branchId: activeBranchId ?? undefined }),
-      financeService.listExpenses({ fromDate: dateRange.fromDate, toDate: dateRange.toDate, branchId: activeBranchId ?? undefined }),
+      financeService.listTransfers({ fromDate: optionalDateParam(dateRange.fromDate), toDate: optionalDateParam(dateRange.toDate), branchId: activeBranchId ?? undefined }),
+      financeService.listCustomerReceipts({ fromDate: optionalDateParam(dateRange.fromDate), toDate: optionalDateParam(dateRange.toDate), branchId: activeBranchId ?? undefined }),
+      financeService.listSupplierReceipts({ fromDate: optionalDateParam(dateRange.fromDate), toDate: optionalDateParam(dateRange.toDate), branchId: activeBranchId ?? undefined }),
+      financeService.listOtherIncome({ fromDate: optionalDateParam(dateRange.fromDate), toDate: optionalDateParam(dateRange.toDate), branchId: activeBranchId ?? undefined }),
+      financeService.listExpenseCharges({ fromDate: optionalDateParam(dateRange.fromDate), toDate: optionalDateParam(dateRange.toDate), branchId: activeBranchId ?? undefined }),
+      financeService.listExpenseBudgets({ fromDate: optionalDateParam(dateRange.fromDate), toDate: optionalDateParam(dateRange.toDate), branchId: activeBranchId ?? undefined }),
+      financeService.listExpenses({ fromDate: optionalDateParam(dateRange.fromDate), toDate: optionalDateParam(dateRange.toDate), branchId: activeBranchId ?? undefined }),
       financeService.listCustomerUnpaid(custMonthOnly ? currentMonth() : undefined, activeBranchId ?? undefined),
       financeService.listSupplierUnpaid(supMonthOnly ? currentMonth() : undefined, activeBranchId ?? undefined),
-      financeService.listPayroll({ period: payrollPeriod, fromDate: dateRange.fromDate, toDate: dateRange.toDate }),
+      financeService.listPayroll({ period: payrollPeriod, fromDate: optionalDateParam(dateRange.fromDate), toDate: optionalDateParam(dateRange.toDate) }),
     ]);
     if (acc.success && acc.data?.accounts) setAccounts(acc.data.accounts);
     if (tr.success && tr.data?.transfers) setTransfers(tr.data.transfers);

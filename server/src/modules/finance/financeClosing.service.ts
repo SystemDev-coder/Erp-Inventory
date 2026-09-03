@@ -485,7 +485,21 @@ export const ensureFinanceClosingSchema = async () => {
            v_branch_id BIGINT;
            v_txn_date DATE;
            v_period RECORD;
+           v_allow_soft_void TEXT;
          BEGIN
+           -- Allow soft-void of returns (is_deleted) when the service explicitly opts in.
+           BEGIN
+             v_allow_soft_void := current_setting('app.allow_soft_void', true);
+           EXCEPTION WHEN OTHERS THEN
+             v_allow_soft_void := '0';
+           END;
+           IF COALESCE(v_allow_soft_void, '0') = '1' THEN
+             IF TG_OP = 'DELETE' THEN
+               RETURN OLD;
+             END IF;
+             RETURN NEW;
+           END IF;
+
            IF TG_OP = 'DELETE' THEN
              v_branch_id := OLD.branch_id;
              EXECUTE format('SELECT ($1).%I::date', TG_ARGV[0]) USING OLD INTO v_txn_date;

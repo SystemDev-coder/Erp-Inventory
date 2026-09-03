@@ -12,7 +12,7 @@ import { RoleRow } from '../../services/user.service';
 import { EmployeeModal } from './EmployeeModal';
 import { Modal } from '../../components/ui/modal/Modal';
 import DeleteConfirmModal from '../../components/ui/modal/DeleteConfirmModal';
-import { defaultDateRange } from '../../utils/dateRange';
+import { emptyDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
 
 const Employees = () => {
@@ -26,7 +26,7 @@ const Employees = () => {
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [hasDisplayed, setHasDisplayed] = useState(false);
-  const [dateRange, setDateRange] = useState(() => defaultDateRange());
+  const [dateRange, setDateRange] = useState(() => emptyDateRange());
 
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [isEmployeeModalOpen, setIsEmployeeModalOpen] = useState(false);
@@ -45,8 +45,8 @@ const Employees = () => {
     const res = await employeeService.list({
       search: term || undefined,
       status: 'active',
-      fromDate: dateRange.fromDate,
-      toDate: dateRange.toDate,
+      fromDate: optionalDateParam(dateRange.fromDate),
+      toDate: optionalDateParam(dateRange.toDate),
       branchId: activeBranchId ?? undefined,
     });
     if (res.success && res.data?.employees) {
@@ -63,8 +63,8 @@ const Employees = () => {
     const res = await employeeService.list({
       status,
       search: search || undefined,
-      fromDate: dateRange.fromDate,
-      toDate: dateRange.toDate,
+      fromDate: optionalDateParam(dateRange.fromDate),
+      toDate: optionalDateParam(dateRange.toDate),
       branchId: activeBranchId ?? undefined,
     });
     if (res.success && res.data?.employees) {

@@ -11,7 +11,7 @@ import Badge from '../../components/ui/badge/Badge';
 import { Tabs } from '../../components/ui/tabs/Tabs';
 import { useToast } from '../../components/ui/toast/Toast';
 import { Sale, SaleItem, salesService } from '../../services/sales.service';
-import { defaultDateRange } from '../../utils/dateRange';
+import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
 
 const formatMoney = (value: number) => `$${Number(value || 0).toFixed(2)}`;
@@ -46,8 +46,8 @@ const Sales = () => {
     setLoading(true);
     const res = await salesService.list({
       includeVoided: true,
-      fromDate: dateRange.fromDate,
-      toDate: dateRange.toDate,
+      fromDate: optionalDateParam(dateRange.fromDate),
+      toDate: optionalDateParam(dateRange.toDate),
       branchId: activeBranchId ?? undefined,
       limit: 500,
     });
@@ -388,11 +388,9 @@ const Sales = () => {
                     toDate: dateRange.toDate,
                     onFromDateChange: (value) => {
                       setDateRange((prev) => ({ ...prev, fromDate: value }));
-                      setHasLoaded(false);
                     },
                     onToDateChange: (value) => {
                       setDateRange((prev) => ({ ...prev, toDate: value }));
-                      setHasLoaded(false);
                     },
                   }}
                 />
@@ -426,11 +424,9 @@ const Sales = () => {
                     toDate: dateRange.toDate,
                     onFromDateChange: (value) => {
                       setDateRange((prev) => ({ ...prev, fromDate: value }));
-                      setHasLoaded(false);
                     },
                     onToDateChange: (value) => {
                       setDateRange((prev) => ({ ...prev, toDate: value }));
-                      setHasLoaded(false);
                     },
                   }}
                 />

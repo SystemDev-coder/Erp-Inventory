@@ -883,9 +883,11 @@ export const inventoryService = {
     if (whId) { params.push(whId); where.push(`m.wh_id = $${params.length}`); }
     if (productId) { params.push(productId); where.push(`m.item_id = $${params.length}`); }
     if (search) { params.push(`%${search}%`); where.push(`p.name ILIKE $${params.length}`); }
-    if (fromDate && toDate) {
+    if (fromDate) {
       params.push(fromDate);
       where.push(`m.move_date::date >= $${params.length}::date`);
+    }
+    if (toDate) {
       params.push(toDate);
       where.push(`m.move_date::date <= $${params.length}::date`);
     }
@@ -931,9 +933,11 @@ export const inventoryService = {
           OR b.branch_name ILIKE $${params.length}
         )`);
       }
-      if (fromDate && toDate) {
+      if (fromDate) {
         params.push(fromDate);
         where.push(`m.move_date::date >= $${params.length}::date`);
+      }
+      if (toDate) {
         params.push(toDate);
         where.push(`m.move_date::date <= $${params.length}::date`);
       }
@@ -993,9 +997,11 @@ export const inventoryService = {
         OR b.branch_name ILIKE $${params.length}
       )`);
     }
-    if (fromDate && toDate) {
+    if (fromDate) {
       params.push(fromDate);
       where.push(`a.adjustment_date::date >= $${params.length}::date`);
+    }
+    if (toDate) {
       params.push(toDate);
       where.push(`a.adjustment_date::date <= $${params.length}::date`);
     }
@@ -1062,9 +1068,11 @@ export const inventoryService = {
           OR b.branch_name ILIKE $${params.length}
         )`);
       }
-      if (fromDate && toDate) {
+      if (fromDate) {
         params.push(fromDate);
         where.push(`m.move_date::date >= $${params.length}::date`);
+      }
+      if (toDate) {
         params.push(toDate);
         where.push(`m.move_date::date <= $${params.length}::date`);
       }
@@ -1123,9 +1131,11 @@ export const inventoryService = {
         OR b.branch_name ILIKE $${params.length}
       )`);
     }
-    if (fromDate && toDate) {
+    if (fromDate) {
       params.push(fromDate);
       where.push(`a.adjustment_date::date >= $${params.length}::date`);
+    }
+    if (toDate) {
       params.push(toDate);
       where.push(`a.adjustment_date::date <= $${params.length}::date`);
     }

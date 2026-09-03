@@ -209,9 +209,11 @@ export const financeService = {
       params.push(scope.branchIds);
       where += ` AND at.branch_id = ANY($${params.length})`;
     }
-    if (range.fromDate && range.toDate) {
+    if (range.fromDate) {
       params.push(range.fromDate);
       where += ` AND at.transfer_date::date >= $${params.length}::date`;
+    }
+    if (range.toDate) {
       params.push(range.toDate);
       where += ` AND at.transfer_date::date <= $${params.length}::date`;
     }
@@ -365,9 +367,11 @@ export const financeService = {
       params.push(scope.branchIds);
       where += ` AND r.branch_id = ANY($${params.length})`;
     }
-    if (range.fromDate && range.toDate) {
+    if (range.fromDate) {
       params.push(range.fromDate);
       where += ` AND r.receipt_date::date >= $${params.length}::date`;
+    }
+    if (range.toDate) {
       params.push(range.toDate);
       where += ` AND r.receipt_date::date <= $${params.length}::date`;
     }
@@ -539,9 +543,11 @@ export const financeService = {
       params.push(scope.branchIds);
       where += ` AND r.branch_id = ANY($${params.length})`;
     }
-    if (range.fromDate && range.toDate) {
+    if (range.fromDate) {
       params.push(range.fromDate);
       where += ` AND r.receipt_date::date >= $${params.length}::date`;
+    }
+    if (range.toDate) {
       params.push(range.toDate);
       where += ` AND r.receipt_date::date <= $${params.length}::date`;
     }
@@ -1233,9 +1239,11 @@ export const financeService = {
       where += ` AND oi.branch_id = ANY($${params.length})`;
     }
 
-    if (range.fromDate && range.toDate) {
+    if (range.fromDate) {
       params.push(range.fromDate);
       where += ` AND oi.income_date >= $${params.length}::date`;
+    }
+    if (range.toDate) {
       params.push(range.toDate);
       where += ` AND oi.income_date <= $${params.length}::date`;
     }
@@ -1997,9 +2005,11 @@ export const financeService = {
       params.push(scope.branchIds);
       where += ` AND e.branch_id = ANY($${params.length})`;
     }
-    if (range.fromDate && range.toDate) {
+    if (range.fromDate) {
       params.push(range.fromDate);
       where += ` AND e.created_at::date >= $${params.length}::date`;
+    }
+    if (range.toDate) {
       params.push(range.toDate);
       where += ` AND e.created_at::date <= $${params.length}::date`;
     }
@@ -2080,9 +2090,11 @@ export const financeService = {
       params.push(scope.branchIds);
       where += ` AND c.branch_id = ANY($${params.length})`;
     }
-    if (range.fromDate && range.toDate) {
+    if (range.fromDate) {
       params.push(range.fromDate);
       where += ` AND c.charge_date::date >= $${params.length}::date`;
+    }
+    if (range.toDate) {
       params.push(range.toDate);
       where += ` AND c.charge_date::date <= $${params.length}::date`;
     }
@@ -2570,13 +2582,15 @@ export const financeService = {
       params.push(scope.branchIds);
       where += ` AND e.branch_id = ANY($${params.length})`;
     }
-    if (range.fromDate && range.toDate) {
+    if (range.fromDate) {
       const hasCreatedAt = await hasColumn('expense_budgets', 'created_at');
       if (hasCreatedAt) {
-        params.push(range.fromDate);
-        where += ` AND b.created_at::date >= $${params.length}::date`;
-        params.push(range.toDate);
-        where += ` AND b.created_at::date <= $${params.length}::date`;
+      params.push(range.fromDate);
+      where += ` AND b.created_at::date >= $${params.length}::date`;
+    }
+    if (range.toDate) {
+      params.push(range.toDate);
+      where += ` AND b.created_at::date <= $${params.length}::date`;
       }
     }
 
@@ -2876,9 +2890,11 @@ export const financeService = {
         where += ` AND pr.period_year = $${params.length - 1} AND pr.period_month = $${params.length}`;
       }
     }
-    if (range.fromDate && range.toDate) {
+    if (range.fromDate) {
       params.push(range.fromDate);
       where += ` AND make_date(pr.period_year, pr.period_month, 1) >= $${params.length}::date`;
+    }
+    if (range.toDate) {
       params.push(range.toDate);
       where += ` AND make_date(pr.period_year, pr.period_month, 1) <= $${params.length}::date`;
     }
