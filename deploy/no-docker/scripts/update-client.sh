@@ -56,8 +56,23 @@ MIGRATIONS_DIR="$REPO_DIR/server/sql"
 set +a
 sh "$REPO_DIR/server/docker/entrypoint.sh" /bin/true
 
-sudo -u "$APP_USER" pm2 restart "erp-$NAME" --update-env
+# `pm2 restart` on a missing process only prints a warning and still exits 0, so the
+# deploy would look successful while the old build kept serving. Start it instead.
+PM2_FILE="$CLIENT_DIR/ecosystem.config.cjs"
+if sudo -u "$APP_USER" pm2 describe "erp-$NAME" >/dev/null 2>&1; then
+  sudo -u "$APP_USER" pm2 restart "erp-$NAME" --update-env
+elif [ -f "$PM2_FILE" ]; then
+  echo "PM2 process 'erp-$NAME' was not running; starting it from $PM2_FILE"
+  sudo -u "$APP_USER" pm2 start "$PM2_FILE"
+else
+  echo "ERROR: PM2 process 'erp-$NAME' is not running and $PM2_FILE is missing."
+  echo "Run new-client.sh to provision '$NAME' before updating it."
+  exit 1
+fi
 sudo -u "$APP_USER" pm2 save
+
+echo "==> Verifying '$NAME' is online..."
+sudo -u "$APP_USER" pm2 describe "erp-$NAME" | grep -E "status|script path" || true
 
 echo ""
 echo "Client '$NAME' updated to the latest commit on '$BRANCH'."
