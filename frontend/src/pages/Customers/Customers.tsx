@@ -24,7 +24,10 @@ type CustomerForm = {
     is_active: boolean;
     credit_allowed: boolean;
     credit_days: number;
-    remaining_balance: number;
+    // Kept as a string so the input never rewrites what is being typed. Coercing on
+    // every keystroke turns "" into "0" and drops a trailing ".", which moves the
+    // caret and makes the field (and the reason field below it) flicker.
+    remaining_balance: string;
     edit_reason: string;
 };
 
@@ -39,9 +42,19 @@ const emptyForm: CustomerForm = {
     is_active: true,
     credit_allowed: true,
     credit_days: 30,
-    remaining_balance: 0,
+    remaining_balance: '',
     edit_reason: '',
 };
+
+const parseBalance = (value: string) => {
+    const numeric = Number(String(value).trim());
+    return Number.isFinite(numeric) ? numeric : 0;
+};
+
+const hasOpeningBalanceChanged = (f: CustomerForm, original: number | null) =>
+    f.customer_id !== undefined &&
+    original !== null &&
+    parseBalance(f.remaining_balance) !== original;
 
 // ── Field-level validation ───────────────────────────────────────────────────
 function validateForm(f: CustomerForm): FieldErrors {
@@ -57,7 +70,9 @@ function validateForm(f: CustomerForm): FieldErrors {
             e.phone = 'Please add at least 2 numbers';
     }
 
-    if (Number(f.remaining_balance) < 0)
+    if (f.remaining_balance.trim() && !Number.isFinite(Number(f.remaining_balance.trim())))
+        e.remaining_balance = 'Balance must be a number';
+    else if (parseBalance(f.remaining_balance) < 0)
         e.remaining_balance = 'Balance cannot be negative';
 
     return e;
@@ -120,6 +135,7 @@ const Customers = () => {
     const [loading, setLoading] = useState(false);
     const [form, setForm] = useState<CustomerForm>(emptyForm);
     const [originalOpeningBalance, setOriginalOpeningBalance] = useState<number | null>(null);
+    const [reasonRevealed, setReasonRevealed] = useState(false);
     const [errors, setErrors] = useState<FieldErrors>({});
     const [touched, setTouched] = useState<Partial<Record<keyof CustomerForm, boolean>>>({});
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -128,11 +144,7 @@ const Customers = () => {
 
     const validateCurrentForm = (candidate: CustomerForm): FieldErrors => {
         const nextErrors = validateForm(candidate);
-        const openingBalanceChanged =
-            candidate.customer_id !== undefined &&
-            originalOpeningBalance !== null &&
-            Number(candidate.remaining_balance) !== originalOpeningBalance;
-        if (openingBalanceChanged && !candidate.edit_reason.trim()) {
+        if (hasOpeningBalanceChanged(candidate, originalOpeningBalance) && !candidate.edit_reason.trim()) {
             nextErrors.edit_reason = 'Reason is required when changing the opening balance';
         }
         return nextErrors;
@@ -148,12 +160,17 @@ const Customers = () => {
     const set = <K extends keyof CustomerForm>(field: K, value: CustomerForm[K]) => {
         const next = { ...form, [field]: value };
         setForm(next);
+        // Latch the reason field open. Toggling it on the live comparison unmounts it
+        // whenever the typed balance passes back through the saved value, which shifts
+        // everything below it up and down while the user is still typing.
+        if (hasOpeningBalanceChanged(next, originalOpeningBalance)) setReasonRevealed(true);
         if (touched[field]) setErrors(validateCurrentForm(next));
     };
 
     const openModal = (preset?: CustomerForm, openingBalance: number | null = null) => {
         setForm(preset ?? emptyForm);
         setOriginalOpeningBalance(openingBalance);
+        setReasonRevealed(false);
         setErrors({});
         setTouched({});
         setIsAddOpen(true);
@@ -162,6 +179,7 @@ const Customers = () => {
     const closeModal = () => {
         setIsAddOpen(false);
         setOriginalOpeningBalance(null);
+        setReasonRevealed(false);
         setErrors({});
         setTouched({});
     };
@@ -186,10 +204,7 @@ const Customers = () => {
 
     const handleSave = async () => {
         // mark all fields as touched so all errors surface
-        const balanceChanged =
-            form.customer_id !== undefined &&
-            originalOpeningBalance !== null &&
-            Number(form.remaining_balance) !== originalOpeningBalance;
+        const balanceChanged = hasOpeningBalanceChanged(form, originalOpeningBalance);
         const errs = validateCurrentForm(form);
         const allTouched: Partial<Record<keyof CustomerForm, boolean>> = {
             full_name: true,
@@ -212,7 +227,7 @@ const Customers = () => {
             is_active: form.is_active,
             credit_allowed: form.customer_type === 'regular' ? form.credit_allowed : false,
             credit_days: form.customer_type === 'regular' && form.credit_allowed ? form.credit_days : 0,
-            remaining_balance: Number(form.remaining_balance) || 0,
+            remaining_balance: parseBalance(form.remaining_balance),
             edit_reason: balanceChanged ? form.edit_reason.trim() : undefined,
         };
         const res = form.customer_id
@@ -240,7 +255,7 @@ const Customers = () => {
             is_active: row.is_active,
             credit_allowed: row.credit_allowed !== false,
             credit_days: Number(row.credit_days ?? 30),
-            remaining_balance: openingBalance,
+            remaining_balance: String(openingBalance),
             edit_reason: '',
         }, openingBalance);
     };
@@ -349,10 +364,7 @@ const Customers = () => {
     // derived
     const t = touched;
     const e = errors;
-    const balanceChanged =
-        form.customer_id !== undefined &&
-        originalOpeningBalance !== null &&
-        Number(form.remaining_balance) !== originalOpeningBalance;
+    const balanceChanged = hasOpeningBalanceChanged(form, originalOpeningBalance);
 
     return (
         <div>
@@ -461,7 +473,7 @@ const Customers = () => {
                                 step="0.01"
                                 placeholder="0.00"
                                 value={form.remaining_balance}
-                                onChange={(ev) => set('remaining_balance', Number(ev.target.value || 0))}
+                                onChange={(ev) => set('remaining_balance', ev.target.value)}
                                 onBlur={() => touch('remaining_balance')}
                                 className={getInputCls(e.remaining_balance, t.remaining_balance)}
                                 disabled={loading}
@@ -520,12 +532,16 @@ const Customers = () => {
                         )}
                     </div>
 
-                    {balanceChanged && (
+                    {reasonRevealed && (
                         <Field
                             label="Reason for Balance Change"
                             error={e.edit_reason}
                             touched={t.edit_reason}
-                            hint="Required to keep the customer balance audit trail."
+                            hint={
+                                balanceChanged
+                                    ? 'Required to keep the customer balance audit trail.'
+                                    : 'Balance matches the saved value, so no reason is needed.'
+                            }
                         >
                             <textarea
                                 rows={3}
