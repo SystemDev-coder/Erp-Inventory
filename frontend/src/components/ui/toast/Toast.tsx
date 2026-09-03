@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { Alert, AlertTitle, Stack } from '@mui/material';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 import { createPortal } from 'react-dom';
@@ -17,6 +17,7 @@ interface ToastContextType {
 }
 
 const ToastContext = createContext<ToastContextType | undefined>(undefined);
+const TOAST_ROOT_ID = 'erp-toast-root';
 
 export const useToast = () => {
   const context = useContext(ToastContext);
@@ -32,51 +33,86 @@ const theme = createTheme({
   },
 });
 
+function getToastRoot(): HTMLElement | null {
+  if (typeof document === 'undefined') return null;
+  let root = document.getElementById(TOAST_ROOT_ID);
+  if (!root) {
+    root = document.createElement('div');
+    root.id = TOAST_ROOT_ID;
+    document.body.appendChild(root);
+  }
+  return root;
+}
+
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [toastRoot, setToastRoot] = useState<HTMLElement | null>(() => getToastRoot());
+  const timeoutIds = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  useEffect(() => {
+    setToastRoot(getToastRoot());
+  }, []);
+
+  useEffect(() => {
+    const timeouts = timeoutIds.current;
+    return () => {
+      timeouts.forEach((timeoutId) => clearTimeout(timeoutId));
+      timeouts.clear();
+    };
+  }, []);
 
   const showToast = useCallback((type: ToastType, title: string, message?: string) => {
     const id = Math.random().toString(36).slice(2, 11);
     setToasts((prev) => [...prev, { id, type, title, message }]);
-    setTimeout(() => {
+    const timeoutId = setTimeout(() => {
       setToasts((prev) => prev.filter((toast) => toast.id !== id));
+      timeoutIds.current.delete(id);
     }, 5000);
+    timeoutIds.current.set(id, timeoutId);
   }, []);
 
   const removeToast = (id: string) => {
+    const timeoutId = timeoutIds.current.get(id);
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutIds.current.delete(id);
+    }
     setToasts((prev) => prev.filter((toast) => toast.id !== id));
   };
 
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
-      {typeof document !== 'undefined' &&
+      {toastRoot &&
         toasts.length > 0 &&
         createPortal(
           <ThemeProvider theme={theme}>
             <div
               role="presentation"
+              className="erp-toast-portal"
               style={{
                 position: 'fixed',
-                top: 24,
+                top: 16,
                 left: '50%',
                 transform: 'translateX(-50%)',
-                zIndex: 2147483646,
+                zIndex: 2147483647,
                 width: 'min(92vw, 420px)',
                 pointerEvents: 'none',
               }}
             >
-              <Stack spacing={1} sx={{ width: '100%', pointerEvents: 'auto' }}>
+              <Stack spacing={1} sx={{ width: '100%' }}>
                 {toasts.map((toast) => (
                   <Alert
                     key={toast.id}
                     severity={toast.type}
                     variant="standard"
                     onClose={() => removeToast(toast.id)}
+                    className="erp-toast-item"
                     sx={{
                       width: '100%',
-                      boxShadow: 3,
+                      boxShadow: 6,
                       alignItems: 'flex-start',
+                      pointerEvents: 'auto',
                     }}
                   >
                     <AlertTitle sx={{ mb: toast.message ? 0.5 : 0, fontWeight: 600, lineHeight: 1.3 }}>
@@ -88,7 +124,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               </Stack>
             </div>
           </ThemeProvider>,
-          document.body
+          toastRoot
         )}
     </ToastContext.Provider>
   );

@@ -3,7 +3,6 @@ import Chart from 'react-apexcharts';
 import type { ApexOptions } from 'apexcharts';
 import {
   AlertTriangle,
-  BarChart3,
   BriefcaseBusiness,
   Boxes,
   Eye,
@@ -204,7 +203,7 @@ const Dashboard = () => {
   }, []);
 
   useEffect(() => {
-    if (hasLoaded) void loadDashboard(false);
+    void loadDashboard(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeBranchId]);
 
@@ -274,11 +273,15 @@ const Dashboard = () => {
   };
 
   const handleShowToggle = () => {
-    if (!valuesVisible) {
-      void loadDashboard(true);
+    if (valuesVisible) {
+      setValuesVisible(false);
       return;
     }
-    setValuesVisible(false);
+    if (data) {
+      setValuesVisible(true);
+      return;
+    }
+    void loadDashboard(true);
   };
 
   const maskedValue = (format?: 'currency' | 'number') => (format === 'currency' ? '••••••' : '••••');
@@ -578,11 +581,11 @@ const Dashboard = () => {
             <p className="text-xs uppercase tracking-[0.2em] text-primary-700 dark:text-primary-200">Inventory ERP</p>
             <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl lg:text-4xl dark:text-white">Dashboard</h1>
             <p className="mt-1 text-sm text-slate-700 dark:text-white/80">
-              {hasLoaded && valuesVisible
-                ? `Live metrics loaded | ${lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : ''}`
-                : hasLoaded
-                  ? 'Metrics loaded. Click Show to reveal numbers and details.'
-                  : 'Click Show to load live cards, charts, and activity.'}
+              {loading && !data
+                ? 'Loading dashboard cards...'
+                : valuesVisible
+                  ? `Live metrics visible | ${lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : ''}`
+                  : 'Cards are visible. Click Show to reveal numbers and charts.'}
             </p>
           </div>
 
@@ -611,19 +614,7 @@ const Dashboard = () => {
         </div>
       )}
 
-      {!hasLoaded && !loading && (
-        <section className="rounded-3xl border border-dashed border-slate-200 bg-white/95 p-12 text-center shadow-sm dark:border-slate-700 dark:bg-slate-900/80">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-primary-700 dark:bg-slate-800/60 dark:text-primary-300">
-            <BarChart3 className="h-7 w-7" />
-          </div>
-          <h2 className="mt-4 text-2xl font-semibold text-slate-900 dark:text-slate-100">Dashboard ready</h2>
-          <p className="mx-auto mt-2 max-w-xl text-sm text-slate-600 dark:text-slate-300">
-            Press <span className="font-semibold">Show</span> (eye icon) to load and reveal live metrics and chart trends.
-          </p>
-        </section>
-      )}
-
-      {loading && !data && hasLoaded && (
+      {loading && !data && (
         <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {Array.from({ length: 8 }).map((_, index) => (
             <div
@@ -930,14 +921,7 @@ const Dashboard = () => {
             </article>
           </section>
           </>
-          ) : (
-            <section className="rounded-3xl border border-dashed border-slate-200 bg-white/95 p-8 text-center shadow-sm dark:border-slate-700 dark:bg-slate-900/80">
-              <EyeOff className="mx-auto h-8 w-8 text-slate-400" />
-              <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">
-                Numbers and detailed charts are hidden. Click <span className="font-semibold">Show</span> to reveal them.
-              </p>
-            </section>
-          )}
+          ) : null}
         </>
       )}
 

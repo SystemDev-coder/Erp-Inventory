@@ -163,6 +163,18 @@ layer(base);
   --z-index-50: 50;
 }
 
+:root {
+  /* Sticky app header (~64–80px); toast sits just below it */
+  --erp-header-height: 4.75rem;
+  --erp-toast-gap: 0.75rem;
+}
+
+@media (max-width: 1023px) {
+  :root {
+    --erp-header-height: 6.25rem;
+  }
+}
+
 /* Light & Dark base surfaces */
 body {
   background: var(--color-white);
@@ -619,6 +631,39 @@ select option:focus {
       transition-duration: 0.01ms !important;
       scroll-behavior: auto !important;
     }
+  }
+}
+
+#erp-toast-root {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647 !important;
+  pointer-events: none;
+}
+
+.erp-toast-portal {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2147483647 !important;
+  width: min(92vw, 420px);
+  pointer-events: none;
+}
+
+.erp-toast-portal .erp-toast-item {
+  pointer-events: auto;
+  animation: erp-toast-enter 220ms ease-out;
+}
+
+@keyframes erp-toast-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
