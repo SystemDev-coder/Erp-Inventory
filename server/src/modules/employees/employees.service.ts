@@ -163,10 +163,12 @@ export const employeesService = {
       paramCount++;
     }
 
-    if (params?.fromDate && params?.toDate) {
+    if (params?.fromDate) {
       query += ` AND e.hire_date::date >= $${paramCount}::date`;
       values.push(params.fromDate);
       paramCount++;
+    }
+    if (params?.toDate) {
       query += ` AND e.hire_date::date <= $${paramCount}::date`;
       values.push(params.toDate);
       paramCount++;

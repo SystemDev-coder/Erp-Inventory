@@ -11,7 +11,7 @@ import {
   InventoryWarehouse,
 } from '../../services/inventory.service';
 import { itemLabelWithAvailability } from '../../utils/itemAvailability';
-import { defaultDateRange } from '../../utils/dateRange';
+import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
 
 type MovementRow = {
@@ -133,8 +133,8 @@ const Transfers = () => {
       inventoryService.listMovements({
         limit: 200,
         page: 1,
-        fromDate: dateRange.fromDate,
-        toDate: dateRange.toDate,
+        fromDate: optionalDateParam(dateRange.fromDate),
+        toDate: optionalDateParam(dateRange.toDate),
         branchId: activeBranchId ?? undefined,
       }),
     ]);

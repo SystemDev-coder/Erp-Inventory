@@ -249,9 +249,11 @@ export const suppliersService = {
       );
     }
 
-    if (dateRange?.fromDate && dateRange?.toDate) {
+    if (dateRange?.fromDate) {
       params.push(dateRange.fromDate);
       where.push(`created_at::date >= $${params.length}::date`);
+    }
+    if (dateRange?.toDate) {
       params.push(dateRange.toDate);
       where.push(`created_at::date <= $${params.length}::date`);
     }

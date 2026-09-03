@@ -898,11 +898,15 @@ const Settings = () => {
     const ownerName =
       isNewOwner ? newProfitOwnerName.trim() : profitForm.ownerName.trim();
     if (!ownerName) {
-      showToast('error', 'Profit Sharing', 'Owner is required');
+      showToast('error', 'Profit Sharing', 'Owner name is required. Choose an existing owner or Add New Owner.');
+      return;
+    }
+    if (isNewOwner && ownerName.length < 2) {
+      showToast('error', 'Profit Sharing', 'New owner name must be at least 2 characters');
       return;
     }
     if (isNewOwner && profitForm.sharePct.trim() === '') {
-      showToast('error', 'Profit Sharing', 'Enter owner share %');
+      showToast('error', 'Profit Sharing', 'Enter owner share % (for example 25)');
       return;
     }
     if (!isNewOwner && !profitPreview) {
@@ -919,7 +923,7 @@ const Settings = () => {
     }
     const res = await settingsService.saveProfitOwner({ ownerName, sharePct });
     if (!res.success) {
-      showToast('error', 'Profit Sharing', res.error || 'Failed to save owner share');
+      showToast('error', 'Profit Sharing', res.error || 'Failed to save owner share. Check that total partner % is ≤ 100.');
       return;
     }
     showToast('success', 'Profit Sharing', 'Owner share saved');
@@ -2135,6 +2139,10 @@ const Settings = () => {
 
       <Modal isOpen={profitModalOpen} onClose={() => setProfitModalOpen(false)} title="Owner Profit Preview" size="lg">
         <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+          <div className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-700">
+            Add a <strong>profit-share partner</strong>: pick period, choose + Add New Owner, type the name, then enter share % (0–100).
+            Total partner shares cannot exceed 100%. Capital contributions belong in the Capital tab.
+          </div>
           <label className="text-sm font-medium flex flex-col gap-1">
             Closing Period *
             <select

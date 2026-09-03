@@ -4,7 +4,6 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { trashService, TrashModule, TrashRow } from '../../services/trash.service';
 import { DataTable } from '../../components/ui/table/DataTable';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
-import { todayYmd } from '../../utils/dateRange';
 
 const formatDate = (value?: string | null) => {
   if (!value) return '-';
@@ -17,8 +16,8 @@ export default function Trash() {
   const { showToast } = useToast();
   type TrashRowView = TrashRow & { module_label?: string };
   const [modules, setModules] = useState<TrashModule[]>([]);
-  const [fromDate, setFromDate] = useState(() => todayYmd());
-  const [toDate, setToDate] = useState(() => todayYmd());
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
   const [rows, setRows] = useState<TrashRowView[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -79,8 +78,8 @@ export default function Trash() {
   };
 
   const loadRows = async () => {
-    if (!fromDate || !toDate) {
-      showToast('warning', 'Trash', 'Please select a From Date and To Date');
+    if (fromDate && toDate && fromDate > toDate) {
+      showToast('warning', 'Trash', 'From date cannot be after To date');
       return;
     }
     setLoading(true);
@@ -150,8 +149,8 @@ export default function Trash() {
             <button
               type="button"
               onClick={loadRows}
-              disabled={!fromDate || !toDate}
-              className="w-full rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-700"
+              disabled={Boolean(fromDate && toDate && fromDate > toDate)}
+              className="w-full rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-700 disabled:opacity-60"
             >
               Apply Filter
             </button>

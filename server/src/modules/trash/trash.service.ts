@@ -256,10 +256,6 @@ export const trashService = {
     table: string | undefined,
     options: { fromDate?: string; toDate?: string; limit?: number; offset?: number; branchId?: number }
   ) {
-    if (!options.fromDate || !options.toDate) {
-      throw ApiError.badRequest('Please select a From Date and To Date');
-    }
-
     // Backward-compatible: when module key is provided, return that module only.
     if (table) {
       const module = resolveModule(table);
@@ -297,10 +293,14 @@ export const trashService = {
         params.push(options.branchId ?? null);
         where.push(`($${params.length}::bigint IS NULL OR t.branch_id = $${params.length})`);
       }
-      params.push(options.fromDate);
-      where.push(`t.${dateCol}::date >= $${params.length}::date`);
-      params.push(options.toDate);
-      where.push(`t.${dateCol}::date <= $${params.length}::date`);
+      if (options.fromDate) {
+        params.push(options.fromDate);
+        where.push(`t.${dateCol}::date >= $${params.length}::date`);
+      }
+      if (options.toDate) {
+        params.push(options.toDate);
+        where.push(`t.${dateCol}::date <= $${params.length}::date`);
+      }
       const limit = Math.min(Math.max(Number(options.limit || 50), 1), 200);
       const offset = Math.max(Number(options.offset || 0), 0);
 
@@ -386,8 +386,11 @@ export const trashService = {
     }
 
     // New behavior: no module selected -> list deleted records across all modules within date range.
-    const fromDate = options.fromDate;
-    const toDate = options.toDate;
+    const fromDate = options.fromDate || '1900-01-01';
+    const toDate = options.toDate || '9999-12-31';
+    if (options.fromDate && options.toDate && options.fromDate > options.toDate) {
+      throw ApiError.badRequest('fromDate cannot be after toDate');
+    }
     const limit = Math.min(Math.max(Number(options.limit || 50), 1), 200);
     const offset = Math.max(Number(options.offset || 0), 0);
 

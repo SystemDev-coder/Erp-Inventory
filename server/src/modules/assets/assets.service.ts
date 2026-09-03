@@ -365,9 +365,11 @@ export const assetsService = {
       where.push(`LOWER(a.state::text) = $${params.length}`);
     }
 
-    if (filters.fromDate && filters.toDate) {
+    if (filters.fromDate) {
       params.push(filters.fromDate);
       where.push(`a.purchased_date::date >= $${params.length}::date`);
+    }
+    if (filters.toDate) {
       params.push(filters.toDate);
       where.push(`a.purchased_date::date <= $${params.length}::date`);
     }

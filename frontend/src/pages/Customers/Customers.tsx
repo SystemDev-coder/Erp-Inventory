@@ -11,7 +11,6 @@ import { useToast } from '../../components/ui/toast/Toast';
 import Badge from '../../components/ui/badge/Badge';
 import { customerService, Customer } from '../../services/customer.service';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
-import { defaultDateRange } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -26,6 +25,7 @@ type CustomerForm = {
     credit_allowed: boolean;
     credit_days: number;
     remaining_balance: number;
+    edit_reason: string;
 };
 
 type FieldErrors = Partial<Record<keyof CustomerForm, string>>;
@@ -40,6 +40,7 @@ const emptyForm: CustomerForm = {
     credit_allowed: true,
     credit_days: 30,
     remaining_balance: 0,
+    edit_reason: '',
 };
 
 // ── Field-level validation ───────────────────────────────────────────────────
@@ -118,28 +119,41 @@ const Customers = () => {
     const [hasDisplayed, setHasDisplayed] = useState(false);
     const [loading, setLoading] = useState(false);
     const [form, setForm] = useState<CustomerForm>(emptyForm);
+    const [originalOpeningBalance, setOriginalOpeningBalance] = useState<number | null>(null);
     const [errors, setErrors] = useState<FieldErrors>({});
     const [touched, setTouched] = useState<Partial<Record<keyof CustomerForm, boolean>>>({});
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null);
     const [importModalOpen, setImportModalOpen] = useState(false);
-    const [dateRange, setDateRange] = useState(() => defaultDateRange());
+
+    const validateCurrentForm = (candidate: CustomerForm): FieldErrors => {
+        const nextErrors = validateForm(candidate);
+        const openingBalanceChanged =
+            candidate.customer_id !== undefined &&
+            originalOpeningBalance !== null &&
+            Number(candidate.remaining_balance) !== originalOpeningBalance;
+        if (openingBalanceChanged && !candidate.edit_reason.trim()) {
+            nextErrors.edit_reason = 'Reason is required when changing the opening balance';
+        }
+        return nextErrors;
+    };
 
     // touch a field on blur and validate immediately
     const touch = (field: keyof CustomerForm) => {
         setTouched((prev) => ({ ...prev, [field]: true }));
-        setErrors(validateForm({ ...form }));
+        setErrors(validateCurrentForm({ ...form }));
     };
 
     // update form + re-validate touched field live
     const set = <K extends keyof CustomerForm>(field: K, value: CustomerForm[K]) => {
         const next = { ...form, [field]: value };
         setForm(next);
-        if (touched[field]) setErrors(validateForm(next));
+        if (touched[field]) setErrors(validateCurrentForm(next));
     };
 
-    const openModal = (preset?: CustomerForm) => {
+    const openModal = (preset?: CustomerForm, openingBalance: number | null = null) => {
         setForm(preset ?? emptyForm);
+        setOriginalOpeningBalance(openingBalance);
         setErrors({});
         setTouched({});
         setIsAddOpen(true);
@@ -147,6 +161,7 @@ const Customers = () => {
 
     const closeModal = () => {
         setIsAddOpen(false);
+        setOriginalOpeningBalance(null);
         setErrors({});
         setTouched({});
     };
@@ -154,8 +169,6 @@ const Customers = () => {
     const fetchCustomers = async () => {
         setLoading(true);
         const res = await customerService.list({
-            fromDate: dateRange.fromDate,
-            toDate: dateRange.toDate,
             branchId: activeBranchId ?? undefined,
             limit: 500,
         });
@@ -173,11 +186,18 @@ const Customers = () => {
 
     const handleSave = async () => {
         // mark all fields as touched so all errors surface
+        const balanceChanged =
+            form.customer_id !== undefined &&
+            originalOpeningBalance !== null &&
+            Number(form.remaining_balance) !== originalOpeningBalance;
+        const errs = validateCurrentForm(form);
         const allTouched: Partial<Record<keyof CustomerForm, boolean>> = {
-            full_name: true, phone: true, remaining_balance: true,
+            full_name: true,
+            phone: true,
+            remaining_balance: true,
+            ...(balanceChanged ? { edit_reason: true } : {}),
         };
         setTouched(allTouched);
-        const errs = validateForm(form);
         setErrors(errs);
         if (Object.keys(errs).length > 0) return;
 
@@ -191,8 +211,9 @@ const Customers = () => {
             gender: form.gender,
             is_active: form.is_active,
             credit_allowed: form.customer_type === 'regular' ? form.credit_allowed : false,
-            credit_days: form.credit_days,
+            credit_days: form.customer_type === 'regular' && form.credit_allowed ? form.credit_days : 0,
             remaining_balance: Number(form.remaining_balance) || 0,
+            edit_reason: balanceChanged ? form.edit_reason.trim() : undefined,
         };
         const res = form.customer_id
             ? await customerService.update(form.customer_id, payload)
@@ -207,7 +228,8 @@ const Customers = () => {
         setLoading(false);
     };
 
-    const onEdit = (row: Customer) =>
+    const onEdit = (row: Customer) => {
+        const openingBalance = Number(row.remaining_balance ?? row.balance ?? row.open_balance ?? 0);
         openModal({
             customer_id: row.customer_id,
             full_name: row.full_name,
@@ -218,8 +240,10 @@ const Customers = () => {
             is_active: row.is_active,
             credit_allowed: row.credit_allowed !== false,
             credit_days: Number(row.credit_days ?? 30),
-            remaining_balance: Number(row.remaining_balance ?? row.balance ?? row.open_balance ?? 0),
-        });
+            remaining_balance: openingBalance,
+            edit_reason: '',
+        }, openingBalance);
+    };
 
     const onDelete = (row: Customer) => { setCustomerToDelete(row); setDeleteConfirmOpen(true); };
 
@@ -263,13 +287,6 @@ const Customers = () => {
 
     const visibleCustomers = hasDisplayed ? customers : [];
 
-    const toolbarDateRange = {
-        fromDate: dateRange.fromDate,
-        toDate: dateRange.toDate,
-        onFromDateChange: (v: string) => { setDateRange((p) => ({ ...p, fromDate: v })); setHasDisplayed(false); },
-        onToDateChange: (v: string) => { setDateRange((p) => ({ ...p, toDate: v })); setHasDisplayed(false); },
-    };
-
     const emptyHint = (
         <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-300">
             Click <strong>Display</strong> to load data.
@@ -286,7 +303,6 @@ const Customers = () => {
         secondaryAction: { label: 'Upload Data', onClick: () => setImportModalOpen(true) },
         onDisplay: handleDisplay,
         displayLoading: loading,
-        dateRange: toolbarDateRange,
     };
 
     const tabs = [
@@ -333,6 +349,10 @@ const Customers = () => {
     // derived
     const t = touched;
     const e = errors;
+    const balanceChanged =
+        form.customer_id !== undefined &&
+        originalOpeningBalance !== null &&
+        Number(form.remaining_balance) !== originalOpeningBalance;
 
     return (
         <div>
@@ -449,32 +469,33 @@ const Customers = () => {
                         </Field>
 
                         {form.customer_type === 'regular' && (
-                            <>
-                                <Field label="Credit Days" hint="Payment due period for credit sales">
-                                    <input
-                                        type="number"
-                                        min={0}
-                                        step={1}
-                                        value={form.credit_days}
-                                        onChange={(ev) => set('credit_days', Number(ev.target.value || 0))}
-                                        className={getInputCls()}
-                                        disabled={loading}
-                                    />
-                                </Field>
-                                <div className="flex items-center gap-3 md:col-span-2">
-                                    <input
-                                        id="credit-allowed"
-                                        type="checkbox"
-                                        className="h-4 w-4 accent-primary-600"
-                                        checked={form.credit_allowed}
-                                        onChange={(ev) => set('credit_allowed', ev.target.checked)}
-                                        disabled={loading}
-                                    />
-                                    <label htmlFor="credit-allowed" className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                                        Credit Allowed
-                                    </label>
-                                </div>
-                            </>
+                            <div className="flex items-center gap-3 self-center">
+                                <input
+                                    id="credit-allowed"
+                                    type="checkbox"
+                                    className="h-4 w-4 accent-primary-600"
+                                    checked={form.credit_allowed}
+                                    onChange={(ev) => set('credit_allowed', ev.target.checked)}
+                                    disabled={loading}
+                                />
+                                <label htmlFor="credit-allowed" className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                                    Credit Allowed
+                                </label>
+                            </div>
+                        )}
+
+                        {form.customer_type === 'regular' && form.credit_allowed && (
+                            <Field label="Credit Days" hint="Payment due period for credit sales">
+                                <input
+                                    type="number"
+                                    min={0}
+                                    step={1}
+                                    value={form.credit_days}
+                                    onChange={(ev) => set('credit_days', Number(ev.target.value || 0))}
+                                    className={getInputCls()}
+                                    disabled={loading}
+                                />
+                            </Field>
                         )}
 
                         {form.customer_id && (
@@ -498,6 +519,25 @@ const Customers = () => {
                             </div>
                         )}
                     </div>
+
+                    {balanceChanged && (
+                        <Field
+                            label="Reason for Balance Change"
+                            error={e.edit_reason}
+                            touched={t.edit_reason}
+                            hint="Required to keep the customer balance audit trail."
+                        >
+                            <textarea
+                                rows={3}
+                                value={form.edit_reason}
+                                onChange={(ev) => set('edit_reason', ev.target.value)}
+                                onBlur={() => touch('edit_reason')}
+                                placeholder="Explain why the opening balance is being changed"
+                                className={`${getInputCls(e.edit_reason, t.edit_reason)} h-auto min-h-20 py-2.5`}
+                                disabled={loading}
+                            />
+                        </Field>
+                    )}
 
                     {/* Divider */}
                     <div className="border-t border-slate-100 dark:border-slate-800" />

@@ -8,7 +8,7 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { Modal } from '../../components/ui/modal/Modal';
 import DeleteConfirmModal from '../../components/ui/modal/DeleteConfirmModal';
 import { inventoryService, InventoryItem, StockAdjustmentRow } from '../../services/inventory.service';
-import { defaultDateRange } from '../../utils/dateRange';
+import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
 
 const formatDate = (value: string) => {
@@ -77,8 +77,8 @@ export default function StockAdjustmentsPage() {
     const res = await inventoryService.listAdjustments({
       page: 1,
       limit: 200,
-      fromDate: dateRange.fromDate,
-      toDate: dateRange.toDate,
+      fromDate: optionalDateParam(dateRange.fromDate),
+      toDate: optionalDateParam(dateRange.toDate),
     });
     setRows(res.data?.rows ?? []);
   }, [dateRange.fromDate, dateRange.toDate]);

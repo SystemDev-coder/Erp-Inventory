@@ -842,9 +842,11 @@ export const salesService = {
     } else if (!includeVoided) {
       clauses.push(`s.status <> 'void'`);
     }
-    if (fromDate && toDate) {
+    if (fromDate) {
       params.push(fromDate);
       clauses.push(`s.sale_date::date >= $${params.length}::date`);
+    }
+    if (toDate) {
       params.push(toDate);
       clauses.push(`s.sale_date::date <= $${params.length}::date`);
     }

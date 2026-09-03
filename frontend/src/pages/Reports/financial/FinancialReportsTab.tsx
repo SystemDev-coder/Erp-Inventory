@@ -19,7 +19,7 @@ type FinancialCardId =
   | 'general-ledger';
 
 const financialCards: Array<{ id: FinancialCardId; title: string; hint?: string }> = [
-  { id: 'balance-sheet', title: 'Balance Sheet' },
+  { id: 'balance-sheet', title: 'Balance Sheet', hint: 'Between two dates (snapshot as of To Date)' },
   { id: 'cash-flow', title: 'Cash Flow Statement' },
   { id: 'cogs-by-invoice', title: 'COGS (Cost of Goods Sold)' },
   { id: 'account-balances', title: 'Account Balances' },
@@ -173,7 +173,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
 
   const [cashFlowRange, setCashFlowRange] = useState<DateRange>(defaultReportRange());
-  const [balanceAsOfDate, setBalanceAsOfDate] = useState(defaultAsOfDate);
+  const [balanceRange, setBalanceRange] = useState<DateRange>(defaultReportRange());
   const [accountBalanceAsOfDate, setAccountBalanceAsOfDate] = useState(defaultAsOfDate);
   const [cogsRange, setCogsRange] = useState<DateRange>(defaultReportRange());
   const [expenseRange, setExpenseRange] = useState<DateRange>(defaultReportRange());
@@ -253,20 +253,20 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
 
   const handleBalanceSheet = () =>
     runCardAction('balance-sheet', async () => {
-      ensureAsOfDateValid(balanceAsOfDate, 'Balance Sheet');
+      ensureRangeValid(balanceRange, 'Balance Sheet');
       const response = await financialReportsService.getBalanceSheet({
-        asOfDate: balanceAsOfDate,
+        asOfDate: balanceRange.toDate,
         branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load balance sheet');
       onOpenModal({
         title: 'Balance Sheet',
-        subtitle: `As of ${formatDateOnly(balanceAsOfDate)}`,
+        subtitle: `${formatDateOnly(balanceRange.fromDate)} - ${formatDateOnly(balanceRange.toDate)}`,
         fileName: 'balance-sheet',
         variant: 'balance-sheet',
         data: toRecordRows(response.data.rows || []),
         columns: statementColumns,
-        filters: { 'As Of Date': balanceAsOfDate },
+        filters: { 'From Date': balanceRange.fromDate, 'To Date': balanceRange.toDate },
       });
     });
 
@@ -614,7 +614,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
     if (cardId === 'balance-sheet') {
       return (
         <div className="space-y-3">
-          {renderAsOfDate(balanceAsOfDate, setBalanceAsOfDate)}
+          {renderDateRange(balanceRange, setBalanceRange)}
           <button
             onClick={handleBalanceSheet}
             disabled={loadingCardId === cardId}
