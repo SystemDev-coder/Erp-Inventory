@@ -11,7 +11,7 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { useAuth } from '../../context/AuthContext';
 import { itemLabelWithAvailability } from '../../utils/itemAvailability';
 import { formatAvailableQty } from '../../utils/itemAvailability';
-import { defaultDateRange } from '../../utils/dateRange';
+import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
 
 type MovementRow = {
@@ -308,8 +308,8 @@ const StockPage = () => {
       whId: filters.whId || undefined,
       productId: filters.productId || undefined,
       search: filters.search || undefined,
-      fromDate: dateRange.fromDate,
-      toDate: dateRange.toDate,
+      fromDate: optionalDateParam(dateRange.fromDate),
+      toDate: optionalDateParam(dateRange.toDate),
     });
     setLoadingMove(false);
     if (res.success && res.data?.rows) setMovements(res.data.rows as MovementRow[]);

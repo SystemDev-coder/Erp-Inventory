@@ -12,7 +12,6 @@ import { InventoryTransactionRow, inventoryService } from '../../services/invent
 import { storeService, Store as StoreType } from '../../services/store.service';
 import StoresPage from '../Stock/StoresPage';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
-import { defaultDateRange } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
 
 type ProductForm = Partial<Product>;
@@ -80,7 +79,6 @@ const Products = () => {
   const [txDisplayed, setTxDisplayed] = useState(false);
   const [inactiveDisplayed, setInactiveDisplayed] = useState(false);
   const [txCategory, setTxCategory] = useState<TxCategory>('adjustment');
-  const [itemsDateRange, setItemsDateRange] = useState(() => defaultDateRange());
   const [txFromDate, setTxFromDate] = useState<string>(() => {
     const d = new Date();
     d.setDate(d.getDate() - 7);
@@ -105,14 +103,25 @@ const Products = () => {
   const [itemToDelete, setItemToDelete] = useState<Product | null>(null);
 
   const resolveStores = async () => {
-    if (stores.length) return stores;
-    const storeRes = await storeService.list();
-    if (storeRes.success && storeRes.data?.stores) {
-      const loaded = storeRes.data.stores;
-      setStores(loaded);
-      return loaded;
+    const storeRes = await storeService.list({ branchId: activeBranchId ?? undefined });
+    let loaded = storeRes.success && storeRes.data?.stores ? storeRes.data.stores : [];
+    if (!loaded.length) {
+      const created = await storeService.create({
+        storeName: 'Main Store',
+        storeCode: 'MAIN',
+        branchId: activeBranchId ?? undefined,
+      });
+      if (created.success && created.data?.store) {
+        loaded = [created.data.store];
+      }
     }
-    return [];
+    setStores(loaded);
+    if (!itemStoreId && loaded.length) {
+      const main =
+        loaded.find((s) => String(s.store_name || '').toLowerCase() === 'main store') || loaded[0];
+      setItemStoreId(main.store_id);
+    }
+    return loaded;
   };
 
   const loadProducts = async () => {
@@ -120,8 +129,6 @@ const Products = () => {
     await resolveStores();
     const res = await productService.list({
       limit: 200,
-      fromDate: itemsDateRange.fromDate,
-      toDate: itemsDateRange.toDate,
       branchId: activeBranchId ?? undefined,
     });
     if (res.success && res.data?.products) setProducts(res.data.products);
@@ -157,8 +164,6 @@ const Products = () => {
     const res = await productService.list({
       includeInactive: true,
       limit: 200,
-      fromDate: itemsDateRange.fromDate,
-      toDate: itemsDateRange.toDate,
       branchId: activeBranchId ?? undefined,
     });
     if (res.success && res.data?.products) {
@@ -222,7 +227,7 @@ const Products = () => {
     []
   );
 
-  const validateItem = (f: ProductForm): ItemFieldErrors => {
+  const validateItem = (f: ProductForm, storeId: number | '' = itemStoreId): ItemFieldErrors => {
     const errs: ItemFieldErrors = {};
     if (!f.name?.trim()) errs.name = 'Item name is required';
     else if (f.name.trim().length < 2) errs.name = 'Name must be at least 2 characters';
@@ -231,6 +236,7 @@ const Products = () => {
     if ((f.stock_alert ?? 0) < 0) errs.stock_alert = 'Stock alert cannot be negative';
     if ((f.opening_balance ?? 0) < 0) errs.opening_balance = 'Opening balance cannot be negative';
     if ((f.quantity ?? 0) < 0) errs.quantity = 'Quantity cannot be negative';
+    if (!storeId) errs.store_id = 'Store is required';
     return errs;
   };
 
@@ -259,17 +265,25 @@ const Products = () => {
   };
 
   const saveItem = async () => {
-    const errs = validateItem(itemForm);
+    const errs = validateItem(itemForm, itemStoreId);
     if (Object.keys(errs).length > 0) {
       setItemErrors(errs);
-      setItemTouched({ name: true, cost_price: true, sell_price: true, stock_alert: true, opening_balance: true, quantity: true });
+      setItemTouched({
+        name: true,
+        cost_price: true,
+        sell_price: true,
+        stock_alert: true,
+        opening_balance: true,
+        quantity: true,
+        store_id: true,
+      });
       return;
     }
     setLoading(true);
     const payload = {
       ...itemForm,
       is_active: true,
-      storeId: itemStoreId || undefined,
+      storeId: Number(itemStoreId),
       quantity: Number(itemForm.quantity ?? 0),
     };
     const res = itemForm.product_id
@@ -324,28 +338,7 @@ const Products = () => {
       icon: Boxes,
       content: (
         <div className="space-y-2">
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
-                From Date
-              </span>
-              <input
-                type="date"
-                value={itemsDateRange.fromDate}
-                onChange={(e) => setItemsDateRange((prev) => ({ ...prev, fromDate: e.target.value }))}
-                className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-              />
-              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
-                To Date
-              </span>
-              <input
-                type="date"
-                value={itemsDateRange.toDate}
-                onChange={(e) => setItemsDateRange((prev) => ({ ...prev, toDate: e.target.value }))}
-                className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-              />
-            </div>
-            <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
             <button
               type="button"
               disabled={loading}
@@ -371,20 +364,14 @@ const Products = () => {
                 setItemForm(defaultProductForm);
                 setItemErrors({});
                 setItemTouched({});
-                const storeRes = await storeService.list();
-                if (storeRes.success && storeRes.data?.stores) {
-                  setStores(storeRes.data.stores);
-                  setItemStoreId('');
-                } else {
-                  setItemStoreId('');
-                }
+                setItemStoreId('');
+                await resolveStores();
                 setItemModalOpen(true);
               }}
               className="rounded-lg bg-primary-600 px-3 py-2 text-sm text-white"
             >
               New Item
             </button>
-            </div>
           </div>
           {!itemsDisplayed && !loading && (
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
@@ -404,9 +391,8 @@ const Products = () => {
               setItemForm({ ...row, quantity: Number(row.quantity ?? row.stock ?? 0) });
               setItemErrors({});
               setItemTouched({});
-              const storeRes = await storeService.list();
-              if (storeRes.success && storeRes.data?.stores) setStores(storeRes.data.stores);
-              setItemStoreId(row.store_id || '');
+              const loaded = await resolveStores();
+              setItemStoreId(row.store_id || loaded[0]?.store_id || '');
               setItemModalOpen(true);
             }}
             onDelete={(row) => setItemToDelete(row)}
@@ -514,28 +500,7 @@ const Products = () => {
       icon: BadgeAlert,
       content: (
         <div className="space-y-2">
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
-                From Date
-              </span>
-              <input
-                type="date"
-                value={itemsDateRange.fromDate}
-                onChange={(e) => setItemsDateRange((prev) => ({ ...prev, fromDate: e.target.value }))}
-                className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-              />
-              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
-                To Date
-              </span>
-              <input
-                type="date"
-                value={itemsDateRange.toDate}
-                onChange={(e) => setItemsDateRange((prev) => ({ ...prev, toDate: e.target.value }))}
-                className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-              />
-            </div>
-            <div className="flex items-center justify-end gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
             <button
               type="button"
               disabled={loading}
@@ -558,7 +523,6 @@ const Products = () => {
             >
               + Set State
             </button>
-            </div>
           </div>
           {!inactiveDisplayed && !loading && (
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
@@ -716,15 +680,27 @@ const Products = () => {
           </ItemField>
 
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">Store (optional)</label>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">Store *</label>
             <select
-              className="h-12 w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800/80 px-3 text-sm text-slate-900 dark:text-slate-100 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
+              className={`h-12 w-full rounded-md border px-3 text-sm text-slate-900 dark:text-slate-100 outline-none focus:ring-2 bg-white dark:bg-slate-800/80 ${
+                itemTouched.store_id && itemErrors.store_id
+                  ? 'border-red-400 bg-red-50/40 focus:border-red-500 focus:ring-red-500/20'
+                  : 'border-slate-300 dark:border-slate-600 focus:border-primary-500 focus:ring-primary-500/20'
+              }`}
               value={itemStoreId}
-              onChange={(e) => setItemStoreId(e.target.value ? Number(e.target.value) : '')}
+              onBlur={() => setItemTouched((t) => ({ ...t, store_id: true }))}
+              onChange={(e) => {
+                const next = e.target.value ? Number(e.target.value) : '';
+                setItemStoreId(next);
+                if (itemTouched.store_id) setItemErrors(validateItem(itemForm, next));
+              }}
             >
-              <option value="">Select store (optional)</option>
+              <option value="">Select store</option>
               {stores.map((s) => <option key={s.store_id} value={s.store_id}>{s.store_name}</option>)}
             </select>
+            {itemTouched.store_id && itemErrors.store_id ? (
+              <span className="text-xs font-medium text-red-600">{itemErrors.store_id}</span>
+            ) : null}
           </div>
 
           <div className="md:col-span-2 flex justify-end gap-2 pt-1 border-t border-slate-100 dark:border-slate-700 mt-1">
@@ -762,6 +738,7 @@ const Products = () => {
         title="Upload Items"
         columns={['item', 'quantity', 'cost_price', 'amount', 'sell_price']}
         templateHeaders={['item', 'quantity', 'cost_price', 'sell_price', 'store_id', 'barcode', 'stock_alert', 'is_active']}
+        hint="store_id is recommended. If omitted, the system assigns Main Store (creates it when missing)."
         onImported={async () => {
           if (itemsDisplayed) await loadProducts();
         }}

@@ -416,7 +416,15 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
         customerId,
         branchId: activeBranchId ?? undefined,
       });
-      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load overdue credit report');
+      if (!response.success || !response.data) {
+        const msg = response.error || response.message || 'Failed to load overdue credit report';
+        if (/route not found/i.test(msg)) {
+          throw new Error(
+            'Customer overdue API route was not found. Restart/redeploy the server so /api/reports/customer/credit-overdue is available, then retry.'
+          );
+        }
+        throw new Error(msg);
+      }
       const rows = toRecordRows(response.data.rows || []);
       openReport({
         title: 'Overdue Credit Sales',

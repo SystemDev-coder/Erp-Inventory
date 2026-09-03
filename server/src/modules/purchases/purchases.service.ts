@@ -745,9 +745,11 @@ export const purchasesService = {
       params.push(docType);
       clauses.push(`p.doc_type = $${params.length}`);
     }
-    if (fromDate && toDate) {
+    if (fromDate) {
       params.push(fromDate);
       clauses.push(`p.purchase_date::date >= $${params.length}::date`);
+    }
+    if (toDate) {
       params.push(toDate);
       clauses.push(`p.purchase_date::date <= $${params.length}::date`);
     }

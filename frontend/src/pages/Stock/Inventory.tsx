@@ -7,7 +7,7 @@ import { Modal } from '../../components/ui/modal/Modal';
 import { inventoryService } from '../../services/inventory.service';
 import { productService } from '../../services/product.service';
 import { useToast } from '../../components/ui/toast/Toast';
-import { defaultDateRange } from '../../utils/dateRange';
+import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 
 const Inventory = () => {
   const { showToast } = useToast();
@@ -68,8 +68,8 @@ const Inventory = () => {
       branchId: filters.branchId || undefined,
       whId: filters.whId || undefined,
       productId: filters.productId || undefined,
-      fromDate: dateRange.fromDate,
-      toDate: dateRange.toDate,
+      fromDate: optionalDateParam(dateRange.fromDate),
+      toDate: optionalDateParam(dateRange.toDate),
     });
     setLoadingMove(false);
     if (res.success && res.data?.rows) setMovements(res.data.rows);

@@ -6,7 +6,7 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { Modal } from '../../components/ui/modal/Modal';
 import { assetsService, Asset, AssetState, AssetType } from '../../services/assets.service';
-import { defaultDateRange } from '../../utils/dateRange';
+import { emptyDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
 
 const money = (value: number) =>
@@ -51,7 +51,7 @@ export default function Assets() {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<'' | AssetType>('');
   const [stateFilter, setStateFilter] = useState<'' | AssetState>('');
-  const [dateRange, setDateRange] = useState(() => defaultDateRange());
+  const [dateRange, setDateRange] = useState(() => emptyDateRange());
 
   const [assetModalOpen, setAssetModalOpen] = useState(false);
   const [form, setForm] = useState<AssetForm>(() => emptyForm('fixed'));
@@ -70,10 +70,6 @@ export default function Assets() {
   );
 
   const loadAssets = async () => {
-    if ((dateRange.fromDate && !dateRange.toDate) || (!dateRange.fromDate && dateRange.toDate)) {
-      showToast('error', 'Assets', 'Both From Date and To Date are required together');
-      return;
-    }
     if (dateRange.fromDate && dateRange.toDate && dateRange.fromDate > dateRange.toDate) {
       showToast('error', 'Assets', 'From date cannot be after To date');
       return;
@@ -88,8 +84,8 @@ export default function Assets() {
         search: search || undefined,
         type: typeFilter || undefined,
         state: stateFilter || undefined,
-        fromDate: dateRange.fromDate || undefined,
-        toDate: dateRange.toDate || undefined,
+        fromDate: optionalDateParam(dateRange.fromDate),
+        toDate: optionalDateParam(dateRange.toDate),
         branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data?.assets) {

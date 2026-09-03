@@ -104,6 +104,7 @@ const tabPermissionAny: Record<TabId, string[]> = {
   customer: [
     'reports.all',
     'customers.view',
+    'customers.reports',
     'customer_receipts.view',
     'sales.view',
     'sales_returns.view',
@@ -129,7 +130,8 @@ export default function Reports() {
     updatedAt?: string;
   }>({});
   const [modalOpen, setModalOpen] = useState(false);
-  const [modalReport, setModalReport] = useState<ModalReportState | null>(null);
+  const [modalStack, setModalStack] = useState<ModalReportState[]>([]);
+  const modalReport = modalStack.length ? modalStack[modalStack.length - 1] : null;
 
   const resolveImageUrl = (value?: string | null) => {
     const raw = (value || '').trim();
@@ -156,8 +158,23 @@ export default function Reports() {
   }, []);
 
   const handleOpenModal = (payload: ModalReportState) => {
-    setModalReport(payload);
+    setModalStack((prev) => [...prev, payload]);
     setModalOpen(true);
+  };
+
+  const handleCloseModal = () => {
+    setModalOpen(false);
+    setModalStack([]);
+  };
+
+  const handleBackModal = () => {
+    setModalStack((prev) => {
+      if (prev.length <= 1) {
+        setModalOpen(false);
+        return [];
+      }
+      return prev.slice(0, -1);
+    });
   };
 
   // UPDATED: Filter tabs by DB role first, then permissions as a safety net (prevents broken/forbidden tabs)
@@ -252,7 +269,8 @@ export default function Reports() {
 
       <ReportModal
         isOpen={modalOpen}
-        onClose={() => setModalOpen(false)}
+        onClose={handleCloseModal}
+        onBack={modalStack.length > 1 ? handleBackModal : undefined}
         title={modalReport?.title || 'Report'}
         subtitle={modalReport?.subtitle}
         companyInfo={companyInfo}

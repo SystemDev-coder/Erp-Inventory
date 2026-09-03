@@ -609,7 +609,14 @@ const hasItemsQuantityColumn = async (client: PoolClient): Promise<boolean> => {
 
 const applyStoreItemDelta = async (
     client: PoolClient,
-    params: { branchId: number; itemId: number; deltaQty: number; storeId?: number | null }
+    params: {
+        branchId: number;
+        itemId: number;
+        deltaQty: number;
+        storeId?: number | null;
+        /** When deleting returns, allow reverse even if stock was already used. */
+        allowNegative?: boolean;
+    }
 ) => {
     const { branchId, itemId, deltaQty } = params;
     const roundedDelta = Math.round(deltaQty);
@@ -658,8 +665,10 @@ const applyStoreItemDelta = async (
         }
     }
     const nextQty = currentQty + roundedDelta;
-    if (!isNegativeStockAllowed() && nextQty < 0) {
-        throw ApiError.badRequest(`Insufficient stock for item ${itemId}. Available: ${Math.max(currentQty, 0)}`);
+    if (!params.allowNegative && !isNegativeStockAllowed() && nextQty < 0) {
+        throw ApiError.badRequest(
+            `Cannot reverse stock for item ${itemId}: available ${Math.max(currentQty, 0)}, needed ${Math.abs(roundedDelta)}. Sell less of the returned stock first, or enable negative stock.`
+        );
     }
     await client.query(
         `INSERT INTO ims.store_items (store_id, product_id, quantity)
@@ -767,6 +776,49 @@ const softDeletePurchaseReturn = async (client: PoolClient, prId: number) => {
             AND COALESCE(is_deleted, 0) = 0`,
         [prId]
     );
+};
+
+/** Soft-void related postings without hard DELETE (avoids soft-delete / period-lock triggers). */
+const softVoidReturnLinkedRows = async (
+    client: PoolClient,
+    params: { branchId: number; refTable: 'sales_returns' | 'purchase_returns'; refId: number }
+) => {
+    const { branchId, refTable, refId } = params;
+    const softVoid = async (table: 'account_transactions' | 'inventory_movements' | 'customer_ledger' | 'supplier_ledger') => {
+        const sp = `sp_void_${table}`;
+        await client.query(`SAVEPOINT ${sp}`);
+        try {
+            await client.query(
+                `UPDATE ims.${table}
+                    SET is_deleted = 1,
+                        deleted_at = COALESCE(deleted_at, NOW())
+                  WHERE branch_id = $1
+                    AND ref_table = $2
+                    AND ref_id = $3
+                    AND COALESCE(is_deleted, 0) = 0`,
+                [branchId, refTable, refId]
+            );
+            await client.query(`RELEASE SAVEPOINT ${sp}`);
+        } catch {
+            await client.query(`ROLLBACK TO SAVEPOINT ${sp}`);
+            // Fallback for DBs where soft-delete columns are missing on a linked table.
+            await client.query(
+                `DELETE FROM ims.${table}
+                  WHERE branch_id = $1
+                    AND ref_table = $2
+                    AND ref_id = $3`,
+                [branchId, refTable, refId]
+            );
+        }
+    };
+
+    await softVoid('account_transactions');
+    await softVoid('inventory_movements');
+    if (refTable === 'sales_returns') {
+        await softVoid('customer_ledger');
+    } else {
+        await softVoid('supplier_ledger');
+    }
 };
 
 const getSalesReturnLimit = async (
@@ -1459,11 +1511,13 @@ export const returnsService = {
         params.push(branchIds);
         whereParts.push(`sr.branch_id = ANY($${params.length})`);
         whereParts.push(ACTIVE_SALES_RETURN);
-        if (dateRange?.fromDate && dateRange?.toDate) {
-            params.push(dateRange.fromDate);
-            whereParts.push(`sr.return_date::date >= $${params.length}::date`);
-            params.push(dateRange.toDate);
-            whereParts.push(`sr.return_date::date <= $${params.length}::date`);
+        if (dateRange?.fromDate) {
+          params.push(dateRange.fromDate);
+          whereParts.push(`sr.return_date::date >= $${params.length}::date`);
+        }
+        if (dateRange?.toDate) {
+          params.push(dateRange.toDate);
+          whereParts.push(`sr.return_date::date <= $${params.length}::date`);
         }
         const where = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
 
@@ -2161,6 +2215,8 @@ export const returnsService = {
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
+            await client.query(`SET LOCAL app.include_deleted = '0'`);
+            await client.query(`SET LOCAL app.allow_soft_void = '1'`);
             const hasBalanceColumn = await hasSalesReturnBalanceAdjustment(client);
             const existing = await client.query<{
                 sr_id: number;
@@ -2196,6 +2252,7 @@ export const returnsService = {
                     branchId: Number(current.branch_id),
                     itemId: Number(line.item_id),
                     deltaQty: -Number(line.quantity || 0),
+                    allowNegative: true,
                 });
             }
 
@@ -2215,21 +2272,11 @@ export const returnsService = {
                 });
             }
 
-            await client.query(
-                `DELETE FROM ims.account_transactions
-                  WHERE branch_id = $1
-                    AND ref_table = 'sales_returns'
-                    AND ref_id = $2`,
-                [current.branch_id, id]
-            );
-
-            await client.query(
-                `DELETE FROM ims.customer_ledger
-                  WHERE branch_id = $1
-                    AND ref_table = 'sales_returns'
-                    AND ref_id = $2`,
-                [current.branch_id, id]
-            );
+            await softVoidReturnLinkedRows(client, {
+                branchId: Number(current.branch_id),
+                refTable: 'sales_returns',
+                refId: id,
+            });
             if (previousCustomerEffect > 0) {
                 await adjustCustomerBalance(client, {
                     branchId: Number(current.branch_id),
@@ -2244,18 +2291,16 @@ export const returnsService = {
                 });
             }
 
-            await client.query(
-                `DELETE FROM ims.inventory_movements
-                  WHERE branch_id = $1
-                    AND ref_table = 'sales_returns'
-                    AND ref_id = $2`,
-                [current.branch_id, id]
-            );
-
             await softDeleteSalesReturn(client, id);
             await client.query('COMMIT');
         } catch (err) {
             await client.query('ROLLBACK');
+            const message = err instanceof Error ? err.message : String(err || '');
+            if (/locked/i.test(message) || /finance period/i.test(message)) {
+                throw ApiError.badRequest(
+                    `Cannot delete this sales return while its finance period is locked. Reopen the closing period, then try again. (${message})`
+                );
+            }
             throw err;
         } finally {
             client.release();
@@ -2272,11 +2317,13 @@ export const returnsService = {
         params.push(branchIds);
         whereParts.push(`pr.branch_id = ANY($${params.length})`);
         whereParts.push(ACTIVE_PURCHASE_RETURN);
-        if (dateRange?.fromDate && dateRange?.toDate) {
-            params.push(dateRange.fromDate);
-            whereParts.push(`pr.return_date::date >= $${params.length}::date`);
-            params.push(dateRange.toDate);
-            whereParts.push(`pr.return_date::date <= $${params.length}::date`);
+        if (dateRange?.fromDate) {
+          params.push(dateRange.fromDate);
+          whereParts.push(`pr.return_date::date >= $${params.length}::date`);
+        }
+        if (dateRange?.toDate) {
+          params.push(dateRange.toDate);
+          whereParts.push(`pr.return_date::date <= $${params.length}::date`);
         }
         const where = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
 
@@ -2926,7 +2973,8 @@ export const returnsService = {
         try {
             await client.query('BEGIN');
             // Soft-delete triggers can toggle this session flag; keep deleted rows hidden for correct totals.
-            await client.query(`SET app.include_deleted = '0'`);
+            await client.query(`SET LOCAL app.include_deleted = '0'`);
+            await client.query(`SET LOCAL app.allow_soft_void = '1'`);
             const hasBalanceColumn = await hasPurchaseReturnBalanceAdjustment(client);
             const existing = await client.query<{
                 pr_id: number;
@@ -2983,21 +3031,11 @@ export const returnsService = {
                 });
             }
 
-            await client.query(
-                `DELETE FROM ims.account_transactions
-                  WHERE branch_id = $1
-                    AND ref_table = 'purchase_returns'
-                    AND ref_id = $2`,
-                [current.branch_id, id]
-            );
-
-            await client.query(
-                `DELETE FROM ims.supplier_ledger
-                  WHERE branch_id = $1
-                    AND ref_table = 'purchase_returns'
-                    AND ref_id = $2`,
-                [current.branch_id, id]
-            );
+            await softVoidReturnLinkedRows(client, {
+                branchId: Number(current.branch_id),
+                refTable: 'purchase_returns',
+                refId: id,
+            });
             if (previousSupplierEffect > 0) {
                 await adjustSupplierBalance(client, {
                     branchId: Number(current.branch_id),
@@ -3006,18 +3044,16 @@ export const returnsService = {
                 });
             }
 
-            await client.query(
-                `DELETE FROM ims.inventory_movements
-                  WHERE branch_id = $1
-                    AND ref_table = 'purchase_returns'
-                    AND ref_id = $2`,
-                [current.branch_id, id]
-            );
-
             await softDeletePurchaseReturn(client, id);
             await client.query('COMMIT');
         } catch (err) {
             await client.query('ROLLBACK');
+            const message = err instanceof Error ? err.message : String(err || '');
+            if (/locked/i.test(message) || /finance period/i.test(message)) {
+                throw ApiError.badRequest(
+                    `Cannot delete this purchase return while its finance period is locked. Reopen the closing period, then try again. (${message})`
+                );
+            }
             throw err;
         } finally {
             client.release();
