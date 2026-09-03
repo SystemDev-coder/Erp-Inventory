@@ -2425,7 +2425,12 @@ export const financialReportsService = {
   },
 
   async getAccountsReceivable(branchId: number, asOfDate: string): Promise<AccountsReceivableRow[]> {
-    return queryMany<AccountsReceivableRow>(
+    // Invoices only cover debt raised by sales. Go-live balances live in the customer
+    // ledger as an `opening` entry, and receipts that are not tied to a sale settle
+    // that opening debt, so both have to be folded in or the report looks empty for
+    // customers who were migrated with a balance but have no unpaid invoice yet.
+    const [invoiceRows, openingRows, unallocatedRows] = await Promise.all([
+      queryMany<AccountsReceivableRow>(
       `WITH sales_scope AS (
          SELECT
            s.sale_id::bigint AS invoice_no,
@@ -2460,8 +2465,87 @@ export const financialReportsService = {
        WHERE GREATEST(ss.amount - COALESCE(ps.paid, 0), 0) > 0.009
         ORDER BY ss.invoice_date ASC, ss.invoice_no ASC
         LIMIT 5000`,
-      [branchId, asOfDate]
-     );
+        [branchId, asOfDate]
+      ),
+      queryMany<{ customer_id: number; customer_name: string; opening_balance: number }>(
+        `SELECT
+           c.customer_id,
+           COALESCE(NULLIF(BTRIM(c.full_name), ''), 'Unknown Customer') AS customer_name,
+           COALESCE(SUM(cl.debit - cl.credit), 0)::double precision AS opening_balance
+         FROM ims.customer_ledger cl
+         JOIN ims.customers c ON c.customer_id = cl.customer_id
+        WHERE cl.branch_id = $1
+          AND cl.entry_type = 'opening'
+          AND cl.ref_table = 'opening_balance'
+          AND cl.entry_date::date <= $2::date
+        GROUP BY c.customer_id, c.full_name
+       HAVING COALESCE(SUM(cl.debit - cl.credit), 0) > 0.009`,
+        [branchId, asOfDate]
+      ),
+      queryMany<{ customer_id: number; customer_name: string; unallocated_paid: number }>(
+        `SELECT
+           c.customer_id,
+           COALESCE(NULLIF(BTRIM(c.full_name), ''), 'Unknown Customer') AS customer_name,
+           COALESCE(SUM(cr.amount), 0)::double precision AS unallocated_paid
+         FROM ims.customer_receipts cr
+         JOIN ims.customers c ON c.customer_id = cr.customer_id
+        WHERE cr.branch_id = $1
+          AND cr.sale_id IS NULL
+          AND cr.receipt_date::date <= $2::date
+        GROUP BY c.customer_id, c.full_name
+       HAVING COALESCE(SUM(cr.amount), 0) > 0.009`,
+        [branchId, asOfDate]
+      ),
+    ]);
+
+    const openingByCustomer = new Map<number, { customer_name: string; opening: number; paid: number }>();
+
+    openingRows.forEach((row) => {
+      openingByCustomer.set(Number(row.customer_id), {
+        customer_name: row.customer_name,
+        opening: Number(row.opening_balance || 0),
+        paid: 0,
+      });
+    });
+
+    unallocatedRows.forEach((row) => {
+      const customerId = Number(row.customer_id);
+      const existing = openingByCustomer.get(customerId);
+      if (existing) {
+        existing.paid += Number(row.unallocated_paid || 0);
+        return;
+      }
+      openingByCustomer.set(customerId, {
+        customer_name: row.customer_name,
+        opening: 0,
+        paid: Number(row.unallocated_paid || 0),
+      });
+    });
+
+    const rows = [...invoiceRows];
+
+    openingByCustomer.forEach((entry) => {
+      const balance = entry.opening - entry.paid;
+      if (Math.abs(balance) <= 0.009) return;
+      rows.push({
+        customer_name: entry.customer_name,
+        invoice_no: 0,
+        invoice_date: asOfDate,
+        due_date: asOfDate,
+        amount: entry.opening,
+        paid: entry.paid,
+        balance,
+        status: balance > 0 ? 'Opening' : 'Unallocated',
+      });
+    });
+
+    return rows.sort((a, b) => {
+      const customerCompare = String(a.customer_name || '').localeCompare(String(b.customer_name || ''));
+      if (customerCompare !== 0) return customerCompare;
+      const dateCompare = String(a.invoice_date || '').localeCompare(String(b.invoice_date || ''));
+      if (dateCompare !== 0) return dateCompare;
+      return Number(a.invoice_no || 0) - Number(b.invoice_no || 0);
+    });
   },
 
   async getAccountsPayable(branchId: number, fromDate: string, toDate: string): Promise<AccountsPayableRow[]> {
