@@ -6,7 +6,6 @@ import { storeService, Store as StoreType, StoreItem } from '../../services/stor
 import { productService, Product } from '../../services/product.service';
 import { Modal } from '../../components/ui/modal/Modal';
 import { itemLabelWithAvailability } from '../../utils/itemAvailability';
-import { emptyDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
 
 const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
@@ -16,7 +15,6 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const [loading, setLoading] = useState(false);
   const [hasDisplayed, setHasDisplayed] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [dateRange, setDateRange] = useState(() => emptyDateRange());
   const [storeItems, setStoreItems] = useState<Record<number, StoreItem[]>>({});
   const [editQty, setEditQty] = useState<Record<number, number>>({});
 
@@ -30,15 +28,9 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const [formStore, setFormStore] = useState({ storeName: '', storeCode: '', address: '', phone: '' });
 
   const loadStores = async () => {
-    if (dateRange.fromDate && dateRange.toDate && dateRange.fromDate > dateRange.toDate) {
-      showToast('error', 'Stores', 'From date cannot be after To date');
-      return;
-    }
     setLoading(true);
     setHasDisplayed(true);
     const res = await storeService.list({
-      fromDate: optionalDateParam(dateRange.fromDate),
-      toDate: optionalDateParam(dateRange.toDate),
       branchId: activeBranchId ?? undefined,
     });
     if (res.success && res.data?.stores) {
@@ -223,34 +215,14 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
       )}
 
       <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-4">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-            From Date
-            <input
-              type="date"
-              className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 dark:bg-slate-800 text-slate-900 dark:text-slate-100 px-3 py-2"
-              value={dateRange.fromDate}
-              onChange={(e) => setDateRange((prev) => ({ ...prev, fromDate: e.target.value }))}
-            />
-          </label>
-          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-            To Date
-            <input
-              type="date"
-              className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 dark:bg-slate-800 text-slate-900 dark:text-slate-100 px-3 py-2"
-              value={dateRange.toDate}
-              onChange={(e) => setDateRange((prev) => ({ ...prev, toDate: e.target.value }))}
-            />
-          </label>
-          <div className="flex items-end">
-            <button
-              onClick={() => void loadStores()}
-              disabled={loading}
-              className="inline-flex w-full items-center justify-center gap-2 px-4 py-2 border border-slate-300 rounded-xl text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <Eye className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
-            </button>
-          </div>
+        <div className="flex items-end justify-end">
+          <button
+            onClick={() => void loadStores()}
+            disabled={loading}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 border border-slate-300 rounded-xl text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <Eye className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
+          </button>
         </div>
       </div>
 

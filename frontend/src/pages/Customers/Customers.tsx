@@ -11,7 +11,6 @@ import { useToast } from '../../components/ui/toast/Toast';
 import Badge from '../../components/ui/badge/Badge';
 import { customerService, Customer } from '../../services/customer.service';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
-import { emptyDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -123,7 +122,6 @@ const Customers = () => {
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null);
     const [importModalOpen, setImportModalOpen] = useState(false);
-    const [dateRange, setDateRange] = useState(() => emptyDateRange());
 
     // touch a field on blur and validate immediately
     const touch = (field: keyof CustomerForm) => {
@@ -154,8 +152,6 @@ const Customers = () => {
     const fetchCustomers = async () => {
         setLoading(true);
         const res = await customerService.list({
-            fromDate: optionalDateParam(dateRange.fromDate),
-            toDate: optionalDateParam(dateRange.toDate),
             branchId: activeBranchId ?? undefined,
             limit: 500,
         });
@@ -263,13 +259,6 @@ const Customers = () => {
 
     const visibleCustomers = hasDisplayed ? customers : [];
 
-    const toolbarDateRange = {
-        fromDate: dateRange.fromDate,
-        toDate: dateRange.toDate,
-        onFromDateChange: (v: string) => setDateRange((p) => ({ ...p, fromDate: v })),
-        onToDateChange: (v: string) => setDateRange((p) => ({ ...p, toDate: v })),
-    };
-
     const emptyHint = (
         <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-300">
             Click <strong>Display</strong> to load data.
@@ -286,7 +275,6 @@ const Customers = () => {
         secondaryAction: { label: 'Upload Data', onClick: () => setImportModalOpen(true) },
         onDisplay: handleDisplay,
         displayLoading: loading,
-        dateRange: toolbarDateRange,
     };
 
     const tabs = [

@@ -137,8 +137,6 @@ const Purchases = () => {
     setLoading(true);
     const res = await supplierService.list({
       search: term,
-      fromDate: optionalDateParam(dateRange.fromDate),
-      toDate: optionalDateParam(dateRange.toDate),
     });
     if (res.success && res.data?.suppliers) {
       setSuppliers(res.data.suppliers);
@@ -152,8 +150,6 @@ const Purchases = () => {
     setLoading(true);
     const res = await purchaseService.listItems({
       search: term,
-      from: optionalDateParam(dateRange.fromDate),
-      to: optionalDateParam(dateRange.toDate),
     });
     if (res.success && res.data?.items) {
       setItems(res.data.items);
@@ -567,12 +563,6 @@ const Purchases = () => {
               void loadSuppliers();
             }}
             displayLoading={loading}
-            dateRange={{
-              fromDate: dateRange.fromDate,
-              toDate: dateRange.toDate,
-              onFromDateChange: (value) => setDateRange((prev) => ({ ...prev, fromDate: value })),
-              onToDateChange: (value) => setDateRange((prev) => ({ ...prev, toDate: value })),
-            }}
           />
           {!suppliersDisplayed && !loading && (
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
@@ -602,26 +592,6 @@ const Purchases = () => {
       content: (
         <div className="space-y-2">
           <div className="flex flex-wrap items-center justify-end gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
-                From Date
-              </span>
-              <input
-                type="date"
-                value={dateRange.fromDate}
-                onChange={(e) => setDateRange((prev) => ({ ...prev, fromDate: e.target.value }))}
-                className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              />
-              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
-                To Date
-              </span>
-              <input
-                type="date"
-                value={dateRange.toDate}
-                onChange={(e) => setDateRange((prev) => ({ ...prev, toDate: e.target.value }))}
-                className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              />
-            </div>
             <button
               type="button"
               disabled={loading}
