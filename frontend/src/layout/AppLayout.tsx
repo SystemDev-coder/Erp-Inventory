@@ -20,6 +20,12 @@ const LayoutContent: React.FC = () => {
         className={`flex-1 min-w-0 transition-all duration-300 ease-in-out ${isExpanded || isHovered ? 'lg:ml-[280px]' : 'lg:ml-[80px]'} ${isMobileOpen ? 'ml-0' : ''}`}
       >
         <AppHeader />
+        <div
+          id="erp-page-alerts"
+          className="mx-auto w-full max-w-(--breakpoint-2xl)"
+          aria-live="polite"
+          aria-atomic="true"
+        />
         <main id="main-content" className="erp-main-content p-4 mx-auto max-w-(--breakpoint-2xl) md:p-6" tabIndex={-1}>
           <Outlet />
         </main>

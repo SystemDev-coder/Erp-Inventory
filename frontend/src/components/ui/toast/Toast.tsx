@@ -18,6 +18,7 @@ interface ToastContextType {
 
 const ToastContext = createContext<ToastContextType | undefined>(undefined);
 const TOAST_ROOT_ID = 'erp-toast-root';
+const PAGE_ALERTS_ID = 'erp-page-alerts';
 
 export const useToast = () => {
   const context = useContext(ToastContext);
@@ -44,13 +45,18 @@ function getToastRoot(): HTMLElement | null {
   return root;
 }
 
+function getToastTarget(): HTMLElement | null {
+  if (typeof document === 'undefined') return null;
+  return document.getElementById(PAGE_ALERTS_ID) || getToastRoot();
+}
+
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [toastRoot, setToastRoot] = useState<HTMLElement | null>(() => getToastRoot());
+  const [toastTarget, setToastTarget] = useState<HTMLElement | null>(() => getToastTarget());
   const timeoutIds = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   useEffect(() => {
-    setToastRoot(getToastRoot());
+    setToastTarget(getToastTarget());
   }, []);
 
   useEffect(() => {
@@ -83,22 +89,13 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
-      {toastRoot &&
+      {toastTarget &&
         toasts.length > 0 &&
         createPortal(
           <ThemeProvider theme={theme}>
             <div
-              role="presentation"
-              className="erp-toast-portal"
-              style={{
-                position: 'fixed',
-                top: 16,
-                left: '50%',
-                transform: 'translateX(-50%)',
-                zIndex: 2147483647,
-                width: 'min(92vw, 420px)',
-                pointerEvents: 'none',
-              }}
+              role="status"
+              className={toastTarget.id === PAGE_ALERTS_ID ? 'erp-page-alert-stack' : 'erp-toast-portal'}
             >
               <Stack spacing={1} sx={{ width: '100%' }}>
                 {toasts.map((toast) => (
@@ -124,7 +121,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               </Stack>
             </div>
           </ThemeProvider>,
-          toastRoot
+          toastTarget
         )}
     </ToastContext.Provider>
   );

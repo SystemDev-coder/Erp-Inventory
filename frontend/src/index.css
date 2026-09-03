@@ -641,6 +641,12 @@ select option:focus {
   pointer-events: none;
 }
 
+.erp-page-alert-stack {
+  width: min(92%, 720px);
+  margin: 0.75rem auto 0;
+  pointer-events: none;
+}
+
 .erp-toast-portal {
   position: fixed;
   top: 1rem;
@@ -651,7 +657,8 @@ select option:focus {
   pointer-events: none;
 }
 
-.erp-toast-portal .erp-toast-item {
+.erp-toast-portal .erp-toast-item,
+.erp-page-alert-stack .erp-toast-item {
   pointer-events: auto;
   animation: erp-toast-enter 220ms ease-out;
 }
