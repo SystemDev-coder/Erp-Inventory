@@ -268,18 +268,14 @@ const SaleCreate = () => {
     ? 'credit'
     : saleForm.sale_type;
 
-  const derivedCashStatus: SaleStatus = (() => {
-    const total = Number(saleForm.total || 0);
-    const paid = Math.max(0, Math.min(Number(saleForm.paid_amount || 0), total));
-    if (paid <= 0.005) return 'unpaid';
-    if (paid >= total - 0.005) return 'paid';
-    return 'partial';
-  })();
-
   const effectiveStatus: SaleStatus =
     effectiveDocType === 'quotation' || effectiveSaleType === 'credit'
       ? 'unpaid'
-      : derivedCashStatus;
+      : saleForm.status === 'void'
+      ? 'void'
+      : saleForm.status;
+
+  const statusLocked = effectiveDocType === 'quotation' || effectiveSaleType === 'credit';
 
   const headerDocLabel =
     effectiveDocType === 'quotation' ? 'Quotation' : effectiveDocType === 'invoice' ? 'Invoice' : 'Sale';
@@ -297,6 +293,17 @@ const SaleCreate = () => {
 
   const shouldShowDueDate =
     effectiveDocType !== 'quotation' && (effectiveSaleType === 'credit' || isDebt);
+
+  useEffect(() => {
+    const target =
+      statusLocked || effectiveStatus === 'unpaid'
+        ? 0
+        : effectiveStatus === 'paid'
+        ? Number(saleForm.total || 0)
+        : null;
+    if (target === null) return;
+    setSaleForm((prev) => (prev.paid_amount === target ? prev : { ...prev, paid_amount: target }));
+  }, [statusLocked, effectiveStatus, saleForm.total]);
 
   useEffect(() => {
     if (!shouldShowDueDate) return;
@@ -640,13 +647,35 @@ const SaleCreate = () => {
 
           <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
             Status
-            <input
-              className={controlReadonlyCls}
+            <select
+              className={statusLocked ? controlReadonlyCls : controlCls}
               value={effectiveStatus}
-              readOnly
-              disabled
-              title="Auto-calculated from amount paid vs total"
-            />
+              disabled={loading || statusLocked}
+              title={
+                statusLocked
+                  ? 'Credit and quotation documents are always unpaid'
+                  : 'Choose how much of this sale is settled now'
+              }
+              onChange={(e) => {
+                const nextStatus = e.target.value as SaleStatus;
+                clearError('account');
+                clearError('paidAmount');
+                setSaleForm((prev) => {
+                  const total = Number(prev.total || 0);
+                  return {
+                    ...prev,
+                    status: nextStatus,
+                    acc_id: nextStatus === 'unpaid' ? '' : prev.acc_id,
+                    paid_amount:
+                      nextStatus === 'paid' ? total : nextStatus === 'unpaid' ? 0 : prev.paid_amount,
+                  };
+                });
+              }}
+            >
+              <option value="paid">Paid</option>
+              <option value="partial">Partial</option>
+              <option value="unpaid">Unpaid</option>
+            </select>
           </label>
         </div>
 
@@ -978,7 +1007,7 @@ const SaleCreate = () => {
               </label>
               <input
                 type="number"
-                min={1}
+                min={0}
                 step={1}
                 className={`${fieldCls('paidAmount')} text-right`}
                 value={saleForm.paid_amount}
@@ -992,7 +1021,7 @@ const SaleCreate = () => {
                     return { ...prev, paid_amount: paid };
                   });
                 }}
-                disabled={loading}
+                disabled={loading || effectiveStatus === 'paid'}
               />
               <FieldError field="paidAmount" />
             </div>
