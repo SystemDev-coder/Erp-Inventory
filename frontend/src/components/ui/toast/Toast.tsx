@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
-import { Snackbar, Alert, AlertTitle, Stack } from '@mui/material';
+import { Alert, AlertTitle, Stack } from '@mui/material';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 import { createPortal } from 'react-dom';
 
@@ -47,23 +47,26 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setToasts((prev) => prev.filter((toast) => toast.id !== id));
   };
 
-  const latest = toasts[toasts.length - 1] ?? null;
-
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
       {typeof document !== 'undefined' &&
+        toasts.length > 0 &&
         createPortal(
           <ThemeProvider theme={theme}>
-            <Snackbar
-              open={Boolean(latest)}
-              anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-              sx={{
-                top: { xs: 16, sm: 24 },
-                zIndex: (t) => t.zIndex.snackbar + 1000,
+            <div
+              role="presentation"
+              style={{
+                position: 'fixed',
+                top: 24,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: 2147483646,
+                width: 'min(92vw, 420px)',
+                pointerEvents: 'none',
               }}
             >
-              <Stack spacing={1} sx={{ width: '100%', maxWidth: 420, pointerEvents: 'auto' }}>
+              <Stack spacing={1} sx={{ width: '100%', pointerEvents: 'auto' }}>
                 {toasts.map((toast) => (
                   <Alert
                     key={toast.id}
@@ -72,8 +75,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                     onClose={() => removeToast(toast.id)}
                     sx={{
                       width: '100%',
-                      minWidth: { xs: 280, sm: 360 },
-                      boxShadow: 2,
+                      boxShadow: 3,
                       alignItems: 'flex-start',
                     }}
                   >
@@ -84,7 +86,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                   </Alert>
                 ))}
               </Stack>
-            </Snackbar>
+            </div>
           </ThemeProvider>,
           document.body
         )}

@@ -6,10 +6,11 @@ import {
   BarChart3,
   BriefcaseBusiness,
   Boxes,
+  Eye,
+  EyeOff,
   Loader2,
   Package,
   ReceiptText,
-  RefreshCcw,
   TrendingUp,
   Users,
   Wallet,
@@ -157,6 +158,7 @@ const Dashboard = () => {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<string>('');
   const [hasLoaded, setHasLoaded] = useState(false);
+  const [valuesVisible, setValuesVisible] = useState(false);
   const [companyInfo, setCompanyInfo] = useState<{
     name?: string;
     logoUrl?: string;
@@ -202,7 +204,7 @@ const Dashboard = () => {
   }, []);
 
   useEffect(() => {
-    if (hasLoaded) void loadDashboard();
+    if (hasLoaded) void loadDashboard(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeBranchId]);
 
@@ -251,7 +253,7 @@ const Dashboard = () => {
     });
   }, [data?.cards, userPermissions]);
 
-  const loadDashboard = async () => {
+  const loadDashboard = async (reveal = true) => {
     setLoading(true);
     setError(null);
 
@@ -260,16 +262,29 @@ const Dashboard = () => {
     if (res.success && res.data) {
       setData(res.data);
       setLastUpdated(new Date().toISOString());
+      if (reveal) setValuesVisible(true);
     } else {
       setData(null);
       setError(res.error || 'Failed to load dashboard data');
+      if (reveal) setValuesVisible(false);
     }
 
     setHasLoaded(true);
     setLoading(false);
   };
 
+  const handleShowToggle = () => {
+    if (!valuesVisible) {
+      void loadDashboard(true);
+      return;
+    }
+    setValuesVisible(false);
+  };
+
+  const maskedValue = (format?: 'currency' | 'number') => (format === 'currency' ? '••••••' : '••••');
+
   const openCardModal = async (card: DashboardCard) => {
+    if (!valuesVisible) return;
     try {
       setCardModalLoadingId(card.id);
       const drilldownUrl = `${API.DASHBOARD}/cards/${encodeURIComponent(card.id)}${
@@ -563,20 +578,28 @@ const Dashboard = () => {
             <p className="text-xs uppercase tracking-[0.2em] text-primary-700 dark:text-primary-200">Inventory ERP</p>
             <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl lg:text-4xl dark:text-white">Dashboard</h1>
             <p className="mt-1 text-sm text-slate-700 dark:text-white/80">
-              {hasLoaded
+              {hasLoaded && valuesVisible
                 ? `Live metrics loaded | ${lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : ''}`
-                : 'Click Display Dashboard to load live cards, charts, and activity.'}
+                : hasLoaded
+                  ? 'Metrics loaded. Click Show to reveal numbers and details.'
+                  : 'Click Show to load live cards, charts, and activity.'}
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <button
-              onClick={() => void loadDashboard()}
+              onClick={handleShowToggle}
               disabled={loading}
               className="inline-flex items-center gap-2 rounded-xl border border-primary-400 bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-65 dark:border-primary-400 dark:bg-primary-600 dark:text-white dark:hover:bg-primary-700"
             >
-              <RefreshCcw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-              {!hasLoaded ? 'Display Dashboard' : loading ? 'Refreshing...' : 'Refresh'}
+              {loading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : valuesVisible ? (
+                <EyeOff className="h-4 w-4" />
+              ) : (
+                <Eye className="h-4 w-4" />
+              )}
+              {loading ? 'Loading...' : valuesVisible ? 'Hide' : 'Show'}
             </button>
           </div>
         </div>
@@ -595,7 +618,7 @@ const Dashboard = () => {
           </div>
           <h2 className="mt-4 text-2xl font-semibold text-slate-900 dark:text-slate-100">Dashboard ready</h2>
           <p className="mx-auto mt-2 max-w-xl text-sm text-slate-600 dark:text-slate-300">
-            Press <span className="font-semibold">Display Dashboard</span> to render live metrics and chart trends.
+            Press <span className="font-semibold">Show</span> (eye icon) to load and reveal live metrics and chart trends.
           </p>
         </section>
       )}
@@ -621,16 +644,23 @@ const Dashboard = () => {
               return (
                 <article
                   key={card.id}
-                  onClick={() => void openCardModal(card)}
+                  onClick={() => {
+                    if (valuesVisible) void openCardModal(card);
+                  }}
                   role="button"
                   tabIndex={0}
                   onKeyDown={(event) => {
+                    if (!valuesVisible) return;
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
                       void openCardModal(card);
                     }
                   }}
-                  className="group relative cursor-pointer overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-slate-100 p-4 shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary-500/40 dark:border-slate-700 dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-900 dark:to-slate-950"
+                  className={`group relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-slate-100 p-4 shadow-sm transition duration-300 focus:outline-none focus:ring-2 focus:ring-primary-500/40 dark:border-slate-700 dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-900 dark:to-slate-950 ${
+                    valuesVisible
+                      ? 'cursor-pointer hover:-translate-y-1 hover:shadow-md'
+                      : 'cursor-default'
+                  }`}
                 >
                   <div className={`absolute left-0 top-0 h-1.5 w-full bg-gradient-to-r ${tone.stripe}`} />
                   <div className="flex items-start justify-between gap-3">
@@ -639,12 +669,14 @@ const Dashboard = () => {
                         {card.title}
                       </p>
                       <p className="mt-2 truncate text-[1.7rem] font-semibold leading-tight text-slate-900 dark:text-slate-100">
-                        {formatValue(card.value, card.format)}
+                        {valuesVisible ? formatValue(card.value, card.format) : maskedValue(card.format)}
                       </p>
-                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-300">{card.subtitle}</p>
+                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-300">
+                        {valuesVisible ? card.subtitle : 'Hidden until Show'}
+                      </p>
                     </div>
                     <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${tone.iconWrap}`}>
-                      <Icon className="h-5 w-5" />
+                      {valuesVisible ? <Icon className="h-5 w-5" /> : <EyeOff className="h-5 w-5" />}
                     </div>
                   </div>
                   {cardModalLoadingId === card.id && (
@@ -668,6 +700,7 @@ const Dashboard = () => {
             )}
           </section>
 
+          {valuesVisible ? (
           <section className="space-y-5">
             {incomeTrendChart && chartOptions[incomeTrendChart.id] && chartHasData(incomeTrendChart) && (
               <article className="rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/80">
@@ -895,6 +928,14 @@ const Dashboard = () => {
               </div>
             </article>
           </section>
+          ) : (
+            <section className="rounded-3xl border border-dashed border-slate-200 bg-white/95 p-8 text-center shadow-sm dark:border-slate-700 dark:bg-slate-900/80">
+              <EyeOff className="mx-auto h-8 w-8 text-slate-400" />
+              <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">
+                Numbers and detailed charts are hidden. Click <span className="font-semibold">Show</span> to reveal them.
+              </p>
+            </section>
+          )}
         </>
       )}
 
