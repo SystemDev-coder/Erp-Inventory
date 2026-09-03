@@ -288,9 +288,11 @@ export const customersService = {
       );
     }
 
-    if (dateRange?.fromDate && dateRange?.toDate) {
+    if (dateRange?.fromDate) {
       params.push(dateRange.fromDate);
       where.push(`registered_date >= $${params.length}::date`);
+    }
+    if (dateRange?.toDate) {
       params.push(dateRange.toDate);
       where.push(`registered_date <= $${params.length}::date`);
     }

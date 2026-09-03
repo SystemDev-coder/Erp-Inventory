@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
-import { Snackbar, Alert, AlertTitle } from '@mui/material';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
+import { Alert, AlertTitle, Stack } from '@mui/material';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 import { createPortal } from 'react-dom';
 
@@ -17,6 +17,8 @@ interface ToastContextType {
 }
 
 const ToastContext = createContext<ToastContextType | undefined>(undefined);
+const TOAST_ROOT_ID = 'erp-toast-root';
+const PAGE_ALERTS_ID = 'erp-page-alerts';
 
 export const useToast = () => {
   const context = useContext(ToastContext);
@@ -26,107 +28,100 @@ export const useToast = () => {
   return context;
 };
 
-// Create a theme that adapts to dark mode
 const theme = createTheme({
   palette: {
     mode: document.documentElement.classList.contains('dark') ? 'dark' : 'light',
   },
 });
 
+function getToastRoot(): HTMLElement | null {
+  if (typeof document === 'undefined') return null;
+  let root = document.getElementById(TOAST_ROOT_ID);
+  if (!root) {
+    root = document.createElement('div');
+    root.id = TOAST_ROOT_ID;
+    document.body.appendChild(root);
+  }
+  return root;
+}
+
+function getToastTarget(): HTMLElement | null {
+  if (typeof document === 'undefined') return null;
+  return document.getElementById(PAGE_ALERTS_ID) || getToastRoot();
+}
+
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const TOAST_Z_INDEX = 2147483647;
+  const [toastTarget, setToastTarget] = useState<HTMLElement | null>(() => getToastTarget());
+  const timeoutIds = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  useEffect(() => {
+    setToastTarget(getToastTarget());
+  }, []);
+
+  useEffect(() => {
+    const timeouts = timeoutIds.current;
+    return () => {
+      timeouts.forEach((timeoutId) => clearTimeout(timeoutId));
+      timeouts.clear();
+    };
+  }, []);
 
   const showToast = useCallback((type: ToastType, title: string, message?: string) => {
-    const id = Math.random().toString(36).substr(2, 9);
-    const newToast: Toast = { id, type, title, message };
-    
-    setToasts((prev) => [...prev, newToast]);
-
-    setTimeout(() => {
+    const id = Math.random().toString(36).slice(2, 11);
+    setToasts((prev) => [...prev, { id, type, title, message }]);
+    const timeoutId = setTimeout(() => {
       setToasts((prev) => prev.filter((toast) => toast.id !== id));
+      timeoutIds.current.delete(id);
     }, 5000);
+    timeoutIds.current.set(id, timeoutId);
   }, []);
 
   const removeToast = (id: string) => {
+    const timeoutId = timeoutIds.current.get(id);
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutIds.current.delete(id);
+    }
     setToasts((prev) => prev.filter((toast) => toast.id !== id));
   };
 
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
-      {typeof document !== 'undefined' &&
+      {toastTarget &&
+        toasts.length > 0 &&
         createPortal(
           <ThemeProvider theme={theme}>
-        <div
-          style={{
-            position: 'fixed',
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
-            zIndex: TOAST_Z_INDEX,
-            pointerEvents: 'none',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: '8px',
-            width: 'max-content',
-            maxWidth: 'min(90vw, 420px)',
-          }}
-        >
-          {toasts.map((toast) => (
-            <Snackbar
-              key={toast.id}
-              open={true}
-              anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-              style={{
-                position: 'relative',
-                transform: 'none',
-                top: 'auto',
-                left: 'auto',
-                right: 'auto',
-                bottom: 'auto',
-                zIndex: TOAST_Z_INDEX,
-                pointerEvents: 'none',
-              }}
+            <div
+              role="status"
+              className={toastTarget.id === PAGE_ALERTS_ID ? 'erp-page-alert-stack' : 'erp-toast-portal'}
             >
-              <Alert
-                onClose={() => removeToast(toast.id)}
-                severity={toast.type}
-                variant="filled"
-                sx={{
-                  pointerEvents: 'auto',
-                  zIndex: TOAST_Z_INDEX,
-                  width: '100%',
-                  minWidth: '280px',
-                  maxWidth: '420px',
-                  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
-                  borderRadius: '8px',
-                  padding: '6px 12px',
-                  '& .MuiAlert-message': {
-                    padding: '4px 0',
-                    fontSize: '0.875rem',
-                  },
-                  '& .MuiAlert-action': {
-                    padding: '0 0 0 8px',
-                    marginRight: '-4px',
-                  },
-                  '& .MuiAlertTitle-root': {
-                    fontSize: '0.875rem',
-                    fontWeight: 600,
-                    marginBottom: toast.message ? '2px' : '0',
-                    lineHeight: 1.4,
-                  },
-                }}
-              >
-                <AlertTitle>{toast.title}</AlertTitle>
-                {toast.message && <div style={{ fontSize: '0.8125rem', lineHeight: 1.3 }}>{toast.message}</div>}
-              </Alert>
-            </Snackbar>
-          ))}
-        </div>
+              <Stack spacing={1} sx={{ width: '100%' }}>
+                {toasts.map((toast) => (
+                  <Alert
+                    key={toast.id}
+                    severity={toast.type}
+                    variant="standard"
+                    onClose={() => removeToast(toast.id)}
+                    className="erp-toast-item"
+                    sx={{
+                      width: '100%',
+                      boxShadow: 6,
+                      alignItems: 'flex-start',
+                      pointerEvents: 'auto',
+                    }}
+                  >
+                    <AlertTitle sx={{ mb: toast.message ? 0.5 : 0, fontWeight: 600, lineHeight: 1.3 }}>
+                      {toast.title}
+                    </AlertTitle>
+                    {toast.message ? toast.message : null}
+                  </Alert>
+                ))}
+              </Stack>
+            </div>
           </ThemeProvider>,
-          document.body
+          toastTarget
         )}
     </ToastContext.Provider>
   );

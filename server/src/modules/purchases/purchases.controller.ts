@@ -60,9 +60,6 @@ export const listPurchaseItems = asyncHandler(async (req: AuthRequest, res: Resp
   const productId = req.query.productId ? Number(req.query.productId) : undefined;
   const from = normalizeDateParam(req.query.from, 'from');
   const to = normalizeDateParam(req.query.to, 'to');
-  if ((from && !to) || (!from && to)) {
-    throw ApiError.badRequest('Both from and to are required together');
-  }
   if (from && to && from > to) {
     throw ApiError.badRequest('from cannot be after to');
   }
@@ -76,9 +73,6 @@ export const listPurchases = asyncHandler(async (req: AuthRequest, res: Response
   const status = (req.query.status as string) || undefined;
   const fromDate = normalizeDateParam(req.query.fromDate, 'fromDate');
   const toDate = normalizeDateParam(req.query.toDate, 'toDate');
-  if ((fromDate && !toDate) || (!fromDate && toDate)) {
-    throw ApiError.badRequest('Both fromDate and toDate are required together');
-  }
   if (fromDate && toDate && fromDate > toDate) {
     throw ApiError.badRequest('fromDate cannot be after toDate');
   }
@@ -203,9 +197,6 @@ export const exportPurchasesXlsx = asyncHandler(async (req: AuthRequest, res: Re
   const status = (req.query.status as string) || undefined;
   const fromDate = (req.query.fromDate as string) || undefined;
   const toDate = (req.query.toDate as string) || undefined;
-  if ((fromDate && !toDate) || (!fromDate && toDate)) {
-    throw ApiError.badRequest('Both fromDate and toDate are required together');
-  }
   if (fromDate && toDate && fromDate > toDate) {
     throw ApiError.badRequest('fromDate cannot be after toDate');
   }

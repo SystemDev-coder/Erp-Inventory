@@ -686,6 +686,44 @@ const applyItemChecks = async (
   const shape = await detectItemShape();
   if (!shape.storesTableExists) return;
 
+  // Ensure branch has at least Main Store, then require/assign store_id for every item row.
+  let defaultStoreId = 0;
+  const existingAny = await queryOne<{ store_id: number }>(
+    `SELECT store_id
+       FROM ims.stores
+      WHERE branch_id = $1
+      ORDER BY CASE WHEN LOWER(store_name) = 'main store' THEN 0 ELSE 1 END, store_id
+      LIMIT 1`,
+    [branchId]
+  );
+  defaultStoreId = Number(existingAny?.store_id || 0);
+  if (!defaultStoreId) {
+    const created = await queryOne<{ store_id: number }>(
+      `INSERT INTO ims.stores (branch_id, store_name, store_code, is_active)
+       VALUES ($1::bigint, 'Main Store', 'MAIN-' || LPAD($1::bigint::text, 3, '0'), TRUE)
+       ON CONFLICT (branch_id, store_name)
+       DO UPDATE SET is_active = TRUE
+       RETURNING store_id`,
+      [branchId]
+    );
+    defaultStoreId = Number(created?.store_id || 0);
+  }
+
+  if (!defaultStoreId) {
+    for (const row of rows) {
+      if (row.errors.length || row.skipReason) continue;
+      row.errors.push('Could not create or resolve a default store for this branch');
+    }
+    return;
+  }
+
+  for (const row of rows) {
+    if (row.errors.length || row.skipReason) continue;
+    if (!row.data.store_id) {
+      row.data.store_id = defaultStoreId;
+    }
+  }
+
   const storeIds = Array.from(
     new Set(
       rows
@@ -1208,6 +1246,7 @@ const itemsDefinition: ImportDefinition<ItemImportRow> = {
     { field: 'quantity', aliases: ['quantity', 'opening_balance', 'opening_stock'] },
     { field: 'cost_price', aliases: ['cost_price', 'cost'] },
     { field: 'sell_price', aliases: ['sell_price', 'price'] },
+    // store_id is preferred in file; if omitted, import auto-assigns Main Store.
   ],
   parseRow: (raw, _row) => parseItemRow(raw),
   applyBusinessChecks: applyItemChecks,

@@ -502,8 +502,20 @@ const PurchaseEditor = () => {
         expiryDate: li.expiry_date || undefined,
       }));
     if (preparedItems.length === 0) {
-      setFormError('A purchase needs at least one line with a product selected.');
-      setFormErrors({ items: 'Select a product for each line or use “Select from products”.' });
+      const hasAnyRow = lineItems.some((li) => li.product_id !== '' || li.name.trim() !== '');
+      const hasZeroQty = lineItems.some(
+        (li) => (li.product_id !== '' || li.name.trim() !== '') && !(Number(li.quantity) > 0)
+      );
+      if (!hasAnyRow) {
+        setFormError('Add at least one purchase line before saving.');
+        setFormErrors({ items: 'Use “Select from products” or type a product on a line.' });
+      } else if (hasZeroQty) {
+        setFormError('Each selected product line must have quantity greater than zero.');
+        setFormErrors({ items: 'Set quantity > 0 for every product line.' });
+      } else {
+        setFormError('A purchase needs at least one valid product line.');
+        setFormErrors({ items: 'Select a product for each line or use “Select from products”.' });
+      }
       return;
     }
     setFormError('');

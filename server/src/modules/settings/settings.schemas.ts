@@ -38,9 +38,6 @@ export const auditQuerySchema = z.object({
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 }).refine(
-  (value) => (value.startDate && value.endDate) || (!value.startDate && !value.endDate),
-  { message: 'Both startDate and endDate are required together', path: ['startDate'] }
-).refine(
   (value) => !value.startDate || !value.endDate || value.startDate <= value.endDate,
   { message: 'startDate must be before or equal to endDate', path: ['endDate'] }
 );
@@ -76,9 +73,6 @@ export const capitalListQuerySchema = z.object({
   fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 }).refine(
-  (value) => (value.fromDate && value.toDate) || (!value.fromDate && !value.toDate),
-  { message: 'Both fromDate and toDate are required together', path: ['fromDate'] }
-).refine(
   (value) => !value.fromDate || !value.toDate || value.fromDate <= value.toDate,
   { message: 'fromDate must be before or equal to toDate', path: ['toDate'] }
 );
@@ -88,9 +82,6 @@ export const capitalReportQuerySchema = z.object({
   fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 }).refine(
-  (value) => (value.fromDate && value.toDate) || (!value.fromDate && !value.toDate),
-  { message: 'Both fromDate and toDate are required together', path: ['fromDate'] }
-).refine(
   (value) => !value.fromDate || !value.toDate || value.fromDate <= value.toDate,
   { message: 'fromDate must be before or equal to toDate', path: ['toDate'] }
 );
@@ -130,10 +121,7 @@ export const capitalDrawingListQuerySchema = z
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   })
-  .refine(
-    (value) => (value.fromDate && value.toDate) || (!value.fromDate && !value.toDate),
-    { message: 'Both fromDate and toDate are required together', path: ['fromDate'] }
-  )
+  
   .refine(
     (value) => !value.fromDate || !value.toDate || value.fromDate <= value.toDate,
     { message: 'fromDate must be before or equal to toDate', path: ['toDate'] }
@@ -168,9 +156,6 @@ export const settingsClosingListQuerySchema = z.object({
   fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 }).refine(
-  (value) => (value.fromDate && value.toDate) || (!value.fromDate && !value.toDate),
-  { message: 'Both fromDate and toDate are required together', path: ['fromDate'] }
-).refine(
   (value) => !value.fromDate || !value.toDate || value.fromDate <= value.toDate,
   { message: 'fromDate must be before or equal to toDate', path: ['toDate'] }
 );
