@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
-import { Snackbar, Alert, AlertTitle } from '@mui/material';
+import { Snackbar, Alert, AlertTitle, Stack } from '@mui/material';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 import { createPortal } from 'react-dom';
 
@@ -26,7 +26,6 @@ export const useToast = () => {
   return context;
 };
 
-// Create a theme that adapts to dark mode
 const theme = createTheme({
   palette: {
     mode: document.documentElement.classList.contains('dark') ? 'dark' : 'light',
@@ -35,14 +34,10 @@ const theme = createTheme({
 
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const TOAST_Z_INDEX = 2147483647;
 
   const showToast = useCallback((type: ToastType, title: string, message?: string) => {
-    const id = Math.random().toString(36).substr(2, 9);
-    const newToast: Toast = { id, type, title, message };
-    
-    setToasts((prev) => [...prev, newToast]);
-
+    const id = Math.random().toString(36).slice(2, 11);
+    setToasts((prev) => [...prev, { id, type, title, message }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((toast) => toast.id !== id));
     }, 5000);
@@ -52,79 +47,44 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setToasts((prev) => prev.filter((toast) => toast.id !== id));
   };
 
+  const latest = toasts[toasts.length - 1] ?? null;
+
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
       {typeof document !== 'undefined' &&
         createPortal(
           <ThemeProvider theme={theme}>
-        <div
-          style={{
-            position: 'fixed',
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
-            zIndex: TOAST_Z_INDEX,
-            pointerEvents: 'none',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: '8px',
-            width: 'max-content',
-            maxWidth: 'min(90vw, 420px)',
-          }}
-        >
-          {toasts.map((toast) => (
             <Snackbar
-              key={toast.id}
-              open={true}
+              open={Boolean(latest)}
               anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-              style={{
-                position: 'relative',
-                transform: 'none',
-                top: 'auto',
-                left: 'auto',
-                right: 'auto',
-                bottom: 'auto',
-                zIndex: TOAST_Z_INDEX,
-                pointerEvents: 'none',
+              sx={{
+                top: { xs: 16, sm: 24 },
+                zIndex: (t) => t.zIndex.snackbar + 1000,
               }}
             >
-              <Alert
-                onClose={() => removeToast(toast.id)}
-                severity={toast.type}
-                variant="filled"
-                sx={{
-                  pointerEvents: 'auto',
-                  zIndex: TOAST_Z_INDEX,
-                  width: '100%',
-                  minWidth: '280px',
-                  maxWidth: '420px',
-                  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
-                  borderRadius: '8px',
-                  padding: '6px 12px',
-                  '& .MuiAlert-message': {
-                    padding: '4px 0',
-                    fontSize: '0.875rem',
-                  },
-                  '& .MuiAlert-action': {
-                    padding: '0 0 0 8px',
-                    marginRight: '-4px',
-                  },
-                  '& .MuiAlertTitle-root': {
-                    fontSize: '0.875rem',
-                    fontWeight: 600,
-                    marginBottom: toast.message ? '2px' : '0',
-                    lineHeight: 1.4,
-                  },
-                }}
-              >
-                <AlertTitle>{toast.title}</AlertTitle>
-                {toast.message && <div style={{ fontSize: '0.8125rem', lineHeight: 1.3 }}>{toast.message}</div>}
-              </Alert>
+              <Stack spacing={1} sx={{ width: '100%', maxWidth: 420, pointerEvents: 'auto' }}>
+                {toasts.map((toast) => (
+                  <Alert
+                    key={toast.id}
+                    severity={toast.type}
+                    variant="standard"
+                    onClose={() => removeToast(toast.id)}
+                    sx={{
+                      width: '100%',
+                      minWidth: { xs: 280, sm: 360 },
+                      boxShadow: 2,
+                      alignItems: 'flex-start',
+                    }}
+                  >
+                    <AlertTitle sx={{ mb: toast.message ? 0.5 : 0, fontWeight: 600, lineHeight: 1.3 }}>
+                      {toast.title}
+                    </AlertTitle>
+                    {toast.message ? toast.message : null}
+                  </Alert>
+                ))}
+              </Stack>
             </Snackbar>
-          ))}
-        </div>
           </ThemeProvider>,
           document.body
         )}
