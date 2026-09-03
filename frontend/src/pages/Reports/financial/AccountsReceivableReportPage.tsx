@@ -65,7 +65,11 @@ export default function AccountsReceivableReportPage() {
   const columns = useMemo<ColumnDef<AccountsReceivableRow>[]>(
     () => [
       { accessorKey: 'customer_name', header: 'Customer' },
-      { accessorKey: 'invoice_no', header: 'Invoice No' },
+      {
+        accessorKey: 'invoice_no',
+        header: 'Invoice No',
+        cell: ({ row }) => (Number(row.original.invoice_no) > 0 ? row.original.invoice_no : '—'),
+      },
       {
         accessorKey: 'invoice_date',
         header: 'Invoice Date',
