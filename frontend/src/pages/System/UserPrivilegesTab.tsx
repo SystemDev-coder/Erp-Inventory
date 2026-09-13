@@ -53,6 +53,15 @@ export const UserPrivilegesTab = ({
     [loadUsers, showToast, users.length]
   );
 
+  // Populate the User dropdown as soon as this tab opens. `users` is shared with the
+  // separate Users tab, which only loads it behind its own Display button - without this,
+  // arriving here directly left the dropdown showing nothing but "Select user..." until the
+  // user happened to visit the Users tab first.
+  useEffect(() => {
+    if (!users.length) void loadUsers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // NEW: Prefill selection from parent
   useEffect(() => {
     if (!initialUserId) return;
