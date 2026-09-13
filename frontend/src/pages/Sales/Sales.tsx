@@ -41,27 +41,59 @@ const Sales = () => {
   const [viewLoading, setViewLoading] = useState(false);
   const [viewSale, setViewSale] = useState<Sale | null>(null);
   const [viewItems, setViewItems] = useState<SaleItem[]>([]);
+  // Server-side pagination: fetch one small page at a time instead of up to 500 docs.
+  // Sales/Quotations tabs both filter within the current page (see Customers.tsx for the
+  // same trade-off) rather than issuing separate fetches per tab.
+  const SALES_PAGE_SIZE = 20;
+  const [salesPageIndex, setSalesPageIndex] = useState(0); // 0-based
+  const [salesTotalPages, setSalesTotalPages] = useState(0);
+  const [salesTotalRows, setSalesTotalRows] = useState(0);
+  const [salesSearch, setSalesSearch] = useState('');
 
-  const loadSales = useCallback(async () => {
+  const loadSales = useCallback(async (nextPageIndex = salesPageIndex, search = salesSearch) => {
     setLoading(true);
     const res = await salesService.list({
       includeVoided: true,
       fromDate: optionalDateParam(dateRange.fromDate),
       toDate: optionalDateParam(dateRange.toDate),
       branchId: activeBranchId ?? undefined,
-      limit: 500,
+      page: nextPageIndex + 1,
+      limit: SALES_PAGE_SIZE,
+      search: search || undefined,
     });
     if (res.success && res.data?.sales) {
       setSales(res.data.sales);
       setHasLoaded(true);
+      setSalesTotalPages(res.data.pagination?.totalPages ?? 0);
+      setSalesTotalRows(res.data.pagination?.total ?? res.data.sales.length);
     } else {
       showToast('error', 'Sales', res.error || 'Failed to load sales');
     }
     setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showToast, dateRange.fromDate, dateRange.toDate, activeBranchId]);
 
+  const handleSalesPageChange = (next: number) => {
+    setSalesPageIndex(next);
+    void loadSales(next, salesSearch);
+  };
+
+  const handleSalesServerSearch = (value: string) => {
+    setSalesSearch(value);
+    setSalesPageIndex(0);
+    void loadSales(0, value);
+  };
+
+  const handleSalesDisplay = () => {
+    setSalesPageIndex(0);
+    void loadSales(0, salesSearch);
+  };
+
   useEffect(() => {
-    if (hasLoaded) void loadSales();
+    if (hasLoaded) {
+      setSalesPageIndex(0);
+      void loadSales(0, salesSearch);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeBranchId]);
 
@@ -386,7 +418,7 @@ const Sales = () => {
                   title="Sales Documents"
                   primaryAction={{ label: 'New Sale', onClick: () => navigate('/sales/new?docType=sale') }}
                   secondaryAction={{ label: 'New Invoice', onClick: () => navigate('/sales/new?docType=invoice') }}
-                  onDisplay={() => void loadSales()}
+                  onDisplay={handleSalesDisplay}
                   displayLoading={loading}
                   dateRange={{
                     fromDate: dateRange.fromDate,
@@ -404,6 +436,15 @@ const Sales = () => {
                   columns={columns}
                   isLoading={loading}
                   searchPlaceholder="Search by customer or note..."
+                  serverPagination={{
+                    pageIndex: salesPageIndex,
+                    pageSize: SALES_PAGE_SIZE,
+                    pageCount: Math.max(salesTotalPages, 1),
+                    totalRows: salesTotalRows,
+                    onPageChange: handleSalesPageChange,
+                    onPageSizeChange: () => {},
+                  }}
+                  onServerSearch={handleSalesServerSearch}
                 />
                 {!loading && !hasLoaded && <div className="text-sm text-slate-500 px-1">Click Display to load data.</div>}
                 {!loading && hasLoaded && salesDocs.length === 0 && (
@@ -422,7 +463,7 @@ const Sales = () => {
                 <TabActionToolbar
                   title="Quotations"
                   primaryAction={{ label: 'New Quotation', onClick: () => navigate('/sales/new?docType=quotation') }}
-                  onDisplay={() => void loadSales()}
+                  onDisplay={handleSalesDisplay}
                   displayLoading={loading}
                   dateRange={{
                     fromDate: dateRange.fromDate,
@@ -440,6 +481,15 @@ const Sales = () => {
                   columns={columns}
                   isLoading={loading}
                   searchPlaceholder="Search quotations by customer or note..."
+                  serverPagination={{
+                    pageIndex: salesPageIndex,
+                    pageSize: SALES_PAGE_SIZE,
+                    pageCount: Math.max(salesTotalPages, 1),
+                    totalRows: salesTotalRows,
+                    onPageChange: handleSalesPageChange,
+                    onPageSizeChange: () => {},
+                  }}
+                  onServerSearch={handleSalesServerSearch}
                 />
                 {!loading && !hasLoaded && <div className="text-sm text-slate-500 px-1">Click Display to load data.</div>}
                 {!loading && hasLoaded && quotationDocs.length === 0 && (

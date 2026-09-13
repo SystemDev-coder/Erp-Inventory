@@ -89,6 +89,13 @@ const Customers = () => {
     const [customers, setCustomers] = useState<Customer[]>([]);
     const [hasDisplayed, setHasDisplayed] = useState(false);
     const [loading, setLoading] = useState(false);
+    // Server-side pagination: fetch one small page (PAGE_SIZE rows) at a time instead of
+    // pulling the whole customer list into the browser on every Display click.
+    const PAGE_SIZE = 20;
+    const [pageIndex, setPageIndex] = useState(0); // 0-based
+    const [totalPages, setTotalPages] = useState(0);
+    const [totalRows, setTotalRows] = useState(0);
+    const [searchTerm, setSearchTerm] = useState('');
     const [form, setForm] = useState<CustomerForm>(emptyForm);
     const [originalOpeningBalance, setOriginalOpeningBalance] = useState<number | null>(null);
     const [reasonRevealed, setReasonRevealed] = useState(false);
@@ -117,21 +124,46 @@ const Customers = () => {
         setReasonRevealed(false);
     };
 
-    const fetchCustomers = async () => {
+    const fetchCustomers = async (nextPageIndex = pageIndex, search = searchTerm) => {
         setLoading(true);
         const res = await customerService.list({
             branchId: activeBranchId ?? undefined,
-            limit: 500,
+            page: nextPageIndex + 1,
+            limit: PAGE_SIZE,
+            search: search || undefined,
         });
-        if (res.success && res.data?.customers) setCustomers(res.data.customers);
-        else showToast('error', 'Load failed', res.error || 'Could not load customers');
+        if (res.success && res.data?.customers) {
+            setCustomers(res.data.customers);
+            setTotalPages(res.data.pagination?.totalPages ?? 0);
+            setTotalRows(res.data.pagination?.total ?? res.data.customers.length);
+        } else {
+            showToast('error', 'Load failed', res.error || 'Could not load customers');
+        }
         setLoading(false);
     };
 
-    const handleDisplay = async () => { setHasDisplayed(true); await fetchCustomers(); };
+    const handleDisplay = async () => {
+        setHasDisplayed(true);
+        setPageIndex(0);
+        await fetchCustomers(0, searchTerm);
+    };
+
+    const handlePageChange = (next: number) => {
+        setPageIndex(next);
+        void fetchCustomers(next, searchTerm);
+    };
+
+    const handleServerSearch = (value: string) => {
+        setSearchTerm(value);
+        setPageIndex(0);
+        void fetchCustomers(0, value);
+    };
 
     useEffect(() => {
-        if (hasDisplayed) void fetchCustomers();
+        if (hasDisplayed) {
+            setPageIndex(0);
+            void fetchCustomers(0, searchTerm);
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeBranchId]);
 
@@ -244,6 +276,24 @@ const Customers = () => {
         displayLoading: loading,
     };
 
+    // Real server-side pagination: `customers` is already just the current PAGE_SIZE-row
+    // page from the API (see fetchCustomers), not the whole customer list. The Regular/
+    // Walking tabs filter within that same page rather than issuing their own fetch, so
+    // they may show fewer than a full page when types are mixed on the current page - a
+    // deliberate trade-off to keep one shared fetch/pagination path across all three tabs
+    // instead of tripling the state.
+    const serverPaginationProps = {
+        serverPagination: {
+            pageIndex,
+            pageSize: PAGE_SIZE,
+            pageCount: Math.max(totalPages, 1),
+            totalRows,
+            onPageChange: handlePageChange,
+            onPageSizeChange: () => {}, // fixed page size for now; server enforces PAGE_SIZE
+        },
+        onServerSearch: handleServerSearch,
+    };
+
     const tabs = [
         {
             id: 'all', label: 'All', icon: Users,
@@ -255,7 +305,7 @@ const Customers = () => {
                     {hasDisplayed && !loading && !visibleCustomers.length && noData}
                     <DataTable data={visibleCustomers} columns={columns}
                         searchPlaceholder="Search by name or phone…" isLoading={loading}
-                        onEdit={onEdit} onDelete={onDelete} />
+                        onEdit={onEdit} onDelete={onDelete} {...serverPaginationProps} />
                 </div>
             )
         },
@@ -267,7 +317,7 @@ const Customers = () => {
                     {!hasDisplayed && emptyHint}
                     {hasDisplayed && !loading && !visibleCustomers.filter(c => c.customer_type !== 'one-time').length && noData}
                     <DataTable data={visibleCustomers.filter(c => c.customer_type !== 'one-time')}
-                        columns={columns} isLoading={loading} onEdit={onEdit} onDelete={onDelete} />
+                        columns={columns} isLoading={loading} onEdit={onEdit} onDelete={onDelete} {...serverPaginationProps} />
                 </div>
             )
         },
@@ -279,7 +329,7 @@ const Customers = () => {
                     {!hasDisplayed && emptyHint}
                     {hasDisplayed && !loading && !visibleCustomers.filter(c => c.customer_type === 'one-time').length && noData}
                     <DataTable data={visibleCustomers.filter(c => c.customer_type === 'one-time')}
-                        columns={columns} isLoading={loading} onEdit={onEdit} onDelete={onDelete} />
+                        columns={columns} isLoading={loading} onEdit={onEdit} onDelete={onDelete} {...serverPaginationProps} />
                 </div>
             )
         },

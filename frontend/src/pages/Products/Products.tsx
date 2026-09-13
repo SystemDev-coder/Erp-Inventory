@@ -69,6 +69,12 @@ const Products = () => {
   const [stateProducts, setStateProducts] = useState<Product[]>([]);
   const [transactions, setTransactions] = useState<InventoryTransactionRow[]>([]);
   const [itemsDisplayed, setItemsDisplayed] = useState(false);
+  // Server-side pagination for the Items tab: fetch one small page at a time.
+  const ITEMS_PAGE_SIZE = 20;
+  const [itemsPageIndex, setItemsPageIndex] = useState(0); // 0-based
+  const [itemsTotalPages, setItemsTotalPages] = useState(0);
+  const [itemsTotalRows, setItemsTotalRows] = useState(0);
+  const [itemsSearch, setItemsSearch] = useState('');
   const [txDisplayed, setTxDisplayed] = useState(false);
   const [inactiveDisplayed, setInactiveDisplayed] = useState(false);
   const [txCategory, setTxCategory] = useState<TxCategory>('adjustment');
@@ -115,16 +121,34 @@ const Products = () => {
     return loaded;
   };
 
-  const loadProducts = async () => {
+  const loadProducts = async (nextPageIndex = itemsPageIndex, search = itemsSearch) => {
     setLoading(true);
     await resolveStores();
     const res = await productService.list({
-      limit: 200,
+      page: nextPageIndex + 1,
+      limit: ITEMS_PAGE_SIZE,
+      search: search || undefined,
       branchId: activeBranchId ?? undefined,
     });
-    if (res.success && res.data?.products) setProducts(res.data.products);
-    else showToast('error', 'Items', res.error || 'Failed to load items');
+    if (res.success && res.data?.products) {
+      setProducts(res.data.products);
+      setItemsTotalPages(res.data.pagination?.totalPages ?? 0);
+      setItemsTotalRows(res.data.pagination?.total ?? res.data.products.length);
+    } else {
+      showToast('error', 'Items', res.error || 'Failed to load items');
+    }
     setLoading(false);
+  };
+
+  const handleItemsPageChange = (next: number) => {
+    setItemsPageIndex(next);
+    void loadProducts(next, itemsSearch);
+  };
+
+  const handleItemsServerSearch = (value: string) => {
+    setItemsSearch(value);
+    setItemsPageIndex(0);
+    void loadProducts(0, value);
   };
 
   const loadTransactions = async (category: TxCategory = txCategory) => {
@@ -167,7 +191,10 @@ const Products = () => {
   };
 
   useEffect(() => {
-    if (itemsDisplayed) void loadProducts();
+    if (itemsDisplayed) {
+      setItemsPageIndex(0);
+      void loadProducts(0, itemsSearch);
+    }
     if (txDisplayed) void loadTransactions();
     if (inactiveDisplayed) void loadInactiveStateItems();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -296,7 +323,8 @@ const Products = () => {
               disabled={loading}
               onClick={() => {
                 setItemsDisplayed(true);
-                void loadProducts();
+                setItemsPageIndex(0);
+                void loadProducts(0, itemsSearch);
               }}
               className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
             >
@@ -345,6 +373,15 @@ const Products = () => {
             }}
             onDelete={(row) => setItemToDelete(row)}
             searchPlaceholder="Search items..."
+            serverPagination={{
+              pageIndex: itemsPageIndex,
+              pageSize: ITEMS_PAGE_SIZE,
+              pageCount: Math.max(itemsTotalPages, 1),
+              totalRows: itemsTotalRows,
+              onPageChange: handleItemsPageChange,
+              onPageSizeChange: () => {},
+            }}
+            onServerSearch={handleItemsServerSearch}
           />
         </div>
       ),

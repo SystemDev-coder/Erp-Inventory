@@ -264,7 +264,8 @@ export const customersService = {
     branchIds: number[],
     search?: string,
     dateRange?: { fromDate?: string; toDate?: string },
-    pagination?: { page: number; limit: number }
+    pagination?: { page: number; limit: number },
+    customerType?: 'regular' | 'one-time'
   ): Promise<{ rows: Customer[]; total: number; page: number; limit: number }> {
     const meta = await detectCustomerColumns();
     const balanceColumn = meta.balanceColumn;
@@ -295,6 +296,11 @@ export const customersService = {
     if (dateRange?.toDate) {
       params.push(dateRange.toDate);
       where.push(`registered_date <= $${params.length}::date`);
+    }
+
+    if (customerType && meta.hasType) {
+      params.push(customerType);
+      where.push(`customer_type = $${params.length}`);
     }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';

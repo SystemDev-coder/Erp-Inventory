@@ -48,6 +48,9 @@ export const listCustomers = asyncHandler(async (req: AuthRequest, res: Response
   const search = req.query.search as string | undefined;
   const fromDate = req.query.fromDate as string | undefined;
   const toDate = req.query.toDate as string | undefined;
+  const customerTypeRaw = req.query.customerType as string | undefined;
+  const customerType =
+    customerTypeRaw === 'regular' || customerTypeRaw === 'one-time' ? customerTypeRaw : undefined;
   if (fromDate && toDate && fromDate > toDate) {
     throw ApiError.badRequest('fromDate cannot be after toDate');
   }
@@ -56,7 +59,8 @@ export const listCustomers = asyncHandler(async (req: AuthRequest, res: Response
     branchIds,
     search,
     { fromDate, toDate },
-    pagination
+    pagination,
+    customerType
   );
   return ApiResponse.success(res, {
     customers: customersResult.rows,
