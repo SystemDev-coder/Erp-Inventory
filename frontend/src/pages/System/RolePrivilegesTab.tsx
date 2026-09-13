@@ -51,6 +51,16 @@ export const RolePrivilegesTab = ({
     [loadPermissions, loadRoles, permissions.length, roles.length, showToast]
   );
 
+  // Populate the Role dropdown as soon as this tab opens. `roles`/`permissions` are shared
+  // with the separate Roles/Privileges tabs, which only load them behind their own Display
+  // button - without this, arriving here directly left the dropdown showing nothing but
+  // "Select role..." until the user happened to visit those other tabs first.
+  useEffect(() => {
+    if (!roles.length) void loadRoles();
+    if (!permissions.length) void loadPermissions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // NEW: Allow parent to preselect a role (e.g. after creating a role or clicking a row action)
   useEffect(() => {
     if (!initialRoleId) return;
