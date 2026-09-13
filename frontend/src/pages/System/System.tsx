@@ -1214,7 +1214,11 @@ const System = () => {
             </div>
             <div className="grid max-h-40 grid-cols-2 gap-1 overflow-y-auto rounded-lg border border-slate-300 bg-white p-2 text-sm dark:border-slate-700 dark:bg-slate-800 sm:grid-cols-3">
               {branches.map((branch) => (
-                <label key={branch.branch_id} className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-slate-50 dark:hover:bg-slate-700">
+                <label
+                  key={branch.branch_id}
+                  className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-slate-50 dark:hover:bg-slate-700"
+                  style={{ flexDirection: 'row' }}
+                >
                   <input
                     type="checkbox"
                     checked={userForm.branchIds.includes(branch.branch_id)}

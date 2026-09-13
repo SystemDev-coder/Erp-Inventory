@@ -70,8 +70,8 @@ type FieldProps = {
 function Field({ label, required, children, hint, colSpan }: FieldProps) {
     return (
         <div className={`flex flex-col gap-1 ${colSpan ? 'md:col-span-2' : ''}`}>
-            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                {label} {required && <span className="text-red-500">*</span>}
+            <label>
+                <span>{label}{required ? ' *' : ''}</span>
             </label>
             {children}
             {hint && <p className="text-xs text-slate-400 dark:text-slate-500">{hint}</p>}
@@ -423,7 +423,9 @@ const Customers = () => {
 
                         {form.customer_id && (
                             <div className="flex items-center self-end pb-2">
-                                <label className="relative inline-flex cursor-pointer items-center gap-3">
+                                {/* The shared modal CSS forces every <label> into a column layout; this
+                                    toggle needs its switch and text side by side, so override it inline. */}
+                                <label className="relative inline-flex cursor-pointer items-center gap-3" style={{ flexDirection: 'row' }}>
                                     <div className="relative">
                                         <input
                                             type="checkbox"
