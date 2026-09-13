@@ -2,8 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import Chart from 'react-apexcharts';
 import type { ApexOptions } from 'apexcharts';
 import {
-  Eye,
-  EyeOff,
   HandCoins,
   HandHeart,
   Loader2,
@@ -161,7 +159,6 @@ const Dashboard = () => {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<string>('');
   const [hasLoaded, setHasLoaded] = useState(hasFreshCache);
-  const [valuesVisible, setValuesVisible] = useState(false);
   const [companyInfo, setCompanyInfo] = useState<{
     name?: string;
     logoUrl?: string;
@@ -212,10 +209,11 @@ const Dashboard = () => {
     const cached = dashboardCache.get(dashboardCacheKey(activeBranchId));
     if (cached && Date.now() - cached.fetchedAt < DASHBOARD_CACHE_TTL_MS) {
       setData(cached.payload);
+      setLastUpdated(new Date(cached.fetchedAt).toISOString());
       setHasLoaded(true);
       return;
     }
-    void loadDashboard(false);
+    void loadDashboard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeBranchId]);
 
@@ -333,7 +331,7 @@ const Dashboard = () => {
     };
   };
 
-  const loadDashboard = async (reveal = true) => {
+  const loadDashboard = async () => {
     setLoading(true);
     setError(null);
 
@@ -343,33 +341,16 @@ const Dashboard = () => {
       setData(res.data);
       dashboardCache.set(dashboardCacheKey(activeBranchId), { payload: res.data, fetchedAt: Date.now() });
       setLastUpdated(new Date().toISOString());
-      if (reveal) setValuesVisible(true);
     } else {
       setData(null);
       setError(res.error || 'Failed to load dashboard data');
-      if (reveal) setValuesVisible(false);
     }
 
     setHasLoaded(true);
     setLoading(false);
   };
 
-  const handleShowToggle = () => {
-    if (valuesVisible) {
-      setValuesVisible(false);
-      return;
-    }
-    if (data) {
-      setValuesVisible(true);
-      return;
-    }
-    void loadDashboard(true);
-  };
-
-  const maskedValue = (format?: 'currency' | 'number') => (format === 'currency' ? '••••••' : '••••');
-
   const openCardModal = async (card: DashboardCard) => {
-    if (!valuesVisible) return;
     try {
       setCardModalLoadingId(card.id);
       const drilldownUrl = `${API.DASHBOARD}/cards/${encodeURIComponent(card.id)}${
@@ -466,27 +447,8 @@ const Dashboard = () => {
             <p className="mt-1 text-sm text-slate-700 dark:text-white/80">
               {loading && !data
                 ? t('dashboard_loading_cards')
-                : valuesVisible
-                  ? `${t('dashboard_live_metrics')} | ${lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : ''}`
-                  : t('dashboard_cards_hint')}
+                : `${t('dashboard_live_metrics')} | ${lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : ''}`}
             </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={handleShowToggle}
-              disabled={loading}
-              className="inline-flex items-center gap-2 rounded-xl border border-primary-400 bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-65 dark:border-primary-400 dark:bg-primary-600 dark:text-white dark:hover:bg-primary-700"
-            >
-              {loading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : valuesVisible ? (
-                <EyeOff className="h-4 w-4" />
-              ) : (
-                <Eye className="h-4 w-4" />
-              )}
-              {loading ? t('dashboard_loading') : valuesVisible ? t('dashboard_hide') : t('dashboard_show')}
-            </button>
           </div>
         </div>
       </section>
@@ -517,23 +479,16 @@ const Dashboard = () => {
               return (
                 <article
                   key={card.id}
-                  onClick={() => {
-                    if (valuesVisible) void openCardModal(card);
-                  }}
+                  onClick={() => void openCardModal(card)}
                   role="button"
                   tabIndex={0}
                   onKeyDown={(event) => {
-                    if (!valuesVisible) return;
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
                       void openCardModal(card);
                     }
                   }}
-                  className={`group relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-slate-100 p-4 shadow-sm transition duration-300 focus:outline-none focus:ring-2 focus:ring-primary-500/40 dark:border-slate-700 dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-900 dark:to-slate-950 ${
-                    valuesVisible
-                      ? 'cursor-pointer hover:-translate-y-1 hover:shadow-md'
-                      : 'cursor-default'
-                  }`}
+                  className="group relative cursor-pointer overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-slate-100 p-4 shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary-500/40 dark:border-slate-700 dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-900 dark:to-slate-950"
                 >
                   <div className={`absolute left-0 top-0 h-1.5 w-full bg-gradient-to-r ${tone.stripe}`} />
                   <div className="flex items-start justify-between gap-3">
@@ -542,18 +497,14 @@ const Dashboard = () => {
                         {CARD_TITLE_KEYS[card.id] ? t(CARD_TITLE_KEYS[card.id]) : card.title}
                       </p>
                       <p className="mt-2 truncate text-[1.7rem] font-semibold leading-tight text-slate-900 dark:text-slate-100">
-                        {valuesVisible ? formatValue(card.value, card.format) : maskedValue(card.format)}
+                        {formatValue(card.value, card.format)}
                       </p>
                       <p className="mt-1 text-xs text-slate-500 dark:text-slate-300">
-                        {valuesVisible
-                          ? CARD_SUBTITLE_KEYS[card.id]
-                            ? t(CARD_SUBTITLE_KEYS[card.id])
-                            : card.subtitle
-                          : t('dashboard_hidden_until_show')}
+                        {CARD_SUBTITLE_KEYS[card.id] ? t(CARD_SUBTITLE_KEYS[card.id]) : card.subtitle}
                       </p>
                     </div>
                     <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${tone.iconWrap}`}>
-                      {valuesVisible ? <Icon className="h-5 w-5" /> : <EyeOff className="h-5 w-5" />}
+                      <Icon className="h-5 w-5" />
                     </div>
                   </div>
                   {cardModalLoadingId === card.id && (
@@ -584,7 +535,7 @@ const Dashboard = () => {
             const title = CHART_TITLE_KEYS[chart.id] ? t(CHART_TITLE_KEYS[chart.id]) : chart.name;
             const subtitle = CHART_SUBTITLE_KEYS[chart.id] ? t(CHART_SUBTITLE_KEYS[chart.id]) : undefined;
             const span = chart.id === 'income-trend-12m' ? 'lg:col-span-3' : chart.id === 'top-items-30d' ? 'lg:col-span-2' : 'lg:col-span-1';
-            const view = valuesVisible ? buildChartView(chart) : null;
+            const view = buildChartView(chart);
             return (
               <div
                 key={chart.id}
@@ -593,18 +544,12 @@ const Dashboard = () => {
                 <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{title}</p>
                 {subtitle && <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{subtitle}</p>}
                 <div className="mt-3">
-                  {view ? (
-                    <Chart
-                      options={view.options}
-                      series={view.series}
-                      type={chart.type}
-                      height={chart.type === 'donut' ? 260 : 240}
-                    />
-                  ) : (
-                    <div className="flex h-[240px] items-center justify-center rounded-xl bg-slate-50 text-sm text-slate-400 dark:bg-slate-800/60 dark:text-slate-500">
-                      <EyeOff className="mr-2 h-4 w-4" /> {t('dashboard_hidden_until_show')}
-                    </div>
-                  )}
+                  <Chart
+                    options={view.options}
+                    series={view.series}
+                    type={chart.type}
+                    height={chart.type === 'donut' ? 260 : 240}
+                  />
                 </div>
               </div>
             );

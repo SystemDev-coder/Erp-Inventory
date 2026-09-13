@@ -83,14 +83,6 @@ export const translations = {
   // Dashboard cards
   dashboard_loading_cards: { en: 'Loading dashboard cards...', so: 'Kaardhadhka guudmarka ayaa soo shubmaya...' },
   dashboard_live_metrics: { en: 'Live metrics visible', so: 'Xogta tooska ah ayaa muuqata' },
-  dashboard_cards_hint: {
-    en: 'Cards are visible. Click Show to reveal numbers.',
-    so: 'Kaardhadhku way muuqdaan. Guji Muuji si aad u aragto tirooyinka.',
-  },
-  dashboard_show: { en: 'Show', so: 'Muuji' },
-  dashboard_hide: { en: 'Hide', so: 'Qari' },
-  dashboard_loading: { en: 'Loading...', so: 'Waa la soo shubayaa...' },
-  dashboard_hidden_until_show: { en: 'Hidden until Show', so: 'Waa qarsoon yahay ilaa Muuji' },
 
   card_today_income_title: { en: 'Today Income', so: 'Dakhliga Maanta' },
   card_today_income_subtitle: { en: 'Sales today', so: 'Iibka maanta' },
@@ -115,7 +107,6 @@ export const translations = {
   chart_debt_breakdown_title: { en: 'Customer Debt Breakdown', so: 'Kala Qaybsanaanta Deynta Macaamiisha' },
   chart_debt_breakdown_subtitle: { en: 'Top customers by outstanding balance', so: 'Macaamiisha ugu deynta badan' },
   chart_other_customers: { en: 'Other Customers', so: 'Macaamiisha Kale' },
-  chart_no_data: { en: 'Not enough data yet', so: 'Xog kuma filna weli' },
 
   // Report card hints shared across multiple report categories (same English text reused
   // verbatim in several *ReportsTab.tsx files, so one key covers all of them)
