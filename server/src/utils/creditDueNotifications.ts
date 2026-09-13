@@ -116,7 +116,7 @@ export const ensureCreditDueNotifications = async (
   }>(
     `SELECT
         p.purchase_id,
-        COALESCE(s.supplier_name, s.name) AS supplier_name,
+        s.name AS supplier_name,
         p.due_date::text AS due_date,
         p.total::text AS total,
         (CURRENT_DATE - p.due_date)::int AS days_overdue

@@ -14,6 +14,8 @@ import { ProfitReportsTab } from './profit/ProfitReportsTab';
 import type { ModalReportState, TabId } from './types';
 import { env } from '../../config/env';
 import { useAuth } from '../../context/AuthContext';
+import { useLanguage } from '../../context/LanguageContext';
+import type { TranslationKey } from '../../translations';
 
 const reportTabs: Array<{ id: TabId; title: string; icon: LucideIcon }> = [
   { id: 'sales', title: 'Sales', icon: LineChart },
@@ -25,6 +27,17 @@ const reportTabs: Array<{ id: TabId; title: string; icon: LucideIcon }> = [
   { id: 'customer', title: 'Customers', icon: UserCheck },
   { id: 'supplier', title: 'Suppliers', icon: Truck },
 ];
+
+const REPORT_TAB_TITLE_KEYS: Record<TabId, TranslationKey> = {
+  sales: 'report_tab_sales',
+  inventory: 'report_tab_inventory',
+  purchase: 'report_tab_purchases',
+  financial: 'report_tab_financial',
+  profit: 'report_tab_profit',
+  hr: 'report_tab_hr',
+  customer: 'report_tab_customers',
+  supplier: 'report_tab_suppliers',
+};
 
 // UPDATED: Treat your DB system roles (Administrator, Viewer) as full-access for report tabs
 const isAdminLikeRole = (roleName?: string | null) => {
@@ -120,6 +133,7 @@ const tabPermissionAny: Record<TabId, string[]> = {
 
 export default function Reports() {
   const { user, permissions } = useAuth();
+  const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState<TabId>('sales');
   const [companyInfo, setCompanyInfo] = useState<{
     name?: string;
@@ -229,7 +243,7 @@ export default function Reports() {
                 }`}
               >
                 <Icon className="h-4 w-4" aria-hidden="true" />
-                {tab.title}
+                {t(REPORT_TAB_TITLE_KEYS[tab.id])}
               </button>
             );
           })}
@@ -261,7 +275,7 @@ export default function Reports() {
           activeTab !== 'customer' &&
           activeTab !== 'supplier' && (
           <div className="rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-8 text-center text-zinc-700">
-            <p className="text-lg font-semibold">{reportTabs.find((tab) => tab.id === activeTab)?.title} reports tab</p>
+            <p className="text-lg font-semibold">{t(REPORT_TAB_TITLE_KEYS[activeTab])} reports tab</p>
             <p className="mt-1 text-sm">This tab is ready for modular implementation in its own report subfolder.</p>
           </div>
         )}

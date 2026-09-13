@@ -6,6 +6,7 @@ import { Modal } from '../../components/ui/modal/Modal';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { useToast } from '../../components/ui/toast/Toast';
 import { useAuth } from '../../context/AuthContext';
+import { useLanguage } from '../../context/LanguageContext';
 import {
   systemService,
   SystemBranch,
@@ -49,6 +50,7 @@ type ConfirmTarget =
 const System = () => {
   const { showToast } = useToast();
   const { permissions: currentPermissions } = useAuth();
+  const { t } = useLanguage();
   const allowRemoteImageUpload = true;
   const logoStorageKey = 'erp.company.logo_img';
   const bannerStorageKey = 'erp.company.banner_img';
@@ -847,14 +849,14 @@ const System = () => {
   const tabs = [
     {
       id: 'company',
-      label: 'Company Info',
+      label: t('tab_company_info'),
       icon: Home,
       badge: 0,
       content: companyContent,
     },
     {
       id: 'users',
-      label: 'Users',
+      label: t('tab_users'),
       icon: Users,
       badge: users.length,
       content: (
@@ -963,7 +965,7 @@ const System = () => {
     },
 	    {
 	      id: 'roles',
-	      label: 'Roles',
+	      label: t('tab_roles'),
 	      icon: Shield,
 	      badge: roles.length,
 	      content: (
@@ -1040,7 +1042,7 @@ const System = () => {
 	      ? [
 	          {
 	            id: 'privileges',
-	            label: 'Privileges',
+	            label: t('tab_privileges'),
 	            icon: CheckSquare,
 	            badge: 0,
 	            content: (
@@ -1068,7 +1070,7 @@ const System = () => {
 	      ? [
 	          {
 	            id: 'role-privileges',
-	            label: 'Role Privileges',
+	            label: t('tab_role_privileges'),
 	            icon: CheckSquare,
 	            badge: 0,
 	            content: (
@@ -1097,7 +1099,7 @@ const System = () => {
 	      ? [
 	          {
 	            id: 'permissions',
-            label: 'Permissions',
+            label: t('tab_permissions'),
             icon: Lock,
             badge: permissions.length,
             content: (

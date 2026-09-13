@@ -10,6 +10,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useBranch } from '../../context/BranchContext';
+import { useLanguage } from '../../context/LanguageContext';
+import type { TranslationKey } from '../../translations';
 import { apiClient, type ApiResponse } from '../../services/api';
 import { API, env } from '../../config/env';
 import { ReportModal, type ReportColumn } from '../../components/reports/ReportModal';
@@ -52,6 +54,22 @@ type DashboardCardDrilldownResponse = {
 // Everything else (totals, monthly/period breakdowns, charts, recent activity) lives in
 // Reports instead, where longer time ranges and drill-downs make more sense.
 const DASHBOARD_CARD_ORDER = ['today-income', 'loans-given-today', 'debt-recovered-today', 'total-outstanding-debt'];
+
+// Card title/subtitle text comes from the backend in English only; translate it here by
+// card id instead, so switching language doesn't require localizing the API response.
+const CARD_TITLE_KEYS: Record<string, TranslationKey> = {
+  'today-income': 'card_today_income_title',
+  'loans-given-today': 'card_loans_given_title',
+  'debt-recovered-today': 'card_debt_recovered_title',
+  'total-outstanding-debt': 'card_total_outstanding_title',
+};
+
+const CARD_SUBTITLE_KEYS: Record<string, TranslationKey> = {
+  'today-income': 'card_today_income_subtitle',
+  'loans-given-today': 'card_loans_given_subtitle',
+  'debt-recovered-today': 'card_debt_recovered_subtitle',
+  'total-outstanding-debt': 'card_total_outstanding_subtitle',
+};
 
 const ICONS = {
   TrendingUp,
@@ -99,6 +117,7 @@ const formatDateTime = (value: string) => {
 const Dashboard = () => {
   const { permissions: userPermissions } = useAuth();
   const { activeBranchId } = useBranch();
+  const { t } = useLanguage();
 
   const [data, setData] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -293,8 +312,8 @@ const Dashboard = () => {
           columns = Object.keys(rows[0] || {}).map((key) => text(key, key));
       }
 
-      setCardModalTitle(payload.title || card.title);
-      setCardModalSubtitle(card.subtitle);
+      setCardModalTitle(CARD_TITLE_KEYS[card.id] ? t(CARD_TITLE_KEYS[card.id]) : payload.title || card.title);
+      setCardModalSubtitle(CARD_SUBTITLE_KEYS[card.id] ? t(CARD_SUBTITLE_KEYS[card.id]) : card.subtitle);
       setCardModalData(rows);
       setCardModalColumns(columns);
       setCardModalTotalLabel(totalLabel);
@@ -317,13 +336,13 @@ const Dashboard = () => {
         <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className="text-xs uppercase tracking-[0.2em] text-primary-700 dark:text-primary-200">Inventory ERP</p>
-            <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl lg:text-4xl dark:text-white">Dashboard</h1>
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl lg:text-4xl dark:text-white">{t('nav_dashboard')}</h1>
             <p className="mt-1 text-sm text-slate-700 dark:text-white/80">
               {loading && !data
-                ? 'Loading dashboard cards...'
+                ? t('dashboard_loading_cards')
                 : valuesVisible
-                  ? `Live metrics visible | ${lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : ''}`
-                  : 'Cards are visible. Click Show to reveal numbers.'}
+                  ? `${t('dashboard_live_metrics')} | ${lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : ''}`
+                  : t('dashboard_cards_hint')}
             </p>
           </div>
 
@@ -340,7 +359,7 @@ const Dashboard = () => {
               ) : (
                 <Eye className="h-4 w-4" />
               )}
-              {loading ? 'Loading...' : valuesVisible ? 'Hide' : 'Show'}
+              {loading ? t('dashboard_loading') : valuesVisible ? t('dashboard_hide') : t('dashboard_show')}
             </button>
           </div>
         </div>
@@ -394,13 +413,17 @@ const Dashboard = () => {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="truncate text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-300">
-                        {card.title}
+                        {CARD_TITLE_KEYS[card.id] ? t(CARD_TITLE_KEYS[card.id]) : card.title}
                       </p>
                       <p className="mt-2 truncate text-[1.7rem] font-semibold leading-tight text-slate-900 dark:text-slate-100">
                         {valuesVisible ? formatValue(card.value, card.format) : maskedValue(card.format)}
                       </p>
                       <p className="mt-1 text-xs text-slate-500 dark:text-slate-300">
-                        {valuesVisible ? card.subtitle : 'Hidden until Show'}
+                        {valuesVisible
+                          ? CARD_SUBTITLE_KEYS[card.id]
+                            ? t(CARD_SUBTITLE_KEYS[card.id])
+                            : card.subtitle
+                          : t('dashboard_hidden_until_show')}
                       </p>
                     </div>
                     <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${tone.iconWrap}`}>

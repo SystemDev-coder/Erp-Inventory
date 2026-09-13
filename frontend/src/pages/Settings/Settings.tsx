@@ -26,6 +26,7 @@ import {
 } from '../../services/settings.service';
 import { systemService, SystemAuditLog } from '../../services/system.service';
 import { useToast } from '../../components/ui/toast/Toast';
+import { useLanguage } from '../../context/LanguageContext';
 import { Modal } from '../../components/ui/modal/Modal';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { useAuth } from '../../context/AuthContext';
@@ -66,6 +67,7 @@ const Settings = () => {
     'px-4 py-2 rounded-xl bg-primary-600 text-white font-semibold hover:bg-primary-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed';
   const { showToast } = useToast();
   const { permissions } = useAuth();
+  const { t } = useLanguage();
 
   const [capitalRows, setCapitalRows] = useState<CapitalContribution[]>([]);
   const [capitalOwnerRows, setCapitalOwnerRows] = useState<CapitalOwnerEquity[]>([]);
@@ -2552,16 +2554,16 @@ const Settings = () => {
       permissions.includes('audit_logs.view') ||
       permissions.includes('system.settings');
     const result = [
-      { id: 'capital', label: 'Capital', icon: CircleDollarSign, content: capitalContent },
-      { id: 'account-cleanup', label: 'Accounting Cleanup', icon: ArrowLeftRight, content: cleanupContent },
-      { id: 'closing-period', label: 'Closing Period', icon: CircleDollarSign, content: closingContent },
-      { id: 'profit-sharing', label: 'Profit Sharing', icon: Percent, content: profitContent },
+      { id: 'capital', label: t('tab_capital'), icon: CircleDollarSign, content: capitalContent },
+      { id: 'account-cleanup', label: t('tab_accounting_cleanup'), icon: ArrowLeftRight, content: cleanupContent },
+      { id: 'closing-period', label: t('tab_closing_period'), icon: CircleDollarSign, content: closingContent },
+      { id: 'profit-sharing', label: t('tab_profit_sharing'), icon: Percent, content: profitContent },
     ];
     if (canManageAssets) {
-      result.splice(1, 0, { id: 'assets', label: 'Assets', icon: BriefcaseBusiness, content: assetsContent });
+      result.splice(1, 0, { id: 'assets', label: t('tab_assets'), icon: BriefcaseBusiness, content: assetsContent });
     }
     if (canViewLogs) {
-      result.push({ id: 'activity-logs', label: 'Activity Logs', icon: History, content: logsContent });
+      result.push({ id: 'activity-logs', label: t('activity_logs'), icon: History, content: logsContent });
     }
     return result;
   }, [
@@ -2572,6 +2574,7 @@ const Settings = () => {
     closingContent,
     profitContent,
     logsContent,
+    t,
   ]);
 
   // Lets links (e.g. the profile dropdown's "Activity Logs" item) deep-link straight to a tab
