@@ -416,6 +416,90 @@ export class DashboardService {
       };
     }
 
+    if (cardId === 'loans-given-today') {
+      if (!canViewSales) return { cardId, title: 'Loans Given Today', format: 'currency', total: 0, rows: [] };
+      const customerNameCol = await pickFirstColumn('customers', ['full_name', 'name'], 'full_name');
+      const rows = await queryMany<{
+        sale_id: number;
+        sale_date: string;
+        doc_type: string;
+        customer_name: string;
+        total: string;
+        status: string;
+      }>(
+        `SELECT
+            s.sale_id,
+            s.sale_date::text AS sale_date,
+            COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale')::text AS doc_type,
+            COALESCE(c.${customerNameCol}, 'Walking Customer')::text AS customer_name,
+            COALESCE(s.total, 0)::text AS total,
+            COALESCE(s.status::text, '')::text AS status
+          FROM ims.sales s
+          LEFT JOIN ims.customers c ON c.customer_id = s.customer_id AND c.branch_id = s.branch_id
+         WHERE s.branch_id = ANY($1)
+           AND s.status <> 'void'
+           AND s.sale_date::date = CURRENT_DATE
+           AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
+           AND LOWER(COALESCE(s.sale_type::text, '')) = 'credit'
+         ORDER BY s.sale_date DESC`,
+        [branchIds]
+      );
+      const total = rows.reduce((sum, row) => sum + Number(row.total || 0), 0);
+      return { cardId, title: 'Loans Given Today', format: 'currency', total, rows };
+    }
+
+    if (cardId === 'debt-recovered-today') {
+      if (!canViewCustomers) return { cardId, title: 'Debt Recovered Today', format: 'currency', total: 0, rows: [] };
+      const customerNameCol = await pickFirstColumn('customers', ['full_name', 'name'], 'full_name');
+      const rows = await queryMany<{
+        receipt_id: number;
+        receipt_date: string;
+        customer_name: string;
+        amount: string;
+        note: string | null;
+      }>(
+        `SELECT
+            cr.receipt_id,
+            cr.receipt_date::text AS receipt_date,
+            COALESCE(c.${customerNameCol}, 'Unknown Customer')::text AS customer_name,
+            COALESCE(cr.amount, 0)::text AS amount,
+            cr.note::text AS note
+          FROM ims.customer_receipts cr
+          LEFT JOIN ims.customers c ON c.customer_id = cr.customer_id AND c.branch_id = cr.branch_id
+         WHERE cr.branch_id = ANY($1)
+           AND cr.receipt_date::date = CURRENT_DATE
+         ORDER BY cr.receipt_date DESC`,
+        [branchIds]
+      );
+      const total = rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+      return { cardId, title: 'Debt Recovered Today', format: 'currency', total, rows };
+    }
+
+    if (cardId === 'total-outstanding-debt') {
+      if (!canViewCustomers) return { cardId, title: 'Total Outstanding Debt', format: 'currency', total: 0, rows: [] };
+      const customerNameCol = await pickFirstColumn('customers', ['full_name', 'name'], 'full_name');
+      const phoneCol = await pickFirstColumn('customers', ['phone', 'mobile', 'phone_number'], 'phone');
+      const rows = await queryMany<{
+        customer_id: number;
+        name: string;
+        phone: string | null;
+        remaining_balance: string;
+      }>(
+        `SELECT customer_id,
+                COALESCE(${customerNameCol}, '')::text AS name,
+                NULLIF(${phoneCol}, '')::text AS phone,
+                remaining_balance::text
+           FROM ims.customers
+          WHERE branch_id = ANY($1)
+            AND remaining_balance > 0
+          ORDER BY remaining_balance DESC
+          LIMIT 500`,
+        [branchIds]
+      );
+      const total = rows.reduce((sum, row) => sum + Number(row.remaining_balance || 0), 0);
+      return { cardId, title: 'Total Outstanding Debt', format: 'currency', total, rows };
+    }
+
     return { cardId, title: 'Dashboard', total: 0, rows: [] };
   }
 
@@ -510,6 +594,9 @@ export class DashboardService {
       todayPaymentsRow,
       monthlyPaymentsRow,
       totalRevenueRow,
+      loansGivenTodayRow,
+      debtRecoveredTodayRow,
+      totalOutstandingDebtRow,
     ] = await Promise.all([
       canViewCustomers
         ? queryOne<{ count: string }>(
@@ -590,6 +677,41 @@ export class DashboardService {
                 COALESCE((SELECT SUM(sr.total) FROM ims.sales_returns sr
                           WHERE sr.branch_id = ANY($1)), 0)
               )::text AS total`,
+            [branchIds]
+          )
+        : Promise.resolve(null),
+      // Loans given today: credit sales handed out today (money lent to customers to
+      // collect later), for tracking day-to-day credit risk.
+      canViewSales
+        ? queryOne<{ total: string }>(
+            `SELECT COALESCE(SUM(s.total), 0)::text AS total
+               FROM ims.sales s
+              WHERE s.branch_id = ANY($1)
+                AND s.status <> 'void'
+                AND s.sale_date::date = CURRENT_DATE
+                AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
+                AND LOWER(COALESCE(s.sale_type::text, '')) = 'credit'`,
+            [branchIds]
+          )
+        : Promise.resolve(null),
+      // Debt recovered today: standalone collections against outstanding customer
+      // balances (Finance > Receipts), not inline payments taken at time of a new sale.
+      canViewCustomers
+        ? queryOne<{ total: string }>(
+            `SELECT COALESCE(SUM(cr.amount), 0)::text AS total
+               FROM ims.customer_receipts cr
+              WHERE cr.branch_id = ANY($1)
+                AND cr.receipt_date::date = CURRENT_DATE`,
+            [branchIds]
+          )
+        : Promise.resolve(null),
+      // Total outstanding debt: current sum of every customer's live receivable balance,
+      // kept in sync with customer_ledger by syncCustomerOutstandingFromLedger.
+      canViewCustomers
+        ? queryOne<{ total: string }>(
+            `SELECT COALESCE(SUM(c.remaining_balance), 0)::text AS total
+               FROM ims.customers c
+              WHERE c.branch_id = ANY($1)`,
             [branchIds]
           )
         : Promise.resolve(null),
@@ -707,6 +829,38 @@ export class DashboardService {
         icon: 'TrendingUp',
         format: 'currency',
       });
+    }
+
+    if (canViewSales) {
+      cards.push({
+        id: 'loans-given-today',
+        title: 'Loans Given Today',
+        value: Number((loansGivenTodayRow as { total: string } | null)?.total || 0),
+        subtitle: 'Credit sales handed out today',
+        icon: 'HandCoins',
+        format: 'currency',
+      });
+    }
+
+    if (canViewCustomers) {
+      cards.push(
+        {
+          id: 'debt-recovered-today',
+          title: 'Debt Recovered Today',
+          value: Number((debtRecoveredTodayRow as { total: string } | null)?.total || 0),
+          subtitle: 'Collected against customer balances today',
+          icon: 'HandHeart',
+          format: 'currency',
+        },
+        {
+          id: 'total-outstanding-debt',
+          title: 'Total Outstanding Debt',
+          value: Number((totalOutstandingDebtRow as { total: string } | null)?.total || 0),
+          subtitle: 'Sum of all customer balances owed',
+          icon: 'Wallet',
+          format: 'currency',
+        }
+      );
     }
 
     return cards;
