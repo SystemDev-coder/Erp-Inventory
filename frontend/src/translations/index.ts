@@ -106,6 +106,141 @@ export const translations = {
     en: 'Sum of all customer balances owed',
     so: 'Isugeynta dhammaan hadhaaga macaamiisha',
   },
+
+  // Dashboard charts
+  chart_income_trend_title: { en: 'Income Trend (12 Months)', so: 'Isbeddelka Dakhliga (12 Bilood)' },
+  chart_income_trend_subtitle: { en: 'Monthly income for the last 12 months', so: 'Dakhliga bishii u dhaxeeya 12-kii bilood ee la soo dhaafay' },
+  chart_top_items_title: { en: 'Top Selling Items', so: 'Alaabta ugu Iibsan Badan' },
+  chart_top_items_subtitle: { en: 'By quantity sold, last 30 days', so: 'Xagga tirada la iibiyay, 30-kii maalmood ee la soo dhaafay' },
+  chart_debt_breakdown_title: { en: 'Customer Debt Breakdown', so: 'Kala Qaybsanaanta Deynta Macaamiisha' },
+  chart_debt_breakdown_subtitle: { en: 'Top customers by outstanding balance', so: 'Macaamiisha ugu deynta badan' },
+  chart_other_customers: { en: 'Other Customers', so: 'Macaamiisha Kale' },
+  chart_no_data: { en: 'Not enough data yet', so: 'Xog kuma filna weli' },
+
+  // Report card hints shared across multiple report categories (same English text reused
+  // verbatim in several *ReportsTab.tsx files, so one key covers all of them)
+  hint_between_two_dates: { en: 'Between two dates', so: 'Labada Taariikh Dhexdooda' },
+  hint_dropdown_show_all: { en: 'Dropdown + Show / All', so: 'Liis + Muuji / Dhammaan' },
+  hint_date_range_show_all: { en: 'Date range + Show / All', so: 'Xilli + Muuji / Dhammaan' },
+  hint_between_dates_status: { en: 'Between two dates + status filter', so: 'Labada Taariikh + Xaaladda' },
+  hint_single_action: { en: 'Single action report', so: 'Warbixin Hal-Tallaabo ah' },
+  hint_between_dates_store: {
+    en: 'Between two dates + Store dropdown + Show / All',
+    so: 'Labada Taariikh + Bakhaarka + Muuji/Dhammaan',
+  },
+  hint_all_items_stock: { en: 'All items with stock', so: 'Dhammaan Alaabta Bakhaarka ku Jirta' },
+  hint_below_threshold: { en: 'Only below threshold', so: 'Kuwa Hoosaysa Heerka la Dejiyay Oo Kaliya' },
+  hint_fifo: { en: 'First-in, first-out costing', so: 'Qiimaynta Kii Hore u Baxay (FIFO)' },
+  hint_lifo: { en: 'Last-in, first-out costing', so: 'Qiimaynta Kii Dambe u Baxay (LIFO)' },
+  hint_average_cost: { en: 'Moving average cost', so: 'Celceliska Qiimaha' },
+  hint_lost_damaged: { en: 'Lost/damaged adjustments', so: "Hagaajin La'aan/Khasaaray" },
+  hint_found_stock: { en: 'Increase adjustments (found stock)', so: 'Kordhinta (Alaab la Helay)' },
+  hint_selected_store_all: { en: 'Show selected store or all', so: 'Muuji Bakhaarka la Doortay ama Dhammaan' },
+  hint_detailed_by_store: { en: 'Detailed by store', so: 'Faahfaahsan Bakhaar Kasta' },
+  hint_store_movement_summary: {
+    en: 'Between two dates + begin/purchase/sales qty',
+    so: 'Labada Taariikh + Bilow/Iibsi/Iib Tirada',
+  },
+  hint_item_movement: {
+    en: 'Item-wise movement between two dates',
+    so: 'Dhaqdhaqaaqa Alaabta Labada Taariikh Dhexdooda',
+  },
+  hint_snapshot_to_date: {
+    en: 'Between two dates (snapshot as of To Date)',
+    so: 'Labada Taariikh (Xaaladda Ilaa Taariikhda Dhammaadka)',
+  },
+  hint_open_invoices: { en: 'Open invoices as of date', so: 'Rasiidhada Furan Ilaa Taariikhda' },
+  hint_group_by: { en: 'Group by customer, item, or store', so: 'U Kala Saar Macmiil, Alaab, ama Bakhaar' },
+  hint_closed_periods: { en: 'Closed periods within range', so: 'Xilliyada la Xiray ee Xadka ku Jira' },
+  hint_payroll_detail: {
+    en: 'Date range + employee salary breakdown',
+    so: 'Xilli + Faahfaahinta Mushaharka Shaqaalaha',
+  },
+  hint_overdue_balance: {
+    en: 'Due date passed with balance remaining',
+    so: 'Taariikhda Dhammaadka way Dhaaftay, Hadhaana wali Jira',
+  },
+  hint_date_range_product_selection: {
+    en: 'Date range + product selection',
+    so: 'Xilli + Doorashada Alaabta',
+  },
+
+  // Sales report cards
+  rcard_sales_summary_title: { en: 'Sales Summary', so: 'Isku-soo-koobka Iibka' },
+  rcard_invoice_status_title: { en: 'Invoice Status', so: 'Xaaladda Rasiidhada' },
+  rcard_daily_sales_title: { en: 'Daily Sales Report', so: 'Warbixinta Iibka Maalinlaha ah' },
+  rcard_sales_by_customer_title: { en: 'Sales by Customer', so: 'Iibka Macmiil Kasta' },
+  rcard_sales_by_product_title: { en: 'Sales by Product', so: 'Iibka Alaab Kasta' },
+  rcard_sales_by_store_title: { en: 'Sales by Store', so: 'Iibka Bakhaar Kasta' },
+  rcard_top_selling_items_title: { en: 'Most Sold Items', so: 'Alaabta ugu Iibsan Badan' },
+  rcard_top_customers_title: { en: 'Top Customers', so: 'Macaamiisha ugu Sarreeya' },
+  rcard_sales_returns_title: { en: 'Sales Returns Report', so: 'Warbixinta Soo Celinta Iibka' },
+  rcard_payments_by_account_title: { en: 'Sales Payments by Account', so: 'Lacag-bixinta Iibka ee Xisaab Kasta' },
+  rcard_quotations_title: { en: 'Quotations', so: 'Qiimaha la Bixiyay' },
+  rcard_cashier_performance_title: { en: 'Cashier Performance', so: 'Waxqabadka Keeshegga' },
+
+  // Inventory report cards
+  rcard_current_stock_title: { en: 'Current Stock Levels', so: 'Heerka Bakhaarka Hadda' },
+  rcard_low_stock_title: { en: 'Low Stock Alert', so: 'Digniinta Bakhaarka Yaraaday' },
+  rcard_valuation_fifo_title: { en: 'Stock Value (FIFO)', so: 'Qiimaha Bakhaarka (FIFO)' },
+  rcard_valuation_lifo_title: { en: 'Stock Value (LIFO)', so: 'Qiimaha Bakhaarka (LIFO)' },
+  rcard_valuation_average_title: { en: 'Stock Value (Average)', so: 'Qiimaha Bakhaarka (Celcelis)' },
+  rcard_adjustments_title: { en: 'Stock Adjustment Log', so: 'Diiwaanka Hagaajinta Bakhaarka' },
+  rcard_inventory_loss_title: { en: 'Inventory Loss', so: 'Khasaaraha Bakhaarka' },
+  rcard_inventory_found_title: { en: 'Inventory Found', so: 'Alaabta la Helay' },
+  rcard_store_stock_title: { en: 'Store Stock Report', so: 'Warbixinta Bakhaarka Store-ka' },
+  rcard_store_wise_title: { en: 'Store-wise Stock', so: 'Bakhaarka Store Kasta' },
+  rcard_store_movement_title: { en: 'Store Movement Summary', so: 'Isku-soo-koobka Dhaqdhaqaaqa Store-ka' },
+  rcard_store_movement_detail_title: { en: 'Store Movement Detail', so: 'Faahfaahinta Dhaqdhaqaaqa Store-ka' },
+
+  // Purchase report cards
+  rcard_orders_summary_title: { en: 'Purchase Orders Summary', so: 'Isku-soo-koobka Dalabaadka Iibsiga' },
+  rcard_purchase_returns_title: { en: 'Purchase Returns', so: 'Soo Celinta Iibsiga' },
+  rcard_purchase_payment_status_title: { en: 'Purchase Payment Status', so: 'Xaaladda Lacag-bixinta Iibsiga' },
+  rcard_supplier_wise_title: { en: 'Supplier Wise Purchases', so: 'Iibsiga Alaab-bixiye Kasta' },
+  rcard_best_suppliers_title: { en: 'Best Suppliers', so: 'Alaab-bixiyeyaasha ugu Fiican' },
+  rcard_price_variance_title: { en: 'Purchase Price Variance', so: 'Kala Duwanaanta Qiimaha Iibsiga' },
+
+  // Financial report cards
+  rcard_balance_sheet_title: { en: 'Balance Sheet', so: 'Miisaaniyadda Hantida' },
+  rcard_cash_flow_title: { en: 'Cash Flow Statement', so: 'Bayaanka Socodka Lacagta' },
+  rcard_cogs_title: { en: 'COGS (Cost of Goods Sold)', so: 'Qiimaha Alaabta la Iibiyay (COGS)' },
+  rcard_account_balances_title: { en: 'Account Balances', so: 'Hadhaaga Xisaabaadka' },
+  rcard_expense_summary_title: { en: 'Expense Summary', so: 'Isku-soo-koobka Kharashaadka' },
+  rcard_accounts_receivable_title: { en: 'Accounts Receivable', so: 'Lacagaha la Sugayo' },
+  rcard_accounts_payable_title: { en: 'Accounts Payable', so: 'Lacagaha la Bixin Doono' },
+  rcard_account_statement_title: { en: 'Account Statement', so: 'Bayaanka Xisaabta' },
+  rcard_trial_balance_title: { en: 'Trial Balance', so: 'Miisaaniyadda Tijaabada' },
+  rcard_general_ledger_title: { en: 'General Ledger', so: 'Diiwaanka Guud ee Xisaabaadka' },
+
+  // Profit report cards
+  rcard_income_statement_title: { en: 'Income Statement (Profit & Loss)', so: "Bayaanka Dakhliga (Faa'iido & Khasaare)" },
+  rcard_profit_analysis_title: { en: 'Profit Analysis', so: "Falanqaynta Faa'iidada" },
+  rcard_profit_by_period_title: { en: 'Profit by Closing Period', so: "Faa'iidada Xilliga Xiran" },
+
+  // HR report cards
+  rcard_employee_list_title: { en: 'Employee List', so: 'Liiska Shaqaalaha' },
+  rcard_payroll_summary_title: { en: 'Payroll Summary', so: 'Isku-soo-koobka Mushaharka' },
+  rcard_payroll_employee_detail_title: { en: 'Payroll Employee Detail', so: 'Faahfaahinta Mushaharka Shaqaale' },
+  rcard_salary_payments_title: { en: 'Salary Payments', so: 'Lacag-bixinta Mushaharka' },
+  rcard_payroll_by_month_title: { en: 'Payroll by Month', so: 'Mushaharka Bil Kasta' },
+
+  // Customer report cards
+  rcard_customer_list_title: { en: 'Customer List', so: 'Liiska Macaamiisha' },
+  rcard_customer_ledger_title: { en: 'Customer Ledger', so: 'Diiwaanka Macmiilka' },
+  rcard_outstanding_balances_title: { en: 'Outstanding Balances', so: 'Hadhaaga aan la Bixin' },
+  rcard_customer_payment_history_title: { en: 'Customer Payment History', so: 'Taariikhda Lacag-bixinta Macmiilka' },
+  rcard_credit_customers_title: { en: 'Credit Customers', so: 'Macaamiisha Deynta' },
+  rcard_credit_overdue_sales_title: { en: 'Overdue Credit Sales', so: 'Iibka Deynta ee Dhaafay' },
+  rcard_new_customers_title: { en: 'New Customers (by date)', so: 'Macaamiisha Cusub (Taariikh ahaan)' },
+  rcard_customer_activity_title: { en: 'Customer Activity', so: 'Dhaqdhaqaaqa Macmiilka' },
+
+  // Supplier report cards
+  rcard_supplier_list_title: { en: 'Supplier List', so: 'Liiska Alaab-bixiyeyaasha' },
+  rcard_supplier_ledger_title: { en: 'Supplier Ledger', so: 'Diiwaanka Alaab-bixiyaha' },
+  rcard_supplier_payments_title: { en: 'Supplier Payments', so: 'Lacag-bixinta Alaab-bixiyaha' },
+  rcard_supplier_outstanding_title: { en: 'Outstanding Purchases', so: 'Iibsiga aan la Bixin' },
+  rcard_credit_overdue_purchases_title: { en: 'Overdue Credit Purchases', so: 'Iibsiga Deynta ee Dhaafay' },
 } as const;
 
 export type TranslationKey = keyof typeof translations;

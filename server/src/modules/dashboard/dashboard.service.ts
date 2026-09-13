@@ -1011,6 +1011,84 @@ export class DashboardService {
         labels: labels12m,
         series: [{ name: 'Income', data: income12m }],
       });
+
+      const topItemRows = await queryMany<{ item_name: string; quantity_sold: string }>(
+        `WITH sale_item_map AS (
+           SELECT
+             si.sale_id,
+             COALESCE(
+               (to_jsonb(si) ->> 'product_id')::bigint,
+               (to_jsonb(si) ->> 'item_id')::bigint
+             ) AS item_id,
+             COALESCE((to_jsonb(si) ->> 'quantity')::numeric, 0) AS quantity
+           FROM ims.sale_items si
+         )
+         SELECT i.name AS item_name,
+                COALESCE(SUM(m.quantity), 0)::double precision AS quantity_sold
+           FROM sale_item_map m
+           JOIN ims.sales s ON s.sale_id = m.sale_id
+           JOIN ims.items i ON i.item_id = m.item_id
+          WHERE s.branch_id = ANY($1)
+            AND s.status <> 'void'
+            AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
+            AND s.sale_date >= CURRENT_DATE - INTERVAL '30 days'
+          GROUP BY i.item_id, i.name
+         HAVING COALESCE(SUM(m.quantity), 0) > 0
+          ORDER BY quantity_sold DESC
+          LIMIT 5`,
+        [branchIds]
+      );
+
+      if (topItemRows.length) {
+        charts.push({
+          id: 'top-items-30d',
+          name: 'Top Selling Items (Last 30 Days)',
+          type: 'bar',
+          labels: topItemRows.map((row) => row.item_name),
+          series: [{ name: 'Quantity Sold', data: topItemRows.map((row) => Number(row.quantity_sold || 0)) }],
+        });
+      }
+    }
+
+    if (permissions.includes('customers.view')) {
+      const nameCol = await pickFirstColumn('customers', ['full_name', 'name'], 'full_name');
+      const topDebtRows = await queryMany<{ name: string; balance: string }>(
+        `SELECT COALESCE(${nameCol}, '')::text AS name, remaining_balance::double precision AS balance
+           FROM ims.customers
+          WHERE branch_id = ANY($1)
+            AND remaining_balance > 0
+          ORDER BY remaining_balance DESC
+          LIMIT 5`,
+        [branchIds]
+      );
+      const totalDebtRow = await queryOne<{ total: string }>(
+        `SELECT COALESCE(SUM(remaining_balance), 0)::double precision AS total
+           FROM ims.customers
+          WHERE branch_id = ANY($1)
+            AND remaining_balance > 0`,
+        [branchIds]
+      );
+
+      if (topDebtRows.length) {
+        const topSum = topDebtRows.reduce((sum, row) => sum + Number(row.balance || 0), 0);
+        const grandTotal = Number(totalDebtRow?.total || 0);
+        const othersBalance = Math.max(0, grandTotal - topSum);
+
+        const labels = topDebtRows.map((row) => row.name || 'Customer');
+        const values = topDebtRows.map((row) => Number(row.balance || 0));
+        if (othersBalance > 0) {
+          labels.push('Other Customers');
+          values.push(othersBalance);
+        }
+
+        charts.push({
+          id: 'customer-debt-breakdown',
+          name: 'Customer Debt Breakdown',
+          type: 'donut',
+          labels,
+          series: [{ name: 'Outstanding Balance', data: values }],
+        });
+      }
     }
 
     return charts;

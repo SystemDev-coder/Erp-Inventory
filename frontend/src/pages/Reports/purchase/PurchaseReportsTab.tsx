@@ -5,6 +5,8 @@ import { purchaseReportsService } from '../../../services/reports/purchaseReport
 import type { DateRange, ModalReportState } from '../types';
 import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange, withReportTruncation, type ReportTruncationMeta } from '../reportUtils';
 import { useBranch } from '../../../context/BranchContext';
+import { useLanguage } from '../../../context/LanguageContext';
+import type { TranslationKey } from '../../../translations';
 
 type PurchaseCardId =
   | 'orders-summary'
@@ -22,6 +24,24 @@ const purchaseCards: Array<{ id: PurchaseCardId; title: string; hint: string }> 
   { id: 'best-suppliers', title: 'Best Suppliers', hint: 'Between two dates' },
   { id: 'price-variance', title: 'Purchase Price Variance', hint: 'Date range + product selection' },
 ];
+
+const PURCHASE_CARD_TITLE_KEYS: Record<PurchaseCardId, TranslationKey> = {
+  'orders-summary': 'rcard_orders_summary_title',
+  'purchase-returns': 'rcard_purchase_returns_title',
+  'payment-status': 'rcard_purchase_payment_status_title',
+  'supplier-wise': 'rcard_supplier_wise_title',
+  'best-suppliers': 'rcard_best_suppliers_title',
+  'price-variance': 'rcard_price_variance_title',
+};
+
+const PURCHASE_CARD_HINT_KEYS: Record<PurchaseCardId, TranslationKey> = {
+  'orders-summary': 'hint_between_two_dates',
+  'purchase-returns': 'hint_between_two_dates',
+  'payment-status': 'hint_between_two_dates',
+  'supplier-wise': 'hint_dropdown_show_all',
+  'best-suppliers': 'hint_between_two_dates',
+  'price-variance': 'hint_date_range_product_selection',
+};
 
 const ordersSummaryColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'purchase_id', header: 'Purchase #', getHref: (row) => (row.purchase_id ? `/purchases/${row.purchase_id}` : null) },
@@ -101,6 +121,7 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
     onOpenModal(withReportTruncation(report, meta, legacy));
 
   const { activeBranchId } = useBranch();
+  const { t } = useLanguage();
   const [expandedCardId, setExpandedCardId] = useState<PurchaseCardId | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<PurchaseCardId | null>(null);
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
@@ -425,8 +446,8 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
           className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-primary-900 to-primary-700 px-5 py-4 text-left text-white"
         >
           <div>
-            <p className="text-xl font-semibold leading-tight">{card.title}</p>
-            <p className="mt-1 text-xs font-medium text-white/85">{card.hint}</p>
+            <p className="text-xl font-semibold leading-tight">{t(PURCHASE_CARD_TITLE_KEYS[card.id])}</p>
+            <p className="mt-1 text-xs font-medium text-white/85">{t(PURCHASE_CARD_HINT_KEYS[card.id])}</p>
           </div>
           <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
         </button>

@@ -7,6 +7,8 @@ import { financeService } from '../../../services/finance.service';
 import type { DateRange, ModalReportState } from '../types';
 import { formatCurrency, formatDateOnly, formatQuantity, toRecordRows, defaultReportRange, withReportTruncation, type ReportTruncationMeta } from '../reportUtils';
 import { useBranch } from '../../../context/BranchContext';
+import { useLanguage } from '../../../context/LanguageContext';
+import type { TranslationKey } from '../../../translations';
 
 type ProfitCardId = 'income-statement' | 'profit-by-period' | 'profit-analysis';
 type ProfitGroupBy = 'customer' | 'item' | 'store';
@@ -16,6 +18,18 @@ const profitCards: Array<{ id: ProfitCardId; title: string; hint: string }> = [
   { id: 'profit-analysis', title: 'Profit Analysis', hint: 'Group by customer, item, or store' },
   { id: 'profit-by-period', title: 'Profit by Closing Period', hint: 'Closed periods within range' },
 ];
+
+const PROFIT_CARD_TITLE_KEYS: Record<ProfitCardId, TranslationKey> = {
+  'income-statement': 'rcard_income_statement_title',
+  'profit-analysis': 'rcard_profit_analysis_title',
+  'profit-by-period': 'rcard_profit_by_period_title',
+};
+
+const PROFIT_CARD_HINT_KEYS: Record<ProfitCardId, TranslationKey> = {
+  'income-statement': 'hint_between_two_dates',
+  'profit-analysis': 'hint_group_by',
+  'profit-by-period': 'hint_closed_periods',
+};
 
 const statementColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'section', header: 'Section' },
@@ -80,6 +94,7 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
     onOpenModal(withReportTruncation(report, meta, legacy));
 
   const { activeBranchId } = useBranch();
+  const { t } = useLanguage();
   const [expandedCardId, setExpandedCardId] = useState<ProfitCardId | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<ProfitCardId | null>(null);
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
@@ -578,8 +593,8 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
           className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-primary-900 to-primary-700 px-5 py-4 text-left text-white"
         >
           <div>
-            <p className="text-xl font-semibold leading-tight">{card.title}</p>
-            <p className="mt-1 text-xs font-medium text-white/85">{card.hint}</p>
+            <p className="text-xl font-semibold leading-tight">{t(PROFIT_CARD_TITLE_KEYS[card.id])}</p>
+            <p className="mt-1 text-xs font-medium text-white/85">{t(PROFIT_CARD_HINT_KEYS[card.id])}</p>
           </div>
           <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
         </button>

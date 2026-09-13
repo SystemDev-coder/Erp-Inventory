@@ -5,6 +5,8 @@ import { inventoryReportsService } from '../../../services/reports/inventoryRepo
 import type { DateRange, ModalReportState } from '../types';
 import { formatCurrency, formatDateOnly, formatDateTime, formatQuantity, toRecordRows, defaultReportRange, withReportTruncation, type ReportTruncationMeta } from '../reportUtils';
 import { useBranch } from '../../../context/BranchContext';
+import { useLanguage } from '../../../context/LanguageContext';
+import type { TranslationKey } from '../../../translations';
 
 type InventoryCardId =
   | 'current-stock'
@@ -34,6 +36,36 @@ const inventoryCards: Array<{ id: InventoryCardId; title: string; hint: string }
   { id: 'store-movement', title: 'Store Movement Summary', hint: 'Between two dates + begin/purchase/sales qty' },
   { id: 'store-movement-detail', title: 'Store Movement Detail', hint: 'Item-wise movement between two dates' },
 ];
+
+const INVENTORY_CARD_TITLE_KEYS: Record<InventoryCardId, TranslationKey> = {
+  'current-stock': 'rcard_current_stock_title',
+  'low-stock': 'rcard_low_stock_title',
+  'valuation-fifo': 'rcard_valuation_fifo_title',
+  'valuation-lifo': 'rcard_valuation_lifo_title',
+  'valuation-average': 'rcard_valuation_average_title',
+  adjustments: 'rcard_adjustments_title',
+  'inventory-loss': 'rcard_inventory_loss_title',
+  'inventory-ledger': 'rcard_inventory_found_title',
+  'store-stock': 'rcard_store_stock_title',
+  'store-wise': 'rcard_store_wise_title',
+  'store-movement': 'rcard_store_movement_title',
+  'store-movement-detail': 'rcard_store_movement_detail_title',
+};
+
+const INVENTORY_CARD_HINT_KEYS: Record<InventoryCardId, TranslationKey> = {
+  'current-stock': 'hint_all_items_stock',
+  'low-stock': 'hint_below_threshold',
+  'valuation-fifo': 'hint_fifo',
+  'valuation-lifo': 'hint_lifo',
+  'valuation-average': 'hint_average_cost',
+  adjustments: 'hint_between_two_dates',
+  'inventory-loss': 'hint_lost_damaged',
+  'inventory-ledger': 'hint_found_stock',
+  'store-stock': 'hint_selected_store_all',
+  'store-wise': 'hint_detailed_by_store',
+  'store-movement': 'hint_store_movement_summary',
+  'store-movement-detail': 'hint_item_movement',
+};
 
 const currentStockColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'item_name', header: 'Item' },
@@ -185,6 +217,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
     onOpenModal(withReportTruncation(report, meta, legacy));
 
   const { activeBranchId } = useBranch();
+  const { t } = useLanguage();
   const [expandedCardId, setExpandedCardId] = useState<InventoryCardId | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<InventoryCardId | null>(null);
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
@@ -772,8 +805,8 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
           className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-primary-900 to-primary-700 px-5 py-4 text-left text-white"
         >
           <div>
-            <p className="text-xl font-semibold leading-tight">{card.title}</p>
-            <p className="mt-1 text-xs font-medium text-white/85">{card.hint}</p>
+            <p className="text-xl font-semibold leading-tight">{t(INVENTORY_CARD_TITLE_KEYS[card.id])}</p>
+            <p className="mt-1 text-xs font-medium text-white/85">{t(INVENTORY_CARD_HINT_KEYS[card.id])}</p>
           </div>
           <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
         </button>

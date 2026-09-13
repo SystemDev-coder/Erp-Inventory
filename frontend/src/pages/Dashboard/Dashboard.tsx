@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import Chart from 'react-apexcharts';
+import type { ApexOptions } from 'apexcharts';
 import {
   Eye,
   EyeOff,
@@ -8,6 +10,7 @@ import {
   TrendingUp,
   Wallet,
 } from 'lucide-react';
+import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { useBranch } from '../../context/BranchContext';
 import { useLanguage } from '../../context/LanguageContext';
@@ -27,9 +30,18 @@ type DashboardCard = {
   format?: 'currency' | 'number';
 };
 
+type DashboardChart = {
+  id: string;
+  name: string;
+  type: 'bar' | 'line' | 'donut';
+  labels: string[];
+  series: Array<{ name: string; data: number[] }>;
+};
+
 type DashboardResponse = {
   widgets?: Array<{ id: string; name: string; permission: string; description?: string }>;
   cards: DashboardCard[];
+  charts?: DashboardChart[];
   summary: {
     modules: number;
     sections: number;
@@ -51,9 +63,29 @@ type DashboardCardDrilldownResponse = {
 
 // Only these four cards belong on the dashboard itself - the day-to-day numbers a manager
 // checks first thing (cash flow, credit risk, collection performance, overall exposure).
-// Everything else (totals, monthly/period breakdowns, charts, recent activity) lives in
-// Reports instead, where longer time ranges and drill-downs make more sense.
+// A small set of trend charts sits below them (see CHART_TITLE_KEYS); anything more
+// detailed than that (period breakdowns, drill-down tables, exports) stays in Reports.
 const DASHBOARD_CARD_ORDER = ['today-income', 'loans-given-today', 'debt-recovered-today', 'total-outstanding-debt'];
+
+// Chart id -> translation keys, same by-id lookup pattern as CARD_TITLE_KEYS above.
+const CHART_TITLE_KEYS: Record<string, TranslationKey> = {
+  'income-trend-12m': 'chart_income_trend_title',
+  'top-items-30d': 'chart_top_items_title',
+  'customer-debt-breakdown': 'chart_debt_breakdown_title',
+};
+
+const CHART_SUBTITLE_KEYS: Record<string, TranslationKey> = {
+  'income-trend-12m': 'chart_income_trend_subtitle',
+  'top-items-30d': 'chart_top_items_subtitle',
+  'customer-debt-breakdown': 'chart_debt_breakdown_subtitle',
+};
+
+// Kept at module scope (not component state) so it survives a route navigation away from
+// and back to the dashboard within the same browser session - returning to the page reuses
+// this instead of hitting the server again. Cleared automatically once stale.
+const DASHBOARD_CACHE_TTL_MS = 60_000;
+const dashboardCache = new Map<string, { payload: DashboardResponse; fetchedAt: number }>();
+const dashboardCacheKey = (branchId: number | null) => String(branchId ?? 'all');
 
 // Card title/subtitle text comes from the backend in English only; translate it here by
 // card id instead, so switching language doesn't require localizing the API response.
@@ -118,12 +150,17 @@ const Dashboard = () => {
   const { permissions: userPermissions } = useAuth();
   const { activeBranchId } = useBranch();
   const { t } = useLanguage();
+  const { theme } = useTheme();
 
-  const [data, setData] = useState<DashboardResponse | null>(null);
+  const cacheKey = dashboardCacheKey(activeBranchId);
+  const cachedEntry = dashboardCache.get(cacheKey);
+  const hasFreshCache = !!cachedEntry && Date.now() - cachedEntry.fetchedAt < DASHBOARD_CACHE_TTL_MS;
+
+  const [data, setData] = useState<DashboardResponse | null>(() => (hasFreshCache ? cachedEntry!.payload : null));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<string>('');
-  const [hasLoaded, setHasLoaded] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(hasFreshCache);
   const [valuesVisible, setValuesVisible] = useState(false);
   const [companyInfo, setCompanyInfo] = useState<{
     name?: string;
@@ -170,6 +207,14 @@ const Dashboard = () => {
   }, []);
 
   useEffect(() => {
+    // Reusing a still-fresh cache entry from a previous mount means simply returning to
+    // this page never hits the server again - only a real data change (Show/refresh) does.
+    const cached = dashboardCache.get(dashboardCacheKey(activeBranchId));
+    if (cached && Date.now() - cached.fetchedAt < DASHBOARD_CACHE_TTL_MS) {
+      setData(cached.payload);
+      setHasLoaded(true);
+      return;
+    }
     void loadDashboard(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeBranchId]);
@@ -208,6 +253,86 @@ const Dashboard = () => {
       });
   }, [data?.cards, userPermissions]);
 
+  // 'sales-6m' is an older bar chart kept in the API for other consumers; it duplicates
+  // income-trend-12m's data in a different shape, so it's left out of the dashboard to
+  // avoid showing two near-identical income charts side by side.
+  const visibleCharts = useMemo(
+    () => (data?.charts ?? []).filter((chart) => chart.id !== 'sales-6m'),
+    [data?.charts]
+  );
+
+  const isDark = theme === 'dark';
+  const chartTextColor = isDark ? '#cbd5e1' : '#475569';
+  const chartGridColor = isDark ? '#334155' : '#e2e8f0';
+  const chartPalette = ['#2a6f97', '#468faf', '#61a5c2', '#01497c', '#89c2d9', '#94a3b8'];
+
+  const formatMonthLabel = (yyyyMm: string) => {
+    const [year, month] = yyyyMm.split('-').map(Number);
+    if (!year || !month) return yyyyMm;
+    return new Date(year, month - 1, 1).toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
+  };
+
+  const buildChartView = (chart: DashboardChart): { options: ApexOptions; series: ApexOptions['series'] } => {
+    const baseOptions: ApexOptions = {
+      chart: { fontFamily: 'inherit', toolbar: { show: false }, background: 'transparent' },
+      colors: chartPalette,
+      theme: { mode: isDark ? 'dark' : 'light' },
+      grid: { borderColor: chartGridColor, strokeDashArray: 4 },
+      legend: { labels: { colors: chartTextColor } },
+      dataLabels: { enabled: false },
+    };
+
+    if (chart.type === 'line') {
+      return {
+        options: {
+          ...baseOptions,
+          stroke: { curve: 'smooth', width: 3 },
+          fill: { type: 'gradient', gradient: { opacityFrom: 0.35, opacityTo: 0 } },
+          xaxis: {
+            categories: chart.labels.map(formatMonthLabel),
+            labels: { style: { colors: chartTextColor } },
+            axisBorder: { show: false },
+            axisTicks: { show: false },
+          },
+          yaxis: { labels: { style: { colors: chartTextColor }, formatter: (v: number) => formatValue(v, 'currency') } },
+          tooltip: { theme: isDark ? 'dark' : 'light', y: { formatter: (v: number) => formatValue(v, 'currency') } },
+        },
+        series: chart.series,
+      };
+    }
+
+    if (chart.type === 'donut') {
+      const labels = chart.labels.map((label) => (label === 'Other Customers' ? t('chart_other_customers') : label));
+      return {
+        options: {
+          ...baseOptions,
+          labels,
+          legend: { ...baseOptions.legend, position: 'bottom' },
+          dataLabels: { enabled: true, formatter: (v: number) => `${v.toFixed(0)}%` },
+          tooltip: { theme: isDark ? 'dark' : 'light', y: { formatter: (v: number) => formatValue(v, 'currency') } },
+        },
+        series: chart.series[0]?.data ?? [],
+      };
+    }
+
+    // bar
+    return {
+      options: {
+        ...baseOptions,
+        plotOptions: { bar: { horizontal: true, borderRadius: 4, barHeight: '60%' } },
+        xaxis: {
+          categories: chart.labels,
+          labels: { style: { colors: chartTextColor } },
+          axisBorder: { show: false },
+          axisTicks: { show: false },
+        },
+        yaxis: { labels: { style: { colors: chartTextColor } } },
+        tooltip: { theme: isDark ? 'dark' : 'light' },
+      },
+      series: chart.series,
+    };
+  };
+
   const loadDashboard = async (reveal = true) => {
     setLoading(true);
     setError(null);
@@ -216,6 +341,7 @@ const Dashboard = () => {
     const res: ApiResponse<DashboardResponse> = await apiClient.get<DashboardResponse>(dashboardUrl);
     if (res.success && res.data) {
       setData(res.data);
+      dashboardCache.set(dashboardCacheKey(activeBranchId), { payload: res.data, fetchedAt: Date.now() });
       setLastUpdated(new Date().toISOString());
       if (reveal) setValuesVisible(true);
     } else {
@@ -449,6 +575,40 @@ const Dashboard = () => {
               ))}
             </div>
           )}
+        </section>
+      )}
+
+      {hasLoaded && visibleCharts.length > 0 && (
+        <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          {visibleCharts.map((chart) => {
+            const title = CHART_TITLE_KEYS[chart.id] ? t(CHART_TITLE_KEYS[chart.id]) : chart.name;
+            const subtitle = CHART_SUBTITLE_KEYS[chart.id] ? t(CHART_SUBTITLE_KEYS[chart.id]) : undefined;
+            const span = chart.id === 'income-trend-12m' ? 'lg:col-span-3' : chart.id === 'top-items-30d' ? 'lg:col-span-2' : 'lg:col-span-1';
+            const view = valuesVisible ? buildChartView(chart) : null;
+            return (
+              <div
+                key={chart.id}
+                className={`rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900 ${span}`}
+              >
+                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{title}</p>
+                {subtitle && <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{subtitle}</p>}
+                <div className="mt-3">
+                  {view ? (
+                    <Chart
+                      options={view.options}
+                      series={view.series}
+                      type={chart.type}
+                      height={chart.type === 'donut' ? 260 : 240}
+                    />
+                  ) : (
+                    <div className="flex h-[240px] items-center justify-center rounded-xl bg-slate-50 text-sm text-slate-400 dark:bg-slate-800/60 dark:text-slate-500">
+                      <EyeOff className="mr-2 h-4 w-4" /> {t('dashboard_hidden_until_show')}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </section>
       )}
 
