@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { deleteReasonSchema } from '../../utils/deleteReason';
 
 const returnItemSchema = z.object({
   itemId: z.coerce.number().int().positive(),
@@ -29,9 +30,7 @@ export const createPurchaseReturnSchema = z.object({
   items: z.array(returnItemSchema).min(1),
 });
 
-export const deleteReturnSchema = z.object({
-  reason: z.string().trim().min(1, 'Reason is required').max(500),
-});
+export const deleteReturnSchema = deleteReasonSchema;
 
 export type CreateSalesReturnBody = z.infer<typeof createSalesReturnSchema>;
 export type CreatePurchaseReturnBody = z.infer<typeof createPurchaseReturnSchema>;

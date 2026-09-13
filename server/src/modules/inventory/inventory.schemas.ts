@@ -61,13 +61,6 @@ export const stockQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(5000).default(50),
 }).superRefine((value, ctx) => {
-  if ((value.fromDate && !value.toDate) || (!value.fromDate && value.toDate)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'Both fromDate and toDate are required together',
-      path: ['fromDate'],
-    });
-  }
   if (value.fromDate && value.toDate && value.fromDate > value.toDate) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,

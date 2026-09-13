@@ -35,9 +35,6 @@ export const listAssets = asyncHandler(async (req: AuthRequest, res: Response) =
   const state = (req.query.state as string | undefined)?.trim();
   const fromDate = (req.query.fromDate as string) || undefined;
   const toDate = (req.query.toDate as string) || undefined;
-  if ((fromDate && !toDate) || (!fromDate && toDate)) {
-    throw ApiError.badRequest('Both fromDate and toDate are required together');
-  }
   if (fromDate && toDate && fromDate > toDate) {
     throw ApiError.badRequest('fromDate cannot be after toDate');
   }

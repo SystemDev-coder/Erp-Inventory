@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   getCreditCustomersReport,
+  getCreditOverdueReport,
   getCustomerActivityReport,
   getCustomerLedgerReport,
   getCustomerListReport,
@@ -20,6 +21,7 @@ router.get('/outstanding-balances', getOutstandingBalancesReport);
 router.get('/top-customers', getTopCustomersReport);
 router.get('/payment-history', getCustomerPaymentHistoryReport);
 router.get('/credit-customers', getCreditCustomersReport);
+router.get('/credit-overdue', getCreditOverdueReport);
 router.get('/new-customers', getNewCustomersReport);
 router.get('/activity', getCustomerActivityReport);
 

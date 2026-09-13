@@ -139,13 +139,13 @@ const System = () => {
     return bannerUrl;
   };
 
-  const handleLogoDelete = async () => {
+  const handleLogoDelete = async (reason: string) => {
     if (!allowRemoteImageUpload) {
       setCompanyForm((prev) => ({ ...prev, logo_img: '' }));
       clearLocalImage(logoStorageKey);
       return;
     }
-    const res = await imageService.deleteSystemLogo();
+    const res = await imageService.deleteSystemLogo(reason);
     if (!res.success) {
       throw new Error(res.error || 'Failed to delete logo');
     }
@@ -153,13 +153,13 @@ const System = () => {
     clearLocalImage(logoStorageKey);
   };
 
-  const handleBannerDelete = async () => {
+  const handleBannerDelete = async (reason: string) => {
     if (!allowRemoteImageUpload) {
       setCompanyForm((prev) => ({ ...prev, banner_img: '' }));
       clearLocalImage(bannerStorageKey);
       return;
     }
-    const res = await imageService.deleteSystemBanner();
+    const res = await imageService.deleteSystemBanner(reason);
     if (!res.success) {
       throw new Error(res.error || 'Failed to delete banner');
     }
@@ -270,10 +270,10 @@ const System = () => {
     await loadCompany();
   };
 
-  const handleCompanyDelete = async () => {
+  const handleCompanyDelete = async (reason: string) => {
     if (!company) return;
     setCompanyDeleting(true);
-    const res = await settingsService.deleteCompany();
+    const res = await settingsService.deleteCompany(reason);
     setCompanyDeleting(false);
     if (!res.success) {
       showToast('error', 'Company Info', res.error || 'Delete failed');
@@ -375,6 +375,8 @@ const System = () => {
     showToast('error', 'Users', res.error || 'Failed to load users');
     return [];
   };
+
+  const filteredUsers = users;
 
   const loadRoles = async () => {
     const res = await systemService.getRoles();
@@ -629,11 +631,11 @@ const System = () => {
     setConfirmTarget({ type: 'permission', payload: permission });
 
 
-  const confirmAction = async () => {
+  const confirmAction = async (reason: string) => {
     if (!confirmTarget) return;
     setConfirmLoading(true);
     if (confirmTarget.type === 'user') {
-      const res = await systemService.deleteUser(confirmTarget.payload.user_id);
+      const res = await systemService.deleteUser(confirmTarget.payload.user_id, reason);
       if (!res.success) {
         showToast('error', 'Users', res.error || 'Delete failed');
       } else {
@@ -641,7 +643,7 @@ const System = () => {
         await loadUsers();
       }
     } else if (confirmTarget.type === 'role') {
-      const res = await systemService.deleteRole(confirmTarget.payload.role_id);
+      const res = await systemService.deleteRole(confirmTarget.payload.role_id, reason);
       if (!res.success) {
         showToast('error', 'Roles', res.error || 'Delete failed');
       } else {
@@ -649,7 +651,7 @@ const System = () => {
         await loadRoles();
       }
     } else if (confirmTarget.type === 'permission') {
-      const res = await systemService.deletePermission(confirmTarget.payload.perm_id);
+      const res = await systemService.deletePermission(confirmTarget.payload.perm_id, reason);
       if (!res.success) {
         showToast('error', 'Permissions', res.error || 'Delete failed');
       } else {
@@ -834,7 +836,8 @@ const System = () => {
       <ConfirmDialog
         isOpen={companyDeleteConfirmOpen}
         onClose={() => setCompanyDeleteConfirmOpen(false)}
-        onConfirm={handleCompanyDelete}
+        onConfirm={(reason) => void handleCompanyDelete(reason || '')}
+        requireReason
         title="Delete Company Profile?"
         highlightedName={company?.company_name || undefined}
         message="This action will permanently remove company profile data."
@@ -861,7 +864,7 @@ const System = () => {
       badge: users.length,
       content: (
         <div className="space-y-3">
-          <div className="flex flex-wrap justify-end gap-2">
+          <div className="flex flex-wrap items-end justify-end gap-2">
             <button
               onClick={displayUsers}
               className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
@@ -894,12 +897,13 @@ const System = () => {
                     <th>Username</th>
                     <th>Role</th>
                     <th>Branch</th>
+                    <th>Created</th>
                     <th>Status</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {users.map((u) => (
+                  {filteredUsers.map((u) => (
                     <tr
                       key={u.user_id}
                       className="border-t border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200"
@@ -914,6 +918,7 @@ const System = () => {
 	                            u.branch_name ||
 	                            u.branch_id}
 	                      </td>
+                      <td>{u.created_at ? String(u.created_at).slice(0, 10) : '-'}</td>
 	                      <td>{u.is_active ? 'Active' : 'Inactive'}</td>
 	                      <td className="space-x-2 py-2">
 	                        {/* NEW: Jump to user privileges editor */}
@@ -1390,7 +1395,8 @@ const System = () => {
       <ConfirmDialog
         isOpen={!!confirmTarget}
         onClose={() => setConfirmTarget(null)}
-        onConfirm={confirmAction}
+        onConfirm={(reason) => void confirmAction(reason || '')}
+        requireReason
         title={confirmTitle}
         highlightedName={confirmHighlightedName}
         message={confirmMessage}

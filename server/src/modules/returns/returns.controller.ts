@@ -14,16 +14,13 @@ import {
 } from './returns.schemas';
 import { resolveActiveBranchIds, resolveBranchScope } from '../../utils/branchScope';
 import { ApiError } from '../../utils/ApiError';
-import { logAudit } from '../../utils/audit';
+import { logDeleteAudit } from '../../utils/logDeleteAudit';
 
 // GET /api/returns/sales
 export const listSalesReturns = async (req: AuthRequest, res: Response): Promise<void> => {
     const branchIds = await resolveActiveBranchIds(req);
     const fromDate = (req.query.fromDate as string) || undefined;
     const toDate = (req.query.toDate as string) || undefined;
-    if ((fromDate && !toDate) || (!fromDate && toDate)) {
-        throw ApiError.badRequest('Both fromDate and toDate are required together');
-    }
     if (fromDate && toDate && fromDate > toDate) {
         throw ApiError.badRequest('fromDate cannot be after toDate');
     }
@@ -59,14 +56,16 @@ export const listReturnItems = async (req: AuthRequest, res: Response): Promise<
 export const listSalesItemsByCustomer = async (req: AuthRequest, res: Response): Promise<void> => {
     const scope = await resolveBranchScope(req);
     const customerId = Number(req.query.customerId);
-    const items = await returnsService.listSalesItemsByCustomer(scope, customerId);
+    const excludeReturnId = req.query.excludeReturnId ? Number(req.query.excludeReturnId) : undefined;
+    const items = await returnsService.listSalesItemsByCustomer(scope, customerId, excludeReturnId);
     res.json({ success: true, data: { items } });
 };
 
 export const listPurchaseItemsBySupplier = async (req: AuthRequest, res: Response): Promise<void> => {
     const scope = await resolveBranchScope(req);
     const supplierId = Number(req.query.supplierId);
-    const items = await returnsService.listPurchaseItemsBySupplier(scope, supplierId);
+    const excludeReturnId = req.query.excludeReturnId ? Number(req.query.excludeReturnId) : undefined;
+    const items = await returnsService.listPurchaseItemsBySupplier(scope, supplierId, excludeReturnId);
     res.json({ success: true, data: { items } });
 };
 
@@ -94,15 +93,7 @@ export const deleteSalesReturn = async (req: AuthRequest, res: Response): Promis
     const id = Number(req.params.id);
     const { reason } = deleteReturnSchema.parse(req.body || {});
     await returnsService.deleteSalesReturn(Number(req.params.id), scope, reason);
-    await logAudit({
-      userId: req.user?.userId ?? null,
-      action: 'delete',
-      entity: 'sales_returns',
-      entityId: id,
-      newValue: { reason },
-      ip: req.ip,
-      userAgent: req.get('user-agent') || null,
-    });
+    await logDeleteAudit(req, 'sales_returns', id);
 
     res.json({ success: true, message: 'Sales return deleted' });
 };
@@ -112,9 +103,6 @@ export const listPurchaseReturns = async (req: AuthRequest, res: Response): Prom
     const branchIds = await resolveActiveBranchIds(req);
     const fromDate = (req.query.fromDate as string) || undefined;
     const toDate = (req.query.toDate as string) || undefined;
-    if ((fromDate && !toDate) || (!fromDate && toDate)) {
-        throw ApiError.badRequest('Both fromDate and toDate are required together');
-    }
     if (fromDate && toDate && fromDate > toDate) {
         throw ApiError.badRequest('fromDate cannot be after toDate');
     }
@@ -159,15 +147,7 @@ export const deletePurchaseReturn = async (req: AuthRequest, res: Response): Pro
     const id = Number(req.params.id);
     const { reason } = deleteReturnSchema.parse(req.body || {});
     await returnsService.deletePurchaseReturn(Number(req.params.id), scope, reason);
-    await logAudit({
-      userId: req.user?.userId ?? null,
-      action: 'delete',
-      entity: 'purchase_returns',
-      entityId: id,
-      newValue: { reason },
-      ip: req.ip,
-      userAgent: req.get('user-agent') || null,
-    });
+    await logDeleteAudit(req, 'purchase_returns', id);
 
     res.json({ success: true, message: 'Purchase return deleted' });
 };

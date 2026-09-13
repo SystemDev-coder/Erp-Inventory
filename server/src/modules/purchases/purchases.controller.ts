@@ -6,8 +6,9 @@ import { purchasesService } from './purchases.service';
 import { purchaseSchema } from './purchases.schemas';
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { assertBranchAccess, pickBranchForWrite, resolveBranchScope } from '../../utils/branchScope';
-import { logAudit } from '../../utils/audit';
+import { logDeleteAudit } from '../../utils/logDeleteAudit';
 import { queryMany, queryOne } from '../../db/query';
+import { listPaginationSchema, paginationMeta } from '../../utils/pagination';
 
 const loadSheetJs = () => {
   try {
@@ -59,9 +60,6 @@ export const listPurchaseItems = asyncHandler(async (req: AuthRequest, res: Resp
   const productId = req.query.productId ? Number(req.query.productId) : undefined;
   const from = normalizeDateParam(req.query.from, 'from');
   const to = normalizeDateParam(req.query.to, 'to');
-  if ((from && !to) || (!from && to)) {
-    throw ApiError.badRequest('Both from and to are required together');
-  }
   if (from && to && from > to) {
     throw ApiError.badRequest('from cannot be after to');
   }
@@ -75,9 +73,6 @@ export const listPurchases = asyncHandler(async (req: AuthRequest, res: Response
   const status = (req.query.status as string) || undefined;
   const fromDate = normalizeDateParam(req.query.fromDate, 'fromDate');
   const toDate = normalizeDateParam(req.query.toDate, 'toDate');
-  if ((fromDate && !toDate) || (!fromDate && toDate)) {
-    throw ApiError.badRequest('Both fromDate and toDate are required together');
-  }
   if (fromDate && toDate && fromDate > toDate) {
     throw ApiError.badRequest('fromDate cannot be after toDate');
   }
@@ -86,8 +81,21 @@ export const listPurchases = asyncHandler(async (req: AuthRequest, res: Response
     assertBranchAccess(scope, branchId);
   }
   const docType = (req.query.docType as string) || undefined;
-  const purchases = await purchasesService.listPurchases(scope, search, status, branchId, fromDate, toDate, docType);
-  return ApiResponse.success(res, { purchases });
+  const pagination = listPaginationSchema.parse(req.query);
+  const result = await purchasesService.listPurchases(
+    scope,
+    search,
+    status,
+    branchId,
+    fromDate,
+    toDate,
+    docType,
+    pagination
+  );
+  return ApiResponse.success(res, {
+    purchases: result.rows,
+    pagination: paginationMeta(result.total, result.page, result.limit),
+  });
 });
 
 export const getPurchase = asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -160,14 +168,7 @@ export const deletePurchase = asyncHandler(async (req: AuthRequest, res: Respons
   const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
   await purchasesService.deletePurchase(id, scope);
-  await logAudit({
-    userId: req.user?.userId ?? null,
-    action: 'delete',
-    entity: 'purchases',
-    entityId: id,
-    ip: req.ip,
-    userAgent: req.get('user-agent') || null,
-  });
+  await logDeleteAudit(req, 'purchases', id);
 
   return ApiResponse.success(res, null, 'Purchase deleted');
 });
@@ -196,9 +197,6 @@ export const exportPurchasesXlsx = asyncHandler(async (req: AuthRequest, res: Re
   const status = (req.query.status as string) || undefined;
   const fromDate = (req.query.fromDate as string) || undefined;
   const toDate = (req.query.toDate as string) || undefined;
-  if ((fromDate && !toDate) || (!fromDate && toDate)) {
-    throw ApiError.badRequest('Both fromDate and toDate are required together');
-  }
   if (fromDate && toDate && fromDate > toDate) {
     throw ApiError.badRequest('fromDate cannot be after toDate');
   }
@@ -207,7 +205,17 @@ export const exportPurchasesXlsx = asyncHandler(async (req: AuthRequest, res: Re
     assertBranchAccess(scope, branchId);
   }
 
-  const purchases = await purchasesService.listPurchases(scope, search, status, branchId, fromDate, toDate);
+  const result = await purchasesService.listPurchases(
+    scope,
+    search,
+    status,
+    branchId,
+    fromDate,
+    toDate,
+    undefined,
+    { page: 1, limit: 500 }
+  );
+  const purchases = result.rows;
   const XLSX = loadSheetJs();
 
   const rows = purchases.map((p: any) => ({

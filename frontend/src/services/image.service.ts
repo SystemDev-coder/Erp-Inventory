@@ -16,12 +16,12 @@ export const imageService = {
     return apiClient.post('/api/system/banner', formData);
   },
 
-  async deleteSystemLogo(): Promise<ApiResponse> {
-    return apiClient.delete('/api/system/logo');
+  async deleteSystemLogo(reason: string): Promise<ApiResponse> {
+    return apiClient.delete('/api/system/logo', reason);
   },
 
-  async deleteSystemBanner(): Promise<ApiResponse> {
-    return apiClient.delete('/api/system/banner');
+  async deleteSystemBanner(reason: string): Promise<ApiResponse> {
+    return apiClient.delete('/api/system/banner', reason);
   },
 
   // Product Images
@@ -32,8 +32,8 @@ export const imageService = {
     return apiClient.post(`/api/products/${productId}/image`, formData);
   },
 
-  async deleteProductImage(productId: number): Promise<ApiResponse> {
-    return apiClient.delete(`/api/products/${productId}/image`);
+  async deleteProductImage(productId: number, reason: string): Promise<ApiResponse> {
+    return apiClient.delete(`/api/products/${productId}/image`, reason);
   },
 
 };

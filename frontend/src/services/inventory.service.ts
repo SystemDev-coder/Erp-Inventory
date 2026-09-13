@@ -147,8 +147,8 @@ export const inventoryService = {
       productId: payload.itemId,
     });
   },
-  deleteAdjustment(id: number) {
-    return apiClient.delete(`/api/inventory/adjustments/${id}`);
+  deleteAdjustment(id: number, reason: string) {
+    return apiClient.delete(`/api/inventory/adjustments/${id}`, reason);
   },
   recount(payload: any) {
     return apiClient.post(`/api/inventory/recounts`, {
@@ -175,8 +175,8 @@ export const inventoryService = {
   updateBranch(id: number, payload: { branchName?: string; location?: string; phone?: string; isActive?: boolean }) {
     return apiClient.put<{ branch: InventoryBranch }>(`/api/inventory/branches/${id}`, payload);
   },
-  deleteBranch(id: number) {
-    return apiClient.delete(`/api/inventory/branches/${id}`);
+  deleteBranch(id: number, reason: string) {
+    return apiClient.delete(`/api/inventory/branches/${id}`, reason);
   },
   listWarehouses(params?: { branchId?: number; includeInactive?: boolean }) {
     const qs = new URLSearchParams();
@@ -190,8 +190,8 @@ export const inventoryService = {
   updateWarehouse(id: number, payload: { branchId?: number; whName?: string; location?: string; isActive?: boolean }) {
     return apiClient.put<{ warehouse: InventoryWarehouse }>(`/api/inventory/warehouses/${id}`, payload);
   },
-  deleteWarehouse(id: number) {
-    return apiClient.delete(`/api/inventory/warehouses/${id}`);
+  deleteWarehouse(id: number, reason: string) {
+    return apiClient.delete(`/api/inventory/warehouses/${id}`, reason);
   },
   listTransactions(params: Record<string, any>) {
     const qs = buildQueryString(params);

@@ -13,7 +13,7 @@ import {
   SalesReturnItem,
 } from '../../services/returns.service';
 import DeleteConfirmModal from '../../components/ui/modal/DeleteConfirmModal';
-import { defaultDateRange } from '../../utils/dateRange';
+import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
 
 const tableHeadCls = 'px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400';
@@ -47,18 +47,21 @@ const Returns = () => {
   const [viewKind, setViewKind] = useState<'sales' | 'purchase' | null>(null);
   const [viewHeader, setViewHeader] = useState<SalesReturn | PurchaseReturn | null>(null);
   const [viewItems, setViewItems] = useState<Array<SalesReturnItem | PurchaseReturnItem>>([]);
+  const [pageError, setPageError] = useState('');
 
   const loadSalesReturns = async () => {
     setLoading(true);
+    setPageError('');
     const res = await returnsService.listSalesReturns({
-      fromDate: dateRange.fromDate,
-      toDate: dateRange.toDate,
+      fromDate: optionalDateParam(dateRange.fromDate),
+      toDate: optionalDateParam(dateRange.toDate),
       branchId: activeBranchId ?? undefined,
     });
     setLoading(false);
     if (res.success && res.data?.rows) {
       setSalesRows(res.data.rows);
     } else {
+      setPageError(res.error || 'Failed to load sales returns');
       showToast('error', 'Sales Returns', res.error || 'Failed to load sales returns');
     }
   };
@@ -66,8 +69,8 @@ const Returns = () => {
   const loadPurchaseReturns = async () => {
     setLoading(true);
     const res = await returnsService.listPurchaseReturns({
-      fromDate: dateRange.fromDate,
-      toDate: dateRange.toDate,
+      fromDate: optionalDateParam(dateRange.fromDate),
+      toDate: optionalDateParam(dateRange.toDate),
       branchId: activeBranchId ?? undefined,
     });
     setLoading(false);
@@ -86,24 +89,28 @@ const Returns = () => {
 
   const removeSalesReturn = async (id: number, reason: string) => {
     setLoading(true);
+    setPageError('');
     const res = await returnsService.deleteSalesReturn(id, reason);
     setLoading(false);
     if (res.success) {
       showToast('success', 'Sales Return', 'Deleted successfully');
       if (salesDisplayed) await loadSalesReturns();
     } else {
+      setPageError(res.error || 'Failed to delete sales return');
       showToast('error', 'Sales Return', res.error || 'Failed to delete return');
     }
   };
 
   const removePurchaseReturn = async (id: number, reason: string) => {
     setLoading(true);
+    setPageError('');
     const res = await returnsService.deletePurchaseReturn(id, reason);
     setLoading(false);
     if (res.success) {
       showToast('success', 'Purchase Return', 'Deleted successfully');
       if (purchaseDisplayed) await loadPurchaseReturns();
     } else {
+      setPageError(res.error || 'Failed to delete purchase return');
       showToast('error', 'Purchase Return', res.error || 'Failed to delete return');
     }
   };
@@ -441,6 +448,14 @@ const Returns = () => {
   return (
     <div>
       <PageHeader title="Returns" description="Manage sales returns and purchase/supplier returns." />
+      {pageError ? (
+        <div
+          className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-300"
+          role="alert"
+        >
+          {pageError}
+        </div>
+      ) : null}
       <Tabs tabs={tabs} defaultTab="sales-return" />
 
       <DeleteConfirmModal

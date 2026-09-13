@@ -398,10 +398,10 @@ const Settings = () => {
     await loadCapital(capitalPage);
   };
 
-  const confirmDeleteCapital = async () => {
+  const confirmDeleteCapital = async (reason: string) => {
     if (!capitalDeleteId) return;
     setCapitalDeleteLoading(true);
-    const res = await settingsService.deleteCapital(capitalDeleteId);
+    const res = await settingsService.deleteCapital(capitalDeleteId, reason);
     setCapitalDeleteLoading(false);
     if (!res.success) {
       showToast('error', 'Capital', res.error || 'Delete failed');
@@ -499,10 +499,10 @@ const Settings = () => {
     }
   };
 
-  const confirmDeleteDrawing = async () => {
+  const confirmDeleteDrawing = async (reason: string) => {
     if (!drawingDeleteId) return;
     setDrawingDeleteLoading(true);
-    const res = await settingsService.deleteCapitalDrawing(drawingDeleteId);
+    const res = await settingsService.deleteCapitalDrawing(drawingDeleteId, reason);
     setDrawingDeleteLoading(false);
     if (!res.success) {
       showToast('error', 'Capital Drawing', res.error || 'Delete failed');
@@ -762,10 +762,10 @@ const Settings = () => {
     await loadAssetAccounts();
   };
 
-  const deleteCurrentAsset = async () => {
+  const deleteCurrentAsset = async (reason: string) => {
     if (!currentAssetDeleteTarget) return;
     setCurrentAssetDeleting(true);
-    const res = await assetsService.delete(currentAssetDeleteTarget.asset_id);
+    const res = await assetsService.delete(currentAssetDeleteTarget.asset_id, reason);
     setCurrentAssetDeleting(false);
     if (!res.success) {
       showToast('error', 'Assets', res.error || 'Failed to delete current asset');
@@ -851,10 +851,10 @@ const Settings = () => {
     }
   };
 
-  const deleteFixedAsset = async () => {
+  const deleteFixedAsset = async (reason: string) => {
     if (!fixedAssetDeleteTarget) return;
     setFixedAssetDeleting(true);
-    const res = await assetsService.delete(fixedAssetDeleteTarget.asset_id);
+    const res = await assetsService.delete(fixedAssetDeleteTarget.asset_id, reason);
     setFixedAssetDeleting(false);
     if (!res.success) {
       showToast('error', 'Assets', res.error || 'Failed to delete fixed asset');
@@ -898,11 +898,15 @@ const Settings = () => {
     const ownerName =
       isNewOwner ? newProfitOwnerName.trim() : profitForm.ownerName.trim();
     if (!ownerName) {
-      showToast('error', 'Profit Sharing', 'Owner is required');
+      showToast('error', 'Profit Sharing', 'Owner name is required. Choose an existing owner or Add New Owner.');
+      return;
+    }
+    if (isNewOwner && ownerName.length < 2) {
+      showToast('error', 'Profit Sharing', 'New owner name must be at least 2 characters');
       return;
     }
     if (isNewOwner && profitForm.sharePct.trim() === '') {
-      showToast('error', 'Profit Sharing', 'Enter owner share %');
+      showToast('error', 'Profit Sharing', 'Enter owner share % (for example 25)');
       return;
     }
     if (!isNewOwner && !profitPreview) {
@@ -919,7 +923,7 @@ const Settings = () => {
     }
     const res = await settingsService.saveProfitOwner({ ownerName, sharePct });
     if (!res.success) {
-      showToast('error', 'Profit Sharing', res.error || 'Failed to save owner share');
+      showToast('error', 'Profit Sharing', res.error || 'Failed to save owner share. Check that total partner % is ≤ 100.');
       return;
     }
     showToast('success', 'Profit Sharing', 'Owner share saved');
@@ -937,17 +941,31 @@ const Settings = () => {
       setProfitPreview(null);
       return;
     }
-    if (!isNewOwner || !sharePctText) {
-      void previewOwnerProfit(closingId, ownerName);
+
+    const period = profitPeriods.find((row) => Number(row.closing_id) === closingId);
+    const netIncome = Number(period?.summary_json?.netIncome || 0);
+
+    if (isNewOwner) {
+      if (!sharePctText) {
+        setProfitPreview(netIncome ? { netIncome, sharePct: 0, shareAmount: 0, source: 'input' } : null);
+        return;
+      }
+      const sharePct = Number(sharePctText);
+      if (!Number.isFinite(sharePct) || sharePct < 0 || sharePct > 100) {
+        setProfitPreview(null);
+        return;
+      }
+      setProfitPreview({
+        netIncome,
+        sharePct,
+        shareAmount: (netIncome * sharePct) / 100,
+        source: 'input',
+      });
       return;
     }
-    const sharePct = Number(sharePctText);
-    if (!Number.isFinite(sharePct) || sharePct < 0 || sharePct > 100) {
-      setProfitPreview(null);
-      return;
-    }
-    void previewOwnerProfit(closingId, ownerName, sharePct);
-  }, [profitForm.closingId, profitForm.ownerName, profitForm.sharePct, newProfitOwnerName, profitModalOpen]);
+
+    void previewOwnerProfit(closingId, ownerName);
+  }, [profitForm.closingId, profitForm.ownerName, profitForm.sharePct, newProfitOwnerName, profitModalOpen, profitPeriods]);
 
   const currentAssetRows = assetOverview?.current_assets || [];
   const fixedAssetRows = assetOverview?.fixed_assets || [];
@@ -1236,7 +1254,8 @@ const Settings = () => {
       <ConfirmDialog
         isOpen={!!currentAssetDeleteTarget}
         onClose={() => setCurrentAssetDeleteTarget(null)}
-        onConfirm={deleteCurrentAsset}
+        onConfirm={(reason) => void deleteCurrentAsset(reason || '')}
+        requireReason
         title="Delete Current Asset?"
         highlightedName={currentAssetDeleteTarget?.asset_name}
         message="This action permanently removes the current asset."
@@ -1249,7 +1268,8 @@ const Settings = () => {
       <ConfirmDialog
         isOpen={!!fixedAssetDeleteTarget}
         onClose={() => setFixedAssetDeleteTarget(null)}
-        onConfirm={deleteFixedAsset}
+        onConfirm={(reason) => void deleteFixedAsset(reason || '')}
+        requireReason
         title="Delete Fixed Asset?"
         highlightedName={fixedAssetDeleteTarget?.asset_name}
         message="This action permanently removes the fixed asset."
@@ -1674,7 +1694,8 @@ const Settings = () => {
       <ConfirmDialog
         isOpen={capitalDeleteId !== null}
         onClose={() => setCapitalDeleteId(null)}
-        onConfirm={confirmDeleteCapital}
+        onConfirm={(reason) => void confirmDeleteCapital(reason || '')}
+        requireReason
         title="Delete Capital Entry?"
         message="This will reverse and remove linked accounting records."
         confirmText="Delete"
@@ -1686,7 +1707,8 @@ const Settings = () => {
       <ConfirmDialog
         isOpen={drawingDeleteId !== null}
         onClose={() => setDrawingDeleteId(null)}
-        onConfirm={confirmDeleteDrawing}
+        onConfirm={(reason) => void confirmDeleteDrawing(reason || '')}
+        requireReason
         title="Delete Drawing Entry?"
         message="This will refund the amount back to capital and remove linked accounting records."
         confirmText="Delete"
@@ -2122,8 +2144,12 @@ const Settings = () => {
         )}
       </div>
 
-      <Modal isOpen={profitModalOpen} onClose={() => setProfitModalOpen(false)} title="Owner Profit Preview" size="md">
-        <div className="space-y-4">
+      <Modal isOpen={profitModalOpen} onClose={() => setProfitModalOpen(false)} title="Owner Profit Preview" size="lg">
+        <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+          <div className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-700">
+            Add a <strong>profit-share partner</strong>: pick period, choose + Add New Owner, type the name, then enter share % (0–100).
+            Total partner shares cannot exceed 100%. Capital contributions belong in the Capital tab.
+          </div>
           <label className="text-sm font-medium flex flex-col gap-1">
             Closing Period *
             <select

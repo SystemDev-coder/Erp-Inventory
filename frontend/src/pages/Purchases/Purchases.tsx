@@ -12,7 +12,7 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { PurchaseItem, purchaseService, Purchase, PurchaseItemView } from '../../services/purchase.service';
 import { supplierService, Supplier } from '../../services/supplier.service';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
-import { defaultDateRange } from '../../utils/dateRange';
+import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
 
 type SupplierFieldErrors = Partial<Record<string, string>>;
@@ -117,8 +117,8 @@ const Purchases = () => {
     const res = await purchaseService.list({
       search: term,
       status,
-      fromDate: dateRange.fromDate,
-      toDate: dateRange.toDate,
+      fromDate: optionalDateParam(dateRange.fromDate),
+      toDate: optionalDateParam(dateRange.toDate),
       branchId: activeBranchId ?? undefined,
     });
     if (res.success && res.data?.purchases) {
@@ -138,8 +138,6 @@ const Purchases = () => {
     setLoading(true);
     const res = await supplierService.list({
       search: term,
-      fromDate: dateRange.fromDate,
-      toDate: dateRange.toDate,
     });
     if (res.success && res.data?.suppliers) {
       setSuppliers(res.data.suppliers);
@@ -153,8 +151,6 @@ const Purchases = () => {
     setLoading(true);
     const res = await purchaseService.listItems({
       search: term,
-      from: dateRange.fromDate,
-      to: dateRange.toDate,
     });
     if (res.success && res.data?.items) {
       setItems(res.data.items);
@@ -249,8 +245,8 @@ const Purchases = () => {
     const res = await purchaseService.exportXlsx({
       search,
       status: statusFilter,
-      fromDate: dateRange.fromDate,
-      toDate: dateRange.toDate,
+      fromDate: optionalDateParam(dateRange.fromDate),
+      toDate: optionalDateParam(dateRange.toDate),
     });
     setExporting(false);
 
@@ -369,10 +365,10 @@ const Purchases = () => {
     setSupplierDeleteOpen(true);
   };
 
-  const confirmDeleteSupplier = async () => {
+  const confirmDeleteSupplier = async (reason: string) => {
     if (!supplierToDelete) return;
     setLoading(true);
-    const res = await supplierService.remove(supplierToDelete.supplier_id);
+    const res = await supplierService.remove(supplierToDelete.supplier_id, reason);
     if (res.success) {
       showToast('success', 'Supplier deleted');
       if (suppliersDisplayed) loadSuppliers(search);
@@ -385,10 +381,10 @@ const Purchases = () => {
   };
 
 
-  const confirmDelete = async () => {
+  const confirmDelete = async (reason: string) => {
     if (!purchaseToDelete) return;
     setLoading(true);
-    const res = await purchaseService.remove(purchaseToDelete.purchase_id);
+    const res = await purchaseService.remove(purchaseToDelete.purchase_id, reason);
     if (res.success) {
       showToast('success', 'Deleted', `Purchase #${purchaseToDelete.purchase_id} removed`);
       if (purchasesDisplayed) loadPurchases(search, statusFilter);
@@ -404,8 +400,8 @@ const Purchases = () => {
     setOrdersLoading(true);
     const res = await purchaseService.list({
       docType: 'order',
-      fromDate: orderDateRange.fromDate,
-      toDate: orderDateRange.toDate,
+      fromDate: optionalDateParam(orderDateRange.fromDate),
+      toDate: optionalDateParam(orderDateRange.toDate),
     });
     if (res.success && res.data?.purchases) {
       setOrders(res.data.purchases);
@@ -439,10 +435,10 @@ const Purchases = () => {
     }
   };
 
-  const confirmDeleteOrder = async () => {
+  const confirmDeleteOrder = async (reason: string) => {
     if (!orderToDelete) return;
     setOrdersLoading(true);
-    const res = await purchaseService.remove(orderToDelete.purchase_id);
+    const res = await purchaseService.remove(orderToDelete.purchase_id, reason);
     if (res.success) {
       showToast('success', 'Deleted', `Order #${orderToDelete.purchase_id} removed`);
       if (ordersDisplayed) void loadOrders();
@@ -580,12 +576,6 @@ const Purchases = () => {
               void loadSuppliers();
             }}
             displayLoading={loading}
-            dateRange={{
-              fromDate: dateRange.fromDate,
-              toDate: dateRange.toDate,
-              onFromDateChange: (value) => setDateRange((prev) => ({ ...prev, fromDate: value })),
-              onToDateChange: (value) => setDateRange((prev) => ({ ...prev, toDate: value })),
-            }}
           />
           {!suppliersDisplayed && !loading && (
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
@@ -615,26 +605,6 @@ const Purchases = () => {
       content: (
         <div className="space-y-2">
           <div className="flex flex-wrap items-center justify-end gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
-                From Date
-              </span>
-              <input
-                type="date"
-                value={dateRange.fromDate}
-                onChange={(e) => setDateRange((prev) => ({ ...prev, fromDate: e.target.value }))}
-                className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              />
-              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
-                To Date
-              </span>
-              <input
-                type="date"
-                value={dateRange.toDate}
-                onChange={(e) => setDateRange((prev) => ({ ...prev, toDate: e.target.value }))}
-                className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              />
-            </div>
             <button
               type="button"
               disabled={loading}
@@ -811,7 +781,8 @@ const Purchases = () => {
       <ConfirmDialog
         isOpen={deleteOpen}
         onClose={() => { setDeleteOpen(false); setPurchaseToDelete(null); }}
-        onConfirm={confirmDelete}
+        onConfirm={(reason) => void confirmDelete(reason || '')}
+        requireReason
         title="Delete Purchase?"
         message={
           purchaseToDelete
@@ -892,7 +863,8 @@ const Purchases = () => {
       <ConfirmDialog
         isOpen={orderDeleteOpen}
         onClose={() => { setOrderDeleteOpen(false); setOrderToDelete(null); }}
-        onConfirm={confirmDeleteOrder}
+        onConfirm={(reason) => void confirmDeleteOrder(reason || '')}
+        requireReason
         title="Delete Order?"
         message={
           orderToDelete
@@ -908,7 +880,8 @@ const Purchases = () => {
       <ConfirmDialog
         isOpen={supplierDeleteOpen}
         onClose={() => { setSupplierDeleteOpen(false); setSupplierToDelete(null); }}
-        onConfirm={confirmDeleteSupplier}
+        onConfirm={(reason) => void confirmDeleteSupplier(reason || '')}
+        requireReason
         title="Delete Supplier?"
         message={
           supplierToDelete

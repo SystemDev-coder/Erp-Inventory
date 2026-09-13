@@ -3,7 +3,7 @@ import { ChevronDown, Loader2 } from 'lucide-react';
 import type { ReportColumn } from '../../../components/reports/ReportModal';
 import { purchaseReportsService } from '../../../services/reports/purchaseReports.service';
 import type { DateRange, ModalReportState } from '../types';
-import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange } from '../reportUtils';
+import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange, withReportTruncation, type ReportTruncationMeta } from '../reportUtils';
 import { useBranch } from '../../../context/BranchContext';
 
 type PurchaseCardId =
@@ -97,6 +97,9 @@ type Props = {
 };
 
 export function PurchaseReportsTab({ onOpenModal }: Props) {
+  const openReport = (report: ModalReportState, meta?: ReportTruncationMeta, legacy?: { truncated?: boolean; totalCount?: number; maxRows?: number }) =>
+    onOpenModal(withReportTruncation(report, meta, legacy));
+
   const { activeBranchId } = useBranch();
   const [expandedCardId, setExpandedCardId] = useState<PurchaseCardId | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<PurchaseCardId | null>(null);
@@ -184,7 +187,7 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load purchase orders');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Purchase Orders Summary',
         subtitle: `${formatDateOnly(ordersRange.fromDate)} - ${formatDateOnly(ordersRange.toDate)}`,
         fileName: 'purchase-orders-summary',
@@ -199,7 +202,7 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
             outstanding_amount: formatCurrency(sumNumericField(rows, 'outstanding_amount')),
           },
         },
-      });
+      }, response.data.meta);
     });
 
 
@@ -212,7 +215,7 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load purchase returns');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Purchase Returns',
         subtitle: `${formatDateOnly(returnsRange.fromDate)} - ${formatDateOnly(returnsRange.toDate)}`,
         fileName: 'purchase-returns',
@@ -226,7 +229,7 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
             total: formatCurrency(sumNumericField(rows, 'total')),
           },
         },
-      });
+      }, response.data.meta);
     });
 
   const handlePaymentStatus = () =>
@@ -238,7 +241,7 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load payment status');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Purchase Payment Status',
         subtitle: `${formatDateOnly(paymentRange.fromDate)} - ${formatDateOnly(paymentRange.toDate)}`,
         fileName: 'purchase-payment-status',
@@ -253,7 +256,7 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
             outstanding_amount: formatCurrency(sumNumericField(rows, 'outstanding_amount')),
           },
         },
-      });
+      }, response.data.meta);
     });
 
   const handleSupplierWisePurchases = (mode: 'show' | 'all') =>
@@ -267,7 +270,7 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load supplier purchases');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Supplier Wise Purchases',
         subtitle: mode === 'show' ? selectedWiseSupplierLabel || 'Selected Supplier' : 'All Suppliers',
         fileName: 'supplier-wise-purchases',
@@ -285,7 +288,7 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
             total: formatCurrency(sumNumericField(rows, 'total')),
           },
         },
-      });
+      }, response.data.meta);
     });
 
   const handleBestSuppliers = () =>
@@ -297,7 +300,7 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load best suppliers');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Best Suppliers',
         subtitle: `${formatDateOnly(bestSuppliersRange.fromDate)} - ${formatDateOnly(bestSuppliersRange.toDate)}`,
         fileName: 'best-suppliers',
@@ -313,7 +316,7 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
             outstanding_amount: formatCurrency(sumNumericField(rows, 'outstanding_amount')),
           },
         },
-      });
+      }, response.data.meta);
     });
 
   const handlePriceVariance = (mode: 'show' | 'all') =>
@@ -330,7 +333,7 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load price variance');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Purchase Price Variance',
         subtitle: `${formatDateOnly(priceVarianceRange.fromDate)} - ${formatDateOnly(priceVarianceRange.toDate)}`,
         fileName: 'purchase-price-variance',
@@ -349,7 +352,7 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
             purchase_lines: sumNumericField(rows, 'purchase_lines').toLocaleString(),
           },
         },
-      });
+      }, response.data.meta);
     });
 
   const renderDateRange = (range: DateRange, onChange: (next: DateRange) => void) => (
@@ -382,7 +385,7 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
   );
 
   const renderShowAllButtons = (onShow: () => void, onAll: () => void, cardId: PurchaseCardId) => (
-    <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <button
         onClick={onShow}
         disabled={loadingCardId === cardId}
@@ -407,7 +410,7 @@ export function PurchaseReportsTab({ onOpenModal }: Props) {
     if (cardId === 'supplier-wise') return <div className="space-y-3">{renderSupplierSelector(selectedWiseSupplierId, setSelectedWiseSupplierId)}{renderShowAllButtons(() => handleSupplierWisePurchases('show'), () => handleSupplierWisePurchases('all'), cardId)}</div>;
     if (cardId === 'best-suppliers') return <div className="space-y-3">{renderDateRange(bestSuppliersRange, setBestSuppliersRange)}<button onClick={handleBestSuppliers} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
 
-    return <div className="space-y-3">{renderDateRange(priceVarianceRange, setPriceVarianceRange)}<select value={selectedVarianceProductId} onChange={(event) => setSelectedVarianceProductId(event.target.value)} className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"><option value="">Select Product</option>{products.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select><div className="grid grid-cols-2 gap-3"><button onClick={() => handlePriceVariance('show')} disabled={loadingCardId === cardId} className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button><button onClick={() => handlePriceVariance('all')} disabled={loadingCardId === cardId} className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70">All</button></div></div>;
+    return <div className="space-y-3">{renderDateRange(priceVarianceRange, setPriceVarianceRange)}<select value={selectedVarianceProductId} onChange={(event) => setSelectedVarianceProductId(event.target.value)} aria-label="Select product" className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"><option value="">Select Product</option>{products.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><button onClick={() => handlePriceVariance('show')} disabled={loadingCardId === cardId} className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button><button onClick={() => handlePriceVariance('all')} disabled={loadingCardId === cardId} className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70">All</button></div></div>;
   };
 
   const renderCard = (card: { id: PurchaseCardId; title: string; hint: string }) => {

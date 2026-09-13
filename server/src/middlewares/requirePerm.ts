@@ -1,28 +1,15 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from './requireAuth';
 import { ApiError } from '../utils/ApiError';
-import { queryMany, queryOne } from '../db/query';
+import { queryOne } from '../db/query';
+import {
+  getUserPermissionSet,
+  isAdminRole,
+  userHasAnyPermission,
+  userHasPermission,
+} from '../utils/userPermissions';
 
-const expandPermissionKeys = (permKey: string): string[] => {
-  if (permKey.startsWith('items.')) {
-    return [permKey, permKey.replace('items.', 'products.')];
-  }
-  if (permKey.startsWith('products.')) {
-    return [permKey, permKey.replace('products.', 'items.')];
-  }
-  return [permKey];
-};
-
-/** Returns true if the user's role is an admin/system role — bypasses all RBAC checks */
-const isAdminRole = async (roleId: number): Promise<boolean> => {
-  const row = await queryOne<{ role_name: string; is_system: boolean | null }>(
-    `SELECT role_name, is_system FROM ims.roles WHERE role_id = $1 LIMIT 1`,
-    [roleId]
-  );
-  if (!row) return false;
-  const name = (row.role_name || '').toLowerCase();
-  return name.includes('admin') || Boolean(row.is_system);
-};
+export { isAdminRole } from '../utils/userPermissions';
 
 export const requireRoleName = (roleNames: string | string[]) => {
   const allowed = Array.isArray(roleNames) ? roleNames : [roleNames];
@@ -52,7 +39,7 @@ export const requireRoleName = (roleNames: string | string[]) => {
 /**
  * Middleware to check if authenticated user has specific permission.
  * Admin roles bypass all checks.
- * Formula: effective = (role_permissions ∪ user_permissions ∪ overrides_allow) - overrides_deny
+ * Uses in-memory permission cache (5 min TTL) to avoid repeated DB lookups.
  */
 export const requirePerm = (permKey: string) => {
   return async (req: AuthRequest, _res: Response, next: NextFunction) => {
@@ -61,54 +48,12 @@ export const requirePerm = (permKey: string) => {
         throw ApiError.unauthorized('Authentication required');
       }
 
-      // Admin bypass: skip all permission checks for admin/system roles
       if (await isAdminRole(req.user.roleId)) {
         return next();
       }
 
-      const userId = req.user.userId;
-      const roleId = req.user.roleId;
-      const effectivePermKeys = expandPermissionKeys(permKey);
-
-      // Check for explicit deny first
-      const denyCheck = await queryMany<{ perm_key: string }>(
-        `SELECT DISTINCT p.perm_key
-         FROM ims.user_permission_overrides upo
-         JOIN ims.permissions p ON upo.perm_id = p.perm_id
-         WHERE upo.user_id = $1 AND p.perm_key = ANY($2) AND upo.effect = 'deny'`,
-        [userId, effectivePermKeys]
-      );
-
-      if (denyCheck.length > 0) {
-        throw ApiError.forbidden('Permission explicitly denied');
-      }
-
-      // Check if user has permission from role, user_permissions, or allow overrides
-      const rolePerms = await queryMany<{ perm_key: string }>(
-        `SELECT DISTINCT p.perm_key
-         FROM ims.role_permissions rp
-         JOIN ims.permissions p ON rp.perm_id = p.perm_id
-         WHERE rp.role_id = $1 AND p.perm_key = ANY($2)`,
-        [roleId, effectivePermKeys]
-      );
-
-      const userPerms = await queryMany<{ perm_key: string }>(
-        `SELECT DISTINCT p.perm_key
-         FROM ims.user_permissions up
-         JOIN ims.permissions p ON up.perm_id = p.perm_id
-         WHERE up.user_id = $1 AND p.perm_key = ANY($2)`,
-        [userId, effectivePermKeys]
-      );
-
-      const allowOverrides = await queryMany<{ perm_key: string }>(
-        `SELECT DISTINCT p.perm_key
-         FROM ims.user_permission_overrides upo
-         JOIN ims.permissions p ON upo.perm_id = p.perm_id
-         WHERE upo.user_id = $1 AND p.perm_key = ANY($2) AND upo.effect = 'allow'`,
-        [userId, effectivePermKeys]
-      );
-
-      if (rolePerms.length === 0 && userPerms.length === 0 && allowOverrides.length === 0) {
+      const permissions = await getUserPermissionSet(req.user.userId, req.user.roleId);
+      if (!userHasPermission(permissions, permKey)) {
         throw ApiError.forbidden('Insufficient permissions');
       }
 
@@ -122,7 +67,6 @@ export const requirePerm = (permKey: string) => {
 /**
  * Middleware to check if user has ANY of the listed permissions.
  * Admin roles bypass all checks.
- * Formula: effective = (role_permissions ∪ user_permissions ∪ overrides_allow) - overrides_deny
  */
 export const requireAnyPerm = (permKeys: string[]) => {
   return async (req: AuthRequest, _res: Response, next: NextFunction) => {
@@ -131,63 +75,12 @@ export const requireAnyPerm = (permKeys: string[]) => {
         throw ApiError.unauthorized('Authentication required');
       }
 
-      // Admin bypass: skip all permission checks for admin/system roles
       if (await isAdminRole(req.user.roleId)) {
         return next();
       }
 
-      const userId = req.user.userId;
-      const roleId = req.user.roleId;
-      const effectivePermKeys = Array.from(
-        new Set(permKeys.flatMap((permKey) => expandPermissionKeys(permKey)))
-      );
-
-      // Get denied permissions
-      const deniedPerms = await queryMany<{ perm_key: string }>(
-        `SELECT DISTINCT p.perm_key
-         FROM ims.user_permission_overrides upo
-         JOIN ims.permissions p ON upo.perm_id = p.perm_id
-         WHERE upo.user_id = $1 AND p.perm_key = ANY($2) AND upo.effect = 'deny'`,
-        [userId, effectivePermKeys]
-      );
-
-      const deniedSet = new Set(deniedPerms.map((p) => p.perm_key));
-
-      // Get role permissions
-      const rolePerms = await queryMany<{ perm_key: string }>(
-        `SELECT DISTINCT p.perm_key
-         FROM ims.role_permissions rp
-         JOIN ims.permissions p ON rp.perm_id = p.perm_id
-         WHERE rp.role_id = $1 AND p.perm_key = ANY($2)`,
-        [roleId, effectivePermKeys]
-      );
-
-      // Get legacy user permissions
-      const userPerms = await queryMany<{ perm_key: string }>(
-        `SELECT DISTINCT p.perm_key
-         FROM ims.user_permissions up
-         JOIN ims.permissions p ON up.perm_id = p.perm_id
-         WHERE up.user_id = $1 AND p.perm_key = ANY($2)`,
-        [userId, effectivePermKeys]
-      );
-
-      // Get allow overrides
-      const allowOverrides = await queryMany<{ perm_key: string }>(
-        `SELECT DISTINCT p.perm_key
-         FROM ims.user_permission_overrides upo
-         JOIN ims.permissions p ON upo.perm_id = p.perm_id
-         WHERE upo.user_id = $1 AND p.perm_key = ANY($2) AND upo.effect = 'allow'`,
-        [userId, effectivePermKeys]
-      );
-
-      // Combine all allowed permissions
-      const allowed = [
-        ...rolePerms.map((p) => p.perm_key),
-        ...userPerms.map((p) => p.perm_key),
-        ...allowOverrides.map((p) => p.perm_key),
-      ].filter((perm) => !deniedSet.has(perm));
-
-      if (allowed.length === 0) {
+      const permissions = await getUserPermissionSet(req.user.userId, req.user.roleId);
+      if (!userHasAnyPermission(permissions, permKeys)) {
         throw ApiError.forbidden('Insufficient permissions');
       }
 

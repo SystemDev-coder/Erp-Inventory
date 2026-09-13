@@ -60,6 +60,7 @@ router.use(
   requireAnyPerm([
     'reports.all',
     'customers.view',
+    'customers.reports',
     'customer_receipts.view',
     'sales.view',
     'sales_returns.view',

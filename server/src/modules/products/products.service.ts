@@ -301,6 +301,31 @@ const upsertStoreItemQuantity = async (
   );
 };
 
+const getOrCreateDefaultStoreId = async (client: PoolClient, branchId: number): Promise<number> => {
+  const existing = await client.query<{ store_id: number }>(
+    `SELECT store_id
+       FROM ims.stores
+      WHERE branch_id = $1
+      ORDER BY CASE WHEN LOWER(store_name) = 'main store' THEN 0 ELSE 1 END, store_id
+      LIMIT 1`,
+    [branchId]
+  );
+  const storeId = Number(existing.rows[0]?.store_id || 0);
+  if (storeId > 0) return storeId;
+
+  const created = await client.query<{ store_id: number }>(
+    `INSERT INTO ims.stores (branch_id, store_name, store_code, is_active)
+     VALUES ($1::bigint, 'Main Store', 'MAIN-' || LPAD($1::bigint::text, 3, '0'), TRUE)
+     ON CONFLICT (branch_id, store_name)
+     DO UPDATE SET is_active = TRUE
+     RETURNING store_id`,
+    [branchId]
+  );
+  const createdId = Number(created.rows[0]?.store_id || 0);
+  if (!createdId) throw ApiError.internal('Failed to create default Main Store');
+  return createdId;
+};
+
 const roundMoney = (value: unknown) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 
 // Opening stock (opening_balance * cost_price) must be reflected in the GL as an
@@ -369,9 +394,11 @@ export const productsService = {
       where.push(`(c.cat_name ILIKE $${params.length} OR COALESCE(c.description, '') ILIKE $${params.length})`);
     }
     if (!filters.includeInactive) where.push('COALESCE(c.is_active, TRUE) = TRUE');
-    if (filters.fromDate && filters.toDate) {
+    if (filters.fromDate) {
       params.push(filters.fromDate);
       where.push(`c.created_at::date >= $${params.length}::date`);
+    }
+    if (filters.toDate) {
       params.push(filters.toDate);
       where.push(`c.created_at::date <= $${params.length}::date`);
     }
@@ -447,9 +474,11 @@ export const productsService = {
       where.push(`(u.unit_name ILIKE $${params.length} OR COALESCE(u.symbol, '') ILIKE $${params.length})`);
     }
     if (!filters.includeInactive) where.push('u.is_active = TRUE');
-    if (filters.fromDate && filters.toDate) {
+    if (filters.fromDate) {
       params.push(filters.fromDate);
       where.push(`u.created_at::date >= $${params.length}::date`);
+    }
+    if (filters.toDate) {
       params.push(filters.toDate);
       where.push(`u.created_at::date <= $${params.length}::date`);
     }
@@ -517,9 +546,11 @@ export const productsService = {
       where.push(`t.tax_name ILIKE $${params.length}`);
     }
     if (!filters.includeInactive) where.push('t.is_active = TRUE');
-    if (filters.fromDate && filters.toDate) {
+    if (filters.fromDate) {
       params.push(filters.fromDate);
       where.push(`t.created_at::date >= $${params.length}::date`);
+    }
+    if (filters.toDate) {
       params.push(filters.toDate);
       where.push(`t.created_at::date <= $${params.length}::date`);
     }
@@ -589,9 +620,11 @@ export const productsService = {
       where.push(`(i.name ILIKE $${params.length} OR COALESCE(i.barcode, '') ILIKE $${params.length})`);
     }
     if (!filters.includeInactive) where.push('i.is_active = TRUE');
-    if (filters.fromDate && filters.toDate) {
+    if (filters.fromDate) {
       params.push(filters.fromDate);
       where.push(`i.created_at::date >= $${params.length}::date`);
+    }
+    if (filters.toDate) {
       params.push(filters.toDate);
       where.push(`i.created_at::date <= $${params.length}::date`);
     }
@@ -638,6 +671,10 @@ export const productsService = {
     const openingBalance = input.openingBalance ?? 0;
     const active = isActiveValue(input, true);
     const createdId = await withTransaction(async (client) => {
+      const resolvedStoreId =
+        Number(input.storeId || 0) > 0
+          ? Number(input.storeId)
+          : await getOrCreateDefaultStoreId(client, branchId);
       const created = await client.query<{ item_id: number }>(
         `INSERT INTO ims.items (
            branch_id, ${catIdRequired ? 'cat_id, ' : ''}store_id, name, barcode, ${stockAlertColumn}, opening_balance, cost_price, sell_price, is_active
@@ -649,7 +686,7 @@ export const productsService = {
           ? [
               branchId,
               categoryId,
-              input.storeId ?? null,
+              resolvedStoreId,
               input.name,
               input.barcode || '',
               input.stockAlert ?? 5,
@@ -660,7 +697,7 @@ export const productsService = {
             ]
           : [
               branchId,
-              input.storeId ?? null,
+              resolvedStoreId,
               input.name,
               input.barcode || '',
               input.stockAlert ?? 5,
@@ -675,10 +712,8 @@ export const productsService = {
         throw ApiError.internal('Failed to create item');
       }
 
-      if (input.storeId) {
-        const quantity = Number(input.quantity ?? input.openingBalance ?? 0);
-        await upsertStoreItemQuantity(client, branchId, input.storeId, itemId, quantity);
-      }
+      const quantity = Number(input.quantity ?? input.openingBalance ?? 0);
+      await upsertStoreItemQuantity(client, branchId, resolvedStoreId, itemId, quantity);
 
       await rewriteItemOpeningStockGl(client, {
         branchId,

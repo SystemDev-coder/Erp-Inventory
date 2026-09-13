@@ -7,6 +7,7 @@ import { softDeleteById } from '../../db/softDelete';
 import { adjustSystemAccountBalance } from '../../utils/systemAccounts';
 import { postGl } from '../../utils/glPosting';
 import { ensureCoaAccounts, ensureNamedAssetAccount } from '../../utils/coaDefaults';
+import { syncCustomerOutstandingFromLedger } from '../../utils/customerOutstanding';
 import {
   AccountTransferInput,
   accountTransferUpdateSchema,
@@ -208,9 +209,11 @@ export const financeService = {
       params.push(scope.branchIds);
       where += ` AND at.branch_id = ANY($${params.length})`;
     }
-    if (range.fromDate && range.toDate) {
+    if (range.fromDate) {
       params.push(range.fromDate);
       where += ` AND at.transfer_date::date >= $${params.length}::date`;
+    }
+    if (range.toDate) {
       params.push(range.toDate);
       where += ` AND at.transfer_date::date <= $${params.length}::date`;
     }
@@ -364,9 +367,11 @@ export const financeService = {
       params.push(scope.branchIds);
       where += ` AND r.branch_id = ANY($${params.length})`;
     }
-    if (range.fromDate && range.toDate) {
+    if (range.fromDate) {
       params.push(range.fromDate);
       where += ` AND r.receipt_date::date >= $${params.length}::date`;
+    }
+    if (range.toDate) {
       params.push(range.toDate);
       where += ` AND r.receipt_date::date <= $${params.length}::date`;
     }
@@ -490,6 +495,11 @@ export const financeService = {
         [branchId, input.customerId, receipt.receipt_id, input.accId, amount, input.note || null]
       );
 
+      await syncCustomerOutstandingFromLedger(client, {
+        branchId,
+        customerId: input.customerId,
+      });
+
       const coa = await ensureCoaAccounts(client, branchId, ['accountsReceivable', 'customerAdvances']);
       await client.query(
         `DELETE FROM ims.account_transactions
@@ -533,9 +543,11 @@ export const financeService = {
       params.push(scope.branchIds);
       where += ` AND r.branch_id = ANY($${params.length})`;
     }
-    if (range.fromDate && range.toDate) {
+    if (range.fromDate) {
       params.push(range.fromDate);
       where += ` AND r.receipt_date::date >= $${params.length}::date`;
+    }
+    if (range.toDate) {
       params.push(range.toDate);
       where += ` AND r.receipt_date::date <= $${params.length}::date`;
     }
@@ -1227,9 +1239,11 @@ export const financeService = {
       where += ` AND oi.branch_id = ANY($${params.length})`;
     }
 
-    if (range.fromDate && range.toDate) {
+    if (range.fromDate) {
       params.push(range.fromDate);
       where += ` AND oi.income_date >= $${params.length}::date`;
+    }
+    if (range.toDate) {
       params.push(range.toDate);
       where += ` AND oi.income_date <= $${params.length}::date`;
     }
@@ -1448,7 +1462,7 @@ export const financeService = {
   },
 
   /* Supplier outstanding balances (purchases not fully paid) */
-  async listSupplierOutstandingPurchases(scope: BranchScope, supplierId?: number) {
+  async listSupplierOutstandingPurchases(scope: BranchScope, supplierId?: number, branchId?: number) {
     const supplierNameCol = await detectColumn('suppliers', 'name', ['name', 'supplier_name']);
     const params: any[] = [];
     let where = 'WHERE p.status != $1';
@@ -1457,7 +1471,10 @@ export const financeService = {
       params.push(supplierId);
       where += ` AND p.supplier_id = $${params.length}`;
     }
-    if (!scope.isAdmin) {
+    if (branchId) {
+      params.push(branchId);
+      where += ` AND p.branch_id = $${params.length}`;
+    } else if (!scope.isAdmin) {
       params.push(scope.branchIds);
       where += ` AND p.branch_id = ANY($${params.length})`;
     }
@@ -1988,9 +2005,11 @@ export const financeService = {
       params.push(scope.branchIds);
       where += ` AND e.branch_id = ANY($${params.length})`;
     }
-    if (range.fromDate && range.toDate) {
+    if (range.fromDate) {
       params.push(range.fromDate);
       where += ` AND e.created_at::date >= $${params.length}::date`;
+    }
+    if (range.toDate) {
       params.push(range.toDate);
       where += ` AND e.created_at::date <= $${params.length}::date`;
     }
@@ -2071,9 +2090,11 @@ export const financeService = {
       params.push(scope.branchIds);
       where += ` AND c.branch_id = ANY($${params.length})`;
     }
-    if (range.fromDate && range.toDate) {
+    if (range.fromDate) {
       params.push(range.fromDate);
       where += ` AND c.charge_date::date >= $${params.length}::date`;
+    }
+    if (range.toDate) {
       params.push(range.toDate);
       where += ` AND c.charge_date::date <= $${params.length}::date`;
     }
@@ -2561,13 +2582,15 @@ export const financeService = {
       params.push(scope.branchIds);
       where += ` AND e.branch_id = ANY($${params.length})`;
     }
-    if (range.fromDate && range.toDate) {
+    if (range.fromDate) {
       const hasCreatedAt = await hasColumn('expense_budgets', 'created_at');
       if (hasCreatedAt) {
-        params.push(range.fromDate);
-        where += ` AND b.created_at::date >= $${params.length}::date`;
-        params.push(range.toDate);
-        where += ` AND b.created_at::date <= $${params.length}::date`;
+      params.push(range.fromDate);
+      where += ` AND b.created_at::date >= $${params.length}::date`;
+    }
+    if (range.toDate) {
+      params.push(range.toDate);
+      where += ` AND b.created_at::date <= $${params.length}::date`;
       }
     }
 
@@ -2867,9 +2890,11 @@ export const financeService = {
         where += ` AND pr.period_year = $${params.length - 1} AND pr.period_month = $${params.length}`;
       }
     }
-    if (range.fromDate && range.toDate) {
+    if (range.fromDate) {
       params.push(range.fromDate);
       where += ` AND make_date(pr.period_year, pr.period_month, 1) >= $${params.length}::date`;
+    }
+    if (range.toDate) {
       params.push(range.toDate);
       where += ` AND make_date(pr.period_year, pr.period_month, 1) <= $${params.length}::date`;
     }

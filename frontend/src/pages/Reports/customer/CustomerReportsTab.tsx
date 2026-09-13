@@ -3,7 +3,7 @@ import { ChevronDown, Loader2 } from 'lucide-react';
 import type { ReportColumn, ReportTotalItem } from '../../../components/reports/ReportModal';
 import { customerReportsService } from '../../../services/reports/customerReports.service';
 import type { DateRange, ModalReportState } from '../types';
-import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange } from '../reportUtils';
+import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange, withReportTruncation, type ReportTruncationMeta } from '../reportUtils';
 import { useBranch } from '../../../context/BranchContext';
 
 type CustomerCardId =
@@ -12,6 +12,7 @@ type CustomerCardId =
   | 'outstanding-balances'
   | 'payment-history'
   | 'credit-customers'
+  | 'credit-overdue'
   | 'new-customers'
   | 'customer-activity';
 
@@ -21,6 +22,7 @@ const customerCards: Array<{ id: CustomerCardId; title: string; hint: string }> 
   { id: 'outstanding-balances', title: 'Outstanding Balances', hint: 'Dropdown + Show / All' },
   { id: 'payment-history', title: 'Customer Payment History', hint: 'Date range + Show / All' },
   { id: 'credit-customers', title: 'Credit Customers', hint: 'Dropdown + Show / All' },
+  { id: 'credit-overdue', title: 'Overdue Credit Sales', hint: 'Due date passed with balance remaining' },
   { id: 'new-customers', title: 'New Customers (by date)', hint: 'Between two dates' },
   { id: 'customer-activity', title: 'Customer Activity', hint: 'Date range + Show / All' },
 ];
@@ -98,6 +100,15 @@ const creditCustomersColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'status', header: 'Status' },
 ];
 
+const creditOverdueColumns: ReportColumn<Record<string, unknown>>[] = [
+  { key: 'invoice_number', header: 'Invoice #' },
+  { key: 'customer_name', header: 'Customer' },
+  { key: 'sale_date', header: 'Sale Date', render: (row) => formatDateOnly(row.sale_date) },
+  { key: 'appointment_date', header: 'Appointment Date', render: (row) => formatDateOnly(row.appointment_date) },
+  { key: 'days_overdue', header: 'Days Overdue', align: 'right' },
+  { key: 'total', header: 'Balance Due', align: 'right', render: (row) => formatCurrency(row.total) },
+];
+
 const newCustomersColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'customer_id', header: 'Customer #' },
   { key: 'full_name', header: 'Customer' },
@@ -134,6 +145,9 @@ const moneyTotal = (label: string, value: number): ReportTotalItem => ({
 });
 
 export function CustomerReportsTab({ onOpenModal }: Props) {
+  const openReport = (report: ModalReportState, meta?: ReportTruncationMeta, legacy?: { truncated?: boolean; totalCount?: number; maxRows?: number }) =>
+    onOpenModal(withReportTruncation(report, meta, legacy));
+
   const { activeBranchId } = useBranch();
   const [expandedCardId, setExpandedCardId] = useState<CustomerCardId | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<CustomerCardId | null>(null);
@@ -148,6 +162,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
   const [selectedOutstandingCustomerId, setSelectedOutstandingCustomerId] = useState('');
   const [selectedPaymentCustomerId, setSelectedPaymentCustomerId] = useState('');
   const [selectedCreditCustomerId, setSelectedCreditCustomerId] = useState('');
+  const [selectedOverdueCustomerId, setSelectedOverdueCustomerId] = useState('');
   const [selectedActivityCustomerId, setSelectedActivityCustomerId] = useState('');
 
   const [ledgerRange, setLedgerRange] = useState<DateRange>(defaultReportRange());
@@ -216,7 +231,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load customer list');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Customer List',
         subtitle: mode === 'show' ? customerNameById.get(selectedListCustomerId) || 'Selected Customer' : 'All Customers',
         fileName: 'customer-list',
@@ -233,7 +248,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
           },
         },
         totals: [moneyTotal('Total Balance', sumByKey(rows, 'balance'))],
-      });
+      }, response.data.meta);
     });
 
   const handleCustomerLedger = (mode: 'show' | 'all') =>
@@ -260,7 +275,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
           : rows.length > 0
             ? Number(rows[rows.length - 1].running_balance || 0)
             : 0;
-      onOpenModal({
+      openReport({
         title: 'Customer Ledger',
         subtitle: `${formatDateOnly(ledgerRange.fromDate)} - ${formatDateOnly(ledgerRange.toDate)}`,
         fileName: 'customer-ledger',
@@ -285,7 +300,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
           Mode: mode === 'show' ? 'Show' : 'All',
           Customer: mode === 'show' ? customerNameById.get(selectedLedgerCustomerId) || 'Selected Customer' : 'All Customers',
         },
-      });
+      }, response.data.meta);
     });
 
   const handleOutstandingBalances = (mode: 'show' | 'all') =>
@@ -302,7 +317,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
       const dr = sumByKey(rows, 'total_debit');
       const cr = sumByKey(rows, 'total_credit');
       const total = sumByKey(rows, 'outstanding_balance');
-      onOpenModal({
+      openReport({
         title: 'Outstanding Balances',
         subtitle: mode === 'show' ? customerNameById.get(selectedOutstandingCustomerId) || 'Selected Customer' : 'All Customers',
         fileName: 'customer-outstanding-balances',
@@ -321,7 +336,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
           },
         },
         totals: [moneyTotal('DR', dr), moneyTotal('CR', cr), moneyTotal('Total', total)],
-      });
+      }, response.data.meta);
     });
 
   const handlePaymentHistory = (mode: 'show' | 'all') =>
@@ -339,7 +354,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load payment history');
       const rows = toRecordRows(response.data.rows || []);
       const totalReceived = sumByKey(rows, 'amount');
-      onOpenModal({
+      openReport({
         title: 'Customer Payment History',
         subtitle: `${formatDateOnly(paymentHistoryRange.fromDate)} - ${formatDateOnly(paymentHistoryRange.toDate)}`,
         fileName: 'customer-payment-history',
@@ -358,7 +373,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
           },
         },
         totals: [moneyTotal('CR', totalReceived), moneyTotal('Total', totalReceived)],
-      });
+      }, response.data.meta);
     });
 
   const handleCreditCustomers = (mode: 'show' | 'all') =>
@@ -372,7 +387,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load credit customers');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Credit Customers',
         subtitle: mode === 'show' ? customerNameById.get(selectedCreditCustomerId) || 'Selected Customer' : 'All Customers',
         fileName: 'credit-customers',
@@ -389,7 +404,46 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
           },
         },
         totals: [moneyTotal('Total Credit', sumByKey(rows, 'current_credit'))],
+      }, response.data.meta);
+    });
+
+  const handleCreditOverdue = (mode: 'show' | 'all') =>
+    runCardAction('credit-overdue', async () => {
+      const customerId = mode === 'show' ? Number(selectedOverdueCustomerId || 0) : undefined;
+      if (mode === 'show' && !customerId) throw new Error('Select a customer first');
+      const response = await customerReportsService.getCreditOverdue({
+        mode,
+        customerId,
+        branchId: activeBranchId ?? undefined,
       });
+      if (!response.success || !response.data) {
+        const msg = response.error || response.message || 'Failed to load overdue credit report';
+        if (/route not found/i.test(msg)) {
+          throw new Error(
+            'Customer overdue API route was not found. Restart/redeploy the server so /api/reports/customer/credit-overdue is available, then retry.'
+          );
+        }
+        throw new Error(msg);
+      }
+      const rows = toRecordRows(response.data.rows || []);
+      openReport({
+        title: 'Overdue Credit Sales',
+        subtitle: mode === 'show' ? customerNameById.get(selectedOverdueCustomerId) || 'Selected Customer' : 'All Customers',
+        fileName: 'credit-overdue',
+        data: rows,
+        columns: creditOverdueColumns,
+        filters: {
+          Mode: mode === 'show' ? 'Show' : 'All',
+          Customer: mode === 'show' ? customerNameById.get(selectedOverdueCustomerId) || 'Selected Customer' : 'All Customers',
+        },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            total: formatCurrency(sumByKey(rows, 'total')),
+          },
+        },
+        totals: [moneyTotal('Total Overdue', sumByKey(rows, 'total'))],
+      }, response.data.meta);
     });
 
   const handleNewCustomers = () =>
@@ -401,7 +455,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load new customers');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'New Customers (by date)',
         subtitle: `${formatDateOnly(newCustomersRange.fromDate)} - ${formatDateOnly(newCustomersRange.toDate)}`,
         fileName: 'new-customers-by-date',
@@ -422,7 +476,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
           moneyTotal('Opening Balance', sumByKey(rows, 'opening_balance')),
           moneyTotal('Current Balance', sumByKey(rows, 'current_balance')),
         ],
-      });
+      }, response.data.meta);
     });
 
   const handleCustomerActivity = (mode: 'show' | 'all') =>
@@ -439,7 +493,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load customer activity');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Customer Activity',
         subtitle: `${formatDateOnly(activityRange.fromDate)} - ${formatDateOnly(activityRange.toDate)}`,
         fileName: 'customer-activity',
@@ -469,7 +523,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
           moneyTotal('Receipts', sumByKey(rows, 'total_receipts')),
           moneyTotal('Net Exposure', sumByKey(rows, 'net_exposure')),
         ],
-      });
+      }, response.data.meta);
     });
 
   const renderDateRange = (range: DateRange, onChange: (next: DateRange) => void) => (
@@ -511,7 +565,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
   );
 
   const renderShowAllButtons = (onShow: () => void, onAll: () => void, cardId: CustomerCardId) => (
-    <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <button
         onClick={onShow}
         disabled={loadingCardId === cardId}
@@ -573,6 +627,15 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
         <div className="space-y-3">
           {renderCustomerSelector(selectedCreditCustomerId, setSelectedCreditCustomerId)}
           {renderShowAllButtons(() => handleCreditCustomers('show'), () => handleCreditCustomers('all'), cardId)}
+        </div>
+      );
+    }
+
+    if (cardId === 'credit-overdue') {
+      return (
+        <div className="space-y-3">
+          {renderCustomerSelector(selectedOverdueCustomerId, setSelectedOverdueCustomerId)}
+          {renderShowAllButtons(() => handleCreditOverdue('show'), () => handleCreditOverdue('all'), cardId)}
         </div>
       );
     }

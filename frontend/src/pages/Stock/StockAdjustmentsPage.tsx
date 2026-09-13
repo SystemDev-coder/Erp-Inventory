@@ -8,7 +8,7 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { Modal } from '../../components/ui/modal/Modal';
 import DeleteConfirmModal from '../../components/ui/modal/DeleteConfirmModal';
 import { inventoryService, InventoryItem, StockAdjustmentRow } from '../../services/inventory.service';
-import { defaultDateRange } from '../../utils/dateRange';
+import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
 
 const formatDate = (value: string) => {
@@ -77,8 +77,8 @@ export default function StockAdjustmentsPage() {
     const res = await inventoryService.listAdjustments({
       page: 1,
       limit: 200,
-      fromDate: dateRange.fromDate,
-      toDate: dateRange.toDate,
+      fromDate: optionalDateParam(dateRange.fromDate),
+      toDate: optionalDateParam(dateRange.toDate),
     });
     setRows(res.data?.rows ?? []);
   }, [dateRange.fromDate, dateRange.toDate]);
@@ -179,11 +179,11 @@ export default function StockAdjustmentsPage() {
     setDeleteTarget(row);
   };
 
-  const confirmDelete = async () => {
+  const confirmDelete = async (reason: string) => {
     if (!deleteTarget) return;
     try {
       setDeleting(true);
-      const res = await inventoryService.deleteAdjustment(deleteTarget.adj_id);
+      const res = await inventoryService.deleteAdjustment(deleteTarget.adj_id, reason);
       if (!res.success) {
         throw new Error(res.error || 'Failed to delete adjustment');
       }

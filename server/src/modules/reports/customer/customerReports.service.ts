@@ -1,4 +1,26 @@
-import { queryMany } from '../../../db/query';
+import { queryMany, queryOne } from '../../../db/query';
+import { customerOutstandingLedgerCte } from '../../../utils/customerOutstanding';
+import { customerInvoicePaymentsCteSql } from '../reports.helpers';
+
+const columnExistsCache: Record<string, boolean> = {};
+
+const resolveColumnExists = async (table: string, column: string): Promise<boolean> => {
+  const cacheKey = `${table}.${column}`;
+  if (cacheKey in columnExistsCache) return columnExistsCache[cacheKey];
+  const row = await queryOne<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM information_schema.columns
+        WHERE table_schema = 'ims'
+          AND table_name = $1
+          AND column_name = $2
+     ) AS exists`,
+    [table, column]
+  );
+  const exists = Boolean(row?.exists);
+  columnExistsCache[cacheKey] = exists;
+  return exists;
+};
 
 export interface CustomerReportOption {
   id: number;
@@ -67,6 +89,17 @@ export interface CreditCustomerRow {
   customer_type: string;
   current_credit: number;
   status: string;
+}
+
+export interface CreditOverdueRow {
+  sale_id: number;
+  invoice_number: string;
+  customer_id: number | null;
+  customer_name: string;
+  sale_date: string;
+  appointment_date: string;
+  days_overdue: number;
+  total: number;
 }
 
 export interface NewCustomerRow {
@@ -166,7 +199,16 @@ export const customerReportsService = {
     }
 
     return queryMany<CustomerLedgerRow>(
-      `WITH scoped AS (
+      `WITH opening AS (
+         SELECT
+           l.customer_id,
+           COALESCE(SUM(l.debit - l.credit), 0)::double precision AS opening_balance
+         FROM ims.customer_ledger l
+        WHERE l.branch_id = $1
+          AND l.entry_date::date < $2::date
+        GROUP BY l.customer_id
+       ),
+       scoped AS (
          SELECT
            l.cust_ledger_id,
            l.entry_date,
@@ -181,9 +223,6 @@ export const customerReportsService = {
            ) AS entry_type,
            COALESCE(l.ref_table, '') AS ref_table,
            l.ref_id,
-           -- Refunds are written as a debit that partially reverses the return's credit note
-           -- (that portion was paid back in cash, not kept as store credit) - use the ledger's
-           -- own signed debit/credit as-is so the running balance nets correctly.
            COALESCE(l.debit, 0)::double precision AS debit,
            COALESCE(l.credit, 0)::double precision AS credit,
            COALESCE(l.note, '') AS note
@@ -215,14 +254,18 @@ export const customerReportsService = {
         scoped.ref_id,
         scoped.debit,
         scoped.credit,
-        SUM(scoped.debit - scoped.credit)
-          OVER (
-            PARTITION BY scoped.customer_id
-            ORDER BY scoped.entry_date, scoped.cust_ledger_id
-            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-          )::double precision AS running_balance,
+        (
+          COALESCE(opening.opening_balance, 0)
+          + SUM(scoped.debit - scoped.credit)
+            OVER (
+              PARTITION BY scoped.customer_id
+              ORDER BY scoped.entry_date, scoped.cust_ledger_id
+              ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+            )
+        )::double precision AS running_balance,
         scoped.note
       FROM scoped
+      LEFT JOIN opening ON opening.customer_id = scoped.customer_id
       ORDER BY scoped.entry_date ASC, scoped.cust_ledger_id ASC
       LIMIT 4000`,
       params
@@ -240,51 +283,31 @@ export const customerReportsService = {
     }
 
     return queryMany<OutstandingBalanceRow>(
-      `WITH ledger AS (
-         SELECT
-           l.customer_id,
-           COALESCE(SUM(l.debit), 0)::double precision AS total_debit,
-           COALESCE(SUM(l.credit), 0)::double precision AS total_credit,
-           COALESCE(SUM(COALESCE(l.debit, 0) - COALESCE(l.credit, 0)), 0)::double precision AS ledger_balance
-          FROM ims.customer_ledger l
-         WHERE l.branch_id = $1
-           AND NOT (
-             COALESCE(l.ref_table, '') = 'sales'
-             AND l.ref_id IS NOT NULL
-             AND NOT EXISTS (
-               SELECT 1
-                 FROM ims.sales s
-                WHERE s.branch_id = $1
-                  AND s.sale_id = l.ref_id
-                  AND LOWER(COALESCE(s.status::text, '')) <> 'void'
-                  AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
-             )
-           )
-         GROUP BY l.customer_id
-      )
+      `WITH ${customerOutstandingLedgerCte}
       SELECT
         c.customer_id,
         c.full_name AS customer_name,
         COALESCE(c.phone, '') AS phone,
-        COALESCE(l.total_debit, 0)::double precision AS total_debit,
-        COALESCE(l.total_credit, 0)::double precision AS total_credit,
-        (
+        COALESCE(l.total_debit, o.gross_sales, 0)::double precision AS total_debit,
+        COALESCE(l.total_credit, o.total_receipts, 0)::double precision AS total_credit,
+        GREATEST(
           CASE
-            -- Prefer ledger-derived outstanding because it correctly reflects returns/refunds.
-            -- Fall back to stored balance only when the ledger has no rows for the customer.
-            WHEN l.customer_id IS NULL THEN GREATEST(COALESCE(c.${balanceColumn}, 0), 0)
-            ELSE GREATEST(COALESCE(l.ledger_balance, 0), 0)
-          END
+            WHEN l.customer_id IS NOT NULL THEN COALESCE(l.ledger_balance, 0)
+            ELSE COALESCE(o.operational_balance, c.${balanceColumn}, 0)
+          END,
+          0
         )::double precision AS outstanding_balance
       FROM ims.customers c
       LEFT JOIN ledger l ON l.customer_id = c.customer_id
+      LEFT JOIN operational o ON o.customer_id = c.customer_id
       WHERE c.branch_id = $1
         ${filter}
-        AND (
+        AND GREATEST(
           CASE
-            WHEN l.customer_id IS NULL THEN GREATEST(COALESCE(c.${balanceColumn}, 0), 0)
-            ELSE GREATEST(COALESCE(l.ledger_balance, 0), 0)
-          END
+            WHEN l.customer_id IS NOT NULL THEN COALESCE(l.ledger_balance, 0)
+            ELSE COALESCE(o.operational_balance, c.${balanceColumn}, 0)
+          END,
+          0
         ) > 0
       ORDER BY outstanding_balance DESC, c.full_name
       LIMIT 2000`,
@@ -399,52 +422,75 @@ export const customerReportsService = {
     }
 
     return queryMany<CreditCustomerRow>(
-      `WITH ledger AS (
-         SELECT
-           l.customer_id,
-           COALESCE(SUM(COALESCE(l.debit, 0) - COALESCE(l.credit, 0)), 0)::double precision AS ledger_balance
-          FROM ims.customer_ledger l
-         WHERE l.branch_id = $1
-           AND NOT (
-             COALESCE(l.ref_table, '') = 'sales'
-             AND l.ref_id IS NOT NULL
-             AND NOT EXISTS (
-               SELECT 1
-                 FROM ims.sales s
-                WHERE s.branch_id = $1
-                  AND s.sale_id = l.ref_id
-                  AND LOWER(COALESCE(s.status::text, '')) <> 'void'
-                  AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
-             )
-           )
-         GROUP BY l.customer_id
-       )
+      `WITH ${customerOutstandingLedgerCte}
        SELECT
          c.customer_id,
          c.full_name AS customer_name,
          COALESCE(c.phone, '') AS phone,
          COALESCE(c.customer_type, 'regular') AS customer_type,
-         (
+         GREATEST(
            CASE
-             -- Prefer ledger-derived outstanding because it correctly reflects returns/refunds.
-             -- Fall back to stored balance only when the ledger has no rows for the customer.
-             WHEN l.customer_id IS NULL THEN GREATEST(COALESCE(c.${balanceColumn}, 0), 0)
-             ELSE GREATEST(COALESCE(l.ledger_balance, 0), 0)
-           END
+             WHEN l.customer_id IS NOT NULL THEN COALESCE(l.ledger_balance, 0)
+             ELSE COALESCE(o.operational_balance, c.${balanceColumn}, 0)
+           END,
+           0
          )::double precision AS current_credit,
          CASE WHEN c.is_active THEN 'Active' ELSE 'Inactive' END AS status
        FROM ims.customers c
        LEFT JOIN ledger l ON l.customer_id = c.customer_id
+       LEFT JOIN operational o ON o.customer_id = c.customer_id
        WHERE c.branch_id = $1
          ${filter}
-         AND (
+         AND GREATEST(
            CASE
-             WHEN l.customer_id IS NULL THEN GREATEST(COALESCE(c.${balanceColumn}, 0), 0)
-             ELSE GREATEST(COALESCE(l.ledger_balance, 0), 0)
-           END
+             WHEN l.customer_id IS NOT NULL THEN COALESCE(l.ledger_balance, 0)
+             ELSE COALESCE(o.operational_balance, c.${balanceColumn}, 0)
+           END,
+           0
          ) > 0
        ORDER BY current_credit DESC, c.full_name
        LIMIT 2000`,
+      params
+    );
+  },
+
+  async getCreditOverdue(branchId: number, customerId?: number): Promise<CreditOverdueRow[]> {
+    const hasDueDate = await resolveColumnExists('sales', 'due_date');
+    if (!hasDueDate) return [];
+
+    const params: Array<number> = [branchId];
+    let filter = '';
+
+    if (customerId) {
+      params.push(customerId);
+      filter = `AND s.customer_id = $${params.length}`;
+    }
+
+    return queryMany<CreditOverdueRow>(
+      `WITH ${customerInvoicePaymentsCteSql('$1', 'CURRENT_DATE')}
+       SELECT
+         s.sale_id,
+         ('#' || s.sale_id::text) AS invoice_number,
+         s.customer_id,
+         COALESCE(c.full_name, 'Walk-in') AS customer_name,
+         s.sale_date::date::text AS sale_date,
+         s.due_date::date::text AS appointment_date,
+         GREATEST((CURRENT_DATE - s.due_date)::int, 0) AS days_overdue,
+         GREATEST(COALESCE(s.total, 0) - COALESCE(ps.paid, 0), 0)::double precision AS total
+       FROM ims.sales s
+       LEFT JOIN pay_sum ps ON ps.sale_id = s.sale_id
+       LEFT JOIN ims.customers c ON c.customer_id = s.customer_id
+      WHERE s.branch_id = $1
+        AND COALESCE(s.sale_type::text, '') = 'credit'
+        AND s.due_date IS NOT NULL
+        AND s.due_date <= CURRENT_DATE
+        AND LOWER(COALESCE(s.status::text, '')) <> 'void'
+        AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
+        AND COALESCE(s.is_deleted, 0)::int = 0
+        AND GREATEST(COALESCE(s.total, 0) - COALESCE(ps.paid, 0), 0) > 0.009
+        ${filter}
+      ORDER BY days_overdue DESC, s.due_date ASC, s.sale_id ASC
+      LIMIT 2000`,
       params
     );
   },

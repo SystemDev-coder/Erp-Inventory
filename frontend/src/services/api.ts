@@ -207,10 +207,14 @@ class ApiClient {
   }
 
   /**
-   * DELETE request
+   * DELETE request — reason is required by the API for all deletes.
    */
-  async delete<T>(endpoint: string, options?: RequestInit): Promise<ApiResponse<T>> {
-    return this.request<T>(endpoint, { ...options, method: 'DELETE' });
+  async delete<T>(endpoint: string, reason: string, options?: RequestInit): Promise<ApiResponse<T>> {
+    return this.request<T>(endpoint, {
+      ...options,
+      method: 'DELETE',
+      body: JSON.stringify({ reason }),
+    });
   }
 }
 

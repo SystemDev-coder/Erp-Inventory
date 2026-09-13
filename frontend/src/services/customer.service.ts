@@ -19,14 +19,18 @@ export interface Customer {
 }
 
 export const customerService = {
-  async list(params?: { search?: string; fromDate?: string; toDate?: string; branchId?: number }) {
+  async list(params?: { search?: string; fromDate?: string; toDate?: string; branchId?: number; page?: number; limit?: number }) {
     const qsParts: string[] = [];
     if (params?.search) qsParts.push(`search=${encodeURIComponent(params.search)}`);
     if (params?.fromDate) qsParts.push(`fromDate=${encodeURIComponent(params.fromDate)}`);
     if (params?.toDate) qsParts.push(`toDate=${encodeURIComponent(params.toDate)}`);
     if (params?.branchId) qsParts.push(`branchId=${params.branchId}`);
+    if (params?.page) qsParts.push(`page=${params.page}`);
+    if (params?.limit) qsParts.push(`limit=${params.limit}`);
     const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
-    return apiClient.get<{ customers: Customer[] }>(`${API.CUSTOMERS.LIST}${qs}`);
+    return apiClient.get<{ customers: Customer[]; pagination?: { total: number; page: number; limit: number; totalPages: number } }>(
+      `${API.CUSTOMERS.LIST}${qs}`
+    );
   },
 
   async get(id: number) {
@@ -73,7 +77,7 @@ export const customerService = {
     return apiClient.get<{ customers: Customer[] }>(`${API.CUSTOMERS.LIST}/lookup${qs}`);
   },
 
-  async remove(id: number) {
-    return apiClient.delete<{ message: string }>(API.CUSTOMERS.ITEM(id));
+  async remove(id: number, reason: string) {
+    return apiClient.delete<{ message: string }>(API.CUSTOMERS.ITEM(id), reason);
   },
 };

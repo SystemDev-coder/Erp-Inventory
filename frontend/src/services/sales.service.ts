@@ -36,6 +36,7 @@ export interface Sale {
   note?: string | null;
   pay_acc_id?: number | null;
   paid_amount?: number;
+  due_date?: string | null;
   is_stock_applied?: boolean;
   voided_at?: string | null;
   void_reason?: string | null;
@@ -63,6 +64,7 @@ export interface SaleCreateInput {
   }>;
   payFromAccId?: number;
   paidAmount?: number;
+  dueDate?: string | null;
 }
 
 export type SaleUpdateInput = Partial<Omit<SaleCreateInput, 'items'>> & {
@@ -77,6 +79,15 @@ export interface SalesListFilters {
   includeVoided?: boolean;
   fromDate?: string;
   toDate?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface PaginationMeta {
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
 }
 
 const makeQueryString = (filters: SalesListFilters = {}) => {
@@ -88,13 +99,17 @@ const makeQueryString = (filters: SalesListFilters = {}) => {
   if (filters.includeVoided) params.set('includeVoided', 'true');
   if (filters.fromDate) params.set('fromDate', filters.fromDate);
   if (filters.toDate) params.set('toDate', filters.toDate);
+  if (filters.page) params.set('page', String(filters.page));
+  if (filters.limit) params.set('limit', String(filters.limit));
   const qs = params.toString();
   return qs ? `?${qs}` : '';
 };
 
 export const salesService = {
   async list(filters: SalesListFilters = {}) {
-    return apiClient.get<{ sales: Sale[] }>(`${API.SALES.LIST}${makeQueryString(filters)}`);
+    return apiClient.get<{ sales: Sale[]; pagination?: PaginationMeta }>(
+      `${API.SALES.LIST}${makeQueryString(filters)}`
+    );
   },
 
   async get(id: number) {
@@ -126,8 +141,8 @@ export const salesService = {
     return apiClient.post<{ sale: Sale }>(`${API.SALES.LIST}/${id}/convert-quotation`, payload);
   },
 
-  async remove(id: number) {
-    return apiClient.delete(API.SALES.ITEM(id));
+  async remove(id: number, reason: string) {
+    return apiClient.delete(API.SALES.ITEM(id), reason);
   },
 
   async getPrintHtml(id: number) {

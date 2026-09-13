@@ -3,7 +3,7 @@ import { ChevronDown, Loader2 } from 'lucide-react';
 import type { ReportColumn } from '../../../components/reports/ReportModal';
 import { financialReportsService } from '../../../services/reports/financialReports.service';
 import type { DateRange, ModalReportState } from '../types';
-import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange } from '../reportUtils';
+import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange, defaultAsOfDate, ensureAsOfDateValid, ensureDateRangeValid, withReportTruncation, type ReportTruncationMeta } from '../reportUtils';
 import { useBranch } from '../../../context/BranchContext';
 
 type FinancialCardId =
@@ -15,18 +15,20 @@ type FinancialCardId =
   | 'accounts-receivable'
   | 'accounts-payable'
   | 'account-statement'
-  | 'trial-balance';
+  | 'trial-balance'
+  | 'general-ledger';
 
-const financialCards: Array<{ id: FinancialCardId; title: string }> = [
-  { id: 'balance-sheet', title: 'Balance Sheet' },
+const financialCards: Array<{ id: FinancialCardId; title: string; hint?: string }> = [
+  { id: 'balance-sheet', title: 'Balance Sheet', hint: 'Between two dates (snapshot as of To Date)' },
   { id: 'cash-flow', title: 'Cash Flow Statement' },
   { id: 'cogs-by-invoice', title: 'COGS (Cost of Goods Sold)' },
   { id: 'account-balances', title: 'Account Balances' },
   { id: 'expense-summary', title: 'Expense Summary' },
-  { id: 'accounts-receivable', title: 'Accounts Receivable' },
+  { id: 'accounts-receivable', title: 'Accounts Receivable', hint: 'Open invoices as of date' },
   { id: 'accounts-payable', title: 'Accounts Payable' },
   { id: 'account-statement', title: 'Account Statement' },
   { id: 'trial-balance', title: 'Trial Balance' },
+  { id: 'general-ledger', title: 'General Ledger' },
 ];
 
 const statementColumns: ReportColumn<Record<string, unknown>>[] = [
@@ -57,7 +59,7 @@ const expenseSummaryColumns: ReportColumn<Record<string, unknown>>[] = [
 
 const accountsReceivableColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'customer_name', header: 'Customer' },
-  { key: 'invoice_no', header: 'Invoice #' },
+  { key: 'invoice_no', header: 'Invoice #', render: (row) => (Number(row.invoice_no) > 0 ? String(row.invoice_no) : '—') },
   { key: 'invoice_date', header: 'Invoice Date', render: (row) => formatDateOnly(row.invoice_date) },
   { key: 'due_date', header: 'Due Date', render: (row) => formatDateOnly(row.due_date) },
   { key: 'amount', header: 'Amount', align: 'right', render: (row) => formatCurrency(row.amount) },
@@ -146,11 +148,25 @@ const trialBalanceColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'closing_credit', header: 'Closing CR', align: 'right', render: (row) => formatCurrency(row.closing_credit) },
 ];
 
+const generalLedgerColumns: ReportColumn<Record<string, unknown>>[] = [
+  { key: 'txn_date', header: 'Date', render: (row) => formatDateOnly(row.txn_date) },
+  { key: 'account_name', header: 'Account' },
+  { key: 'txn_type', header: 'Type' },
+  { key: 'ref_table', header: 'Source' },
+  { key: 'ref_id', header: 'Ref #' },
+  { key: 'debit', header: 'Debit', align: 'right', render: (row) => formatCurrency(row.debit) },
+  { key: 'credit', header: 'Credit', align: 'right', render: (row) => formatCurrency(row.credit) },
+  { key: 'note', header: 'Memo' },
+];
+
 type Props = {
   onOpenModal: (report: ModalReportState) => void;
 };
 
 export function FinancialReportsTab({ onOpenModal }: Props) {
+  const openReport = (report: ModalReportState, meta?: ReportTruncationMeta, legacy?: { truncated?: boolean; totalCount?: number; maxRows?: number }) =>
+    onOpenModal(withReportTruncation(report, meta, legacy));
+
   const { activeBranchId } = useBranch();
   const [expandedCardKey, setExpandedCardKey] = useState<string | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<FinancialCardId | null>(null);
@@ -158,14 +174,17 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
 
   const [cashFlowRange, setCashFlowRange] = useState<DateRange>(defaultReportRange());
   const [balanceRange, setBalanceRange] = useState<DateRange>(defaultReportRange());
+  const [accountBalanceAsOfDate, setAccountBalanceAsOfDate] = useState(defaultAsOfDate);
   const [cogsRange, setCogsRange] = useState<DateRange>(defaultReportRange());
   const [expenseRange, setExpenseRange] = useState<DateRange>(defaultReportRange());
-  const [receivableRange, setReceivableRange] = useState<DateRange>(defaultReportRange());
+  const [receivableAsOfDate, setReceivableAsOfDate] = useState(defaultAsOfDate);
   const [payableRange, setPayableRange] = useState<DateRange>(defaultReportRange());
   const [statementRange, setStatementRange] = useState<DateRange>(defaultReportRange());
   const [trialBalanceRange, setTrialBalanceRange] = useState<DateRange>(defaultReportRange());
+  const [generalLedgerRange, setGeneralLedgerRange] = useState<DateRange>(defaultReportRange());
   const [selectedAccountBalanceId, setSelectedAccountBalanceId] = useState('');
   const [selectedAccountStatementId, setSelectedAccountStatementId] = useState('');
+  const [selectedGeneralLedgerAccountId, setSelectedGeneralLedgerAccountId] = useState('');
 
   const [optionsLoading, setOptionsLoading] = useState(false);
   const [optionsError, setOptionsError] = useState('');
@@ -222,10 +241,12 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
     }
   };
 
-  const ensureRangeValid = (range: DateRange, label: string) => {
-    if (!range.fromDate || !range.toDate) throw new Error(`${label}: both start and end date are required`);
-    if (range.fromDate > range.toDate) throw new Error(`${label}: start date cannot be after end date`);
-  };
+  const selectedGeneralLedgerAccountLabel = useMemo(
+    () => accounts.find((option) => String(option.id) === selectedGeneralLedgerAccountId)?.label || '',
+    [accounts, selectedGeneralLedgerAccountId]
+  );
+
+  const ensureRangeValid = ensureDateRangeValid;
 
   const sumNumericField = (rows: Record<string, unknown>[], field: string) =>
     rows.reduce((sum, row) => sum + Number(row[field] || 0), 0);
@@ -233,10 +254,8 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
   const handleBalanceSheet = () =>
     runCardAction('balance-sheet', async () => {
       ensureRangeValid(balanceRange, 'Balance Sheet');
-      const asOfDate = balanceRange.toDate;
       const response = await financialReportsService.getBalanceSheet({
-        asOfDate,
-        fromDate: balanceRange.fromDate,
+        asOfDate: balanceRange.toDate,
         branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load balance sheet');
@@ -247,7 +266,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
         variant: 'balance-sheet',
         data: toRecordRows(response.data.rows || []),
         columns: statementColumns,
-        filters: { 'From Date': balanceRange.fromDate, 'To Date': balanceRange.toDate, 'As Of Date': asOfDate },
+        filters: { 'From Date': balanceRange.fromDate, 'To Date': balanceRange.toDate },
       });
     });
 
@@ -261,7 +280,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load cash flow statement');
       const rows = toRecordRows(response.data.rows || []);
       const totalAmount = sumNumericField(rows, 'amount');
-      onOpenModal({
+      openReport({
         title: 'Cash Flow Statement',
         subtitle: `${formatDateOnly(cashFlowRange.fromDate)} - ${formatDateOnly(cashFlowRange.toDate)}`,
         fileName: 'cash-flow-statement',
@@ -275,7 +294,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
             amount: formatCurrency(totalAmount),
           },
         },
-      });
+      }, response.data.meta);
     });
 
   const handleCogsByInvoice = () =>
@@ -287,7 +306,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load COGS report');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'COGS (Cost of Goods Sold)',
         subtitle: `${formatDateOnly(cogsRange.fromDate)} - ${formatDateOnly(cogsRange.toDate)}`,
         fileName: 'cogs-by-invoice',
@@ -303,23 +322,25 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
             gross_profit: formatCurrency(sumNumericField(rows, 'gross_profit')),
           },
         },
-      });
+      }, response.data.meta);
     });
 
   const handleAccountBalances = (mode: 'show' | 'all') =>
     runCardAction('account-balances', async () => {
+      ensureAsOfDateValid(accountBalanceAsOfDate, 'Account Balances');
       const accountId = mode === 'show' ? Number(selectedAccountBalanceId || 0) : undefined;
       if (mode === 'show' && !accountId) throw new Error('Select an account first');
       const response = await financialReportsService.getAccountBalances({
         mode,
         accountId,
+        asOfDate: accountBalanceAsOfDate,
         branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load account balances');
       const rows = toRecordRows(response.data.rows || []);
       const totalDebit = rows.reduce((sum, row) => sum + Number(row.debit_balance || 0), 0);
       const totalCredit = rows.reduce((sum, row) => sum + Number(row.credit_balance || 0), 0);
-      onOpenModal({
+      openReport({
         title: 'Account Balances',
         subtitle: mode === 'show' ? selectedAccountBalanceLabel || 'Selected Account' : 'All Accounts',
         fileName: 'account-balances',
@@ -343,10 +364,11 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
           },
         },
         filters: {
+          'As Of Date': accountBalanceAsOfDate,
           Mode: mode === 'show' ? 'Show' : 'All',
           Account: mode === 'show' ? selectedAccountBalanceLabel || 'Selected Account' : 'All Accounts',
         },
-      });
+      }, response.data.meta);
     });
 
   const handleExpenseSummary = () =>
@@ -362,7 +384,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
       const totalCharged = sumNumericField(rows, 'total_charged');
       const totalPaid = sumNumericField(rows, 'total_paid');
       const totalOutstanding = sumNumericField(rows, 'outstanding_amount');
-      onOpenModal({
+      openReport({
         title: 'Expense Summary',
         subtitle: `${formatDateOnly(expenseRange.fromDate)} - ${formatDateOnly(expenseRange.toDate)}`,
         fileName: 'expense-summary',
@@ -378,23 +400,24 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
           },
         },
         filters: { 'From Date': expenseRange.fromDate, 'To Date': expenseRange.toDate },
-      });
+      }, response.data.meta);
     });
 
 
-  const handleAccountStatement = (mode: 'show' | 'all') =>
+  const handleAccountStatement = () =>
     runCardAction('account-statement', async () => {
       ensureRangeValid(statementRange, 'Account Statement');
-      const accountId = mode === 'show' ? Number(selectedAccountStatementId || 0) : undefined;
-      if (mode === 'show' && !accountId) throw new Error('Select an account first');
+      const accountId = Number(selectedAccountStatementId || 0);
+      if (!accountId) throw new Error('Select an account first');
       const response = await financialReportsService.getAccountStatement({
         fromDate: statementRange.fromDate,
         toDate: statementRange.toDate,
-        mode,
         accountId,
         branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load account statement');
+      const truncated = Boolean(response.data.truncated);
+      const totalCount = Number(response.data.totalCount || 0);
       const rows = toRecordRows(response.data.rows || []).map((row) => ({
         ...row,
         type_display: formatAccountStatementType(row.txn_type, row.ref_table),
@@ -406,13 +429,13 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
       }));
       const totalDebit = sumNumericField(rows, 'debit');
       const totalCredit = sumNumericField(rows, 'credit');
-      const closingBalance = mode === 'show' && rows.length > 0 ? Number(rows[rows.length - 1].closing_balance || 0) : null;
-      onOpenModal({
+      const closingBalance = rows.length > 0 ? Number(rows[rows.length - 1].closing_balance || 0) : null;
+      openReport({
         title: 'Account Statement',
         subtitle: `${formatDateOnly(statementRange.fromDate)} - ${formatDateOnly(statementRange.toDate)}`,
         fileName: 'account-statement',
         data: rows,
-        columns: mode === 'show' ? accountStatementShowColumns : accountStatementAllColumns,
+        columns: accountStatementShowColumns,
         tableTotals: {
           label: 'Total',
           values: {
@@ -424,10 +447,9 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
         filters: {
           'From Date': statementRange.fromDate,
           'To Date': statementRange.toDate,
-          Mode: mode === 'show' ? 'Show' : 'All',
-          Account: mode === 'show' ? selectedAccountStatementLabel || 'Selected Account' : 'All Accounts',
+          Account: selectedAccountStatementLabel || 'Selected Account',
         },
-      });
+      }, response.data.meta, { truncated, totalCount, maxRows: 5000 });
     });
 
   const handleTrialBalance = () =>
@@ -440,7 +462,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load trial balance');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Trial Balance',
         subtitle: `${formatDateOnly(trialBalanceRange.fromDate)} - ${formatDateOnly(trialBalanceRange.toDate)}`,
         fileName: 'trial-balance',
@@ -459,22 +481,57 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
           },
         },
         filters: { 'From Date': trialBalanceRange.fromDate, 'To Date': trialBalanceRange.toDate },
+      }, response.data.meta);
+    });
+
+  const handleGeneralLedger = (mode: 'show' | 'all') =>
+    runCardAction('general-ledger', async () => {
+      ensureRangeValid(generalLedgerRange, 'General Ledger');
+      const accountId = mode === 'show' ? Number(selectedGeneralLedgerAccountId || 0) : undefined;
+      if (mode === 'show' && !accountId) throw new Error('Select an account first');
+      const response = await financialReportsService.getAccountTransactions({
+        fromDate: generalLedgerRange.fromDate,
+        toDate: generalLedgerRange.toDate,
+        mode,
+        accountId,
+        branchId: activeBranchId ?? undefined,
       });
+      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load general ledger');
+      const rows = toRecordRows(response.data.rows || []);
+      openReport({
+        title: 'General Ledger',
+        subtitle: `${formatDateOnly(generalLedgerRange.fromDate)} - ${formatDateOnly(generalLedgerRange.toDate)}`,
+        fileName: 'general-ledger',
+        data: rows,
+        columns: generalLedgerColumns,
+        tableTotals: {
+          label: 'Total',
+          values: {
+            debit: formatCurrency(sumNumericField(rows, 'debit')),
+            credit: formatCurrency(sumNumericField(rows, 'credit')),
+          },
+        },
+        filters: {
+          'From Date': generalLedgerRange.fromDate,
+          'To Date': generalLedgerRange.toDate,
+          Mode: mode === 'show' ? 'Show' : 'All',
+          Account: mode === 'show' ? selectedGeneralLedgerAccountLabel || 'Selected Account' : 'All Accounts',
+        },
+      }, response.data.meta);
     });
 
   const handleAccountsReceivable = () =>
     runCardAction('accounts-receivable', async () => {
-      ensureRangeValid(receivableRange, 'Accounts Receivable');
+      ensureAsOfDateValid(receivableAsOfDate, 'Accounts Receivable');
       const response = await financialReportsService.getAccountsReceivable({
-        fromDate: receivableRange.fromDate,
-        toDate: receivableRange.toDate,
+        asOfDate: receivableAsOfDate,
         branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load accounts receivable');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Accounts Receivable',
-        subtitle: `${formatDateOnly(receivableRange.fromDate)} - ${formatDateOnly(receivableRange.toDate)}`,
+        subtitle: `As of ${formatDateOnly(receivableAsOfDate)}`,
         fileName: 'accounts-receivable',
         data: rows,
         columns: accountsReceivableColumns,
@@ -486,8 +543,8 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
             balance: formatCurrency(sumNumericField(rows, 'balance')),
           },
         },
-        filters: { 'From Date': receivableRange.fromDate, 'To Date': receivableRange.toDate },
-      });
+        filters: { 'As of Date': receivableAsOfDate },
+      }, response.data.meta);
     });
 
   const handleAccountsPayable = () =>
@@ -500,7 +557,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load accounts payable');
       const rows = toRecordRows(response.data.rows || []);
-      onOpenModal({
+      openReport({
         title: 'Accounts Payable',
         subtitle: `${formatDateOnly(payableRange.fromDate)} - ${formatDateOnly(payableRange.toDate)}`,
         fileName: 'accounts-payable',
@@ -515,7 +572,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
           },
         },
         filters: { 'From Date': payableRange.fromDate, 'To Date': payableRange.toDate },
-      });
+      }, response.data.meta);
     });
 
   const renderDateRange = (range: DateRange, onChange: (next: DateRange) => void) => (
@@ -539,6 +596,18 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
         />
       </label>
     </div>
+  );
+
+  const renderAsOfDate = (value: string, onChange: (next: string) => void, label = 'As of Date') => (
+    <label className="space-y-1 text-xs font-semibold text-slate-600">
+      <span>{label}</span>
+      <input
+        type="date"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"
+      />
+    </label>
   );
 
   const renderCardBody = (cardId: FinancialCardId) => {
@@ -590,10 +659,14 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
     if (cardId === 'account-balances') {
       return (
         <div className="space-y-3">
-          <select
+          {renderAsOfDate(accountBalanceAsOfDate, setAccountBalanceAsOfDate)}
+          <label className="space-y-1 text-xs font-semibold text-slate-600">
+            <span>Account</span>
+            <select
             value={selectedAccountBalanceId}
             onChange={(event) => setSelectedAccountBalanceId(event.target.value)}
             disabled={optionsLoading}
+            aria-label="Account"
             className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"
           >
             <option value="">Select Account</option>
@@ -603,8 +676,10 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
               </option>
             ))}
           </select>
-          <div className="grid grid-cols-2 gap-3">
+          </label>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <button
+              type="button"
               onClick={() => handleAccountBalances('show')}
               disabled={loadingCardId === cardId}
               className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
@@ -612,6 +687,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
               Show
             </button>
             <button
+              type="button"
               onClick={() => handleAccountBalances('all')}
               disabled={loadingCardId === cardId}
               className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70"
@@ -643,35 +719,31 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
       return (
         <div className="space-y-3">
           {renderDateRange(statementRange, setStatementRange)}
-          <select
-            value={selectedAccountStatementId}
-            onChange={(event) => setSelectedAccountStatementId(event.target.value)}
-            disabled={optionsLoading}
-            className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"
+          <label className="space-y-1 text-xs font-semibold text-slate-600">
+            <span>Account</span>
+            <select
+              value={selectedAccountStatementId}
+              onChange={(event) => setSelectedAccountStatementId(event.target.value)}
+              disabled={optionsLoading}
+              aria-label="Account"
+              className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"
+            >
+              <option value="">Select Account</option>
+              {accounts.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            onClick={handleAccountStatement}
+            disabled={loadingCardId === cardId}
+            className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
           >
-            <option value="">Select Account</option>
-            {accounts.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <div className="grid grid-cols-2 gap-3">
-            <button
-              onClick={() => handleAccountStatement('show')}
-              disabled={loadingCardId === cardId}
-              className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              Show
-            </button>
-            <button
-              onClick={() => handleAccountStatement('all')}
-              disabled={loadingCardId === cardId}
-              className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              All
-            </button>
-          </div>
+            Show
+          </button>
         </div>
       );
     }
@@ -679,7 +751,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
     if (cardId === 'accounts-receivable') {
       return (
         <div className="space-y-3">
-          {renderDateRange(receivableRange, setReceivableRange)}
+          {renderAsOfDate(receivableAsOfDate, setReceivableAsOfDate)}
           <button
             onClick={handleAccountsReceivable}
             disabled={loadingCardId === cardId}
@@ -706,39 +778,89 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
       );
     }
 
-    return (
-      <div className="space-y-3">
-        {renderDateRange(trialBalanceRange, setTrialBalanceRange)}
-        <button
-          onClick={handleTrialBalance}
-          disabled={loadingCardId === cardId}
-          className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
-        >
-          Show
-        </button>
-      </div>
-    );
+    if (cardId === 'trial-balance') {
+      return (
+        <div className="space-y-3">
+          {renderDateRange(trialBalanceRange, setTrialBalanceRange)}
+          <button
+            onClick={handleTrialBalance}
+            disabled={loadingCardId === cardId}
+            className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            Show
+          </button>
+        </div>
+      );
+    }
+
+    if (cardId === 'general-ledger') {
+      return (
+        <div className="space-y-3">
+          {renderDateRange(generalLedgerRange, setGeneralLedgerRange)}
+          <label className="space-y-1 text-xs font-semibold text-slate-600">
+            <span>Account (optional for All)</span>
+            <select
+              value={selectedGeneralLedgerAccountId}
+              onChange={(event) => setSelectedGeneralLedgerAccountId(event.target.value)}
+              disabled={optionsLoading}
+              aria-label="Account"
+              className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"
+            >
+              <option value="">Select Account</option>
+              {accounts.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => handleGeneralLedger('show')}
+              disabled={loadingCardId === cardId}
+              className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              Show
+            </button>
+            <button
+              type="button"
+              onClick={() => handleGeneralLedger('all')}
+              disabled={loadingCardId === cardId}
+              className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              All
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return null;
   };
 
   const renderCard = (card: { id: FinancialCardId; title: string }, index: number) => {
-    const cardKey = `${card.id}::${index}`;
+    const cardKey = `${card.id}-${index}`;
     const isOpen = expandedCardKey === cardKey;
     return (
       <div key={cardKey} className="self-start overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_8px_18px_rgba(15,23,42,0.08)]">
         <button
+          type="button"
+          aria-expanded={isOpen}
+          aria-controls={`${card.id}-${index}-panel`}
           onClick={() => {
             setCardErrors((prev) => ({ ...prev, [card.id]: '' }));
             setExpandedCardKey((prev) => (prev === cardKey ? null : cardKey));
           }}
-          className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-primary-900 to-primary-700 px-5 py-4 text-left text-white"
+          className="flex w-full min-h-11 items-center justify-between border-b border-slate-200 bg-gradient-to-r from-primary-900 to-primary-700 px-5 py-4 text-left text-white"
         >
           <div>
             <p className="text-xl font-semibold leading-tight">{card.title}</p>
           </div>
-          <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+          <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
         </button>
         {isOpen && (
-          <div className="space-y-3 bg-slate-50 px-5 py-4">
+          <div id={`${card.id}-${index}-panel`} className="space-y-3 bg-slate-50 px-5 py-4">
             {renderCardBody(card.id)}
             {cardErrors[card.id] && <p className="text-sm font-semibold text-red-600">{cardErrors[card.id]}</p>}
           </div>

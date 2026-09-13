@@ -132,8 +132,8 @@ class EmployeeService {
   /**
    * Delete employee
    */
-  async delete(id: number): Promise<ApiResponse<void>> {
-    return apiClient.delete<void>(`/api/employees/${id}`);
+  async delete(id: number, reason: string): Promise<ApiResponse<void>> {
+    return apiClient.delete<void>(`/api/employees/${id}`, reason);
   }
 
   /**
@@ -211,8 +211,8 @@ class EmployeeService {
     return apiClient.put<{ assignment: ShiftAssignment }>(`/api/employees/shift-assignments/${id}`, data);
   }
 
-  async deleteShiftAssignment(id: number): Promise<ApiResponse<void>> {
-    return apiClient.delete<void>(`/api/employees/shift-assignments/${id}`);
+  async deleteShiftAssignment(id: number, reason: string): Promise<ApiResponse<void>> {
+    return apiClient.delete<void>(`/api/employees/shift-assignments/${id}`, reason);
   }
 }
 

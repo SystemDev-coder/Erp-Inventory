@@ -187,6 +187,7 @@ const AppSidebar: React.FC = () => {
         ${showExpanded ? 'w-[280px]' : 'w-[80px]'}
         ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'}
         lg:translate-x-0`}
+      aria-label="Application sidebar"
       onMouseEnter={() => !isExpanded && setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
@@ -195,7 +196,7 @@ const AppSidebar: React.FC = () => {
           !showExpanded ? 'lg:justify-center px-2' : 'justify-between px-4'
         }`}
       >
-        <Link to="/" className="flex items-center gap-3 min-w-0">
+        <Link to="/" className="flex items-center gap-3 min-w-0" aria-label={brandName}>
           <div className="w-9 h-9 shrink-0 rounded-lg border border-slate-200 bg-black text-white flex items-center justify-center shadow-sm dark:border-white/15 dark:bg-white dark:text-black">
             <ShoppingCart className="w-5 h-5" />
           </div>
@@ -216,7 +217,7 @@ const AppSidebar: React.FC = () => {
       </div>
 
       <div className="flex-1 overflow-y-auto sidebar-scrollbar">
-        <nav className={`px-2 pb-4 ${showExpanded ? 'pt-3' : 'pt-4'}`}>
+        <nav className={`px-2 pb-4 ${showExpanded ? 'pt-3' : 'pt-4'}`} aria-label="Main">
           <ul className="space-y-1">
             {visibleGroups.map((group) => (
               <li key={group.title} className="mt-2">
@@ -234,7 +235,10 @@ const AppSidebar: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => toggleGroup(item.id)}
-                      className={`flex items-center w-full rounded-lg px-3 py-2.5 transition-colors ${
+                      aria-expanded={groupOpen}
+                      aria-controls={`${item.id}-submenu`}
+                      aria-label={item.label}
+                      className={`flex items-center w-full min-h-11 rounded-lg px-3 py-2.5 transition-colors ${
                         hasActiveSub
                           ? 'bg-slate-100 text-slate-900 ring-1 ring-slate-200 dark:bg-white/10 dark:text-white dark:ring-white/15'
                           : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900 dark:text-white/80 dark:hover:bg-white/10 dark:hover:text-white'
@@ -257,7 +261,7 @@ const AppSidebar: React.FC = () => {
                       )}
                     </button>
                     {showExpanded && groupOpen && (
-                      <ul className="ml-5 mt-2 space-y-1 border-l border-slate-200 pl-3 dark:border-white/10">
+                      <ul id={`${item.id}-submenu`} className="ml-5 mt-2 space-y-1 border-l border-slate-200 pl-3 dark:border-white/10">
                         {(item.subItems || []).map((sub) => {
                           const subActive = isActive(sub.to, sub.exact);
                           return (
@@ -285,7 +289,9 @@ const AppSidebar: React.FC = () => {
                   <li key={item.id}>
                     <Link
                     to={item.to || '/'}
-                    className={`flex items-center w-full rounded-lg transition-colors ${
+                    aria-label={item.label}
+                    title={item.label}
+                    className={`flex items-center w-full min-h-11 rounded-lg transition-colors ${
                       active
                         ? 'bg-slate-100 text-slate-900 ring-1 ring-slate-200 dark:bg-white/10 dark:text-white dark:ring-white/15'
                         : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900 dark:text-white/80 dark:hover:bg-white/10 dark:hover:text-white'

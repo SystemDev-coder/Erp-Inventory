@@ -27,6 +27,11 @@ type ReturnLine = {
 
 const defaultLine = (): ReturnLine => ({ itemId: '', quantity: 1, unitPrice: 0 });
 
+const sumLineQtyForItem = (lineItems: ReturnLine[], itemId: number) =>
+  lineItems
+    .filter((line) => Number(line.itemId) === Number(itemId))
+    .reduce((sum, line) => sum + Math.round(Number(line.quantity || 0)), 0);
+
 const SalesReturns = () => {
   const { showToast } = useToast();
   const { activeBranchId } = useBranch();
@@ -53,6 +58,7 @@ const SalesReturns = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [formError, setFormError] = useState('');
   const [touched, setTouched] = useState<Record<string, boolean>>({});
 
   const subtotal = useMemo(
@@ -87,6 +93,24 @@ const SalesReturns = () => {
     }
   }, [form.customerId]);
 
+  const getMaxReturnQty = (item: ReturnItemOption | undefined, itemId?: number | '', lineIndex?: number) => {
+    if (!item) return 0;
+    const sold = Math.max(0, Number(item.sold_qty || 0));
+    const available = Math.max(0, Number(item.available_qty || 0));
+    const id = Number(itemId || item.item_id || 0);
+    if (!isEditing || !id) return Math.min(sold, available);
+
+    // When editing, API may or may not exclude this return from returned/available.
+    // Adding the qty already on this form (or other lines) recovers the editable headroom,
+    // then we always cap at sold so both units can be returned on one return.
+    const formQtyForItem = sumLineQtyForItem(lines, id);
+    const maxTotal = Math.min(sold, available + formQtyForItem);
+    if (lineIndex === undefined || lineIndex < 0) return maxTotal;
+    const thisLineQty = Math.max(0, Number(lines[lineIndex]?.quantity || 0));
+    const otherLinesQty = Math.max(0, formQtyForItem - thisLineQty);
+    return Math.max(0, maxTotal - otherLinesQty);
+  };
+
   const loadCustomers = async () => {
     const res = await returnsService.listSalesCustomers({ branchId: activeBranchId ?? undefined });
     if (res.success && res.data?.customers) {
@@ -117,12 +141,12 @@ const SalesReturns = () => {
     if (res.success && res.data?.accounts) setAccounts(res.data.accounts);
   };
 
-  const loadItemsForCustomer = async (customerId?: number) => {
+  const loadItemsForCustomer = async (customerId?: number, excludeReturnId?: number) => {
     if (!customerId) {
       setItems([]);
       return [];
     }
-    const res = await returnsService.listSalesItemsByCustomer(customerId);
+    const res = await returnsService.listSalesItemsByCustomer(customerId, excludeReturnId);
     if (res.success && res.data?.items) {
       const mapped = res.data.items.map((item) => ({
         ...item,
@@ -150,6 +174,7 @@ const SalesReturns = () => {
     setLines([defaultLine()]);
     setItems([]);
     setErrors({});
+    setFormError('');
     setTouched({});
   };
 
@@ -180,7 +205,7 @@ const SalesReturns = () => {
         refundAmount: Number(row.refund_amount || 0),
         refundViaAccount: Number(row.refund_amount || 0) > 0,
       });
-      await loadItemsForCustomer(row.customer_id ? Number(row.customer_id) : undefined);
+      await loadItemsForCustomer(row.customer_id ? Number(row.customer_id) : undefined, editingId);
       const itemsRes = await returnsService.getSalesReturnItems(editingId);
       if (itemsRes.success && itemsRes.data?.items) {
         const nextLines = itemsRes.data.items.map((item) => ({
@@ -204,7 +229,7 @@ const SalesReturns = () => {
     setLines([defaultLine()]);
     setErrors((prev) => ({ ...prev, customerId: '', items: '' }));
     setTouched((prev) => ({ ...prev, customerId: true }));
-    await loadItemsForCustomer(customerId ? Number(customerId) : undefined);
+    await loadItemsForCustomer(customerId ? Number(customerId) : undefined, editingId ?? undefined);
   };
 
   const setLineValue = (index: number, patch: Partial<ReturnLine>) => {
@@ -213,7 +238,7 @@ const SalesReturns = () => {
       const merged = { ...next[index], ...patch };
       if (Object.prototype.hasOwnProperty.call(patch, 'quantity')) {
         const selected = items.find((item) => Number(item.item_id) === Number(merged.itemId));
-        const maxQty = selected?.available_qty !== undefined ? Number(selected.available_qty || 0) : null;
+        const maxQty = selected ? getMaxReturnQty(selected, merged.itemId, index) : null;
         const rawQty = Math.round(Number((merged as any).quantity || 0));
         merged.quantity = maxQty === null ? Math.max(rawQty, 1) : Math.max(Math.min(rawQty, maxQty), 0);
       }
@@ -228,7 +253,7 @@ const SalesReturns = () => {
     setLineValue(index, {
       itemId,
       unitPrice: selected ? Number(selected.sell_price || selected.cost_price || 0) : 0,
-      quantity: selected && Number(selected.available_qty || 0) > 0 ? 1 : 0,
+      quantity: selected && getMaxReturnQty(selected, itemId) > 0 ? 1 : 0,
     });
     setErrors((prev) => ({ ...prev, items: '' }));
   };
@@ -260,9 +285,11 @@ const SalesReturns = () => {
     const errs = validate();
     if (Object.keys(errs).length > 0) {
       setErrors(errs);
+      setFormError('Please fix the highlighted fields before saving.');
       setTouched({ customerId: true, items: true, refundAccId: true, refundAmount: true });
       return;
     }
+    setFormError('');
     const normalized = lines
       .filter((line) => line.itemId)
       .map((line) => ({
@@ -272,13 +299,14 @@ const SalesReturns = () => {
       }));
     const unavailable = normalized.find((line) => {
       const selected = items.find((it) => Number(it.item_id) === Number(line.itemId));
-      const maxQty = selected?.available_qty !== undefined ? Number(selected.available_qty || 0) : null;
+      const maxQty = selected ? getMaxReturnQty(selected, line.itemId) : null;
       return maxQty !== null && line.quantity > maxQty;
     });
     if (unavailable) {
       const selected = items.find((it) => Number(it.item_id) === Number(unavailable.itemId));
-      const maxQty = selected?.available_qty !== undefined ? Number(selected.available_qty || 0) : 0;
+      const maxQty = selected ? getMaxReturnQty(selected, unavailable.itemId) : 0;
       showToast('error', 'Sales Return', `Return qty exceeds available (${maxQty}) for ${selected?.name || `item ${unavailable.itemId}`}`);
+      setFormError(`Return quantity exceeds available stock for ${selected?.name || `item ${unavailable.itemId}`}.`);
       return;
     }
     const payload: any = {
@@ -303,7 +331,7 @@ const SalesReturns = () => {
       showToast('success', 'Sales Return', editingId ? 'Return updated successfully' : 'Return recorded successfully');
       navigate('/returns');
     } else {
-      showToast('error', 'Sales Return', res.error || 'Failed to save return');
+      setFormError(res.error || 'Failed to save return');
     }
   };
 
@@ -338,6 +366,11 @@ const SalesReturns = () => {
           </button>
         </div>
         <form onSubmit={submitReturn} className="space-y-4 p-4">
+          {formError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-300" role="alert">
+              {formError}
+            </div>
+          )}
 	          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
 	            <div>
 	              <label className={labelClass}>Customer</label>
@@ -403,7 +436,7 @@ const SalesReturns = () => {
 	                          value={line.itemId}
 	                          options={items.map((item) => ({
 	                            value: Number(item.item_id),
-	                            label: `${item.name} (Available: ${Number(item.available_qty || 0)})`,
+	                            label: `${item.name} (Available: ${getMaxReturnQty(item, item.item_id)})`,
 	                          }))}
 	                          placeholder="Select item"
 	                          disabled={!form.customerId}
@@ -414,7 +447,7 @@ const SalesReturns = () => {
 	                          if (!it) return null;
                           return (
                             <div className="text-[11px] text-slate-500">
-                              Sold: {Number(it.sold_qty || 0)} | Returned: {Number(it.returned_qty || 0)} | Available: {Number(it.available_qty || 0)}
+                              Sold: {Number(it.sold_qty || 0)} | Returned: {Number(it.returned_qty || 0)} | You can return up to: {getMaxReturnQty(it, line.itemId, idx)}
                             </div>
                           );
                         })() : null}

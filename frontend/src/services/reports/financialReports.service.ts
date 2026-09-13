@@ -208,10 +208,9 @@ export const financialReportsService = {
     return apiClient.get<RowsResponse<IncomeStatementRow>>(`${API.REPORTS.FINANCIAL_INCOME_STATEMENT}${query}`);
   },
 
-  async getBalanceSheet(input: { asOfDate: string; fromDate?: string; branchId?: number }) {
+  async getBalanceSheet(input: { asOfDate: string; branchId?: number }) {
     const query = toQuery({
       branchId: input.branchId,
-      fromDate: input.fromDate,
       asOfDate: input.asOfDate,
     });
     return apiClient.get<BalanceSheetResponse>(`${API.REPORTS.FINANCIAL_BALANCE_SHEET}${query}`);
@@ -226,11 +225,17 @@ export const financialReportsService = {
     return apiClient.get<RowsResponse<CashFlowRow>>(`${API.REPORTS.FINANCIAL_CASH_FLOW}${query}`);
   },
 
-  async getAccountBalances(input: { mode: ReportSelectionMode; accountId?: number; branchId?: number }) {
+  async getAccountBalances(input: {
+    mode: ReportSelectionMode;
+    accountId?: number;
+    branchId?: number;
+    asOfDate?: string;
+  }) {
     const query = toQuery({
       branchId: input.branchId,
       mode: input.mode,
       accountId: input.mode === 'show' ? input.accountId : undefined,
+      asOfDate: input.asOfDate,
     });
     return apiClient.get<RowsResponse<AccountBalanceRow>>(`${API.REPORTS.FINANCIAL_ACCOUNT_BALANCES}${query}`);
   },
@@ -333,11 +338,10 @@ export const financialReportsService = {
     return apiClient.get<RowsResponse<SupplierPaymentRow>>(`${API.REPORTS.FINANCIAL_SUPPLIER_PAYMENTS}${query}`);
   },
 
-  async getAccountsReceivable(input: { fromDate: string; toDate: string; branchId?: number }) {
+  async getAccountsReceivable(input: { asOfDate: string; branchId?: number }) {
     const query = toQuery({
       branchId: input.branchId,
-      fromDate: input.fromDate,
-      toDate: input.toDate,
+      asOfDate: input.asOfDate,
     });
     return apiClient.get<RowsResponse<AccountsReceivableRow>>(`${API.REPORTS.FINANCIAL_ACCOUNTS_RECEIVABLE}${query}`);
   },
@@ -371,18 +375,18 @@ export const financialReportsService = {
   async getAccountStatement(input: {
     fromDate: string;
     toDate: string;
-    mode: ReportSelectionMode;
-    accountId?: number;
+    accountId: number;
     branchId?: number;
   }) {
     const query = toQuery({
       branchId: input.branchId,
       fromDate: input.fromDate,
       toDate: input.toDate,
-      mode: input.mode,
-      accountId: input.mode === 'show' ? input.accountId : undefined,
+      accountId: input.accountId,
     });
-    return apiClient.get<RowsResponse<AccountStatementRow>>(`${API.REPORTS.FINANCIAL_ACCOUNT_STATEMENT}${query}`);
+    return apiClient.get<
+      RowsResponse<AccountStatementRow> & { truncated?: boolean; totalCount?: number }
+    >(`${API.REPORTS.FINANCIAL_ACCOUNT_STATEMENT}${query}`);
   },
 
   async getTrialBalance(input: { fromDate: string; toDate: string; branchId?: number }) {

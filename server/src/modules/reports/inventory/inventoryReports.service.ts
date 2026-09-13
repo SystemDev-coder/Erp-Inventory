@@ -25,7 +25,11 @@ export interface InventoryValuationRow {
   sell_price: number;
   cost_value: number;
   retail_value: number;
+  valuation_method?: string;
+  unit_cost_used?: number;
 }
+
+export type InventoryValuationMethod = 'fifo' | 'lifo' | 'average';
 
 export interface ExpiryTrackingRow {
   purchase_id: number;
@@ -462,6 +466,182 @@ export const inventoryReportsService = {
       ORDER BY cost_value DESC, i.name`,
       [branchId]
     );
+  },
+
+  async getInventoryValuationByMethod(
+    branchId: number,
+    method: InventoryValuationMethod
+  ): Promise<InventoryValuationRow[]> {
+    if (method === 'average') {
+      const rows = await queryMany<InventoryValuationRow>(
+        `${stockTotalsCte}
+         SELECT
+           i.item_id,
+           i.name AS item_name,
+           COALESCE(st.total_qty, 0)::double precision AS total_qty,
+           COALESCE(i.cost_price, 0)::double precision AS cost_price,
+           COALESCE(i.sell_price, i.cost_price, 0)::double precision AS sell_price,
+           (COALESCE(st.total_qty, 0) * COALESCE(i.cost_price, 0))::double precision AS cost_value,
+           (COALESCE(st.total_qty, 0) * COALESCE(i.sell_price, i.cost_price, 0))::double precision AS retail_value
+         FROM ims.items i
+         LEFT JOIN stock_totals st
+           ON st.item_id = i.item_id
+          AND st.branch_id = i.branch_id
+        WHERE i.branch_id = $1
+          AND (i.is_active = TRUE OR COALESCE(st.total_qty, 0) <> 0)
+        ORDER BY cost_value DESC, i.name`,
+        [branchId]
+      );
+      return rows.map((row) => ({
+        ...row,
+        valuation_method: 'average',
+        unit_cost_used: row.cost_price,
+      }));
+    }
+
+    type PurchaseLayerRow = {
+      item_id: number;
+      item_name: string;
+      quantity: number;
+      unit_cost: number;
+    };
+
+    type StockRow = {
+      item_id: number;
+      item_name: string;
+      total_qty: number;
+      cost_price: number;
+      sell_price: number;
+    };
+
+    const [layers, stockRows, returnedQtyRows] = await Promise.all([
+      queryMany<PurchaseLayerRow>(
+        `SELECT
+           pi.item_id,
+           i.name AS item_name,
+           GREATEST(COALESCE(pi.quantity, 0), 0)::double precision AS quantity,
+           COALESCE(pi.unit_cost, 0)::double precision AS unit_cost
+         FROM ims.purchase_items pi
+         JOIN ims.purchases p ON p.purchase_id = pi.purchase_id
+         JOIN ims.items i ON i.item_id = pi.item_id
+        WHERE p.branch_id = $1
+          AND COALESCE(p.is_deleted, 0)::int = 0
+          AND COALESCE(pi.quantity, 0) > 0
+        ORDER BY pi.item_id ASC, p.purchase_date ASC, p.purchase_id ASC`,
+        [branchId]
+      ),
+      queryMany<StockRow>(
+        `${stockTotalsCte}
+         SELECT
+           i.item_id,
+           i.name AS item_name,
+           COALESCE(st.total_qty, 0)::double precision AS total_qty,
+           COALESCE(i.cost_price, 0)::double precision AS cost_price,
+           COALESCE(i.sell_price, i.cost_price, 0)::double precision AS sell_price
+         FROM ims.items i
+         LEFT JOIN stock_totals st
+           ON st.item_id = i.item_id
+          AND st.branch_id = i.branch_id
+        WHERE i.branch_id = $1
+          AND (i.is_active = TRUE OR COALESCE(st.total_qty, 0) <> 0)
+        ORDER BY i.name`,
+        [branchId]
+      ),
+      queryMany<{ item_id: number; returned_qty: number }>(
+        `SELECT
+           pri.item_id,
+           COALESCE(SUM(pri.quantity), 0)::double precision AS returned_qty
+         FROM ims.purchase_return_items pri
+         JOIN ims.purchase_returns pr ON pr.pr_id = pri.pr_id
+        WHERE pr.branch_id = $1
+        GROUP BY pri.item_id`,
+        [branchId]
+      ).catch(() => [] as Array<{ item_id: number; returned_qty: number }>),
+    ]);
+
+    const layersByItem = new Map<number, Array<{ quantity: number; unit_cost: number }>>();
+    const namesByItem = new Map<number, string>();
+    layers.forEach((layer) => {
+      namesByItem.set(layer.item_id, layer.item_name);
+      const bucket = layersByItem.get(layer.item_id) || [];
+      bucket.push({ quantity: Number(layer.quantity || 0), unit_cost: Number(layer.unit_cost || 0) });
+      layersByItem.set(layer.item_id, bucket);
+    });
+
+    const returnedByItem = new Map<number, number>();
+    returnedQtyRows.forEach((row) => {
+      returnedByItem.set(row.item_id, Number(row.returned_qty || 0));
+    });
+
+    const computeLayeredStockValue = (
+      itemLayers: Array<{ quantity: number; unit_cost: number }>,
+      onHand: number,
+      order: 'fifo' | 'lifo'
+    ): number => {
+      if (onHand <= 0) return 0;
+      const ordered = order === 'fifo' ? itemLayers : [...itemLayers].reverse();
+      const totalPurchased = itemLayers.reduce((sum, layer) => sum + layer.quantity, 0);
+      let skip = Math.max(0, totalPurchased - onHand);
+      let remaining = onHand;
+      let value = 0;
+
+      for (const layer of ordered) {
+        let qty = layer.quantity;
+        if (skip > 0) {
+          const skipped = Math.min(skip, qty);
+          skip -= skipped;
+          qty -= skipped;
+        }
+        if (qty <= 0) continue;
+        const take = Math.min(qty, remaining);
+        value += take * layer.unit_cost;
+        remaining -= take;
+        if (remaining <= 0) break;
+      }
+
+      if (remaining > 0 && ordered.length > 0) {
+        const fallbackCost = ordered[ordered.length - 1]?.unit_cost || 0;
+        value += remaining * fallbackCost;
+      }
+
+      return value;
+    };
+
+    return stockRows
+      .map((row) => {
+        const onHand = Number(row.total_qty || 0);
+        const itemLayers = [...(layersByItem.get(row.item_id) || [])];
+        const returnedQty = returnedByItem.get(row.item_id) || 0;
+        if (returnedQty > 0 && itemLayers.length > 0) {
+          let toReduce = returnedQty;
+          for (const layer of itemLayers) {
+            if (toReduce <= 0) break;
+            const reduced = Math.min(layer.quantity, toReduce);
+            layer.quantity -= reduced;
+            toReduce -= reduced;
+          }
+        }
+
+        const costValue = onHand <= 0
+          ? 0
+          : computeLayeredStockValue(itemLayers.filter((layer) => layer.quantity > 0), onHand, method);
+        const unitCostUsed = onHand > 0 ? costValue / onHand : Number(row.cost_price || 0);
+        const retailValue = onHand * Number(row.sell_price || 0);
+
+        return {
+          item_id: row.item_id,
+          item_name: row.item_name || namesByItem.get(row.item_id) || `Item #${row.item_id}`,
+          total_qty: onHand,
+          cost_price: Number(row.cost_price || 0),
+          sell_price: Number(row.sell_price || 0),
+          cost_value: costValue,
+          retail_value: retailValue,
+          valuation_method: method,
+          unit_cost_used: unitCostUsed,
+        };
+      })
+      .filter((row) => row.total_qty > 0 || row.cost_value > 0)
+      .sort((a, b) => b.cost_value - a.cost_value || a.item_name.localeCompare(b.item_name));
   },
 
   async getExpiryTracking(branchId: number, fromDate: string, toDate: string): Promise<ExpiryTrackingRow[]> {

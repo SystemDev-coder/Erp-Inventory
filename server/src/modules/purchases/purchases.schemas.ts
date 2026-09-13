@@ -38,6 +38,7 @@ export const purchaseSchema = z.object({
   // Optional inline payment details (used to update accounts and supplier balance)
   payFromAccId: z.coerce.number().int().positive().optional(),
   paidAmount: z.coerce.number().nonnegative().optional(),
+  dueDate: z.string().optional().nullable(),
 });
 
 export type PurchaseInput = z.infer<typeof purchaseSchema>;

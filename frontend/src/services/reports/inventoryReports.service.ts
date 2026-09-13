@@ -172,8 +172,8 @@ export const inventoryReportsService = {
     return apiClient.get<RowsResponse<CurrentStockLevelRow>>(`${API.REPORTS.INVENTORY_LOW_STOCK}${query}`);
   },
 
-  async getInventoryValuation(branchId?: number) {
-    const query = toQuery({ branchId });
+  async getInventoryValuation(branchId?: number, method: 'fifo' | 'lifo' | 'average' = 'average') {
+    const query = toQuery({ branchId, method });
     return apiClient.get<RowsResponse<InventoryValuationRow>>(`${API.REPORTS.INVENTORY_VALUATION}${query}`);
   },
 

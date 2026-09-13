@@ -75,13 +75,6 @@ export const listQuerySchema = z.object({
   fromDate: dateString.optional(),
   toDate: dateString.optional(),
 }).superRefine((value, ctx) => {
-  if ((value.fromDate && !value.toDate) || (!value.fromDate && value.toDate)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'Both fromDate and toDate are required together',
-      path: ['fromDate'],
-    });
-  }
   if (value.fromDate && value.toDate && value.fromDate > value.toDate) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,

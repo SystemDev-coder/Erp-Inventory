@@ -57,8 +57,8 @@ export const scheduleService = {
     return apiClient.patch<{ schedule: Schedule }>(`/api/schedules/${id}/status`, { status });
   },
 
-  async delete(id: number): Promise<ApiResponse<void>> {
-    return apiClient.delete(`/api/schedules/${id}`);
+  async delete(id: number, reason: string): Promise<ApiResponse<void>> {
+    return apiClient.delete(`/api/schedules/${id}`, reason);
   },
 
   async getUpcoming(empId?: number, days?: number): Promise<ApiResponse<{ schedules: Schedule[] }>> {

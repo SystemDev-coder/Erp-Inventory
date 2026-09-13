@@ -7,6 +7,12 @@ import { authService } from '../auth/auth.service';
 import { dashboardService } from './dashboard.service';
 import { resolveActiveBranchIds } from '../../utils/branchScope';
 
+const DASHBOARD_CACHE_TTL_MS = 45_000;
+const dashboardPayloadCache = new Map<string, { payload: unknown; expiresAt: number }>();
+
+const dashboardCacheKey = (userId: number, branchIds: number[]) =>
+  `${userId}:${[...branchIds].sort((a, b) => a - b).join(',')}`;
+
 export class DashboardController {
   /**
    * GET /api/dashboard - Role-based dashboard widgets
@@ -35,6 +41,12 @@ export class DashboardController {
     }
 
     const branchIds = await resolveActiveBranchIds(req);
+    const cacheKey = dashboardCacheKey(req.user.userId, branchIds);
+    const cachedPayload = dashboardPayloadCache.get(cacheKey);
+    if (cachedPayload && Date.now() <= cachedPayload.expiresAt) {
+      return ApiResponse.success(res, cachedPayload.payload);
+    }
+
     const widgets = dashboardService.getDashboardWidgets(permissions);
     const [cards, charts, lowStockItems, recent] = await Promise.all([
       dashboardService.getDashboardCards(branchIds, permissions),
@@ -43,7 +55,7 @@ export class DashboardController {
       dashboardService.getRecentActivity(branchIds, permissions),
     ]);
 
-    return ApiResponse.success(res, {
+    const payload = {
       widgets,
       cards,
       charts,
@@ -58,7 +70,14 @@ export class DashboardController {
         role_id: req.user.roleId,
         role_name: roleName,
       },
+    };
+
+    dashboardPayloadCache.set(cacheKey, {
+      payload,
+      expiresAt: Date.now() + DASHBOARD_CACHE_TTL_MS,
     });
+
+    return ApiResponse.success(res, payload);
   });
 
   /**

@@ -82,13 +82,13 @@ const POSTab = () => {
     };
 
     return (
-        <div className="flex flex-col lg:flex-row gap-6 h-[calc(100vh-250px)]">
+        <div className="flex flex-col lg:flex-row gap-6 lg:h-[calc(100vh-250px)] min-h-0">
             {/* Left & Center: Inventory & Cart */}
             <div className="flex-grow flex flex-col gap-6 overflow-hidden">
                 {/* Search & Results */}
                 <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm shrink-0">
                     <div className="relative">
-                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" aria-hidden="true" />
                         <input
                             ref={searchInputRef}
                             type="text"
@@ -100,12 +100,12 @@ const POSTab = () => {
                                     addToCart(filteredProducts[0]);
                                 }
                             }}
+                            aria-label="Search product name or scan barcode"
                             className="w-full pl-12 pr-4 py-3 text-lg border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 dark:bg-slate-800 transition-all font-medium"
                         />
-                    </div>
 
                     {searchQuery && (
-                        <div className="absolute z-50 mt-2 w-[500px] max-h-[400px] overflow-y-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-2 custom-scrollbar">
+                        <div className="absolute z-50 mt-2 left-0 right-0 max-h-[400px] overflow-y-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-2 custom-scrollbar">
                             {filteredProducts.map(product => (
                                 <button
                                     key={product.id}
@@ -131,6 +131,7 @@ const POSTab = () => {
                             ))}
                         </div>
                     )}
+                    </div>
                 </div>
 
                 {/* Cart Table */}
@@ -172,17 +173,21 @@ const POSTab = () => {
                                             <td className="px-6 py-4">
                                                 <div className="flex items-center justify-center gap-3">
                                                     <button
+                                                        type="button"
                                                         onClick={() => updateQty(item.id, -1)}
-                                                        className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                                                        aria-label={`Decrease quantity of ${item.name}`}
+                                                        className="w-11 h-11 flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                                                     >
-                                                        <Minus className="w-3 h-3" />
+                                                        <Minus className="w-3 h-3" aria-hidden="true" />
                                                     </button>
                                                     <span className="font-bold text-lg min-w-[20px] text-center">{item.qty}</span>
                                                     <button
+                                                        type="button"
                                                         onClick={() => updateQty(item.id, 1)}
-                                                        className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                                                        aria-label={`Increase quantity of ${item.name}`}
+                                                        className="w-11 h-11 flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                                                     >
-                                                        <Plus className="w-3 h-3" />
+                                                        <Plus className="w-3 h-3" aria-hidden="true" />
                                                     </button>
                                                 </div>
                                             </td>
@@ -192,8 +197,10 @@ const POSTab = () => {
                                             </td>
                                             <td className="px-6 py-4 text-right">
                                                 <button
+                                                    type="button"
                                                     onClick={() => removeFromCart(item.id)}
-                                                    className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10 rounded-lg transition-all"
+                                                    aria-label={`Remove ${item.name} from cart`}
+                                                    className="inline-flex min-h-11 min-w-11 items-center justify-center p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10 rounded-lg transition-all"
                                                 >
                                                     <Trash2 className="w-4 h-4" />
                                                 </button>

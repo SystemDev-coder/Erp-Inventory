@@ -15,6 +15,7 @@ type ImportUploadModalProps = {
   title: string;
   columns: string[];
   templateHeaders: string[];
+  hint?: string;
   onImported?: () => void | Promise<void>;
 };
 
@@ -57,6 +58,7 @@ const ImportUploadModal = ({
   title,
   columns,
   templateHeaders,
+  hint,
   onImported,
 }: ImportUploadModalProps) => {
   const { showToast } = useToast();
@@ -64,6 +66,7 @@ const ImportUploadModal = ({
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState<ImportSummary | null>(null);
   const [showPreview, setShowPreview] = useState(false);
+  const [pageError, setPageError] = useState('');
   const [updateExistingBalances, setUpdateExistingBalances] = useState(
     importType === 'customers' || importType === 'suppliers'
   );
@@ -74,19 +77,21 @@ const ImportUploadModal = ({
       setLoading(false);
       setSummary(null);
       setShowPreview(false);
+      setPageError('');
       setUpdateExistingBalances(importType === 'customers' || importType === 'suppliers');
     }
   }, [isOpen, importType]);
 
   const ensureFile = () => {
     if (file) return true;
-    showToast('error', 'Import', 'Please select a file first');
+    setPageError('Please select a file first');
     return false;
   };
 
   const runCheck = async () => {
     if (!ensureFile()) return;
     setLoading(true);
+    setPageError('');
     const response = await importService.preview(importType, file as File, {
       update_existing: updateExistingBalances,
     });
@@ -97,7 +102,7 @@ const ImportUploadModal = ({
       showToast('success', 'Check complete', 'Validation finished. You can preview or import valid rows.');
       return;
     }
-    showToast('error', 'Check failed', response.error || response.message || 'Could not validate file');
+    setPageError(response.error || response.message || 'Could not validate file');
   };
 
   const runPreview = async () => {
@@ -111,6 +116,7 @@ const ImportUploadModal = ({
   const runImport = async () => {
     if (!ensureFile()) return;
     setLoading(true);
+    setPageError('');
     const response = await importService.import(importType, file as File, {
       update_existing: updateExistingBalances,
     });
@@ -125,7 +131,7 @@ const ImportUploadModal = ({
       );
       return;
     }
-    showToast('error', 'Import failed', response.error || response.message || 'Could not import file');
+    setPageError(response.error || response.message || 'Could not import file');
   };
 
   const downloadTemplate = () => {
@@ -186,12 +192,28 @@ const ImportUploadModal = ({
       size={summary || showPreview ? '2xl' : 'md'}
     >
       <div className="space-y-4">
+        {pageError ? (
+          <div
+            className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-300"
+            role="alert"
+          >
+            {pageError}
+          </div>
+        ) : null}
+        {hint ? (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+            {hint}
+          </div>
+        ) : null}
         <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <input
               type="file"
               accept=".xlsx,.csv"
-              onChange={(event) => setFile(event.target.files?.[0] || null)}
+              onChange={(event) => {
+                setFile(event.target.files?.[0] || null);
+                setPageError('');
+              }}
               className="max-w-sm rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
             />
             <button

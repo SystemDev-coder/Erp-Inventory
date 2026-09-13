@@ -13,7 +13,7 @@ import {
   InventoryItem,
 } from '../../services/inventory.service';
 import { itemLabelWithAvailability } from '../../utils/itemAvailability';
-import { defaultDateRange } from '../../utils/dateRange';
+import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 
 const inputClass =
   'h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
@@ -164,8 +164,8 @@ const StockRecountPage = () => {
       whId: filters.whId || undefined,
       itemId: filters.itemId || undefined,
       search: filters.search || undefined,
-      fromDate: dateRange.fromDate,
-      toDate: dateRange.toDate,
+      fromDate: optionalDateParam(dateRange.fromDate),
+      toDate: optionalDateParam(dateRange.toDate),
     });
     setLoading(false);
     setHasLoaded(true);

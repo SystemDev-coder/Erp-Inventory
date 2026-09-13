@@ -53,6 +53,7 @@ export const saleSchema = z.object({
   // Optional inline payment details (used to update accounts and customer balance)
   payFromAccId: z.coerce.number().int().positive().optional(),
   paidAmount: z.coerce.number().nonnegative().optional(),
+  dueDate: z.string().optional().nullable(),
 });
 
 export const saleUpdateSchema = z.object({
@@ -75,6 +76,7 @@ export const saleUpdateSchema = z.object({
   items: z.array(saleItemSchema).min(1, 'At least one item is required').optional(),
   payFromAccId: z.coerce.number().int().positive().nullable().optional(),
   paidAmount: z.coerce.number().nonnegative().optional(),
+  dueDate: z.string().optional().nullable(),
 });
 
 export const saleVoidSchema = z.object({

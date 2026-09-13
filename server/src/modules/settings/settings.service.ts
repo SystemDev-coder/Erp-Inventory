@@ -1054,9 +1054,13 @@ export const settingsService = {
     const filterValues: unknown[] = [];
     let param = 1;
 
-    if (startDate && endDate) {
-      where.push(`al.created_at::date BETWEEN $${param++}::date AND $${param++}::date`);
-      filterValues.push(startDate, endDate);
+    if (startDate) {
+      where.push(`al.created_at::date >= $${param++}::date`);
+      filterValues.push(startDate);
+    }
+    if (endDate) {
+      where.push(`al.created_at::date <= $${param++}::date`);
+      filterValues.push(endDate);
     }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -1117,9 +1121,13 @@ export const settingsService = {
       params.push(`%${input.owner}%`);
       where.push(`cc.owner_name ILIKE $${params.length}`);
     }
-    if (input.fromDate && input.toDate) {
-      params.push(input.fromDate, input.toDate);
-      where.push(`cc.contribution_date BETWEEN $${params.length - 1}::date AND $${params.length}::date`);
+    if (input.fromDate) {
+      params.push(input.fromDate);
+      where.push(`cc.contribution_date >= $${params.length}::date`);
+    }
+    if (input.toDate) {
+      params.push(input.toDate);
+      where.push(`cc.contribution_date <= $${params.length}::date`);
     }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -1363,9 +1371,13 @@ export const settingsService = {
       params.push(`%${input.owner}%`);
       where.push(`od.owner_name ILIKE $${params.length}`);
     }
-    if (input.fromDate && input.toDate) {
-      params.push(input.fromDate, input.toDate);
-      where.push(`od.draw_date BETWEEN $${params.length - 1}::date AND $${params.length}::date`);
+    if (input.fromDate) {
+      params.push(input.fromDate);
+      where.push(`od.draw_date >= $${params.length}::date`);
+    }
+    if (input.toDate) {
+      params.push(input.toDate);
+      where.push(`od.draw_date <= $${params.length}::date`);
     }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -2215,9 +2227,13 @@ export const settingsService = {
       params.push(`%${input.owner}%`);
       where.push(`cc.owner_name ILIKE $${params.length}`);
     }
-    if (input.fromDate && input.toDate) {
-      params.push(input.fromDate, input.toDate);
-      where.push(`cc.contribution_date BETWEEN $${params.length - 1}::date AND $${params.length}::date`);
+    if (input.fromDate) {
+      params.push(input.fromDate);
+      where.push(`cc.contribution_date >= $${params.length}::date`);
+    }
+    if (input.toDate) {
+      params.push(input.toDate);
+      where.push(`cc.contribution_date <= $${params.length}::date`);
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 

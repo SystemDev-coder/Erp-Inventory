@@ -1,5 +1,5 @@
 import type React from "react";
-import type { FC } from "react";
+import { useId, type FC } from "react";
 
 interface InputProps {
   type?: "text" | "number" | "email" | "password" | "date" | "time" | string;
@@ -36,6 +36,7 @@ const Input: FC<InputProps> = ({
   hint,
   required = false,
 }) => {
+  const hintId = useId();
   let inputClasses = ` h-11 w-full rounded-lg border appearance-none px-4 py-2.5 text-sm shadow-theme-xs placeholder:text-gray-400 focus:outline-hidden focus:ring-3  dark:bg-gray-900 dark:text-white/90 dark:placeholder:text-white/30 ${className}`;
 
   if (disabled) {
@@ -62,11 +63,14 @@ const Input: FC<InputProps> = ({
         step={step}
         disabled={disabled}
         required={required}
+        aria-invalid={error || undefined}
+        aria-describedby={hint ? hintId : undefined}
         className={inputClasses}
       />
 
       {hint && (
         <p
+          id={hintId}
           className={`mt-1.5 text-xs ${
             error
               ? "text-error-500"
@@ -74,6 +78,7 @@ const Input: FC<InputProps> = ({
               ? "text-success-500"
               : "text-gray-500"
           }`}
+          role={error ? "alert" : undefined}
         >
           {hint}
         </p>

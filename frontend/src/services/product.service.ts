@@ -125,8 +125,8 @@ export const productService = {
     return apiClient.put<{ product: Product }>(API.PRODUCTS.ITEM(id), data);
   },
 
-  async remove(id: number) {
-    return apiClient.delete<{ message: string }>(API.PRODUCTS.ITEM(id));
+  async remove(id: number, reason: string) {
+    return apiClient.delete<{ message: string }>(API.PRODUCTS.ITEM(id), reason);
   },
 
   async listCategories(options: MasterListOptions = {}) {
@@ -142,8 +142,8 @@ export const productService = {
     return apiClient.put<{ category: Category }>(API.PRODUCTS.CATEGORY(id), data);
   },
 
-  async removeCategory(id: number) {
-    return apiClient.delete<{ message: string }>(API.PRODUCTS.CATEGORY(id));
+  async removeCategory(id: number, reason: string) {
+    return apiClient.delete<{ message: string }>(API.PRODUCTS.CATEGORY(id), reason);
   },
 
   async listUnits(options: MasterListOptions = {}) {
@@ -159,8 +159,8 @@ export const productService = {
     return apiClient.put<{ unit: Unit }>(API.PRODUCTS.UNIT(id), data);
   },
 
-  async removeUnit(id: number) {
-    return apiClient.delete<{ message: string }>(API.PRODUCTS.UNIT(id));
+  async removeUnit(id: number, reason: string) {
+    return apiClient.delete<{ message: string }>(API.PRODUCTS.UNIT(id), reason);
   },
 
   async listTaxes(options: MasterListOptions = {}) {
@@ -176,7 +176,7 @@ export const productService = {
     return apiClient.put<{ tax: Tax }>(API.PRODUCTS.TAX(id), data);
   },
 
-  async removeTax(id: number) {
-    return apiClient.delete<{ message: string }>(API.PRODUCTS.TAX(id));
+  async removeTax(id: number, reason: string) {
+    return apiClient.delete<{ message: string }>(API.PRODUCTS.TAX(id), reason);
   },
 };

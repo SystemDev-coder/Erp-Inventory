@@ -63,15 +63,17 @@ export default function SignInForm() {
             <form onSubmit={handleSubmit}>
               <div className="space-y-6">
                 {error && (
-                  <div className="p-3 text-sm text-error-700 bg-error-50 rounded-lg dark:bg-error-900/30 dark:text-error-200">
+                  <div role="alert" className="p-3 text-sm text-error-700 bg-error-50 rounded-lg dark:bg-error-900/30 dark:text-error-200">
                     {error}
                   </div>
                 )}
                 <div>
-                  <Label>
+                  <Label htmlFor="signin-identifier">
                     Username <span className="text-error-500">*</span>{" "}
                   </Label>
                   <Input
+                    id="signin-identifier"
+                    name="identifier"
                     className="border-2 border-slate-300 focus:border-primary-500 focus:ring-primary-500/20 dark:border-slate-700"
                     placeholder="Enter username" 
                     value={identifier}
@@ -80,11 +82,13 @@ export default function SignInForm() {
                   />
                 </div>
                 <div>
-                  <Label>
+                  <Label htmlFor="signin-password">
                     Password <span className="text-error-500">*</span>{" "}
                   </Label>
                   <div className="relative">
                     <Input
+                      id="signin-password"
+                      name="password"
                       type={showPassword ? "text" : "password"}
                       className="border-2 border-slate-300 focus:border-primary-500 focus:ring-primary-500/20 dark:border-slate-700"
                       placeholder="Enter your password"
@@ -92,23 +96,27 @@ export default function SignInForm() {
                       onChange={(e) => setPassword(e.target.value)}
                       required
                     />
-                    <span
+                    <button
+                      type="button"
                       onClick={() => setShowPassword(!showPassword)}
-                      className="absolute z-30 -translate-y-1/2 cursor-pointer right-4 top-1/2"
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                      className="absolute z-30 inline-flex min-h-11 min-w-11 -translate-y-1/2 items-center justify-center right-2 top-1/2 rounded-md text-slate-500 hover:text-slate-800"
                     >
                       {showPassword ? (
                         <EyeIcon className="fill-gray-500 dark:fill-gray-400 size-5" />
                       ) : (
                         <EyeCloseIcon className="fill-gray-500 dark:fill-gray-400 size-5" />
                       )}
-                    </span>
+                    </button>
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <Checkbox checked={isChecked} onChange={setIsChecked} />
-                  <span className="block font-normal text-theme-sm text-slate-700 dark:text-slate-300">
-                    Keep me logged in
-                  </span>
+                <div>
+                  <Checkbox
+                    id="signin-remember"
+                    checked={isChecked}
+                    onChange={setIsChecked}
+                    label="Keep me logged in"
+                  />
                 </div>
                 <div>
                   <Button 

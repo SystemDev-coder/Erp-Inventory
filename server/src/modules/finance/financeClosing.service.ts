@@ -485,7 +485,21 @@ export const ensureFinanceClosingSchema = async () => {
            v_branch_id BIGINT;
            v_txn_date DATE;
            v_period RECORD;
+           v_allow_soft_void TEXT;
          BEGIN
+           -- Allow soft-void of returns (is_deleted) when the service explicitly opts in.
+           BEGIN
+             v_allow_soft_void := current_setting('app.allow_soft_void', true);
+           EXCEPTION WHEN OTHERS THEN
+             v_allow_soft_void := '0';
+           END;
+           IF COALESCE(v_allow_soft_void, '0') = '1' THEN
+             IF TG_OP = 'DELETE' THEN
+               RETURN OLD;
+             END IF;
+             RETURN NEW;
+           END IF;
+
            IF TG_OP = 'DELETE' THEN
              v_branch_id := OLD.branch_id;
              EXECUTE format('SELECT ($1).%I::date', TG_ARGV[0]) USING OLD INTO v_txn_date;
@@ -512,20 +526,9 @@ export const ensureFinanceClosingSchema = async () => {
               ORDER BY cp.period_to DESC
               LIMIT 1;
 
-            UPDATE ims.finance_closing_periods
-               SET is_locked = CASE WHEN closing_id = v_period.closing_id THEN FALSE ELSE TRUE END,
-                   status = CASE WHEN closing_id = v_period.closing_id THEN 'reopened' ELSE status END,
-                   reopened_at = CASE WHEN closing_id = v_period.closing_id THEN NOW() ELSE reopened_at END,
-                   reopened_by = CASE WHEN closing_id = v_period.closing_id THEN reopened_by ELSE reopened_by END,
-                   note = CASE
-                     WHEN closing_id = v_period.closing_id
-                       AND COALESCE(note, '') NOT ILIKE '%auto reopened%'
-                       THEN COALESCE(note, '') || ' [Auto reopened]'
-                     ELSE note
-                   END,
-                   updated_at = NOW()
-             WHERE branch_id = v_branch_id
-               AND status IN ('closed', 'reopened');
+            RAISE EXCEPTION 'Finance period % to % is locked for branch %. Reopen the period explicitly before editing.',
+              v_period.period_from, v_period.period_to, v_branch_id
+              USING ERRCODE = 'P0001';
            END IF;
 
            IF TG_OP = 'DELETE' THEN

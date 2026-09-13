@@ -1,11 +1,17 @@
 import { queryMany } from '../../../db/query';
+import {
+  ACTIVE_SALE_SQL,
+  ACTIVE_SALES_RETURN_SQL,
+  customerInvoicePaymentsCteSql,
+  NON_QUOTATION_SALES_WHERE,
+} from '../reports.helpers';
 
 export interface ReportOption {
   id: number;
   label: string;
 }
 
-const nonQuotationSalesWhere = `COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'`;
+const salesBaseFilters = `s.status <> 'void' AND ${NON_QUOTATION_SALES_WHERE} AND ${ACTIVE_SALE_SQL}`;
 
 export interface DailySalesRow {
   sale_id: number;
@@ -169,8 +175,7 @@ export const salesReportsService = {
            COALESCE(COUNT(*) FILTER (WHERE s.status = 'unpaid'), 0)::int AS unpaid_count
          FROM ims.sales s
         WHERE s.branch_id = $1
-          AND s.status <> 'void'
-          AND ${nonQuotationSalesWhere}
+          AND ${salesBaseFilters}
           AND s.sale_date::date BETWEEN $2::date AND $3::date
        ),
        returns_base AS (
@@ -179,6 +184,7 @@ export const salesReportsService = {
            COALESCE(SUM(sr.total), 0)::double precision AS returns_total
          FROM ims.sales_returns sr
         WHERE sr.branch_id = $1
+          AND ${ACTIVE_SALES_RETURN_SQL}
           AND sr.return_date::date BETWEEN $2::date AND $3::date
        )
        SELECT *
@@ -188,7 +194,7 @@ export const salesReportsService = {
            ('Gross Sales (Subtotal)', 'money', (SELECT gross_sales FROM sales_base)),
            ('Discount', 'money', (SELECT discount_total FROM sales_base)),
            ('Tax', 'money', (SELECT tax_total FROM sales_base)),
-           ('Net Sales', 'money', (SELECT net_sales FROM sales_base)),
+           ('Total Sales (incl. tax)', 'money', (SELECT net_sales FROM sales_base)),
            ('Sales Returns', 'money', (SELECT returns_total FROM returns_base)),
            ('Net After Returns', 'money', (SELECT (sales_base.net_sales - returns_base.returns_total)::double precision FROM sales_base, returns_base)),
            ('Average Invoice', 'money', (SELECT CASE WHEN invoice_count > 0 THEN (net_sales / invoice_count)::double precision ELSE 0 END FROM sales_base)),
@@ -205,7 +211,7 @@ export const salesReportsService = {
            WHEN 'Gross Sales (Subtotal)' THEN 2
            WHEN 'Discount' THEN 3
            WHEN 'Tax' THEN 4
-           WHEN 'Net Sales' THEN 5
+           WHEN 'Total Sales (incl. tax)' THEN 5
            WHEN 'Sales Returns' THEN 6
            WHEN 'Net After Returns' THEN 7
            WHEN 'Average Invoice' THEN 8
@@ -230,8 +236,7 @@ export const salesReportsService = {
     const params: Array<number | string> = [branchId, fromDate, toDate];
     const filters: string[] = [
       's.branch_id = $1',
-      `s.status <> 'void'`,
-      nonQuotationSalesWhere,
+      salesBaseFilters,
       's.sale_date::date BETWEEN $2::date AND $3::date',
     ];
 
@@ -241,15 +246,7 @@ export const salesReportsService = {
     }
 
     return queryMany<InvoiceStatusRow>(
-      `WITH pay_sum AS (
-         SELECT
-           sp.sale_id,
-           COALESCE(SUM(sp.amount_paid), 0)::double precision AS paid
-         FROM ims.sale_payments sp
-        WHERE sp.branch_id = $1
-          AND sp.pay_date::date <= $3::date
-        GROUP BY sp.sale_id
-       )
+      `WITH ${customerInvoicePaymentsCteSql('$1', '$3')}
        SELECT
          s.sale_id,
          s.sale_date::text AS sale_date,
@@ -259,13 +256,18 @@ export const salesReportsService = {
          COALESCE(s.total, 0)::double precision AS total,
          COALESCE(ps.paid, 0)::double precision AS paid,
          GREATEST(COALESCE(s.total, 0) - COALESCE(ps.paid, 0), 0)::double precision AS balance,
-         COALESCE(s.status::text, 'unpaid') AS status
+         CASE
+           WHEN GREATEST(COALESCE(s.total, 0) - COALESCE(ps.paid, 0), 0) <= 0.009 THEN 'paid'
+           WHEN COALESCE(ps.paid, 0) > 0.009 THEN 'partial'
+           ELSE COALESCE(s.status::text, 'unpaid')
+         END AS status
        FROM ims.sales s
        LEFT JOIN pay_sum ps ON ps.sale_id = s.sale_id
        LEFT JOIN ims.customers c ON c.customer_id = s.customer_id
        LEFT JOIN ims.users u ON u.user_id = s.user_id
       WHERE ${filters.join(' AND ')}
-      ORDER BY s.sale_date ASC, s.sale_id ASC`,
+      ORDER BY s.sale_date ASC, s.sale_id ASC
+      LIMIT 5000`,
       params
     );
   },
@@ -275,7 +277,7 @@ export const salesReportsService = {
     let storeFilter = '';
     if (storeId) {
       params.push(storeId);
-      storeFilter = `AND i.store_id = $${params.length}`;
+      storeFilter = `AND COALESCE(s.store_id, i.store_id) = $${params.length}`;
     }
 
     return queryMany<SalesByStoreRow>(
@@ -291,7 +293,7 @@ export const salesReportsService = {
          FROM ims.sale_items si
        )
        SELECT
-         i.store_id,
+         COALESCE(s.store_id, i.store_id) AS store_id,
          COALESCE(st.store_name, 'Unassigned') AS store_name,
          COALESCE(SUM(m.quantity), 0)::double precision AS quantity_sold,
          COALESCE(SUM(m.line_total), 0)::double precision AS sales_amount,
@@ -299,13 +301,12 @@ export const salesReportsService = {
        FROM sale_item_map m
        JOIN ims.sales s ON s.sale_id = m.sale_id
        JOIN ims.items i ON i.item_id = m.item_id
-       LEFT JOIN ims.stores st ON st.store_id = i.store_id
+       LEFT JOIN ims.stores st ON st.store_id = COALESCE(s.store_id, i.store_id)
       WHERE s.branch_id = $1
-        AND s.status <> 'void'
-        AND ${nonQuotationSalesWhere}
+        AND ${salesBaseFilters}
         AND s.sale_date::date BETWEEN $2::date AND $3::date
         ${storeFilter}
-      GROUP BY i.store_id, st.store_name
+      GROUP BY COALESCE(s.store_id, i.store_id), st.store_name
       HAVING COALESCE(SUM(m.quantity), 0) > 0
       ORDER BY sales_amount DESC, quantity_sold DESC, store_name
       LIMIT 250`,
@@ -326,8 +327,7 @@ export const salesReportsService = {
        JOIN ims.accounts a ON a.acc_id = sp.acc_id
       WHERE sp.branch_id = $1
         AND sp.pay_date::date BETWEEN $2::date AND $3::date
-        AND s.status <> 'void'
-        AND ${nonQuotationSalesWhere}
+        AND ${salesBaseFilters}
       GROUP BY a.acc_id, a.name
       HAVING COALESCE(SUM(sp.amount_paid), 0) > 0
       ORDER BY amount_paid DESC, sales_count DESC, account_name`,
@@ -366,8 +366,7 @@ export const salesReportsService = {
            COALESCE(s.total, 0)::double precision AS total
          FROM ims.sales s
         WHERE s.branch_id = $1
-          AND s.status <> 'void'
-          AND ${nonQuotationSalesWhere}
+          AND ${salesBaseFilters}
           AND s.sale_date::date BETWEEN $2::date AND $3::date
        ),
        sale_item_map AS (
@@ -393,6 +392,7 @@ export const salesReportsService = {
            COALESCE(SUM(sr.total), 0)::double precision AS returns_total
          FROM ims.sales_returns sr
         WHERE sr.branch_id = $1
+          AND ${ACTIVE_SALES_RETURN_SQL}
           AND sr.return_date::date BETWEEN $2::date AND $3::date
         GROUP BY sr.customer_id
        )
@@ -430,8 +430,7 @@ export const salesReportsService = {
        LEFT JOIN ims.users u ON u.user_id = s.user_id
       WHERE s.branch_id = $1
         AND s.sale_date::date = CURRENT_DATE
-        AND s.status <> 'void'
-        AND ${nonQuotationSalesWhere}
+        AND ${salesBaseFilters}
       ORDER BY s.sale_date ASC, s.sale_id ASC`,
       [branchId]
     );
@@ -439,7 +438,7 @@ export const salesReportsService = {
 
   async getSalesByCustomer(branchId: number, customerId?: number): Promise<SalesByCustomerRow[]> {
     const params: Array<number> = [branchId];
-    const filters: string[] = ['s.branch_id = $1', `s.status <> 'void'`, nonQuotationSalesWhere];
+    const filters: string[] = ['s.branch_id = $1', salesBaseFilters];
 
     if (customerId) {
       params.push(customerId);
@@ -466,7 +465,7 @@ export const salesReportsService = {
 
   async getSalesByProduct(branchId: number, productId?: number): Promise<SalesByProductRow[]> {
     const params: Array<number> = [branchId];
-    const filters: string[] = ['s.branch_id = $1', `s.status <> 'void'`, nonQuotationSalesWhere];
+    const filters: string[] = ['s.branch_id = $1', salesBaseFilters];
 
     if (productId) {
       params.push(productId);
@@ -532,8 +531,7 @@ export const salesReportsService = {
        JOIN ims.sales s ON s.sale_id = m.sale_id
        JOIN ims.items i ON i.item_id = m.item_id
       WHERE s.branch_id = $1
-        AND s.status <> 'void'
-        AND ${nonQuotationSalesWhere}
+        AND ${salesBaseFilters}
         AND s.sale_date::date BETWEEN $2::date AND $3::date
       GROUP BY i.item_id, i.name
       HAVING COALESCE(SUM(m.quantity), 0) > 0
@@ -558,6 +556,7 @@ export const salesReportsService = {
        LEFT JOIN ims.customers c ON c.customer_id = sr.customer_id
        LEFT JOIN ims.users u ON u.user_id = sr.user_id
       WHERE sr.branch_id = $1
+        AND ${ACTIVE_SALES_RETURN_SQL}
         AND sr.return_date::date BETWEEN $2::date AND $3::date
       ORDER BY sr.return_date ASC, sr.sr_id ASC`,
       [branchId, fromDate, toDate]
@@ -573,8 +572,7 @@ export const salesReportsService = {
            COALESCE(SUM(s.total), 0)::double precision AS gross_sales
          FROM ims.sales s
         WHERE s.branch_id = $1
-          AND s.status <> 'void'
-          AND ${nonQuotationSalesWhere}
+          AND ${salesBaseFilters}
           AND s.sale_date::date BETWEEN $2::date AND $3::date
         GROUP BY s.user_id
        ),
@@ -585,6 +583,7 @@ export const salesReportsService = {
            COALESCE(SUM(sr.total), 0)::double precision AS returns_total
          FROM ims.sales_returns sr
         WHERE sr.branch_id = $1
+          AND ${ACTIVE_SALES_RETURN_SQL}
           AND sr.return_date::date BETWEEN $2::date AND $3::date
         GROUP BY sr.user_id
        )

@@ -1215,9 +1215,13 @@ export const systemService = {
     const filterValues: unknown[] = [];
     let param = 1;
 
-    if (startDate && endDate) {
-      where.push(`al.created_at::date BETWEEN $${param++}::date AND $${param++}::date`);
-      filterValues.push(startDate, endDate);
+    if (startDate) {
+      where.push(`al.created_at::date >= $${param++}::date`);
+      filterValues.push(startDate);
+    }
+    if (endDate) {
+      where.push(`al.created_at::date <= $${param++}::date`);
+      filterValues.push(endDate);
     }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';

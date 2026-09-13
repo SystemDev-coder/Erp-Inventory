@@ -103,8 +103,8 @@ export const systemService = {
     return apiClient.put<{ user: SystemUser }>(API.SYSTEM.USER(id), data);
   },
 
-  async deleteUser(id: number): Promise<ApiResponse> {
-    return apiClient.delete(API.SYSTEM.USER(id));
+  async deleteUser(id: number, reason: string): Promise<ApiResponse> {
+    return apiClient.delete(API.SYSTEM.USER(id), reason);
   },
 
   async getRoles(): Promise<ApiResponse<{ roles: SystemRole[] }>> {
@@ -132,8 +132,8 @@ export const systemService = {
     return apiClient.put<{ role: SystemRole }>(API.SYSTEM.ROLE(id), data);
   },
 
-  async deleteRole(id: number): Promise<ApiResponse> {
-    return apiClient.delete(API.SYSTEM.ROLE(id));
+  async deleteRole(id: number, reason: string): Promise<ApiResponse> {
+    return apiClient.delete(API.SYSTEM.ROLE(id), reason);
   },
 
   async getRolePermissions(id: number): Promise<ApiResponse<{ permissions: RolePermission[] }>> {
@@ -186,8 +186,8 @@ export const systemService = {
     return apiClient.put<{ permission: SystemPermission }>(API.SYSTEM.PERMISSION(id), data);
   },
 
-  async deletePermission(id: number): Promise<ApiResponse> {
-    return apiClient.delete(API.SYSTEM.PERMISSION(id));
+  async deletePermission(id: number, reason: string): Promise<ApiResponse> {
+    return apiClient.delete(API.SYSTEM.PERMISSION(id), reason);
   },
 
   async getLogs(
@@ -207,11 +207,11 @@ export const systemService = {
     return apiClient.get(`${API.SYSTEM.LOGS}?${params.toString()}`);
   },
 
-  async deleteLog(id: number): Promise<ApiResponse> {
-    return apiClient.delete(API.SYSTEM.LOG(id));
+  async deleteLog(id: number, reason: string): Promise<ApiResponse> {
+    return apiClient.delete(API.SYSTEM.LOG(id), reason);
   },
 
-  async clearLogs(): Promise<ApiResponse<{ deleted: number }>> {
-    return apiClient.delete(API.SYSTEM.LOGS);
+  async clearLogs(reason: string): Promise<ApiResponse<{ deleted: number }>> {
+    return apiClient.delete(API.SYSTEM.LOGS, reason);
   },
 };

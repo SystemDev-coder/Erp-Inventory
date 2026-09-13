@@ -71,8 +71,8 @@ export const storeService = {
     return apiClient.put<{ store: Store }>(API.STORES.ITEM(id), data);
   },
 
-  async remove(id: number) {
-    return apiClient.delete<{ message: string }>(API.STORES.ITEM(id));
+  async remove(id: number, reason: string) {
+    return apiClient.delete<{ message: string }>(API.STORES.ITEM(id), reason);
   },
 
   async listItems(storeId: number, options: StoreItemListOptions = {}) {
@@ -92,7 +92,7 @@ export const storeService = {
     return apiClient.put<{ item: StoreItem }>(API.STORES.UPDATE_ITEM(storeId, itemId), { quantity });
   },
 
-  async removeItem(storeId: number, itemId: number) {
-    return apiClient.delete<{ message: string }>(API.STORES.REMOVE_ITEM(storeId, itemId));
+  async removeItem(storeId: number, itemId: number, reason: string) {
+    return apiClient.delete<{ message: string }>(API.STORES.REMOVE_ITEM(storeId, itemId), reason);
   },
 };

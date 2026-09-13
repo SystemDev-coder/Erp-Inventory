@@ -6,9 +6,12 @@ import { BranchScope } from '../../utils/branchScope';
 import { syncLowStockNotifications } from '../../utils/stockAlerts';
 import { adjustSystemAccountBalance } from '../../utils/systemAccounts';
 import { postGl } from '../../utils/glPosting';
+import { offsetOf, type Paged } from '../../utils/pagination';
 import { ensureCoaAccounts } from '../../utils/coaDefaults';
 import { financeClosingService } from '../finance/financeClosing.service';
 import { assertCustomerCreditAllowed } from '../../utils/creditRules';
+import { resolveSaleDueDate } from '../../utils/creditDueHelpers';
+import { syncCustomerOutstandingFromLedger } from '../../utils/customerOutstanding';
 import { requireDeleteReason } from '../../utils/refundRules';
 import {
   QuotationConvertInput,
@@ -69,6 +72,8 @@ interface SalesListFilters {
   includeVoided?: boolean;
   fromDate?: string;
   toDate?: string;
+  page?: number;
+  limit?: number;
 }
 
 interface UpdateSaleContext {
@@ -812,9 +817,11 @@ const listScopeCondition = (scope: BranchScope, branchId?: number) => {
 };
 
 export const salesService = {
-  async listSales(scope: BranchScope, filters: SalesListFilters): Promise<Sale[]> {
+  async listSales(scope: BranchScope, filters: SalesListFilters): Promise<Paged<Sale>> {
     const schema = await getSalesSchemaMeta();
     const { search, status, branchId, docType, includeVoided, fromDate, toDate } = filters;
+    const page = filters.page ?? 1;
+    const limit = filters.limit ?? 100;
     const scoped = listScopeCondition(scope, branchId);
     const params = scoped.params;
     const clauses = scoped.clauses;
@@ -835,23 +842,41 @@ export const salesService = {
     } else if (!includeVoided) {
       clauses.push(`s.status <> 'void'`);
     }
-    if (fromDate && toDate) {
+    if (fromDate) {
       params.push(fromDate);
       clauses.push(`s.sale_date::date >= $${params.length}::date`);
+    }
+    if (toDate) {
       params.push(toDate);
       clauses.push(`s.sale_date::date <= $${params.length}::date`);
     }
 
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 
-    return queryMany<Sale>(
+    const countRow = await queryOne<{ total: string }>(
+      `SELECT COUNT(*)::text AS total
+         FROM ims.sales s
+         LEFT JOIN ims.customers c ON c.customer_id = s.customer_id
+         ${where}`,
+      params
+    );
+
+    const rows = await queryMany<Sale>(
       `SELECT s.*, c.full_name AS customer_name
          FROM ims.sales s
          LEFT JOIN ims.customers c ON c.customer_id = s.customer_id
          ${where}
-        ORDER BY s.sale_date DESC, s.sale_id DESC`,
-      params
+        ORDER BY s.sale_date DESC, s.sale_id DESC
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offsetOf(page, limit)]
     );
+
+    return {
+      rows,
+      total: Number(countRow?.total || 0),
+      page,
+      limit,
+    };
   },
 
   async getSale(id: number, scope: BranchScope): Promise<Sale | null> {
@@ -1007,6 +1032,13 @@ export const salesService = {
       pushColumn('pay_acc_id', payment.payAccId);
       pushColumn('paid_amount', payment.paidAmount);
       pushColumn('is_stock_applied', shouldApplyStock);
+      const dueDate = await resolveSaleDueDate(client, {
+        saleType,
+        saleDate: input.saleDate || new Date().toISOString(),
+        customerId: input.customerId ?? null,
+        dueDateInput: input.dueDate ?? null,
+      });
+      pushColumn('due_date', dueDate);
 
       const placeholders = insertValues.map((_, idx) => `$${idx + 1}`).join(', ');
 
@@ -1071,6 +1103,12 @@ export const salesService = {
             customerId: input.customerId,
             amount: outstanding,
             mode: 'add',
+          });
+        }
+        if (input.customerId) {
+          await syncCustomerOutstandingFromLedger(client, {
+            branchId: context.branchId,
+            customerId: input.customerId,
           });
         }
         await rewriteSaleGl(client, { branchId: context.branchId, saleId: sale.sale_id });
@@ -1306,6 +1344,18 @@ export const salesService = {
           payDate: input.saleDate || current.sale_date,
         });
       }
+      if (current.customer_id) {
+        await syncCustomerOutstandingFromLedger(client, {
+          branchId: current.branch_id,
+          customerId: Number(current.customer_id),
+        });
+      }
+      if (nextCustomerId && nextCustomerId !== current.customer_id) {
+        await syncCustomerOutstandingFromLedger(client, {
+          branchId: current.branch_id,
+          customerId: Number(nextCustomerId),
+        });
+      }
 
       const updates: string[] = [];
       const values: Array<string | number | boolean | null> = [];
@@ -1338,6 +1388,13 @@ export const salesService = {
       pushSet('tax_id', tax?.tax_id ?? current.tax_id ?? null);
       pushSet('total_before_tax', taxableBase);
       pushSet('tax_amount', taxAmount);
+      const nextDueDate = await resolveSaleDueDate(client, {
+        saleType: nextSaleType,
+        saleDate: input.saleDate || current.sale_date,
+        customerId: input.customerId ?? current.customer_id ?? null,
+        dueDateInput: input.dueDate !== undefined ? input.dueDate : (current as { due_date?: string | null }).due_date ?? null,
+      });
+      pushSet('due_date', nextDueDate);
 
       if (schema.salesColumns.has('voided_at')) {
         values.push(finalNextStatus);
@@ -1471,6 +1528,13 @@ export const salesService = {
         branchId: current.branch_id,
         saleId: current.sale_id,
       });
+
+      if (current.customer_id) {
+        await syncCustomerOutstandingFromLedger(client, {
+          branchId: current.branch_id,
+          customerId: Number(current.customer_id),
+        });
+      }
 
       const updates: string[] = [];
       const values: Array<string | number | boolean | null> = [id];

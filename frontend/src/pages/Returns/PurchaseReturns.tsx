@@ -27,6 +27,11 @@ type ReturnLine = {
 
 const defaultLine = (): ReturnLine => ({ itemId: '', quantity: 1, unitCost: 0 });
 
+const sumLineQtyForItem = (lineItems: ReturnLine[], itemId: number) =>
+  lineItems
+    .filter((line) => Number(line.itemId) === Number(itemId))
+    .reduce((sum, line) => sum + Math.round(Number(line.quantity || 0)), 0);
+
 const PurchaseReturns = () => {
   const { showToast } = useToast();
   const { activeBranchId } = useBranch();
@@ -53,6 +58,7 @@ const PurchaseReturns = () => {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [formError, setFormError] = useState('');
   const [touched, setTouched] = useState<Record<string, boolean>>({});
 
   const subtotal = useMemo(
@@ -84,6 +90,22 @@ const PurchaseReturns = () => {
     }
   }, [form.supplierId]);
 
+  const getMaxReturnQty = (item: ReturnItemOption | undefined, itemId?: number | '', lineIndex?: number) => {
+    if (!item) return 0;
+    const sold = Math.max(0, Number(item.sold_qty || 0));
+    const available = Math.max(0, Number(item.available_qty || 0));
+    const id = Number(itemId || item.item_id || 0);
+    if (!isEditing || !id) return Math.min(sold || available, available);
+
+    const formQtyForItem = sumLineQtyForItem(lines, id);
+    const ceiling = sold > 0 ? sold : available + formQtyForItem;
+    const maxTotal = Math.min(ceiling, available + formQtyForItem);
+    if (lineIndex === undefined || lineIndex < 0) return maxTotal;
+    const thisLineQty = Math.max(0, Number(lines[lineIndex]?.quantity || 0));
+    const otherLinesQty = Math.max(0, formQtyForItem - thisLineQty);
+    return Math.max(0, maxTotal - otherLinesQty);
+  };
+
   const loadSuppliers = async () => {
     const res = await supplierService.list({ branchId: activeBranchId ?? undefined });
     if (res.success && res.data?.suppliers) setSuppliers(res.data.suppliers);
@@ -94,12 +116,12 @@ const PurchaseReturns = () => {
     if (res.success && res.data?.accounts) setAccounts(res.data.accounts);
   };
 
-  const loadItemsForSupplier = async (supplierId?: number) => {
+  const loadItemsForSupplier = async (supplierId?: number, excludeReturnId?: number) => {
     if (!supplierId) {
       setItems([]);
       return [];
     }
-    const res = await returnsService.listPurchaseItemsBySupplier(supplierId);
+    const res = await returnsService.listPurchaseItemsBySupplier(supplierId, excludeReturnId);
     if (res.success && res.data?.items) {
       const mapped = res.data.items.map((item) => ({
         ...item,
@@ -127,6 +149,7 @@ const PurchaseReturns = () => {
     setLines([defaultLine()]);
     setItems([]);
     setErrors({});
+    setFormError('');
     setTouched({});
   };
 
@@ -157,7 +180,7 @@ const PurchaseReturns = () => {
         refundAmount: Number(row.refund_amount || 0),
         refundViaAccount: Number(row.refund_amount || 0) > 0,
       });
-      await loadItemsForSupplier(row.supplier_id ? Number(row.supplier_id) : undefined);
+      await loadItemsForSupplier(row.supplier_id ? Number(row.supplier_id) : undefined, editingId);
       const itemsRes = await returnsService.getPurchaseReturnItems(editingId);
       if (itemsRes.success && itemsRes.data?.items) {
         const nextLines = itemsRes.data.items.map((item) => ({
@@ -181,7 +204,7 @@ const PurchaseReturns = () => {
     setLines([defaultLine()]);
     setErrors((prev) => ({ ...prev, supplierId: '', items: '' }));
     setTouched((prev) => ({ ...prev, supplierId: true }));
-    await loadItemsForSupplier(supplierId ? Number(supplierId) : undefined);
+    await loadItemsForSupplier(supplierId ? Number(supplierId) : undefined, editingId ?? undefined);
   };
 
   const setLineValue = (index: number, patch: Partial<ReturnLine>) => {
@@ -190,7 +213,7 @@ const PurchaseReturns = () => {
       const merged = { ...next[index], ...patch };
       if (Object.prototype.hasOwnProperty.call(patch, 'quantity')) {
         const selected = items.find((item) => Number(item.item_id) === Number(merged.itemId));
-        const maxQty = selected?.available_qty !== undefined ? Number(selected.available_qty || 0) : null;
+        const maxQty = selected ? getMaxReturnQty(selected, merged.itemId, index) : null;
         const rawQty = Math.round(Number((merged as any).quantity || 0));
         merged.quantity = maxQty === null ? Math.max(rawQty, 1) : Math.max(Math.min(rawQty, maxQty), 0);
       }
@@ -205,7 +228,7 @@ const PurchaseReturns = () => {
     setLineValue(index, {
       itemId,
       unitCost: selected ? Number(selected.cost_price || 0) : 0,
-      quantity: selected && Number(selected.available_qty || 0) > 0 ? 1 : 0,
+      quantity: selected && getMaxReturnQty(selected, itemId) > 0 ? 1 : 0,
     });
     setErrors((prev) => ({ ...prev, items: '' }));
   };
@@ -237,9 +260,11 @@ const PurchaseReturns = () => {
     const errs = validate();
     if (Object.keys(errs).length > 0) {
       setErrors(errs);
+      setFormError('Please fix the highlighted fields before saving.');
       setTouched({ supplierId: true, items: true, refundAccId: true, refundAmount: true });
       return;
     }
+    setFormError('');
     const normalized = lines
       .filter((line) => line.itemId)
       .map((line) => ({
@@ -249,13 +274,14 @@ const PurchaseReturns = () => {
       }));
     const unavailable = normalized.find((line) => {
       const selected = items.find((it) => Number(it.item_id) === Number(line.itemId));
-      const maxQty = selected?.available_qty !== undefined ? Number(selected.available_qty || 0) : null;
+      const maxQty = selected ? getMaxReturnQty(selected, line.itemId) : null;
       return maxQty !== null && line.quantity > maxQty;
     });
     if (unavailable) {
       const selected = items.find((it) => Number(it.item_id) === Number(unavailable.itemId));
-      const maxQty = selected?.available_qty !== undefined ? Number(selected.available_qty || 0) : 0;
+      const maxQty = selected ? getMaxReturnQty(selected, unavailable.itemId) : 0;
       showToast('error', 'Purchase Return', `Return qty exceeds available stock (${maxQty}) for ${selected?.name || `item ${unavailable.itemId}`}`);
+      setFormError(`Return quantity exceeds available stock for ${selected?.name || `item ${unavailable.itemId}`}.`);
       return;
     }
     const payload: any = {
@@ -280,7 +306,7 @@ const PurchaseReturns = () => {
       showToast('success', 'Purchase Return', editingId ? 'Return updated successfully' : 'Return recorded successfully');
       navigate('/returns');
     } else {
-      showToast('error', 'Purchase Return', res.error || 'Failed to save return');
+      setFormError(res.error || 'Failed to save return');
     }
   };
 
@@ -315,6 +341,11 @@ const PurchaseReturns = () => {
           </button>
         </div>
         <form onSubmit={submitReturn} className="space-y-4 p-4">
+          {formError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-300" role="alert">
+              {formError}
+            </div>
+          )}
 	          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
 	            <div>
 	              <label className={labelClass}>Supplier</label>
@@ -367,7 +398,7 @@ const PurchaseReturns = () => {
 	                          value={line.itemId}
 	                          options={items.map((item) => ({
 	                            value: Number(item.item_id),
-	                            label: `${item.name} (Available: ${Number(item.available_qty || 0)})`,
+	                            label: `${item.name} (Available: ${getMaxReturnQty(item, item.item_id)})`,
 	                          }))}
 	                          placeholder={form.supplierId ? 'Select item' : 'Select supplier first'}
 	                          disabled={!form.supplierId}
@@ -378,7 +409,7 @@ const PurchaseReturns = () => {
 	                          if (!it) return null;
                            return (
                              <div className="text-[11px] text-slate-500">
-                              Purchased: {Number(it.sold_qty || 0)} | Returned: {Number(it.returned_qty || 0)} | On hand: {Number(it.on_hand_qty || 0)} | Available: {Number(it.available_qty || 0)}
+                              Purchased: {Number(it.sold_qty || 0)} | Returned: {Number(it.returned_qty || 0)} | On hand: {Number(it.on_hand_qty || 0)} | You can return up to: {getMaxReturnQty(it, line.itemId, idx)}
                               </div>
                            );
                          })() : null}

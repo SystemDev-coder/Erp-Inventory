@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useId } from 'react';
 import { Plus, ChevronDown, Download, Printer, Search, RefreshCw } from 'lucide-react';
 import { ActionDropdown } from '../dropdown/ActionDropdown';
 
@@ -51,113 +51,129 @@ export const TabActionToolbar: React.FC<TabActionToolbarProps> = ({
     sticky = false,
     dateRange,
 }) => {
+    const fromId = useId();
+    const toId = useId();
+    const searchId = useId();
+
     return (
-        <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-4 px-1 mb-2 ${sticky ? 'sticky top-0 bg-slate-50/80 dark:bg-slate-900/80 backdrop-blur-md z-30' : ''}`}>
+        <div className={`flex flex-col lg:flex-row lg:items-center justify-between gap-4 py-4 px-1 mb-2 ${sticky ? 'sticky top-0 bg-slate-50/80 dark:bg-slate-900/80 backdrop-blur-md z-30' : ''}`}>
             {title && (
-                <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100 hidden lg:block">
+                <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100">
                     {title}
                 </h3>
             )}
 
             <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
                 {dateRange && (
-                    <div className="flex flex-wrap items-center gap-2">
-                        <div className="flex items-center gap-2">
-                            <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                    <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                        <div className="flex items-center gap-2 w-full min-[360px]:w-auto">
+                            <label htmlFor={fromId} className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
                                 From Date
-                            </span>
+                            </label>
                             <input
+                                id={fromId}
                                 type="date"
                                 value={dateRange.fromDate}
                                 onChange={(e) => dateRange.onFromDateChange(e.target.value)}
-                                className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                                className="h-11 w-full min-[360px]:w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                             />
                         </div>
-                        <div className="flex items-center gap-2">
-                            <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                        <div className="flex items-center gap-2 w-full min-[360px]:w-auto">
+                            <label htmlFor={toId} className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
                                 To Date
-                            </span>
+                            </label>
                             <input
+                                id={toId}
                                 type="date"
                                 value={dateRange.toDate}
                                 onChange={(e) => dateRange.onToDateChange(e.target.value)}
-                                className="h-10 w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                                className="h-11 w-full min-[360px]:w-36 rounded-xl border border-slate-200 bg-white px-2.5 text-sm text-slate-900 shadow-sm outline-none transition-all focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                             />
                         </div>
                     </div>
                 )}
-                {/* Search Input */}
                 {onSearch && (
-                    <div className="relative mr-2">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <div className="relative mr-2 w-full sm:w-auto">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" aria-hidden="true" />
+                        <label htmlFor={searchId} className="sr-only">Search</label>
                         <input
-                            type="text"
+                            id={searchId}
+                            type="search"
                             placeholder="Search..."
+                            aria-label="Search"
                             onChange={(e) => onSearch(e.target.value)}
-                            className="pl-9 pr-4 py-2 w-64 text-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 transition-all"
+                            className="pl-9 pr-4 py-2 min-h-11 w-full sm:w-64 text-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 transition-all"
                         />
                     </div>
                 )}
                 {secondaryAction && (
                     <button
+                        type="button"
                         onClick={secondaryAction.onClick}
-                        className="px-3 py-2 text-sm font-medium rounded-xl border border-primary-300 text-primary-700 hover:bg-primary-50 dark:border-primary-500/40 dark:text-primary-300 dark:hover:bg-primary-500/10 transition-all"
+                        className="min-h-11 px-3 py-2 text-sm font-medium rounded-xl border border-primary-300 text-primary-700 hover:bg-primary-50 dark:border-primary-500/40 dark:text-primary-300 dark:hover:bg-primary-500/10 transition-all"
                     >
                         {secondaryAction.label}
                     </button>
                 )}
                 {onDisplay && (
                     <button
+                        type="button"
                         onClick={() => {
                             if (displayLoading) return;
                             onDisplay();
                         }}
                         disabled={displayLoading}
-                        className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all disabled:cursor-not-allowed disabled:opacity-60"
+                        className="inline-flex min-h-11 items-center gap-2 px-3 py-2 text-sm font-medium rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                        <RefreshCw className={`w-4 h-4 ${displayLoading ? 'animate-spin' : ''}`} />
+                        <RefreshCw className={`w-4 h-4 ${displayLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
                         {displayLoading ? 'Loading...' : (displayLabel || 'Display')}
                     </button>
                 )}
-                {/* Export & Print */}
                 {(onExport || onPrint) && (
                     <div className="flex items-center gap-1.5 mr-2 pr-2 border-r border-slate-200 dark:border-slate-800">
                         {onPrint && (
                             <button
+                                type="button"
                                 onClick={onPrint}
-                                className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-800 rounded-xl transition-all"
+                                className="inline-flex min-h-11 min-w-11 items-center justify-center p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-800 rounded-xl transition-all"
                                 title="Print"
+                                aria-label="Print"
                             >
-                                <Printer className="w-5 h-5" />
+                                <Printer className="w-5 h-5" aria-hidden="true" />
                             </button>
                         )}
                         {onExport && (
                             <button
+                                type="button"
                                 onClick={onExport}
-                                className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-800 rounded-xl transition-all"
+                                className="inline-flex min-h-11 min-w-11 items-center justify-center p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-800 rounded-xl transition-all"
                                 title="Export"
+                                aria-label="Export"
                             >
-                                <Download className="w-5 h-5" />
+                                <Download className="w-5 h-5" aria-hidden="true" />
                             </button>
                         )}
                     </div>
                 )}
 
-                {/* Primary Action */}
                 <button
+                    type="button"
                     onClick={primaryAction.onClick}
-                    className="flex items-center gap-2 px-5 py-2.5 bg-primary-600 text-white font-bold rounded-xl hover:bg-primary-700 transition-all shadow-lg shadow-primary-500/20 active:scale-95"
+                    className="flex min-h-11 items-center gap-2 px-5 py-2.5 bg-primary-600 text-white font-bold rounded-xl hover:bg-primary-700 transition-all shadow-lg shadow-primary-500/20 active:scale-95"
                 >
-                    <Plus className="w-5 h-5" />
+                    <Plus className="w-5 h-5" aria-hidden="true" />
                     <span>{primaryAction.label}</span>
                 </button>
 
-                {/* Quick Add Dropdown */}
                 {quickAddItems.length > 0 && (
                     <ActionDropdown
                         trigger={
-                            <button className="flex items-center justify-center w-11 h-11 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-700 transition-all shadow-sm">
-                                <ChevronDown className="w-5 h-5" />
+                            <button
+                                type="button"
+                                aria-label="More actions"
+                                className="flex items-center justify-center w-11 h-11 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-700 transition-all shadow-sm"
+                            >
+                                <ChevronDown className="w-5 h-5" aria-hidden="true" />
                             </button>
                         }
                         items={quickAddItems.map(item => ({

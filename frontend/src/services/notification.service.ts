@@ -41,7 +41,7 @@ export const notificationService = {
     return apiClient.patch<{ updated: number }>(API.NOTIFICATIONS.MARK_ALL_READ);
   },
 
-  async remove(id: number) {
-    return apiClient.delete(API.NOTIFICATIONS.ITEM(id));
+  async remove(id: number, reason: string) {
+    return apiClient.delete(API.NOTIFICATIONS.ITEM(id), reason);
   },
 };

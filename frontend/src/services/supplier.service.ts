@@ -61,7 +61,7 @@ export const supplierService = {
     });
   },
 
-  async remove(id: number) {
-    return apiClient.delete<{ message: string }>(`/api/suppliers/${id}`);
+  async remove(id: number, reason: string) {
+    return apiClient.delete<{ message: string }>(`/api/suppliers/${id}`, reason);
   },
 };

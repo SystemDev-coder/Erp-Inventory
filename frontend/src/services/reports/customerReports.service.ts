@@ -64,6 +64,17 @@ export interface CreditCustomerRow {
   status: string;
 }
 
+export interface CreditOverdueRow {
+  sale_id: number;
+  invoice_number: string;
+  customer_id: number | null;
+  customer_name: string;
+  sale_date: string;
+  appointment_date: string;
+  days_overdue: number;
+  total: number;
+}
+
 export interface NewCustomerRow {
   customer_id: number;
   full_name: string;
@@ -165,6 +176,15 @@ export const customerReportsService = {
       customerId: input.mode === 'show' ? input.customerId : undefined,
     });
     return apiClient.get<RowsResponse<CreditCustomerRow>>(`${API.REPORTS.CUSTOMER_CREDIT_CUSTOMERS}${query}`);
+  },
+
+  async getCreditOverdue(input: { mode: ReportSelectionMode; customerId?: number; branchId?: number }) {
+    const query = toQuery({
+      branchId: input.branchId,
+      mode: input.mode,
+      customerId: input.mode === 'show' ? input.customerId : undefined,
+    });
+    return apiClient.get<RowsResponse<CreditOverdueRow>>(`${API.REPORTS.CUSTOMER_CREDIT_OVERDUE}${query}`);
   },
 
   async getNewCustomers(input: { fromDate: string; toDate: string; branchId?: number }) {

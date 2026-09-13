@@ -18,7 +18,7 @@ import {
     UnpaidSupplier,
     SupplierOutstandingPurchase,
 } from '../../services/finance.service';
-import { defaultDateRange } from '../../utils/dateRange';
+import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
 
 type ActiveTab = 'customer-receipts' | 'supplier-receipts';
@@ -163,8 +163,8 @@ const Receipts = () => {
         try {
             const [accRes, custRes, crRes, unpaidC] = await Promise.all([
                 accountService.list({ branchId: activeBranchId ?? undefined }),
-                customerService.list({ fromDate: dateRange.fromDate, toDate: dateRange.toDate, branchId: activeBranchId ?? undefined }),
-                financeService.listCustomerReceipts({ fromDate: dateRange.fromDate, toDate: dateRange.toDate, branchId: activeBranchId ?? undefined }),
+                customerService.list({ fromDate: optionalDateParam(dateRange.fromDate), toDate: optionalDateParam(dateRange.toDate), branchId: activeBranchId ?? undefined }),
+                financeService.listCustomerReceipts({ fromDate: optionalDateParam(dateRange.fromDate), toDate: optionalDateParam(dateRange.toDate), branchId: activeBranchId ?? undefined }),
                 financeService.listCustomerUnpaid(undefined, activeBranchId ?? undefined),
             ]);
             if (accRes.success && accRes.data?.accounts) setAccounts(accRes.data.accounts);
@@ -186,8 +186,8 @@ const Receipts = () => {
         try {
             const [accRes, supRes, srRes, unpaidS, outPurch] = await Promise.all([
                 accountService.list({ branchId: activeBranchId ?? undefined }),
-                supplierService.list({ fromDate: dateRange.fromDate, toDate: dateRange.toDate, branchId: activeBranchId ?? undefined }),
-                financeService.listSupplierReceipts({ fromDate: dateRange.fromDate, toDate: dateRange.toDate, branchId: activeBranchId ?? undefined }),
+                supplierService.list({ fromDate: optionalDateParam(dateRange.fromDate), toDate: optionalDateParam(dateRange.toDate), branchId: activeBranchId ?? undefined }),
+                financeService.listSupplierReceipts({ fromDate: optionalDateParam(dateRange.fromDate), toDate: optionalDateParam(dateRange.toDate), branchId: activeBranchId ?? undefined }),
                 financeService.listSupplierUnpaid(undefined, activeBranchId ?? undefined),
                 financeService.listSupplierOutstandingPurchases(),
             ]);
@@ -492,8 +492,8 @@ const Receipts = () => {
         }
     };
 
-    const deleteCustReceipt = async (id: number) => {
-        const res = await financeService.deleteCustomerReceipt(id);
+    const deleteCustReceipt = async (id: number, reason: string) => {
+        const res = await financeService.deleteCustomerReceipt(id, reason);
         if (res.success) {
             showToast('success', 'Receipts', 'Receipt deleted');
             await loadAll();
@@ -545,8 +545,8 @@ const Receipts = () => {
         }
     };
 
-    const deleteSupReceipt = async (id: number) => {
-        const res = await financeService.deleteSupplierReceipt(id);
+    const deleteSupReceipt = async (id: number, reason: string) => {
+        const res = await financeService.deleteSupplierReceipt(id, reason);
         if (res.success) {
             showToast('success', 'Receipts', 'Receipt deleted');
             await loadAll();
@@ -571,14 +571,14 @@ const Receipts = () => {
         });
     };
 
-    const confirmDeleteReceipt = async () => {
+    const confirmDeleteReceipt = async (reason: string) => {
         if (!deleteTarget) return;
         setDeletingReceipt(true);
         try {
             if (deleteTarget.type === 'customer') {
-                await deleteCustReceipt(deleteTarget.id);
+                await deleteCustReceipt(deleteTarget.id, reason);
             } else {
-                await deleteSupReceipt(deleteTarget.id);
+                await deleteSupReceipt(deleteTarget.id, reason);
             }
         } finally {
             setDeletingReceipt(false);

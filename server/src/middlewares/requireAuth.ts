@@ -4,6 +4,7 @@ import { ApiError } from '../utils/ApiError';
 
 export interface AuthRequest extends Request {
   user?: TokenPayload;
+  deleteReason?: string;
 }
 
 export const requireAuth = (
