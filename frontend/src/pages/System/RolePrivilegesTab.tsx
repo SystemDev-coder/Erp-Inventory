@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckSquare, Save, Search, XSquare } from 'lucide-react';
+import { Save } from 'lucide-react';
 import { useToast } from '../../components/ui/toast/Toast';
 import { systemService, type RolePermission, type SystemPermission, type SystemRole } from '../../services/system.service';
+import {
+  SIMPLE_ACTIONS,
+  SIMPLE_ACTION_LABELS,
+  SIMPLE_PRIVILEGE_MODULES,
+  simplePermKeys,
+} from '../../config/simplePrivileges';
 
 type Props = {
   roles: SystemRole[];
@@ -13,7 +19,11 @@ type Props = {
   onRoleSelected?: (roleId: number | null) => void;
 };
 
-// NEW: Role privileges editor (loads data only when user selects a role)
+// Role privileges editor - a simple View/Add New/Edit/Delete grid per business area instead
+// of a flat list of ~400 raw permission keys. See config/simplePrivileges.ts for why and how
+// modules map to the underlying keys; anything not shown in this grid (export, void, approve,
+// credit, ...) is left exactly as the role already has it - Save only ever touches the keys
+// visibly checked/unchecked here.
 export const RolePrivilegesTab = ({
   roles,
   permissions,
@@ -28,9 +38,7 @@ export const RolePrivilegesTab = ({
   const [rolePermissions, setRolePermissions] = useState<RolePermission[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [search, setSearch] = useState('');
 
-  // NEW: Load role permissions on demand (and ensure roles/permissions lists exist)
   const loadRolePermissions = useCallback(
     async (nextRoleId: number) => {
       setLoading(true);
@@ -61,7 +69,7 @@ export const RolePrivilegesTab = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // NEW: Allow parent to preselect a role (e.g. after creating a role or clicking a row action)
+  // Allow parent to preselect a role (e.g. after creating a role or clicking a row action)
   useEffect(() => {
     if (!initialRoleId) return;
     if (roleId === initialRoleId) return;
@@ -69,41 +77,21 @@ export const RolePrivilegesTab = ({
     void loadRolePermissions(initialRoleId);
   }, [initialRoleId, loadRolePermissions, roleId]);
 
-  // NEW: Toggle permission in local state
-  const togglePermission = (permId: number) => {
+  const byKey = useMemo(() => {
+    const map = new Map<string, RolePermission>();
+    for (const p of rolePermissions) map.set(p.perm_key, p);
+    return map;
+  }, [rolePermissions]);
+
+  // Toggle every underlying perm_key a module+action maps to, together, to the same value -
+  // e.g. "Returns" x "Edit" flips both sales_returns.update and purchase_returns.update.
+  const toggleModuleAction = (keys: string[], nextValue: boolean) => {
+    const keySet = new Set(keys);
     setRolePermissions((prev) =>
-      prev.map((p) => (p.perm_id === permId ? { ...p, has_permission: !p.has_permission } : p))
+      prev.map((p) => (keySet.has(p.perm_key) ? { ...p, has_permission: nextValue } : p))
     );
   };
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return rolePermissions;
-    return rolePermissions.filter((p) => {
-      const hay = `${p.perm_key} ${p.perm_name || ''} ${p.module || ''} ${p.sub_module || ''} ${p.action_type || ''}`.toLowerCase();
-      return hay.includes(q);
-    });
-  }, [rolePermissions, search]);
-
-  const grouped = useMemo(() => {
-    const groups = new Map<string, RolePermission[]>();
-    for (const p of filtered) {
-      const title = `${p.module || 'Other'}${p.sub_module ? ` / ${p.sub_module}` : ''}`;
-      if (!groups.has(title)) groups.set(title, []);
-      groups.get(title)!.push(p);
-    }
-    return Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [filtered]);
-
-  // NEW: Bulk toggle visible permissions
-  const bulkSetVisible = (enabled: boolean) => {
-    const visibleSet = new Set(filtered.map((p) => p.perm_id));
-    setRolePermissions((prev) =>
-      prev.map((p) => (visibleSet.has(p.perm_id) ? { ...p, has_permission: enabled } : p))
-    );
-  };
-
-  // NEW: Save full permission set for role
   const save = async () => {
     if (!roleId) return;
     if (!canUpdateRolePermissions) {
@@ -128,115 +116,88 @@ export const RolePrivilegesTab = ({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex flex-wrap items-center gap-3">
-          <label className="text-sm font-medium text-slate-700 dark:text-slate-200">
-            Role
-            <select
-              className="ml-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
-              value={roleId ?? ''}
-              onChange={async (e) => {
-                const next = Number(e.target.value || 0) || null;
-                setRoleId(next);
-                onRoleSelected?.(next);
-                if (next) await loadRolePermissions(next);
-              }}
-            >
-              <option value="">Select role...</option>
-              {roles.map((r) => (
-                <option key={r.role_id} value={r.role_id}>
-                  {r.role_name}
-                </option>
-              ))}
-            </select>
-          </label>
+        <label className="text-sm font-medium text-slate-700 dark:text-slate-200">
+          Role
+          <select
+            className="ml-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
+            value={roleId ?? ''}
+            onChange={async (e) => {
+              const next = Number(e.target.value || 0) || null;
+              setRoleId(next);
+              onRoleSelected?.(next);
+              if (next) await loadRolePermissions(next);
+            }}
+          >
+            <option value="">Select role...</option>
+            {roles.map((r) => (
+              <option key={r.role_id} value={r.role_id}>
+                {r.role_name}
+              </option>
+            ))}
+          </select>
+        </label>
 
-          <div className="relative">
-            <Search className="h-4 w-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              className="w-72 max-w-full rounded-lg border border-slate-300 bg-white pl-9 pr-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search permissions..."
-              disabled={!roleId || loading}
-            />
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2 justify-end">
+        {canUpdateRolePermissions && (
           <button
             type="button"
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-60"
-            onClick={() => bulkSetVisible(true)}
-            disabled={!roleId || loading}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary-600 text-white text-sm font-semibold disabled:opacity-60"
+            onClick={save}
+            disabled={!roleId || loading || saving}
           >
-            <CheckSquare className="h-4 w-4" /> Check visible
+            <Save className="h-4 w-4" /> {saving ? 'Saving...' : 'Save'}
           </button>
-          <button
-            type="button"
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-60"
-            onClick={() => bulkSetVisible(false)}
-            disabled={!roleId || loading}
-          >
-            <XSquare className="h-4 w-4" /> Uncheck visible
-          </button>
-          {canUpdateRolePermissions && (
-            <button
-              type="button"
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 text-white text-sm disabled:opacity-60"
-              onClick={save}
-              disabled={!roleId || loading || saving}
-            >
-              <Save className="h-4 w-4" /> {saving ? 'Saving...' : 'Save'}
-            </button>
-          )}
-        </div>
+        )}
       </div>
 
       {!roleId ? (
         <div className="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-          Select a role to view and edit its privileges.
+          Select a role to view and edit what it can do.
         </div>
       ) : loading ? (
         <div className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
           Loading role privileges...
         </div>
       ) : (
-        <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-          {grouped.map(([groupTitle, groupPerms]) => (
-            <div key={groupTitle} className="border-b border-slate-200 last:border-b-0 dark:border-slate-800 py-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="font-semibold text-slate-900 dark:text-white">{groupTitle}</div>
-                <div className="text-xs text-slate-500 dark:text-slate-400">
-                  {groupPerms.filter((p) => p.has_permission).length}/{groupPerms.length} enabled
-                </div>
-              </div>
-              <div className="mt-2 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                {groupPerms.map((p) => (
-                  <label
-                    key={p.perm_id}
-                    className="flex items-start gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-200 dark:hover:bg-slate-800/40"
-                  >
-                    <input
-                      type="checkbox"
-                      className="mt-0.5"
-                      checked={!!p.has_permission}
-                      onChange={() => togglePermission(p.perm_id)}
-                      disabled={!canUpdateRolePermissions}
-                    />
-                    <span className="min-w-0">
-                      <span className="block font-medium truncate">{p.perm_name || p.perm_key}</span>
-                      <span className="block font-mono text-xs text-slate-500 dark:text-slate-400 truncate">
-                        {p.perm_key}
-                      </span>
-                    </span>
-                  </label>
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 text-left text-slate-500 dark:border-slate-800 dark:text-slate-400">
+                <th className="px-4 py-3 font-semibold">Area</th>
+                {SIMPLE_ACTIONS.map((action) => (
+                  <th key={action} className="px-4 py-3 text-center font-semibold">
+                    {SIMPLE_ACTION_LABELS[action]}
+                  </th>
                 ))}
-              </div>
-            </div>
-          ))}
-          {grouped.length === 0 && (
-            <div className="text-sm text-slate-500 dark:text-slate-400">No permissions match your search.</div>
-          )}
+              </tr>
+            </thead>
+            <tbody>
+              {SIMPLE_PRIVILEGE_MODULES.map((mod) => (
+                <tr key={mod.id} className="border-b border-slate-100 last:border-b-0 dark:border-slate-800">
+                  <td className="px-4 py-3 font-medium text-slate-900 dark:text-slate-100">{mod.label}</td>
+                  {SIMPLE_ACTIONS.map((action) => {
+                    const keys = simplePermKeys(mod, action);
+                    const matched = keys.map((k) => byKey.get(k)).filter((p): p is RolePermission => !!p);
+                    if (matched.length === 0) {
+                      return <td key={action} className="px-4 py-3 text-center text-slate-300 dark:text-slate-700">—</td>;
+                    }
+                    const checked = matched.every((p) => p.has_permission);
+                    return (
+                      <td key={action} className="px-4 py-3 text-center">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4"
+                          checked={checked}
+                          onChange={() => toggleModuleAction(keys, !checked)}
+                          disabled={!canUpdateRolePermissions}
+                          aria-label={`${mod.label} - ${SIMPLE_ACTION_LABELS[action]}`}
+                        />
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
