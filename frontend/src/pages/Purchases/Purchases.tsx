@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { ColumnDef } from '@tanstack/react-table';
-import { CheckCircle2, ClipboardList, RefreshCw, ShoppingBag, Users } from 'lucide-react';
+import { ClipboardList, RefreshCw, ShoppingBag, Users } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
 import { PageHeader, TabActionToolbar } from '../../components/ui/layout';
 import { DataTable } from '../../components/ui/table/DataTable';
@@ -15,33 +15,25 @@ import ImportUploadModal from '../../components/import/ImportUploadModal';
 import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
 
-type SupplierFieldErrors = Partial<Record<string, string>>;
-
+// Deliberately has no error/touched/success state: the form relies on native HTML5
+// validation (required/minLength on the inputs themselves) instead of custom
+// red-border flashing, matching the Employee modal's behavior. The browser blocks
+// submission and shows its own message for invalid fields.
 function SupplierField({
   label,
-  error,
-  touched,
-  success,
+  required,
   children,
 }: {
   label: string;
-  error?: string;
-  touched?: boolean;
-  success?: boolean;
+  required?: boolean;
   children: React.ReactNode;
 }) {
-  const showError = touched && error;
-  const showSuccess = touched && !error && success;
   return (
     <div className="flex flex-col gap-1">
-      <div className="flex items-center gap-2">
-        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">{label}</label>
-        {showSuccess && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />}
-      </div>
+      <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
+        {label} {required && <span className="text-red-500">*</span>}
+      </label>
       {children}
-      {showError && (
-        <p className="text-xs font-medium text-red-500 dark:text-red-400">{error}</p>
-      )}
     </div>
   );
 }
@@ -108,9 +100,6 @@ const Purchases = () => {
     remaining_balance: 0,
     is_active: true,
   } as Supplier);
-  const [supplierErrors, setSupplierErrors] = useState<SupplierFieldErrors>({});
-  const [supplierTouched, setSupplierTouched] = useState<Partial<Record<string, boolean>>>({});
-  const [supplierAttemptedSubmit, setSupplierAttemptedSubmit] = useState(false);
 
   const loadPurchases = async (term?: string, status?: string) => {
     setLoading(true);
@@ -270,47 +259,9 @@ const Purchases = () => {
     window.URL.revokeObjectURL(url);
   };
 
-  const validateSupplier = (f: Supplier): SupplierFieldErrors => {
-    const errs: SupplierFieldErrors = {};
-    const digitCount = (val: string) => (val.match(/\d/g) || []).length;
-    if (!f.supplier_name.trim()) errs.supplier_name = 'Supplier name is required';
-    else if (f.supplier_name.trim().length < 2) errs.supplier_name = 'Name must be at least 2 characters';
-    if (!f.company_name?.trim()) errs.company_name = 'Company name is required';
-    if (!f.contact_person?.trim()) errs.contact_person = 'Contact person is required';
-    if (!f.contact_phone?.trim()) errs.contact_phone = 'Contact phone is required';
-    else if (digitCount(f.contact_phone) < 2) errs.contact_phone = 'Please add at least 2 numbers';
-    if (!f.phone?.trim()) errs.phone = 'Phone is required';
-    else if (digitCount(f.phone) < 2) errs.phone = 'Please add at least 2 numbers';
-    if (!f.location?.trim()) errs.location = 'Location is required';
-    if ((f.remaining_balance ?? 0) < 0) errs.remaining_balance = 'Balance cannot be negative';
-    return errs;
-  };
-
-  const getSupplierInputCls = (field: string) => {
-    const base = 'rounded-lg border px-3 py-2 w-full text-sm outline-none transition-all focus:ring-2';
-    if (!supplierTouched[field]) return `${base} border-slate-300 dark:border-slate-600 focus:border-primary-500 focus:ring-primary-500/20`;
-    if (supplierFieldError(field, (supplierForm as unknown as Record<string, unknown>)[field])) return `${base} border-red-400 bg-red-50/40 dark:border-red-500 dark:bg-red-900/10 focus:border-red-500 focus:ring-red-500/20`;
-    return `${base} border-emerald-500 focus:border-emerald-500 focus:ring-emerald-500/20`;
-  };
-
-  const touchSupplier = (field: string) => {
-    setSupplierTouched(t => ({ ...t, [field]: true }));
-    setSupplierErrors(validateSupplier(supplierForm));
-  };
-
   const setSupplierField = (field: string, value: unknown) => {
     const next = { ...supplierForm, [field]: value } as Supplier;
     setSupplierForm(next);
-    if (supplierTouched[field]) setSupplierErrors(validateSupplier(next));
-  };
-
-  // Only surface a field's error immediately when it's genuinely empty (an unambiguous "you
-  // skipped this") or once Save has been attempted at least once. A field that just hasn't
-  // reached its minimum length/digit count yet (e.g. one letter typed, then Tab to the next
-  // field) stays quiet so tabbing through the form mid-entry doesn't look like a rejection.
-  const supplierFieldError = (field: keyof SupplierFieldErrors, value: unknown): string | undefined => {
-    const isEmpty = value === null || value === undefined || String(value).trim() === '';
-    return (supplierAttemptedSubmit || isEmpty) ? supplierErrors[field] : undefined;
   };
 
   const openSupplierModal = (preset?: Supplier) => {
@@ -325,27 +276,17 @@ const Purchases = () => {
       remaining_balance: 0,
       is_active: true,
     } as Supplier);
-    setSupplierErrors({});
-    setSupplierTouched({});
-    setSupplierAttemptedSubmit(false);
     setSupplierModalOpen(true);
   };
 
   const closeSupplierModal = () => {
     setSupplierModalOpen(false);
-    setSupplierErrors({});
-    setSupplierTouched({});
-    setSupplierAttemptedSubmit(false);
   };
 
   const saveSupplier = async () => {
-    setSupplierAttemptedSubmit(true);
-    const errs = validateSupplier(supplierForm);
-    if (Object.keys(errs).length > 0) {
-      setSupplierErrors(errs);
-      setSupplierTouched({ supplier_name: true, company_name: true, contact_person: true, contact_phone: true, phone: true, location: true, remaining_balance: true });
-      return;
-    }
+    // Required/minLength/pattern are enforced natively on the inputs (see the form's
+    // required attributes below), so the browser blocks submission before this ever
+    // runs when a field is invalid - no manual check needed here.
     setLoading(true);
     const res = supplierForm.supplier_id
       ? await supplierService.update(supplierForm.supplier_id, supplierForm)
@@ -1008,115 +949,79 @@ const Purchases = () => {
         size="xl"
       >
         <form
-          noValidate
           onSubmit={(e) => { e.preventDefault(); saveSupplier(); }}
           className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-4 p-2"
         >
           {/* Supplier Name — spans full width */}
           <div className="md:col-span-2">
-            <SupplierField
-              label="Supplier Name"
-              error={supplierFieldError('supplier_name', supplierForm.supplier_name)}
-              touched={supplierTouched.supplier_name}
-              success={supplierForm.supplier_name.trim().length >= 2}
-            >
+            <SupplierField label="Supplier Name" required>
               <input
-                className={getSupplierInputCls('supplier_name')}
+                required
+                minLength={2}
                 placeholder="Enter supplier name"
                 value={supplierForm.supplier_name}
-                onBlur={() => touchSupplier('supplier_name')}
                 onChange={(e) => setSupplierField('supplier_name', e.target.value)}
               />
             </SupplierField>
           </div>
 
-          <SupplierField
-            label="Company"
-            error={supplierFieldError('company_name', supplierForm.company_name)}
-            touched={supplierTouched.company_name}
-            success={!!(supplierForm.company_name?.trim())}
-          >
+          <SupplierField label="Company" required>
             <input
-              className={getSupplierInputCls('company_name')}
+              required
               placeholder="Company name"
               value={supplierForm.company_name || ''}
-              onBlur={() => touchSupplier('company_name')}
               onChange={(e) => setSupplierField('company_name', e.target.value)}
             />
           </SupplierField>
 
-          <SupplierField
-            label="Contact Person"
-            error={supplierFieldError('contact_person', supplierForm.contact_person)}
-            touched={supplierTouched.contact_person}
-            success={!!(supplierForm.contact_person?.trim())}
-          >
+          <SupplierField label="Contact Person" required>
             <input
-              className={getSupplierInputCls('contact_person')}
+              required
               placeholder="Contact person name"
               value={supplierForm.contact_person || ''}
-              onBlur={() => touchSupplier('contact_person')}
               onChange={(e) => setSupplierField('contact_person', e.target.value)}
             />
           </SupplierField>
 
-          <SupplierField
-            label="Contact Phone"
-            error={supplierFieldError('contact_phone', supplierForm.contact_phone)}
-            touched={supplierTouched.contact_phone}
-            success={!!(supplierForm.contact_phone?.trim()) && (supplierForm.contact_phone.match(/\d/g) || []).length >= 2}
-          >
+          <SupplierField label="Contact Phone" required>
             <input
-              className={getSupplierInputCls('contact_phone')}
+              type="tel"
+              required
+              pattern=".*\d.*\d.*"
+              title="Please add at least 2 numbers"
               placeholder="+1 555 000 1234"
               value={supplierForm.contact_phone || ''}
-              onBlur={() => touchSupplier('contact_phone')}
               onChange={(e) => setSupplierField('contact_phone', e.target.value)}
             />
           </SupplierField>
 
-          <SupplierField
-            label="Phone"
-            error={supplierFieldError('phone', supplierForm.phone)}
-            touched={supplierTouched.phone}
-            success={!!(supplierForm.phone?.trim()) && (supplierForm.phone.match(/\d/g) || []).length >= 2}
-          >
+          <SupplierField label="Phone" required>
             <input
-              className={getSupplierInputCls('phone')}
+              type="tel"
+              required
+              pattern=".*\d.*\d.*"
+              title="Please add at least 2 numbers"
               placeholder="+1 555 123 4567"
               value={supplierForm.phone || ''}
-              onBlur={() => touchSupplier('phone')}
               onChange={(e) => setSupplierField('phone', e.target.value)}
             />
           </SupplierField>
 
-          <SupplierField
-            label="Location"
-            error={supplierFieldError('location', supplierForm.location)}
-            touched={supplierTouched.location}
-            success={!!(supplierForm.location?.trim())}
-          >
+          <SupplierField label="Location" required>
             <input
-              className={getSupplierInputCls('location')}
+              required
               placeholder="City / area"
               value={supplierForm.location || ''}
-              onBlur={() => touchSupplier('location')}
               onChange={(e) => setSupplierField('location', e.target.value)}
             />
           </SupplierField>
 
-          <SupplierField
-            label="Remaining Balance"
-            error={supplierAttemptedSubmit ? supplierErrors.remaining_balance : undefined}
-            touched={supplierTouched.remaining_balance}
-            success={(supplierForm.remaining_balance ?? 0) >= 0}
-          >
+          <SupplierField label="Remaining Balance">
             <input
               type="number"
-              className={getSupplierInputCls('remaining_balance')}
+              min={0}
               placeholder="0.00"
               value={supplierForm.remaining_balance ?? 0}
-              onBlur={() => touchSupplier('remaining_balance')}
               onChange={(e) => setSupplierField('remaining_balance', Number(e.target.value || 0))}
             />
           </SupplierField>

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router';
 import { ColumnDef } from '@tanstack/react-table';
-import { Users, UserPlus, UserCheck, CheckCircle2 } from 'lucide-react';
+import { Users, UserPlus, UserCheck } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
 import { PageHeader, TabActionToolbar } from '../../components/ui/layout';
 import { DataTable } from '../../components/ui/table/DataTable';
@@ -31,8 +31,6 @@ type CustomerForm = {
     edit_reason: string;
 };
 
-type FieldErrors = Partial<Record<keyof CustomerForm, string>>;
-
 const emptyForm: CustomerForm = {
     full_name: '',
     phone: '',
@@ -56,71 +54,29 @@ const hasOpeningBalanceChanged = (f: CustomerForm, original: number | null) =>
     original !== null &&
     parseBalance(f.remaining_balance) !== original;
 
-// ── Field-level validation ───────────────────────────────────────────────────
-function validateForm(f: CustomerForm): FieldErrors {
-    const e: FieldErrors = {};
-    if (!f.full_name.trim())
-        e.full_name = 'Customer name is required';
-    else if (f.full_name.trim().length < 2)
-        e.full_name = 'Name must be at least 2 characters';
-
-    if (f.phone.trim()) {
-        const digits = f.phone.replace(/\D/g, '');
-        if (digits.length < 2)
-            e.phone = 'Please add at least 2 numbers';
-    }
-
-    if (f.remaining_balance.trim() && !Number.isFinite(Number(f.remaining_balance.trim())))
-        e.remaining_balance = 'Balance must be a number';
-    else if (parseBalance(f.remaining_balance) < 0)
-        e.remaining_balance = 'Balance cannot be negative';
-
-    return e;
-}
-
-// ── Shared field component ────────────────────────────────────────────────────
+// ── Shared field component ─────────────────────────────────────────────────
+// Deliberately has no error/touched/success state: the form relies on native
+// HTML5 validation (required/minLength/min on the inputs themselves) instead
+// of custom red-border flashing, matching the Employee modal's behavior. The
+// browser blocks submission and shows its own message for invalid fields.
 type FieldProps = {
     label: string;
-    error?: string;
-    touched?: boolean;
-    success?: boolean;
+    required?: boolean;
     children: React.ReactNode;
     hint?: string;
     colSpan?: boolean;
 };
 
-function Field({ label, error, touched, success, children, hint, colSpan }: FieldProps) {
-    const showError = touched && error;
-    const showSuccess = touched && !error && success;
+function Field({ label, required, children, hint, colSpan }: FieldProps) {
     return (
         <div className={`flex flex-col gap-1 ${colSpan ? 'md:col-span-2' : ''}`}>
-            <div className="flex items-center gap-2">
-                <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                    {label}
-                </label>
-                {showSuccess && (
-                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-                )}
-            </div>
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                {label} {required && <span className="text-red-500">*</span>}
+            </label>
             {children}
-            {showError ? (
-                <p className="text-xs font-medium text-red-500 dark:text-red-400">{error}</p>
-            ) : hint ? (
-                <p className="text-xs text-slate-400 dark:text-slate-500">{hint}</p>
-            ) : null}
+            {hint && <p className="text-xs text-slate-400 dark:text-slate-500">{hint}</p>}
         </div>
     );
-}
-
-// ── Input class helper ────────────────────────────────────────────────────────
-function getInputCls(error?: string, touched?: boolean) {
-    const base =
-        'h-11 w-full rounded-lg border bg-white px-3 text-sm text-slate-900 shadow-sm outline-none transition-all duration-150 placeholder:text-slate-400 focus:ring-2 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:opacity-70 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500';
-    if (touched && error)
-        return `${base} border-red-400 bg-red-50/40 focus:border-red-500 focus:ring-red-500/20 dark:border-red-500 dark:bg-red-900/10`;
-    if (touched && !error)
-        return `${base} border-emerald-400 focus:border-emerald-500 focus:ring-emerald-500/20 dark:border-emerald-600`;
-    return `${base} border-slate-200 focus:border-primary-500 focus:ring-primary-500/20 dark:border-slate-700 dark:focus:border-primary-400`;
 }
 
 // ── Main component ───────────────────────────────────────────────────────────
@@ -136,45 +92,22 @@ const Customers = () => {
     const [form, setForm] = useState<CustomerForm>(emptyForm);
     const [originalOpeningBalance, setOriginalOpeningBalance] = useState<number | null>(null);
     const [reasonRevealed, setReasonRevealed] = useState(false);
-    const [errors, setErrors] = useState<FieldErrors>({});
-    const [touched, setTouched] = useState<Partial<Record<keyof CustomerForm, boolean>>>({});
-    const [attemptedSubmit, setAttemptedSubmit] = useState(false);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null);
     const [importModalOpen, setImportModalOpen] = useState(false);
 
-    const validateCurrentForm = (candidate: CustomerForm): FieldErrors => {
-        const nextErrors = validateForm(candidate);
-        if (hasOpeningBalanceChanged(candidate, originalOpeningBalance) && !candidate.edit_reason.trim()) {
-            nextErrors.edit_reason = 'Reason is required when changing the opening balance';
-        }
-        return nextErrors;
-    };
-
-    // touch a field on blur and validate immediately
-    const touch = (field: keyof CustomerForm) => {
-        setTouched((prev) => ({ ...prev, [field]: true }));
-        setErrors(validateCurrentForm({ ...form }));
-    };
-
-    // update form + re-validate touched field live
+    // update form state; latch the reason field open once the balance has actually diverged
+    // (see hasOpeningBalanceChanged) so it doesn't mount/unmount while the user is still typing
     const set = <K extends keyof CustomerForm>(field: K, value: CustomerForm[K]) => {
         const next = { ...form, [field]: value };
         setForm(next);
-        // Latch the reason field open. Toggling it on the live comparison unmounts it
-        // whenever the typed balance passes back through the saved value, which shifts
-        // everything below it up and down while the user is still typing.
         if (hasOpeningBalanceChanged(next, originalOpeningBalance)) setReasonRevealed(true);
-        if (touched[field]) setErrors(validateCurrentForm(next));
     };
 
     const openModal = (preset?: CustomerForm, openingBalance: number | null = null) => {
         setForm(preset ?? emptyForm);
         setOriginalOpeningBalance(openingBalance);
         setReasonRevealed(false);
-        setErrors({});
-        setTouched({});
-        setAttemptedSubmit(false);
         setIsAddOpen(true);
     };
 
@@ -182,19 +115,6 @@ const Customers = () => {
         setIsAddOpen(false);
         setOriginalOpeningBalance(null);
         setReasonRevealed(false);
-        setErrors({});
-        setTouched({});
-        setAttemptedSubmit(false);
-    };
-
-    // Only surface a field's error immediately when it's genuinely empty (an unambiguous "you
-    // skipped this") or once Save has been attempted at least once. A field that just hasn't
-    // reached its minimum length yet (e.g. one letter typed, then Tab to the next field) stays
-    // quiet so tabbing through the form mid-entry doesn't look like the form rejected the input.
-    const fieldError = <K extends keyof CustomerForm>(field: K): string | undefined => {
-        const value = form[field];
-        const isEmpty = value === '' || value === null || value === undefined;
-        return (attemptedSubmit || isEmpty) ? errors[field] : undefined;
     };
 
     const fetchCustomers = async () => {
@@ -216,20 +136,10 @@ const Customers = () => {
     }, [activeBranchId]);
 
     const handleSave = async () => {
-        setAttemptedSubmit(true);
-        // mark all fields as touched so all errors surface
+        // Required/minLength/min are enforced natively on the inputs (see the form's
+        // required attributes below), so the browser blocks submission before this
+        // ever runs when a field is invalid - no manual check needed here.
         const balanceChanged = hasOpeningBalanceChanged(form, originalOpeningBalance);
-        const errs = validateCurrentForm(form);
-        const allTouched: Partial<Record<keyof CustomerForm, boolean>> = {
-            full_name: true,
-            phone: true,
-            remaining_balance: true,
-            ...(balanceChanged ? { edit_reason: true } : {}),
-        };
-        setTouched(allTouched);
-        setErrors(errs);
-        if (Object.keys(errs).length > 0) return;
-
         setLoading(true);
         const payload = {
             full_name: form.full_name.trim(),
@@ -376,8 +286,6 @@ const Customers = () => {
     ];
 
     // derived
-    const t = touched;
-    const e = errors;
     const balanceChanged = hasOpeningBalanceChanged(form, originalOpeningBalance);
 
     return (
@@ -394,32 +302,29 @@ const Customers = () => {
             >
                 <form
                     onSubmit={(ev) => { ev.preventDefault(); handleSave(); }}
-                    noValidate
                     className="space-y-5"
                 >
                     {/* Row 1 – Name / Phone */}
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                        <Field label="Customer Name" error={fieldError('full_name')} touched={t.full_name} success={form.full_name.trim().length >= 2}>
+                        <Field label="Customer Name" required>
                             <input
                                 type="text"
+                                required
+                                minLength={2}
                                 placeholder="e.g. Ahmed Hassan"
                                 value={form.full_name}
                                 onChange={(ev) => set('full_name', ev.target.value)}
-                                onBlur={() => touch('full_name')}
-                                className={getInputCls(fieldError('full_name'), t.full_name)}
                                 disabled={loading}
                                 autoComplete="name"
                             />
                         </Field>
 
-                        <Field label="Phone Number" error={fieldError('phone')} touched={t.phone} success={!!form.phone.trim() && !e.phone}>
+                        <Field label="Phone Number">
                             <input
                                 type="tel"
                                 placeholder="e.g. +252 61 123 4567"
                                 value={form.phone}
                                 onChange={(ev) => set('phone', ev.target.value)}
-                                onBlur={() => touch('phone')}
-                                className={getInputCls(fieldError('phone'), t.phone)}
                                 disabled={loading}
                                 autoComplete="tel"
                             />
@@ -430,7 +335,6 @@ const Customers = () => {
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                         <Field label="Customer Type">
                             <select
-                                className={getInputCls()}
                                 value={form.customer_type}
                                 onChange={(ev) => {
                                     const nextType = ev.target.value as 'regular' | 'one-time';
@@ -449,7 +353,6 @@ const Customers = () => {
 
                         <Field label="Gender">
                             <select
-                                className={getInputCls()}
                                 value={form.gender}
                                 onChange={(ev) => set('gender', ev.target.value as 'male' | 'female')}
                                 disabled={loading}
@@ -467,7 +370,6 @@ const Customers = () => {
                             placeholder="City / Street (optional)"
                             value={form.address}
                             onChange={(ev) => set('address', ev.target.value)}
-                            className={getInputCls()}
                             disabled={loading}
                             autoComplete="street-address"
                         />
@@ -477,8 +379,6 @@ const Customers = () => {
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                         <Field
                             label="Opening Balance"
-                            error={fieldError('remaining_balance')}
-                            touched={t.remaining_balance}
                             hint="Amount the customer already owes (go-live balance)"
                         >
                             <input
@@ -488,8 +388,6 @@ const Customers = () => {
                                 placeholder="0.00"
                                 value={form.remaining_balance}
                                 onChange={(ev) => set('remaining_balance', ev.target.value)}
-                                onBlur={() => touch('remaining_balance')}
-                                className={getInputCls(fieldError('remaining_balance'), t.remaining_balance)}
                                 disabled={loading}
                             />
                         </Field>
@@ -518,7 +416,6 @@ const Customers = () => {
                                     step={1}
                                     value={form.credit_days}
                                     onChange={(ev) => set('credit_days', Number(ev.target.value || 0))}
-                                    className={getInputCls()}
                                     disabled={loading}
                                 />
                             </Field>
@@ -549,8 +446,7 @@ const Customers = () => {
                     {reasonRevealed && (
                         <Field
                             label="Reason for Balance Change"
-                            error={e.edit_reason}
-                            touched={t.edit_reason}
+                            required={balanceChanged}
                             hint={
                                 balanceChanged
                                     ? 'Required to keep the customer balance audit trail.'
@@ -559,11 +455,10 @@ const Customers = () => {
                         >
                             <textarea
                                 rows={3}
+                                required={balanceChanged}
                                 value={form.edit_reason}
                                 onChange={(ev) => set('edit_reason', ev.target.value)}
-                                onBlur={() => touch('edit_reason')}
                                 placeholder="Explain why the opening balance is being changed"
-                                className={`${getInputCls(e.edit_reason, t.edit_reason)} h-auto min-h-20 py-2.5`}
                                 disabled={loading}
                             />
                         </Field>

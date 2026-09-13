@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
-import { BadgeAlert, Boxes, CheckCircle2, RefreshCw, Store } from 'lucide-react';
+import { BadgeAlert, Boxes, RefreshCw, Store } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
 import { DataTable } from '../../components/ui/table/DataTable';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
@@ -16,33 +16,26 @@ import { useBranch } from '../../context/BranchContext';
 
 type ProductForm = Partial<Product>;
 type TxCategory = 'adjustment' | 'paid' | 'sales' | 'cancelled';
-type ItemFieldErrors = Partial<Record<string, string>>;
 
+// Deliberately has no error/touched/success state: the form relies on native HTML5
+// validation (required/minLength/min on the inputs themselves) instead of custom
+// red-border flashing, matching the Employee modal's behavior. The browser blocks
+// submission and shows its own message for invalid fields.
 function ItemField({
   label,
-  error,
-  touched,
-  success,
+  required,
   children,
 }: {
   label: string;
-  error?: string;
-  touched?: boolean;
-  success?: boolean;
+  required?: boolean;
   children: React.ReactNode;
 }) {
-  const showError = touched && error;
-  const showSuccess = touched && !error && success;
   return (
     <div className="flex flex-col gap-1">
-      <div className="flex items-center gap-2">
-        <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">{label}</label>
-        {showSuccess && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />}
-      </div>
+      <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
+        {label} {required && <span className="text-red-500">*</span>}
+      </label>
       {children}
-      {showError && (
-        <p className="text-xs font-medium text-red-500 dark:text-red-400">{error}</p>
-      )}
     </div>
   );
 }
@@ -91,9 +84,6 @@ const Products = () => {
   const [itemImportOpen, setItemImportOpen] = useState(false);
 
   const [itemForm, setItemForm] = useState<ProductForm>(defaultProductForm);
-  const [itemErrors, setItemErrors] = useState<ItemFieldErrors>({});
-  const [itemTouched, setItemTouched] = useState<Partial<Record<string, boolean>>>({});
-  const [itemAttemptedSubmit, setItemAttemptedSubmit] = useState(false);
   const [itemStoreId, setItemStoreId] = useState<number | ''>('');
   const [stores, setStores] = useState<StoreType[]>([]);
   const [stateForm, setStateForm] = useState<{ product_id?: number; status: 'active' | 'inactive' }>({
@@ -228,70 +218,19 @@ const Products = () => {
     []
   );
 
-  const validateItem = (f: ProductForm, storeId: number | '' = itemStoreId): ItemFieldErrors => {
-    const errs: ItemFieldErrors = {};
-    if (!f.name?.trim()) errs.name = 'Item name is required';
-    else if (f.name.trim().length < 2) errs.name = 'Name must be at least 2 characters';
-    if (!f.cost_price || Number(f.cost_price) <= 0) errs.cost_price = 'Cost price is required';
-    if (!f.sell_price || Number(f.sell_price) <= 0) errs.sell_price = 'Sell price is required';
-    if ((f.stock_alert ?? 0) < 0) errs.stock_alert = 'Stock alert cannot be negative';
-    if ((f.opening_balance ?? 0) < 0) errs.opening_balance = 'Opening balance cannot be negative';
-    if ((f.quantity ?? 0) < 0) errs.quantity = 'Quantity cannot be negative';
-    if (!storeId) errs.store_id = 'Store is required';
-    return errs;
-  };
-
-  const getItemInputCls = (field: string) => {
-    const base = 'h-12 w-full rounded-md border px-3 text-sm text-slate-900 shadow-sm outline-none transition-all placeholder:text-slate-400 focus:ring-2 dark:text-slate-100 dark:placeholder:text-slate-400 bg-white dark:bg-slate-800/80';
-    if (!itemTouched[field]) return `${base} border-slate-300 dark:border-slate-600 focus:border-primary-500 focus:ring-primary-500/20`;
-    if (itemFieldError(field)) return `${base} border-red-400 bg-red-50/40 dark:border-red-500 dark:bg-red-900/10 focus:border-red-500 focus:ring-red-500/20`;
-    return `${base} border-emerald-500 focus:border-emerald-500 focus:ring-emerald-500/20`;
-  };
-
-  const touchItem = (field: string) => {
-    setItemTouched(t => ({ ...t, [field]: true }));
-    setItemErrors(validateItem(itemForm));
-  };
-
   const setItemField = (field: string, value: unknown) => {
     const next = { ...itemForm, [field]: value } as ProductForm;
     setItemForm(next);
-    if (itemTouched[field]) setItemErrors(validateItem(next));
   };
 
   const closeItemModal = () => {
     setItemModalOpen(false);
-    setItemErrors({});
-    setItemTouched({});
-    setItemAttemptedSubmit(false);
-  };
-
-  // Only surface a field's error immediately when it's genuinely empty (an unambiguous "you
-  // skipped this") or once Save has been attempted at least once. A field that just hasn't
-  // reached its minimum length yet (e.g. one letter typed, then Tab to the next field) stays
-  // quiet so tabbing through the form mid-entry doesn't look like the form rejected the input.
-  const itemFieldError = (field: string): string | undefined => {
-    const value = (itemForm as Record<string, unknown>)[field];
-    const isEmpty = value === '' || value === null || value === undefined;
-    return (itemAttemptedSubmit || isEmpty) ? itemErrors[field] : undefined;
   };
 
   const saveItem = async () => {
-    setItemAttemptedSubmit(true);
-    const errs = validateItem(itemForm, itemStoreId);
-    if (Object.keys(errs).length > 0) {
-      setItemErrors(errs);
-      setItemTouched({
-        name: true,
-        cost_price: true,
-        sell_price: true,
-        stock_alert: true,
-        opening_balance: true,
-        quantity: true,
-        store_id: true,
-      });
-      return;
-    }
+    // Required/minLength/min are enforced natively on the inputs (see the form's
+    // required attributes below), so the browser blocks submission before this
+    // ever runs when a field is invalid - no manual check needed here.
     setLoading(true);
     const payload = {
       ...itemForm,
@@ -375,9 +314,6 @@ const Products = () => {
               type="button"
               onClick={async () => {
                 setItemForm(defaultProductForm);
-                setItemErrors({});
-                setItemTouched({});
-                setItemAttemptedSubmit(false);
                 setItemStoreId('');
                 await resolveStores();
                 setItemModalOpen(true);
@@ -403,9 +339,6 @@ const Products = () => {
             isLoading={loading}
             onEdit={async (row) => {
               setItemForm({ ...row, quantity: Number(row.quantity ?? row.stock ?? 0) });
-              setItemErrors({});
-              setItemTouched({});
-              setItemAttemptedSubmit(false);
               const loaded = await resolveStores();
               setItemStoreId(row.store_id || loaded[0]?.store_id || '');
               setItemModalOpen(true);
@@ -567,156 +500,97 @@ const Products = () => {
 
       <Modal isOpen={itemModalOpen} onClose={closeItemModal} title={itemForm.product_id ? 'Edit Item' : 'New Item'} size="lg">
         <form
-          noValidate
           onSubmit={(e) => { e.preventDefault(); void saveItem(); }}
           className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-4 p-2"
         >
           {/* Item Name — full width, required */}
           <div className="md:col-span-2">
-            <ItemField
-              label="Item Name"
-              error={itemFieldError('name')}
-              touched={itemTouched.name}
-              success={!!itemForm.name?.trim() && itemForm.name.trim().length >= 2}
-            >
+            <ItemField label="Item Name" required>
               <input
-                className={getItemInputCls('name')}
+                required
+                minLength={2}
                 placeholder="Enter item name"
                 value={itemForm.name || ''}
-                onBlur={() => touchItem('name')}
                 onChange={(e) => setItemField('name', e.target.value)}
               />
             </ItemField>
           </div>
 
-          <ItemField
-            label="Cost Price"
-            error={itemFieldError('cost_price')}
-            touched={itemTouched.cost_price}
-            success={Number(itemForm.cost_price ?? 0) > 0}
-          >
+          <ItemField label="Cost Price" required>
             <input
               type="number"
               step="0.01"
-              min={0}
-              className={getItemInputCls('cost_price')}
+              min="0.01"
+              required
               placeholder="0.00"
               value={itemForm.cost_price ?? 0}
-              onBlur={() => touchItem('cost_price')}
               onChange={(e) => setItemField('cost_price', Number(e.target.value || 0))}
             />
           </ItemField>
 
-          <ItemField
-            label="Sell Price"
-            error={itemFieldError('sell_price')}
-            touched={itemTouched.sell_price}
-            success={Number(itemForm.sell_price ?? 0) > 0}
-          >
+          <ItemField label="Sell Price" required>
             <input
               type="number"
               step="0.01"
-              min={0}
-              className={getItemInputCls('sell_price')}
+              min="0.01"
+              required
               placeholder="0.00"
               value={itemForm.sell_price ?? 0}
-              onBlur={() => touchItem('sell_price')}
               onChange={(e) => setItemField('sell_price', Number(e.target.value || 0))}
             />
           </ItemField>
 
-          <ItemField
-            label="Barcode"
-            error={itemFieldError('barcode')}
-            touched={itemTouched.barcode}
-            success={!!(itemForm.barcode?.trim())}
-          >
+          <ItemField label="Barcode">
             <input
-              className={getItemInputCls('barcode')}
               placeholder="Scan or enter barcode"
               value={itemForm.barcode || ''}
-              onBlur={() => touchItem('barcode')}
               onChange={(e) => setItemField('barcode', e.target.value)}
             />
           </ItemField>
 
-          <ItemField
-            label="Stock Alert"
-            error={itemFieldError('stock_alert')}
-            touched={itemTouched.stock_alert}
-            success={(itemForm.stock_alert ?? 0) >= 0}
-          >
+          <ItemField label="Stock Alert">
             <input
               type="number"
               min={0}
               step="1"
-              className={getItemInputCls('stock_alert')}
               placeholder="5"
               value={itemForm.stock_alert ?? 5}
-              onBlur={() => touchItem('stock_alert')}
               onChange={(e) => setItemField('stock_alert', Number(e.target.value || 0))}
             />
           </ItemField>
 
-          <ItemField
-            label="Opening Balance"
-            error={itemFieldError('opening_balance')}
-            touched={itemTouched.opening_balance}
-            success={(itemForm.opening_balance ?? 0) >= 0}
-          >
+          <ItemField label="Opening Balance">
             <input
               type="number"
               min={0}
               step="1"
-              className={getItemInputCls('opening_balance')}
               placeholder="0"
               value={itemForm.opening_balance ?? 0}
-              onBlur={() => touchItem('opening_balance')}
               onChange={(e) => setItemField('opening_balance', Number(e.target.value || 0))}
             />
           </ItemField>
 
-          <ItemField
-            label="Quantity"
-            error={itemFieldError('quantity')}
-            touched={itemTouched.quantity}
-            success={(itemForm.quantity ?? 0) >= 0}
-          >
+          <ItemField label="Quantity">
             <input
               type="number"
               step="1"
               min={0}
-              className={getItemInputCls('quantity')}
               placeholder="0"
               value={itemForm.quantity ?? 0}
-              onBlur={() => touchItem('quantity')}
               onChange={(e) => setItemField('quantity', Number(e.target.value || 0))}
             />
           </ItemField>
 
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">Store *</label>
+          <ItemField label="Store" required>
             <select
-              className={`h-12 w-full rounded-md border px-3 text-sm text-slate-900 dark:text-slate-100 outline-none focus:ring-2 bg-white dark:bg-slate-800/80 ${
-                itemTouched.store_id && itemErrors.store_id
-                  ? 'border-red-400 bg-red-50/40 focus:border-red-500 focus:ring-red-500/20'
-                  : 'border-slate-300 dark:border-slate-600 focus:border-primary-500 focus:ring-primary-500/20'
-              }`}
+              required
               value={itemStoreId}
-              onBlur={() => setItemTouched((t) => ({ ...t, store_id: true }))}
-              onChange={(e) => {
-                const next = e.target.value ? Number(e.target.value) : '';
-                setItemStoreId(next);
-                if (itemTouched.store_id) setItemErrors(validateItem(itemForm, next));
-              }}
+              onChange={(e) => setItemStoreId(e.target.value ? Number(e.target.value) : '')}
             >
-              <option value="">Select store</option>
+              <option value="" disabled>Select store</option>
               {stores.map((s) => <option key={s.store_id} value={s.store_id}>{s.store_name}</option>)}
             </select>
-            {itemTouched.store_id && itemErrors.store_id ? (
-              <span className="text-xs font-medium text-red-600">{itemErrors.store_id}</span>
-            ) : null}
-          </div>
+          </ItemField>
 
           <div className="md:col-span-2 flex justify-end gap-2 pt-1 border-t border-slate-100 dark:border-slate-700 mt-1">
             <button
