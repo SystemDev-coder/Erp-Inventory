@@ -638,6 +638,9 @@ export class DashboardService {
       totalSuppliersRow,
       totalPurchasesRow,
       totalExpensesRow,
+      loansGivenTodayRow,
+      debtRecoveredTodayRow,
+      totalOutstandingDebtRow,
     ] = await Promise.all([
       canViewCustomers
         ? queryOne<{ count: string }>(
@@ -730,6 +733,41 @@ export class DashboardService {
                FROM ims.expense_charges ec
               WHERE ec.branch_id = ANY($1)
                 AND ec.charge_date >= date_trunc('month', CURRENT_DATE)`,
+            [branchIds]
+          )
+        : Promise.resolve(null),
+      // Loans given today: credit sales handed out today (money lent to customers to
+      // collect later), for tracking day-to-day credit risk.
+      canViewSales
+        ? queryOne<{ total: string }>(
+            `SELECT COALESCE(SUM(s.total), 0)::text AS total
+               FROM ims.sales s
+              WHERE s.branch_id = ANY($1)
+                AND s.status <> 'void'
+                AND s.sale_date::date = CURRENT_DATE
+                AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
+                AND LOWER(COALESCE(s.sale_type::text, '')) = 'credit'`,
+            [branchIds]
+          )
+        : Promise.resolve(null),
+      // Debt recovered today: standalone collections against outstanding customer
+      // balances (Finance > Receipts), not inline payments taken at time of a new sale.
+      canViewCustomers
+        ? queryOne<{ total: string }>(
+            `SELECT COALESCE(SUM(cr.amount), 0)::text AS total
+               FROM ims.customer_receipts cr
+              WHERE cr.branch_id = ANY($1)
+                AND cr.receipt_date::date = CURRENT_DATE`,
+            [branchIds]
+          )
+        : Promise.resolve(null),
+      // Total outstanding debt: current sum of every customer's live receivable balance,
+      // kept in sync with customer_ledger by syncCustomerOutstandingFromLedger.
+      canViewCustomers
+        ? queryOne<{ total: string }>(
+            `SELECT COALESCE(SUM(c.remaining_balance), 0)::text AS total
+               FROM ims.customers c
+              WHERE c.branch_id = ANY($1)`,
             [branchIds]
           )
         : Promise.resolve(null),
@@ -834,6 +872,38 @@ export class DashboardService {
         icon: 'TrendingUp',
         format: 'currency',
       });
+    }
+
+    if (canViewSales) {
+      cards.push({
+        id: 'loans-given-today',
+        title: 'Loans Given Today',
+        value: Number((loansGivenTodayRow as { total: string } | null)?.total || 0),
+        subtitle: 'Credit sales handed out today',
+        icon: 'HandCoins',
+        format: 'currency',
+      });
+    }
+
+    if (canViewCustomers) {
+      cards.push(
+        {
+          id: 'debt-recovered-today',
+          title: 'Debt Recovered Today',
+          value: Number((debtRecoveredTodayRow as { total: string } | null)?.total || 0),
+          subtitle: 'Collected against customer balances today',
+          icon: 'HandHeart',
+          format: 'currency',
+        },
+        {
+          id: 'total-outstanding-debt',
+          title: 'Total Outstanding Debt',
+          value: Number((totalOutstandingDebtRow as { total: string } | null)?.total || 0),
+          subtitle: 'Sum of all customer balances owed',
+          icon: 'Wallet',
+          format: 'currency',
+        }
+      );
     }
 
     return cards;

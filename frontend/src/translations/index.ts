@@ -108,6 +108,18 @@ export const translations = {
     en: 'All sales (calculated from transactions)',
     so: 'Dhammaan Iibka (laga xisaabiyay dhaqdhaqaaqyada)',
   },
+  card_loans_given_title: { en: 'Loans Given Today', so: 'Deymaha Bixiyay' },
+  card_loans_given_subtitle: { en: 'Credit sales handed out today', so: 'Iibka deynta ee maanta la bixiyay' },
+  card_debt_recovered_title: { en: 'Debt Recovered Today', so: 'Deynta Celiyay' },
+  card_debt_recovered_subtitle: {
+    en: 'Collected against customer balances today',
+    so: 'Lacagta maanta laga soo ururiyay hadhaaga macaamiisha',
+  },
+  card_total_outstanding_title: { en: 'Total Outstanding Debt', so: 'Wadarta Deynta Hadhay' },
+  card_total_outstanding_subtitle: {
+    en: 'Sum of all customer balances owed',
+    so: 'Isugeynta dhammaan hadhaaga macaamiisha',
+  },
 
   // Dashboard charts
   chart_income_trend_title: { en: 'Income Trend (12 Months)', so: 'Isbeddelka Dakhliga (12 Bilood)' },

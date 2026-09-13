@@ -3,6 +3,8 @@ import Chart from 'react-apexcharts';
 import type { ApexOptions } from 'apexcharts';
 import {
   BriefcaseBusiness,
+  HandCoins,
+  HandHeart,
   Loader2,
   Package,
   ReceiptText,
@@ -10,6 +12,7 @@ import {
   TrendingUp,
   Truck,
   Users,
+  Wallet,
 } from 'lucide-react';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
@@ -75,6 +78,9 @@ const DASHBOARD_CARD_ORDER = [
   'total-expenses',
   'monthly-payment',
   'total-revenue',
+  'loans-given-today',
+  'debt-recovered-today',
+  'total-outstanding-debt',
 ];
 
 // Chart id -> translation keys, same by-id lookup pattern as CARD_TITLE_KEYS above.
@@ -109,6 +115,9 @@ const CARD_TITLE_KEYS: Record<string, TranslationKey> = {
   'total-expenses': 'card_total_expenses_title',
   'monthly-payment': 'card_monthly_payment_title',
   'total-revenue': 'card_total_revenue_title',
+  'loans-given-today': 'card_loans_given_title',
+  'debt-recovered-today': 'card_debt_recovered_title',
+  'total-outstanding-debt': 'card_total_outstanding_title',
 };
 
 const CARD_SUBTITLE_KEYS: Record<string, TranslationKey> = {
@@ -121,6 +130,9 @@ const CARD_SUBTITLE_KEYS: Record<string, TranslationKey> = {
   'total-expenses': 'card_total_expenses_subtitle',
   'monthly-payment': 'card_monthly_payment_subtitle',
   'total-revenue': 'card_total_revenue_subtitle',
+  'loans-given-today': 'card_loans_given_subtitle',
+  'debt-recovered-today': 'card_debt_recovered_subtitle',
+  'total-outstanding-debt': 'card_total_outstanding_subtitle',
 };
 
 const ICONS = {
@@ -131,6 +143,9 @@ const ICONS = {
   ReceiptText,
   Truck,
   ShoppingBag,
+  HandCoins,
+  HandHeart,
+  Wallet,
 } as const;
 
 const CARD_TONES = [
@@ -267,6 +282,9 @@ const Dashboard = () => {
       'total-expenses': ['expenses.view'],
       'monthly-payment': ['accounts.view', 'expenses.view'],
       'total-revenue': ['sales.view'],
+      'loans-given-today': ['sales.view'],
+      'debt-recovered-today': ['customers.view'],
+      'total-outstanding-debt': ['customers.view'],
     };
 
     // Keep only the four dashboard cards, in the fixed order above, regardless of what
@@ -468,6 +486,24 @@ const Dashboard = () => {
           columns = [dateTime('charge_date', 'Date'), text('name', 'Expense'), money('amount', 'Amount'), text('note', 'Note')];
           totalLabel = 'Total Expenses';
           totalKey = 'amount';
+          totalValue = formatValue(payload.total, 'currency');
+          break;
+        case 'loans-given-today':
+          columns = [text('sale_id', 'Sale #'), dateTime('sale_date', 'Date'), text('customer_name', 'Customer'), money('total', 'Amount'), text('status', 'Status')];
+          totalLabel = 'Total Loaned Today';
+          totalKey = 'total';
+          totalValue = formatValue(payload.total, 'currency');
+          break;
+        case 'debt-recovered-today':
+          columns = [dateTime('receipt_date', 'Date'), text('customer_name', 'Customer'), money('amount', 'Amount'), text('note', 'Note')];
+          totalLabel = 'Total Recovered Today';
+          totalKey = 'amount';
+          totalValue = formatValue(payload.total, 'currency');
+          break;
+        case 'total-outstanding-debt':
+          columns = [text('customer_id', 'ID'), text('name', 'Customer'), text('phone', 'Phone'), money('remaining_balance', 'Owed')];
+          totalLabel = 'Total Outstanding';
+          totalKey = 'remaining_balance';
           totalValue = formatValue(payload.total, 'currency');
           break;
         default:
