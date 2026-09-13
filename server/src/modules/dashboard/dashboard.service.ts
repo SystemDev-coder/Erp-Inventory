@@ -124,6 +124,107 @@ export class DashboardService {
     const canViewExpenses = permissions.includes('expenses.view');
     const canViewAccounts = permissions.includes('accounts.view');
     const canViewPayments = canViewAccounts || canViewExpenses;
+    const canViewSuppliers = hasPermission(permissions, 'suppliers.view');
+    const canViewPurchases = permissions.includes('purchases.view');
+
+    if (cardId === 'total-suppliers') {
+      if (!canViewSuppliers) return { cardId, title: 'Total Suppliers', format: 'number', total: 0, rows: [] };
+      const rows = await queryMany<{
+        supplier_id: number;
+        name: string;
+        phone: string | null;
+        created_at: string | null;
+      }>(
+        `SELECT supplier_id,
+                COALESCE(name, '')::text AS name,
+                NULLIF(phone, '')::text AS phone,
+                created_at::text AS created_at
+           FROM ims.suppliers
+          WHERE branch_id = ANY($1)
+            AND is_active = TRUE
+          ORDER BY supplier_id DESC
+          LIMIT 500`,
+        [branchIds]
+      );
+      const totalRow = await queryOne<{ total: string }>(
+        `SELECT COUNT(*)::text AS total
+           FROM ims.suppliers
+          WHERE branch_id = ANY($1)
+            AND is_active = TRUE`,
+        [branchIds]
+      );
+      return { cardId, title: 'Total Suppliers', format: 'number', total: Number(totalRow?.total || 0), rows };
+    }
+
+    if (cardId === 'total-purchases') {
+      if (!canViewPurchases) return { cardId, title: 'Total Purchases', format: 'currency', total: 0, rows: [] };
+      const supplierNameCol = await pickFirstColumn('suppliers', ['name'], 'name');
+      const rows = await queryMany<{
+        purchase_id: number;
+        purchase_date: string;
+        supplier_name: string | null;
+        total: string;
+        status: string;
+      }>(
+        `SELECT p.purchase_id,
+                p.purchase_date::text AS purchase_date,
+                COALESCE(s.${supplierNameCol}, '')::text AS supplier_name,
+                p.total::text AS total,
+                COALESCE(p.status::text, '')::text AS status
+           FROM ims.purchases p
+           LEFT JOIN ims.suppliers s ON s.supplier_id = p.supplier_id
+          WHERE p.branch_id = ANY($1)
+            AND p.status NOT IN ('void', 'order', 'ordered')
+            AND p.purchase_date >= date_trunc('month', CURRENT_DATE)
+            AND COALESCE(p.doc_type, 'purchase') = 'purchase'
+          ORDER BY p.purchase_date DESC
+          LIMIT 500`,
+        [branchIds]
+      );
+      const totalRow = await queryOne<{ total: string }>(
+        `SELECT COALESCE(SUM(p.total), 0)::text AS total
+           FROM ims.purchases p
+          WHERE p.branch_id = ANY($1)
+            AND p.status NOT IN ('void', 'order', 'ordered')
+            AND p.purchase_date >= date_trunc('month', CURRENT_DATE)
+            AND COALESCE(p.doc_type, 'purchase') = 'purchase'`,
+        [branchIds]
+      );
+      return { cardId, title: 'Total Purchases', format: 'currency', total: Number(totalRow?.total || 0), rows };
+    }
+
+    if (cardId === 'total-expenses') {
+      if (!canViewExpenses) return { cardId, title: 'Total Expenses', format: 'currency', total: 0, rows: [] };
+      const expenseNameCol = await pickFirstColumn('expenses', ['name', 'expense_name', 'title'], 'name');
+      const rows = await queryMany<{
+        charge_id: number;
+        charge_date: string;
+        name: string | null;
+        amount: string;
+        note: string | null;
+      }>(
+        `SELECT ec.charge_id,
+                ec.charge_date::text AS charge_date,
+                COALESCE(e.${expenseNameCol}, '[Expense]')::text AS name,
+                ec.amount::text AS amount,
+                ec.note::text AS note
+           FROM ims.expense_charges ec
+           LEFT JOIN ims.expenses e ON e.exp_id = ec.exp_id AND e.branch_id = ec.branch_id
+          WHERE ec.branch_id = ANY($1)
+            AND ec.charge_date >= date_trunc('month', CURRENT_DATE)
+          ORDER BY ec.charge_date DESC
+          LIMIT 500`,
+        [branchIds]
+      );
+      const totalRow = await queryOne<{ total: string }>(
+        `SELECT COALESCE(SUM(ec.amount), 0)::text AS total
+           FROM ims.expense_charges ec
+          WHERE ec.branch_id = ANY($1)
+            AND ec.charge_date >= date_trunc('month', CURRENT_DATE)`,
+        [branchIds]
+      );
+      return { cardId, title: 'Total Expenses', format: 'currency', total: Number(totalRow?.total || 0), rows };
+    }
 
     if (cardId === 'total-customers') {
       if (!canViewCustomers) return { cardId, title: 'Total Customers', format: 'number', total: 0, rows: [] };
@@ -520,95 +621,23 @@ export class DashboardService {
     const canViewCustomers = hasPermission(permissions, 'customers.view');
     const canViewEmployees = hasPermission(permissions, 'employees.view') || permissions.includes('users.view');
     const canViewProducts = hasPermission(permissions, 'items.view') || hasPermission(permissions, 'products.view');
-    // 'stock.view' was never a seeded permission key - items/products/warehouse_stock view
-    // rights are what actually gate stock features elsewhere (e.g. the sidebar's Stock
-    // Management item), so check those instead.
-    const canViewStock =
-      hasPermission(permissions, 'items.view') ||
-      hasPermission(permissions, 'products.view') ||
-      hasPermission(permissions, 'warehouse_stock.view');
     const canViewSales = permissions.includes('sales.view');
     const canViewExpenses = permissions.includes('expenses.view');
     const canViewAccounts = permissions.includes('accounts.view');
     const canViewPayments = canViewAccounts || canViewExpenses;
-
-    const runLowStockCount = async (): Promise<{ count: string } | null> => {
-      const alertExpr = await getItemAlertExpression();
-      const thresholdExpr = `GREATEST(COALESCE(NULLIF(${alertExpr}, 0), 5), 1)`;
-      return queryOne<{ count: string }>(
-        `WITH item_stock AS (
-           SELECT
-             i.item_id,
-             ${thresholdExpr}::numeric(14,3) AS stock_alert,
-             CASE
-               WHEN COALESCE(st.row_count, 0) = 0 THEN COALESCE(i.opening_balance, 0)
-               ELSE COALESCE(st.store_qty, 0)
-             END::numeric(14,3) AS quantity
-           FROM ims.items i
-           LEFT JOIN (
-             SELECT
-               s.branch_id,
-               si.product_id AS item_id,
-               COALESCE(SUM(si.quantity), 0)::numeric(14,3) AS store_qty,
-               COUNT(*)::int AS row_count
-             FROM ims.store_items si
-             JOIN ims.stores s ON s.store_id = si.store_id
-             GROUP BY s.branch_id, si.product_id
-           ) st
-             ON st.item_id = i.item_id
-            AND st.branch_id = i.branch_id
-          WHERE i.branch_id = ANY($1)
-            AND i.is_active = TRUE
-         )
-         SELECT COUNT(*)::text AS count
-           FROM item_stock
-          WHERE quantity <= stock_alert`,
-        [branchIds]
-      );
-    };
-
-    const runInventoryStock = async (): Promise<{ total: string } | null> => {
-      return queryOne<{ total: string }>(
-        `WITH item_stock AS (
-           SELECT
-             CASE
-               WHEN COALESCE(st.row_count, 0) = 0 THEN COALESCE(i.opening_balance, 0)
-               ELSE COALESCE(st.store_qty, 0)
-             END::numeric(14,3) AS quantity
-           FROM ims.items i
-           LEFT JOIN (
-             SELECT
-               s.branch_id,
-               si.product_id AS item_id,
-               COALESCE(SUM(si.quantity), 0)::numeric(14,3) AS store_qty,
-               COUNT(*)::int AS row_count
-             FROM ims.store_items si
-             JOIN ims.stores s ON s.store_id = si.store_id
-             GROUP BY s.branch_id, si.product_id
-           ) st
-             ON st.item_id = i.item_id
-            AND st.branch_id = i.branch_id
-          WHERE i.branch_id = ANY($1)
-            AND i.is_active = TRUE
-         )
-         SELECT COALESCE(SUM(quantity), 0)::text AS total
-           FROM item_stock`,
-        [branchIds]
-      );
-    };
+    const canViewSuppliers = hasPermission(permissions, 'suppliers.view');
+    const canViewPurchases = permissions.includes('purchases.view');
 
     const [
       totalCustomersRow,
       totalEmployeesRow,
       totalProductsRow,
-      todayIncomeRow,
       monthlyIncomeRow,
-      todayPaymentsRow,
       monthlyPaymentsRow,
       totalRevenueRow,
-      loansGivenTodayRow,
-      debtRecoveredTodayRow,
-      totalOutstandingDebtRow,
+      totalSuppliersRow,
+      totalPurchasesRow,
+      totalExpensesRow,
     ] = await Promise.all([
       canViewCustomers
         ? queryOne<{ count: string }>(
@@ -642,29 +671,8 @@ export class DashboardService {
                FROM ims.sales s
               WHERE s.branch_id = ANY($1)
                 AND s.status <> 'void'
-                AND s.sale_date::date = CURRENT_DATE
-                AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'`,
-            [branchIds]
-          )
-        : Promise.resolve(null),
-      canViewSales
-        ? queryOne<{ total: string }>(
-            `SELECT COALESCE(SUM(s.total), 0)::text AS total
-               FROM ims.sales s
-              WHERE s.branch_id = ANY($1)
-                AND s.status <> 'void'
                 AND s.sale_date >= date_trunc('month', CURRENT_DATE)
                 AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'`,
-            [branchIds]
-          )
-        : Promise.resolve(null),
-      canViewPayments
-        ? queryOne<{ total: string }>(
-            `SELECT (
-                COALESCE((SELECT SUM(ep.amount_paid) FROM ims.expense_payments ep WHERE ep.branch_id = ANY($1) AND ep.pay_date::date = CURRENT_DATE), 0)
-                +
-                COALESCE((SELECT SUM(emp.amount_paid) FROM ims.employee_payments emp WHERE emp.branch_id = ANY($1) AND emp.pay_date::date = CURRENT_DATE), 0)
-              )::text AS total`,
             [branchIds]
           )
         : Promise.resolve(null),
@@ -692,46 +700,39 @@ export class DashboardService {
             [branchIds]
           )
         : Promise.resolve(null),
-      // Loans given today: credit sales handed out today (money lent to customers to
-      // collect later), for tracking day-to-day credit risk.
-      canViewSales
-        ? queryOne<{ total: string }>(
-            `SELECT COALESCE(SUM(s.total), 0)::text AS total
-               FROM ims.sales s
-              WHERE s.branch_id = ANY($1)
-                AND s.status <> 'void'
-                AND s.sale_date::date = CURRENT_DATE
-                AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
-                AND LOWER(COALESCE(s.sale_type::text, '')) = 'credit'`,
+      canViewSuppliers
+        ? queryOne<{ count: string }>(
+            `SELECT COUNT(*)::text AS count
+               FROM ims.suppliers
+              WHERE branch_id = ANY($1)
+                AND is_active = TRUE`,
             [branchIds]
           )
         : Promise.resolve(null),
-      // Debt recovered today: standalone collections against outstanding customer
-      // balances (Finance > Receipts), not inline payments taken at time of a new sale.
-      canViewCustomers
+      // Total purchases this month: money spent on received purchases, excluding void and
+      // not-yet-received purchase orders.
+      canViewPurchases
         ? queryOne<{ total: string }>(
-            `SELECT COALESCE(SUM(cr.amount), 0)::text AS total
-               FROM ims.customer_receipts cr
-              WHERE cr.branch_id = ANY($1)
-                AND cr.receipt_date::date = CURRENT_DATE`,
+            `SELECT COALESCE(SUM(p.total), 0)::text AS total
+               FROM ims.purchases p
+              WHERE p.branch_id = ANY($1)
+                AND p.status NOT IN ('void', 'order', 'ordered')
+                AND p.purchase_date >= date_trunc('month', CURRENT_DATE)
+                AND COALESCE(p.doc_type, 'purchase') = 'purchase'`,
             [branchIds]
           )
         : Promise.resolve(null),
-      // Total outstanding debt: current sum of every customer's live receivable balance,
-      // kept in sync with customer_ledger by syncCustomerOutstandingFromLedger.
-      canViewCustomers
+      // Total expenses this month: expense charges booked this month (what was incurred),
+      // distinct from Monthly Payment which tracks what was actually paid out.
+      canViewExpenses
         ? queryOne<{ total: string }>(
-            `SELECT COALESCE(SUM(c.remaining_balance), 0)::text AS total
-               FROM ims.customers c
-              WHERE c.branch_id = ANY($1)`,
+            `SELECT COALESCE(SUM(ec.amount), 0)::text AS total
+               FROM ims.expense_charges ec
+              WHERE ec.branch_id = ANY($1)
+                AND ec.charge_date >= date_trunc('month', CURRENT_DATE)`,
             [branchIds]
           )
         : Promise.resolve(null),
-    ]);
-
-    const [inventoryStockRow, lowStockRow] = await Promise.all([
-      canViewStock ? runInventoryStock() : Promise.resolve(null),
-      canViewStock ? runLowStockCount() : Promise.resolve(null),
     ]);
 
     const cards: DashboardCard[] = [];
@@ -769,67 +770,59 @@ export class DashboardService {
       });
     }
 
-    if (canViewStock) {
-      cards.push(
-        {
-          id: 'inventory-stock',
-          title: 'Inventory Stock',
-          value: Number((inventoryStockRow as { total: string } | null)?.total || 0),
-          subtitle: 'Units in stock',
-          icon: 'Boxes',
-          format: 'number',
-        },
-        {
-          id: 'low-stock-alert',
-          title: 'Low Stock Alert',
-          value: Number((lowStockRow as { count: string } | null)?.count || 0),
-          subtitle: 'Items below reorder level',
-          icon: 'AlertTriangle',
-          format: 'number',
-        }
-      );
+    if (canViewSuppliers) {
+      cards.push({
+        id: 'total-suppliers',
+        title: 'Total Suppliers',
+        value: Number(totalSuppliersRow?.count || 0),
+        subtitle: 'Active suppliers',
+        icon: 'Truck',
+        format: 'number',
+      });
     }
 
     if (canViewSales) {
-      cards.push(
-        {
-          id: 'today-income',
-          title: 'Today Income',
-          value: Number((todayIncomeRow as { total: string } | null)?.total || 0),
-          subtitle: 'Sales today',
-          icon: 'TrendingUp',
-          format: 'currency',
-        },
-        {
-          id: 'monthly-income',
-          title: 'Monthly Income',
-          value: Number((monthlyIncomeRow as { total: string } | null)?.total || 0),
-          subtitle: 'Sales this month',
-          icon: 'TrendingUp',
-          format: 'currency',
-        }
-      );
+      cards.push({
+        id: 'monthly-income',
+        title: 'Monthly Income',
+        value: Number((monthlyIncomeRow as { total: string } | null)?.total || 0),
+        subtitle: 'Sales this month',
+        icon: 'TrendingUp',
+        format: 'currency',
+      });
+    }
+
+    if (canViewPurchases) {
+      cards.push({
+        id: 'total-purchases',
+        title: 'Total Purchases',
+        value: Number((totalPurchasesRow as { total: string } | null)?.total || 0),
+        subtitle: 'Received purchases this month',
+        icon: 'ShoppingBag',
+        format: 'currency',
+      });
+    }
+
+    if (canViewExpenses) {
+      cards.push({
+        id: 'total-expenses',
+        title: 'Total Expenses',
+        value: Number((totalExpensesRow as { total: string } | null)?.total || 0),
+        subtitle: 'Expenses booked this month',
+        icon: 'ReceiptText',
+        format: 'currency',
+      });
     }
 
     if (canViewPayments) {
-      cards.push(
-        {
-          id: 'today-payment',
-          title: 'Today Payment',
-          value: Number((todayPaymentsRow as { total: string } | null)?.total || 0),
-          subtitle: 'Expenses + salary',
-          icon: 'ReceiptText',
-          format: 'currency',
-        },
-        {
-          id: 'monthly-payment',
-          title: 'Monthly Payment',
-          value: Number((monthlyPaymentsRow as { total: string } | null)?.total || 0),
-          subtitle: 'Expenses + salary this month',
-          icon: 'ReceiptText',
-          format: 'currency',
-        }
-      );
+      cards.push({
+        id: 'monthly-payment',
+        title: 'Monthly Payment',
+        value: Number((monthlyPaymentsRow as { total: string } | null)?.total || 0),
+        subtitle: 'Expenses + salary this month',
+        icon: 'ReceiptText',
+        format: 'currency',
+      });
     }
 
     if (canViewSales) {
@@ -841,38 +834,6 @@ export class DashboardService {
         icon: 'TrendingUp',
         format: 'currency',
       });
-    }
-
-    if (canViewSales) {
-      cards.push({
-        id: 'loans-given-today',
-        title: 'Loans Given Today',
-        value: Number((loansGivenTodayRow as { total: string } | null)?.total || 0),
-        subtitle: 'Credit sales handed out today',
-        icon: 'HandCoins',
-        format: 'currency',
-      });
-    }
-
-    if (canViewCustomers) {
-      cards.push(
-        {
-          id: 'debt-recovered-today',
-          title: 'Debt Recovered Today',
-          value: Number((debtRecoveredTodayRow as { total: string } | null)?.total || 0),
-          subtitle: 'Collected against customer balances today',
-          icon: 'HandHeart',
-          format: 'currency',
-        },
-        {
-          id: 'total-outstanding-debt',
-          title: 'Total Outstanding Debt',
-          value: Number((totalOutstandingDebtRow as { total: string } | null)?.total || 0),
-          subtitle: 'Sum of all customer balances owed',
-          icon: 'Wallet',
-          format: 'currency',
-        }
-      );
     }
 
     return cards;

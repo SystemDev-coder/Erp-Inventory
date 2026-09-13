@@ -2,17 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import Chart from 'react-apexcharts';
 import type { ApexOptions } from 'apexcharts';
 import {
-  AlertTriangle,
-  Boxes,
   BriefcaseBusiness,
-  HandCoins,
-  HandHeart,
   Loader2,
   Package,
   ReceiptText,
+  ShoppingBag,
   TrendingUp,
+  Truck,
   Users,
-  Wallet,
 } from 'lucide-react';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
@@ -72,16 +69,12 @@ const DASHBOARD_CARD_ORDER = [
   'total-customers',
   'total-employees',
   'total-products',
-  'inventory-stock',
-  'low-stock-alert',
-  'today-income',
+  'total-suppliers',
   'monthly-income',
-  'total-revenue',
-  'today-payment',
+  'total-purchases',
+  'total-expenses',
   'monthly-payment',
-  'loans-given-today',
-  'debt-recovered-today',
-  'total-outstanding-debt',
+  'total-revenue',
 ];
 
 // Chart id -> translation keys, same by-id lookup pattern as CARD_TITLE_KEYS above.
@@ -110,45 +103,34 @@ const CARD_TITLE_KEYS: Record<string, TranslationKey> = {
   'total-customers': 'card_total_customers_title',
   'total-employees': 'card_total_employees_title',
   'total-products': 'card_total_products_title',
-  'inventory-stock': 'card_inventory_stock_title',
-  'low-stock-alert': 'card_low_stock_title',
-  'today-income': 'card_today_income_title',
+  'total-suppliers': 'card_total_suppliers_title',
   'monthly-income': 'card_monthly_income_title',
-  'total-revenue': 'card_total_revenue_title',
-  'today-payment': 'card_today_payment_title',
+  'total-purchases': 'card_total_purchases_title',
+  'total-expenses': 'card_total_expenses_title',
   'monthly-payment': 'card_monthly_payment_title',
-  'loans-given-today': 'card_loans_given_title',
-  'debt-recovered-today': 'card_debt_recovered_title',
-  'total-outstanding-debt': 'card_total_outstanding_title',
+  'total-revenue': 'card_total_revenue_title',
 };
 
 const CARD_SUBTITLE_KEYS: Record<string, TranslationKey> = {
   'total-customers': 'card_total_customers_subtitle',
   'total-employees': 'card_total_employees_subtitle',
   'total-products': 'card_total_products_subtitle',
-  'inventory-stock': 'card_inventory_stock_subtitle',
-  'low-stock-alert': 'card_low_stock_subtitle',
-  'today-income': 'card_today_income_subtitle',
+  'total-suppliers': 'card_total_suppliers_subtitle',
   'monthly-income': 'card_monthly_income_subtitle',
-  'total-revenue': 'card_total_revenue_subtitle',
-  'today-payment': 'card_today_payment_subtitle',
+  'total-purchases': 'card_total_purchases_subtitle',
+  'total-expenses': 'card_total_expenses_subtitle',
   'monthly-payment': 'card_monthly_payment_subtitle',
-  'loans-given-today': 'card_loans_given_subtitle',
-  'debt-recovered-today': 'card_debt_recovered_subtitle',
-  'total-outstanding-debt': 'card_total_outstanding_subtitle',
+  'total-revenue': 'card_total_revenue_subtitle',
 };
 
 const ICONS = {
   TrendingUp,
-  HandCoins,
-  HandHeart,
-  Wallet,
   Users,
   BriefcaseBusiness,
   Package,
-  Boxes,
-  AlertTriangle,
   ReceiptText,
+  Truck,
+  ShoppingBag,
 } as const;
 
 const CARD_TONES = [
@@ -279,16 +261,12 @@ const Dashboard = () => {
       'total-customers': ['customers.view'],
       'total-employees': ['employees.view', 'users.view'],
       'total-products': ['items.view', 'products.view'],
-      'inventory-stock': ['items.view', 'products.view', 'warehouse_stock.view'],
-      'low-stock-alert': ['items.view', 'products.view', 'warehouse_stock.view'],
-      'today-income': ['sales.view'],
+      'total-suppliers': ['suppliers.view'],
       'monthly-income': ['sales.view'],
-      'total-revenue': ['sales.view'],
-      'today-payment': ['accounts.view', 'expenses.view'],
+      'total-purchases': ['purchases.view'],
+      'total-expenses': ['expenses.view'],
       'monthly-payment': ['accounts.view', 'expenses.view'],
-      'loans-given-today': ['sales.view'],
-      'debt-recovered-today': ['customers.view'],
-      'total-outstanding-debt': ['customers.view'],
+      'total-revenue': ['sales.view'],
     };
 
     // Keep only the four dashboard cards, in the fixed order above, regardless of what
@@ -463,42 +441,33 @@ const Dashboard = () => {
           columns = [text('item_id', 'ID'), text('name', 'Name'), money('sale_price', 'Price'), number('opening_balance', 'Opening Qty')];
           totalLabel = 'Total Products';
           break;
-        case 'inventory-stock':
-        case 'low-stock-alert':
-          columns = [text('item_id', 'ID'), text('item_name', 'Item'), number('quantity', 'Qty'), number('stock_alert', 'Reorder Level')];
-          totalLabel = card.id === 'low-stock-alert' ? 'Low Stock Items' : 'Total Units';
+        case 'total-suppliers':
+          columns = [text('supplier_id', 'ID'), text('name', 'Name'), text('phone', 'Phone'), dateTime('created_at', 'Registered')];
+          totalLabel = 'Total Suppliers';
           break;
-        case 'today-payment':
         case 'monthly-payment':
           columns = [text('payment_type', 'Type'), dateTime('pay_date', 'Date'), text('name', 'For'), text('account_name', 'Account'), money('amount_paid', 'Amount'), text('note', 'Note')];
-          totalLabel = card.id === 'today-payment' ? 'Total Today Payment' : 'Total Monthly Payment';
+          totalLabel = 'Total Monthly Payment';
           totalKey = 'amount_paid';
           totalValue = formatValue(payload.total, 'currency');
           break;
-        case 'today-income':
         case 'monthly-income':
         case 'total-revenue':
           columns = [text('sale_id', 'Sale #'), dateTime('sale_date', 'Date'), text('doc_type', 'Type'), text('customer_name', 'Customer'), money('total', 'Total'), text('status', 'Status')];
-          totalLabel = card.id === 'today-income' ? 'Total Income' : card.id === 'monthly-income' ? 'Total Monthly Income' : 'Total Revenue';
+          totalLabel = card.id === 'monthly-income' ? 'Total Monthly Income' : 'Total Revenue';
           totalKey = 'total';
           totalValue = formatValue(payload.total, 'currency');
           break;
-        case 'loans-given-today':
-          columns = [text('sale_id', 'Sale #'), dateTime('sale_date', 'Date'), text('customer_name', 'Customer'), money('total', 'Amount'), text('status', 'Status')];
-          totalLabel = 'Total Loaned Today';
+        case 'total-purchases':
+          columns = [text('purchase_id', 'Purchase #'), dateTime('purchase_date', 'Date'), text('supplier_name', 'Supplier'), money('total', 'Total'), text('status', 'Status')];
+          totalLabel = 'Total Purchases';
           totalKey = 'total';
           totalValue = formatValue(payload.total, 'currency');
           break;
-        case 'debt-recovered-today':
-          columns = [dateTime('receipt_date', 'Date'), text('customer_name', 'Customer'), money('amount', 'Amount'), text('note', 'Note')];
-          totalLabel = 'Total Recovered Today';
+        case 'total-expenses':
+          columns = [dateTime('charge_date', 'Date'), text('name', 'Expense'), money('amount', 'Amount'), text('note', 'Note')];
+          totalLabel = 'Total Expenses';
           totalKey = 'amount';
-          totalValue = formatValue(payload.total, 'currency');
-          break;
-        case 'total-outstanding-debt':
-          columns = [text('customer_id', 'ID'), text('name', 'Customer'), text('phone', 'Phone'), money('remaining_balance', 'Owed')];
-          totalLabel = 'Total Outstanding';
-          totalKey = 'remaining_balance';
           totalValue = formatValue(payload.total, 'currency');
           break;
         default:
