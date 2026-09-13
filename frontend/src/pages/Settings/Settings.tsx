@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import {
   ArrowLeftRight,
   BriefcaseBusiness,
@@ -2573,13 +2574,19 @@ const Settings = () => {
     logsContent,
   ]);
 
+  // Lets links (e.g. the profile dropdown's "Activity Logs" item) deep-link straight to a tab
+  // via /settings?tab=activity-logs instead of always landing on the default "capital" tab.
+  const [searchParams] = useSearchParams();
+  const requestedTab = searchParams.get('tab');
+  const initialTab = requestedTab && tabs.some((tab) => tab.id === requestedTab) ? requestedTab : 'capital';
+
   return (
     <div>
       <PageHeader
         title="System & Security"
         description="Manage capital, assets, closing periods, profit sharing, and activity logs."
       />
-      <Tabs tabs={tabs} defaultTab="capital" />
+      <Tabs tabs={tabs} defaultTab={initialTab} />
       {/* NEW: Audit log details modal */}
       {auditLogDetailsModal}
     </div>

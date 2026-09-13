@@ -35,7 +35,6 @@ const AccountsReceivableReportPage = lazy(() => import("./pages/Reports/financia
 const AccountsPayableReportPage = lazy(() => import("./pages/Reports/financial/AccountsPayableReportPage"));
 const Settings = lazy(() => import("./pages/Settings/Settings"));
 const System = lazy(() => import("./pages/System/System"));
-const Support = lazy(() => import("./pages/Support/Support"));
 const Trash = lazy(() => import("./pages/Trash/Trash"));
 
 const PageLoader = () => (
@@ -199,7 +198,6 @@ function AppRoutes() {
             }
           />
           <Route path="/system" element={<ProtectedRoute permission="system.settings"><Lazy><Settings /></Lazy></ProtectedRoute>} />
-          <Route path="/support" element={<ProtectedRoute><Lazy><Support /></Lazy></ProtectedRoute>} />
           <Route path="/trash" element={<ProtectedRoute permission="trash.view" roleAny={['developer']}><Lazy><Trash /></Lazy></ProtectedRoute>} />
         </Route>
 
