@@ -2,15 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import Chart from 'react-apexcharts';
 import type { ApexOptions } from 'apexcharts';
 import {
-  BriefcaseBusiness,
   HandCoins,
   HandHeart,
   Loader2,
-  Package,
   ReceiptText,
   ShoppingBag,
   TrendingUp,
-  Truck,
   Users,
   Wallet,
 } from 'lucide-react';
@@ -69,15 +66,12 @@ type DashboardCardDrilldownResponse = {
 // server-side and with a matching drilldown query. A small set of trend charts sits below
 // them (see CHART_TITLE_KEYS); anything more detailed than a card+drilldown stays in Reports.
 const DASHBOARD_CARD_ORDER = [
-  'total-customers',
-  'total-employees',
-  'total-products',
-  'total-suppliers',
-  'monthly-income',
-  'total-purchases',
-  'total-expenses',
-  'monthly-payment',
-  'total-revenue',
+  'today-income',
+  'new-customers-today',
+  'today-expenses',
+  'today-purchases',
+  'week-sales',
+  'week-expenses',
   'loans-given-today',
   'debt-recovered-today',
   'total-outstanding-debt',
@@ -106,30 +100,24 @@ const dashboardCacheKey = (branchId: number | null) => String(branchId ?? 'all')
 // Card title/subtitle text comes from the backend in English only; translate it here by
 // card id instead, so switching language doesn't require localizing the API response.
 const CARD_TITLE_KEYS: Record<string, TranslationKey> = {
-  'total-customers': 'card_total_customers_title',
-  'total-employees': 'card_total_employees_title',
-  'total-products': 'card_total_products_title',
-  'total-suppliers': 'card_total_suppliers_title',
-  'monthly-income': 'card_monthly_income_title',
-  'total-purchases': 'card_total_purchases_title',
-  'total-expenses': 'card_total_expenses_title',
-  'monthly-payment': 'card_monthly_payment_title',
-  'total-revenue': 'card_total_revenue_title',
+  'today-income': 'card_today_sales_title',
+  'new-customers-today': 'card_new_customers_today_title',
+  'today-expenses': 'card_today_expenses_title',
+  'today-purchases': 'card_today_purchases_title',
+  'week-sales': 'card_week_sales_title',
+  'week-expenses': 'card_week_expenses_title',
   'loans-given-today': 'card_loans_given_title',
   'debt-recovered-today': 'card_debt_recovered_title',
   'total-outstanding-debt': 'card_total_outstanding_title',
 };
 
 const CARD_SUBTITLE_KEYS: Record<string, TranslationKey> = {
-  'total-customers': 'card_total_customers_subtitle',
-  'total-employees': 'card_total_employees_subtitle',
-  'total-products': 'card_total_products_subtitle',
-  'total-suppliers': 'card_total_suppliers_subtitle',
-  'monthly-income': 'card_monthly_income_subtitle',
-  'total-purchases': 'card_total_purchases_subtitle',
-  'total-expenses': 'card_total_expenses_subtitle',
-  'monthly-payment': 'card_monthly_payment_subtitle',
-  'total-revenue': 'card_total_revenue_subtitle',
+  'today-income': 'card_today_sales_subtitle',
+  'new-customers-today': 'card_new_customers_today_subtitle',
+  'today-expenses': 'card_today_expenses_subtitle',
+  'today-purchases': 'card_today_purchases_subtitle',
+  'week-sales': 'card_week_sales_subtitle',
+  'week-expenses': 'card_week_expenses_subtitle',
   'loans-given-today': 'card_loans_given_subtitle',
   'debt-recovered-today': 'card_debt_recovered_subtitle',
   'total-outstanding-debt': 'card_total_outstanding_subtitle',
@@ -138,10 +126,7 @@ const CARD_SUBTITLE_KEYS: Record<string, TranslationKey> = {
 const ICONS = {
   TrendingUp,
   Users,
-  BriefcaseBusiness,
-  Package,
   ReceiptText,
-  Truck,
   ShoppingBag,
   HandCoins,
   HandHeart,
@@ -273,15 +258,12 @@ const Dashboard = () => {
   const visibleCards = useMemo(() => {
     const cards = data?.cards ?? [];
     const cardPermissions: Record<string, string[]> = {
-      'total-customers': ['customers.view'],
-      'total-employees': ['employees.view', 'users.view'],
-      'total-products': ['items.view', 'products.view'],
-      'total-suppliers': ['suppliers.view'],
-      'monthly-income': ['sales.view'],
-      'total-purchases': ['purchases.view'],
-      'total-expenses': ['expenses.view'],
-      'monthly-payment': ['accounts.view', 'expenses.view'],
-      'total-revenue': ['sales.view'],
+      'today-income': ['sales.view'],
+      'new-customers-today': ['customers.view'],
+      'today-expenses': ['expenses.view'],
+      'today-purchases': ['purchases.view'],
+      'week-sales': ['sales.view'],
+      'week-expenses': ['expenses.view'],
       'loans-given-today': ['sales.view'],
       'debt-recovered-today': ['customers.view'],
       'total-outstanding-debt': ['customers.view'],
@@ -433,58 +415,33 @@ const Dashboard = () => {
           render: (row) => (row[key] ? formatDateTime(String(row[key])) : '—'),
         }) satisfies ReportColumn<Record<string, unknown>>;
 
-      const number = (key: string, header: string) =>
-        ({
-          key,
-          header,
-          align: 'right',
-          render: (row) => formatValue(Number(row[key] || 0), 'number'),
-        }) satisfies ReportColumn<Record<string, unknown>>;
-
       let columns: ReportColumn<Record<string, unknown>>[] = [];
       let totalLabel = 'Total';
       let totalKey = 'total';
       let totalValue = payload.format === 'currency' ? formatValue(payload.total, 'currency') : formatValue(payload.total, 'number');
 
       switch (card.id) {
-        case 'total-customers':
+        case 'new-customers-today':
           columns = [text('customer_id', 'ID'), text('name', 'Name'), text('phone', 'Phone'), dateTime('created_at', 'Registered')];
-          totalLabel = 'Total Customers';
+          totalLabel = 'New Customers Today';
           break;
-        case 'total-employees':
-          columns = [text('employee_id', 'ID'), text('name', 'Name'), text('phone', 'Phone'), text('position', 'Position'), text('status', 'Status')];
-          totalLabel = 'Total Employees';
-          break;
-        case 'total-products':
-          columns = [text('item_id', 'ID'), text('name', 'Name'), money('sale_price', 'Price'), number('opening_balance', 'Opening Qty')];
-          totalLabel = 'Total Products';
-          break;
-        case 'total-suppliers':
-          columns = [text('supplier_id', 'ID'), text('name', 'Name'), text('phone', 'Phone'), dateTime('created_at', 'Registered')];
-          totalLabel = 'Total Suppliers';
-          break;
-        case 'monthly-payment':
-          columns = [text('payment_type', 'Type'), dateTime('pay_date', 'Date'), text('name', 'For'), text('account_name', 'Account'), money('amount_paid', 'Amount'), text('note', 'Note')];
-          totalLabel = 'Total Monthly Payment';
-          totalKey = 'amount_paid';
-          totalValue = formatValue(payload.total, 'currency');
-          break;
-        case 'monthly-income':
-        case 'total-revenue':
+        case 'today-income':
+        case 'week-sales':
           columns = [text('sale_id', 'Sale #'), dateTime('sale_date', 'Date'), text('doc_type', 'Type'), text('customer_name', 'Customer'), money('total', 'Total'), text('status', 'Status')];
-          totalLabel = card.id === 'monthly-income' ? 'Total Monthly Income' : 'Total Revenue';
+          totalLabel = card.id === 'today-income' ? "Today's Sales" : "This Week's Sales";
           totalKey = 'total';
           totalValue = formatValue(payload.total, 'currency');
           break;
-        case 'total-purchases':
+        case 'today-purchases':
           columns = [text('purchase_id', 'Purchase #'), dateTime('purchase_date', 'Date'), text('supplier_name', 'Supplier'), money('total', 'Total'), text('status', 'Status')];
-          totalLabel = 'Total Purchases';
+          totalLabel = "Today's Purchases";
           totalKey = 'total';
           totalValue = formatValue(payload.total, 'currency');
           break;
-        case 'total-expenses':
+        case 'today-expenses':
+        case 'week-expenses':
           columns = [dateTime('charge_date', 'Date'), text('name', 'Expense'), money('amount', 'Amount'), text('note', 'Note')];
-          totalLabel = 'Total Expenses';
+          totalLabel = card.id === 'today-expenses' ? "Today's Expenses" : "This Week's Expenses";
           totalKey = 'amount';
           totalValue = formatValue(payload.total, 'currency');
           break;
