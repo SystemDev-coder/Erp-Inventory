@@ -13,6 +13,7 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { Sale, SaleItem, salesService } from '../../services/sales.service';
 import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
+import { usePermissions } from '../../hooks/usePermissions';
 
 const formatMoney = (value: number) => `$${Number(value || 0).toFixed(2)}`;
 
@@ -25,6 +26,7 @@ const getDocRef = (sale: Pick<Sale, 'sale_id' | 'doc_type'>) => {
 
 const Sales = () => {
   const { showToast } = useToast();
+  const { can } = usePermissions();
   const navigate = useNavigate();
   const { activeBranchId } = useBranch();
   const [loading, setLoading] = useState(false);
@@ -297,13 +299,13 @@ const Sales = () => {
           const menuItems = [
             { label: viewLabel, icon: <Eye className="h-4 w-4" />, onClick: () => void handleView(sale) },
             { label: printLabel, icon: <Printer className="h-4 w-4" />, onClick: () => void printSaleInvoice(sale) },
-            ...(sale.status !== 'void'
+            ...(sale.status !== 'void' && can('sales.update')
               ? [{ label: 'Edit', icon: <Edit3 className="h-4 w-4" />, onClick: () => navigate(`/sales/${sale.sale_id}/edit`) }]
               : []),
-            ...(sale.doc_type === 'quotation' && sale.status !== 'void'
+            ...(sale.doc_type === 'quotation' && sale.status !== 'void' && can('sales.update')
               ? [{ label: 'Convert to invoice', icon: <FileCheck2 className="h-4 w-4" />, onClick: () => void handleConvertQuotation(sale) }]
               : []),
-            ...(sale.status !== 'void'
+            ...(sale.status !== 'void' && can('sales.void')
               ? [{
                   label: 'Void',
                   icon: <Ban className="h-4 w-4" />,
@@ -313,7 +315,7 @@ const Sales = () => {
                   },
                 }]
               : []),
-            ...(sale.status === 'void' || sale.doc_type === 'quotation'
+            ...((sale.status === 'void' || sale.doc_type === 'quotation') && can('sales.delete')
               ? [{
                   label: 'Delete',
                   icon: <Trash2 className="h-4 w-4" />,
@@ -334,19 +336,19 @@ const Sales = () => {
                   <Printer className="h-4 w-4" aria-hidden="true" />
                   Print
                 </button>
-                {sale.status !== 'void' && (
+                {sale.status !== 'void' && can('sales.update') && (
                   <button type="button" onClick={() => navigate(`/sales/${sale.sale_id}/edit`)} className={`${btn} border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800`} aria-label={`Edit ${getDocRef(sale)}`}>
                     <Edit3 className="h-4 w-4" aria-hidden="true" />
                     Edit
                   </button>
                 )}
-                {sale.doc_type === 'quotation' && sale.status !== 'void' && (
+                {sale.doc_type === 'quotation' && sale.status !== 'void' && can('sales.update') && (
                   <button type="button" onClick={() => void handleConvertQuotation(sale)} className={`${btn} border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-900/30`} aria-label="Convert to invoice">
                     <FileCheck2 className="h-4 w-4" aria-hidden="true" />
                     Convert
                   </button>
                 )}
-                {sale.status !== 'void' && (
+                {sale.status !== 'void' && can('sales.void') && (
                   <button
                     type="button"
                     onClick={() => {
@@ -360,7 +362,7 @@ const Sales = () => {
                     Void
                   </button>
                 )}
-                {(sale.status === 'void' || sale.doc_type === 'quotation') && (
+                {(sale.status === 'void' || sale.doc_type === 'quotation') && can('sales.delete') && (
                   <button type="button" onClick={() => void handleDelete(sale)} className={`${btn} border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-900/30`} aria-label={`Delete ${getDocRef(sale)}`}>
                     <Trash2 className="h-4 w-4" aria-hidden="true" />
                     Delete
@@ -416,8 +418,8 @@ const Sales = () => {
               <div className="space-y-2">
                 <TabActionToolbar
                   title="Sales Documents"
-                  primaryAction={{ label: 'New Sale', onClick: () => navigate('/sales/new?docType=sale') }}
-                  secondaryAction={{ label: 'New Invoice', onClick: () => navigate('/sales/new?docType=invoice') }}
+                  primaryAction={can('sales.create') ? { label: 'New Sale', onClick: () => navigate('/sales/new?docType=sale') } : undefined}
+                  secondaryAction={can('sales.create') ? { label: 'New Invoice', onClick: () => navigate('/sales/new?docType=invoice') } : undefined}
                   onDisplay={handleSalesDisplay}
                   displayLoading={loading}
                   dateRange={{
@@ -462,7 +464,7 @@ const Sales = () => {
               <div className="space-y-2">
                 <TabActionToolbar
                   title="Quotations"
-                  primaryAction={{ label: 'New Quotation', onClick: () => navigate('/sales/new?docType=quotation') }}
+                  primaryAction={can('sales.create') ? { label: 'New Quotation', onClick: () => navigate('/sales/new?docType=quotation') } : undefined}
                   onDisplay={handleSalesDisplay}
                   displayLoading={loading}
                   dateRange={{

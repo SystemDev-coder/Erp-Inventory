@@ -14,6 +14,7 @@ import { supplierService, Supplier } from '../../services/supplier.service';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
 import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
+import { usePermissions } from '../../hooks/usePermissions';
 
 // Deliberately has no error/touched/success state: the form relies on native HTML5
 // validation (required/minLength on the inputs themselves) instead of custom
@@ -55,6 +56,7 @@ const Purchases = () => {
   const navigate = useNavigate();
   const { showToast } = useToast();
   const { activeBranchId } = useBranch();
+  const { can } = usePermissions();
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [items, setItems] = useState<PurchaseItemView[]>([]);
@@ -429,24 +431,30 @@ const Purchases = () => {
       header: 'Actions',
       cell: ({ row }) => (
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => openReceiveDialog(row.original)}
-            className="inline-flex items-center gap-1 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 transition-colors"
-          >
-            ✓ Mark Received
-          </button>
-          <button
-            onClick={() => navigate(`/purchases/${row.original.purchase_id}`)}
-            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors"
-          >
-            Edit
-          </button>
-          <button
-            onClick={() => { setOrderToDelete(row.original); setOrderDeleteOpen(true); }}
-            className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950 transition-colors"
-          >
-            Delete
-          </button>
+          {can('purchases.receive') && (
+            <button
+              onClick={() => openReceiveDialog(row.original)}
+              className="inline-flex items-center gap-1 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 transition-colors"
+            >
+              ✓ Mark Received
+            </button>
+          )}
+          {can('purchases.update') && (
+            <button
+              onClick={() => navigate(`/purchases/${row.original.purchase_id}`)}
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors"
+            >
+              Edit
+            </button>
+          )}
+          {can('purchases.delete') && (
+            <button
+              onClick={() => { setOrderToDelete(row.original); setOrderDeleteOpen(true); }}
+              className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950 transition-colors"
+            >
+              Delete
+            </button>
+          )}
         </div>
       ),
     },
@@ -507,11 +515,11 @@ const Purchases = () => {
         <div className="space-y-2">
           <TabActionToolbar
             title="Suppliers"
-            primaryAction={{
+            primaryAction={can('suppliers.create') ? {
               label: 'New Supplier',
               onClick: () => openSupplierModal(),
-            }}
-            secondaryAction={{ label: 'Upload Data', onClick: () => setSupplierImportOpen(true) }}
+            } : undefined}
+            secondaryAction={can('suppliers.create') ? { label: 'Upload Data', onClick: () => setSupplierImportOpen(true) } : undefined}
             onDisplay={() => {
               setSuppliersDisplayed(true);
               void loadSuppliers();
@@ -533,8 +541,8 @@ const Purchases = () => {
             columns={supplierColumns}
             isLoading={loading}
             searchPlaceholder="Find supplier..."
-            onEdit={(row) => openSupplierModal(row as Supplier)}
-            onDelete={deleteSupplier}
+            onEdit={can('suppliers.update') ? (row) => openSupplierModal(row as Supplier) : undefined}
+            onDelete={can('suppliers.delete') ? deleteSupplier : undefined}
           />
         </div>
       ),
@@ -587,7 +595,7 @@ const Purchases = () => {
           <TabActionToolbar
             title="Purchase Orders"
             // UPDATED: Support Purchase Orders (planned) separate from Purchases (received).
-            primaryAction={{ label: 'New Purchase', onClick: () => navigate('/purchases/new') }}
+            primaryAction={can('purchases.create') ? { label: 'New Purchase', onClick: () => navigate('/purchases/new') } : undefined}
             onDisplay={() => {
               setPurchasesDisplayed(true);
               void loadPurchases(search, statusFilter);
@@ -624,8 +632,8 @@ const Purchases = () => {
             isLoading={loading}
             searchPlaceholder="Find by supplier or note..."
             onView={onView}
-            onEdit={onEdit}
-            onDelete={onDelete}
+            onEdit={can('purchases.update') ? onEdit : undefined}
+            onDelete={can('purchases.delete') ? onDelete : undefined}
           />
           {!purchasesDisplayed && !loading && (
             <div className="text-sm text-slate-500 px-1">Click Display to load data.</div>
@@ -668,13 +676,15 @@ const Purchases = () => {
                 {ordersLoading ? 'Loading...' : 'Display'}
               </button>
             </div>
-            <button
-              type="button"
-              onClick={() => navigate('/purchases/new?docType=order')}
-              className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-orange-600 transition-colors"
-            >
-              + New Order
-            </button>
+            {can('purchases.create') && (
+              <button
+                type="button"
+                onClick={() => navigate('/purchases/new?docType=order')}
+                className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-orange-600 transition-colors"
+              >
+                + New Order
+              </button>
+            )}
           </div>
 
           {!ordersDisplayed && !ordersLoading && (

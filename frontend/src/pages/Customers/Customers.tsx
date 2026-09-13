@@ -12,6 +12,7 @@ import Badge from '../../components/ui/badge/Badge';
 import { customerService, Customer } from '../../services/customer.service';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
 import { useBranch } from '../../context/BranchContext';
+import { usePermissions } from '../../hooks/usePermissions';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 type CustomerForm = {
@@ -84,6 +85,7 @@ const Customers = () => {
     const { tab } = useParams();
     const { showToast } = useToast();
     const { activeBranchId } = useBranch();
+    const { can } = usePermissions();
 
     const [isAddOpen, setIsAddOpen] = useState(false);
     const [customers, setCustomers] = useState<Customer[]>([]);
@@ -270,8 +272,8 @@ const Customers = () => {
     );
 
     const sharedToolbar = {
-        primaryAction: { label: 'New Customer', onClick: () => openModal() },
-        secondaryAction: { label: 'Upload Data', onClick: () => setImportModalOpen(true) },
+        primaryAction: can('customers.create') ? { label: 'New Customer', onClick: () => openModal() } : undefined,
+        secondaryAction: can('customers.create') ? { label: 'Upload Data', onClick: () => setImportModalOpen(true) } : undefined,
         onDisplay: handleDisplay,
         displayLoading: loading,
     };
@@ -305,7 +307,7 @@ const Customers = () => {
                     {hasDisplayed && !loading && !visibleCustomers.length && noData}
                     <DataTable data={visibleCustomers} columns={columns}
                         searchPlaceholder="Search by name or phone…" isLoading={loading}
-                        onEdit={onEdit} onDelete={onDelete} {...serverPaginationProps} />
+                        onEdit={can('customers.update') ? onEdit : undefined} onDelete={can('customers.delete') ? onDelete : undefined} {...serverPaginationProps} />
                 </div>
             )
         },
@@ -317,7 +319,7 @@ const Customers = () => {
                     {!hasDisplayed && emptyHint}
                     {hasDisplayed && !loading && !visibleCustomers.filter(c => c.customer_type !== 'one-time').length && noData}
                     <DataTable data={visibleCustomers.filter(c => c.customer_type !== 'one-time')}
-                        columns={columns} isLoading={loading} onEdit={onEdit} onDelete={onDelete} {...serverPaginationProps} />
+                        columns={columns} isLoading={loading} onEdit={can('customers.update') ? onEdit : undefined} onDelete={can('customers.delete') ? onDelete : undefined} {...serverPaginationProps} />
                 </div>
             )
         },
@@ -329,7 +331,7 @@ const Customers = () => {
                     {!hasDisplayed && emptyHint}
                     {hasDisplayed && !loading && !visibleCustomers.filter(c => c.customer_type === 'one-time').length && noData}
                     <DataTable data={visibleCustomers.filter(c => c.customer_type === 'one-time')}
-                        columns={columns} isLoading={loading} onEdit={onEdit} onDelete={onDelete} {...serverPaginationProps} />
+                        columns={columns} isLoading={loading} onEdit={can('customers.update') ? onEdit : undefined} onDelete={can('customers.delete') ? onDelete : undefined} {...serverPaginationProps} />
                 </div>
             )
         },

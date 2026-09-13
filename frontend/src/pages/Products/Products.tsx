@@ -13,6 +13,7 @@ import { storeService, Store as StoreType } from '../../services/store.service';
 import StoresPage from '../Stock/StoresPage';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
 import { useBranch } from '../../context/BranchContext';
+import { usePermissions } from '../../hooks/usePermissions';
 
 type ProductForm = Partial<Product>;
 type TxCategory = 'adjustment' | 'paid' | 'sales' | 'cancelled';
@@ -63,6 +64,7 @@ const txLabel: Record<TxCategory, string> = {
 const Products = () => {
   const { showToast } = useToast();
   const { activeBranchId } = useBranch();
+  const { can } = usePermissions();
 
   const [loading, setLoading] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
@@ -331,25 +333,29 @@ const Products = () => {
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
               {loading ? 'Loading...' : 'Display'}
             </button>
-            <button
-              type="button"
-              onClick={() => setItemImportOpen(true)}
-              className="rounded-lg border border-primary-300 px-3 py-2 text-sm font-medium text-primary-700 hover:bg-primary-50 dark:border-primary-500/40 dark:text-primary-300 dark:hover:bg-primary-500/10"
-            >
-              Upload Data
-            </button>
-            <button
-              type="button"
-              onClick={async () => {
-                setItemForm(defaultProductForm);
-                setItemStoreId('');
-                await resolveStores();
-                setItemModalOpen(true);
-              }}
-              className="rounded-lg bg-primary-600 px-3 py-2 text-sm text-white"
-            >
-              New Item
-            </button>
+            {can('items.create') && (
+              <button
+                type="button"
+                onClick={() => setItemImportOpen(true)}
+                className="rounded-lg border border-primary-300 px-3 py-2 text-sm font-medium text-primary-700 hover:bg-primary-50 dark:border-primary-500/40 dark:text-primary-300 dark:hover:bg-primary-500/10"
+              >
+                Upload Data
+              </button>
+            )}
+            {can('items.create') && (
+              <button
+                type="button"
+                onClick={async () => {
+                  setItemForm(defaultProductForm);
+                  setItemStoreId('');
+                  await resolveStores();
+                  setItemModalOpen(true);
+                }}
+                className="rounded-lg bg-primary-600 px-3 py-2 text-sm text-white"
+              >
+                New Item
+              </button>
+            )}
           </div>
           {!itemsDisplayed && !loading && (
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
@@ -365,13 +371,13 @@ const Products = () => {
             data={itemsDisplayed ? products : []}
             columns={itemColumns}
             isLoading={loading}
-            onEdit={async (row) => {
+            onEdit={can('items.update') ? async (row) => {
               setItemForm({ ...row, quantity: Number(row.quantity ?? row.stock ?? 0) });
               const loaded = await resolveStores();
               setItemStoreId(row.store_id || loaded[0]?.store_id || '');
               setItemModalOpen(true);
-            }}
-            onDelete={(row) => setItemToDelete(row)}
+            } : undefined}
+            onDelete={can('items.delete') ? (row) => setItemToDelete(row) : undefined}
             searchPlaceholder="Search items..."
             serverPagination={{
               pageIndex: itemsPageIndex,
