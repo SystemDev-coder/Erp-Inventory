@@ -250,6 +250,49 @@ const SaleCreate = () => {
     }));
   };
 
+  // Auto-create: if the typed customer name doesn't match anyone in the list, the
+  // combobox commits it here on blur. Register the walk-in as a real customer (so future
+  // sales can find them) and attach the sale to it immediately, instead of forcing the
+  // cashier to cancel the sale, go create the customer separately, then start over.
+  const [creatingCustomer, setCreatingCustomer] = useState(false);
+  const handleAutoCreateCustomer = async (typedName: string) => {
+    const name = typedName.trim();
+    if (!name) return;
+    // Typed an exact match for someone already in the list but didn't click the suggestion -
+    // attach to the existing customer instead of creating a duplicate.
+    const existing = customers.find((c) => c.full_name.trim().toLowerCase() === name.toLowerCase());
+    if (existing) {
+      clearError('customer');
+      setIsDebt(false);
+      setSaleForm((prev) => ({ ...prev, customer_id: existing.customer_id }));
+      return;
+    }
+    if (name.length < 2) {
+      showToast('error', 'Customer', 'Name must be at least 2 characters to auto-create a customer.');
+      return;
+    }
+    setCreatingCustomer(true);
+    const res = await customerService.create({
+      full_name: name,
+      customer_type: 'regular',
+      gender: 'male',
+      is_active: true,
+      credit_allowed: true,
+      credit_days: 30,
+    });
+    setCreatingCustomer(false);
+    if (res.success && res.data?.customer) {
+      const created = res.data.customer;
+      setCustomers((prev) => [...prev, created]);
+      clearError('customer');
+      setIsDebt(false);
+      setSaleForm((prev) => ({ ...prev, customer_id: created.customer_id }));
+      showToast('success', 'Customer', `"${created.full_name}" was added and attached to this sale.`);
+    } else {
+      showToast('error', 'Customer', res.error || 'Could not auto-create this customer.');
+    }
+  };
+
   const selectedCustomer = useMemo(
     () => customers.find((c) => Number(c.customer_id) === Number(saleForm.customer_id)),
     [customers, saleForm.customer_id]
@@ -646,9 +689,11 @@ const SaleCreate = () => {
                 value: customer.customer_id,
                 label: customer.full_name,
               }))}
-              placeholder="Walking Customer"
-              disabled={loading}
+              placeholder={creatingCustomer ? 'Adding customer…' : 'Walking Customer'}
+              disabled={loading || creatingCustomer}
               hasError={!!formErrors.customer}
+              allowCustom
+              onCustomCommit={(text) => void handleAutoCreateCustomer(text)}
               onChange={(nextValue) => {
                 clearError('customer');
                 const customerId = nextValue === '' ? '' : Number(nextValue);
@@ -657,6 +702,9 @@ const SaleCreate = () => {
               }}
             />
             <FieldError field="customer" />
+            <p className="text-xs text-slate-400 dark:text-slate-500">
+              Type a name not in the list and click away to register them as a new customer.
+            </p>
           </div>
 
           <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">

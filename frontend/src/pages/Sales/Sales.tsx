@@ -251,14 +251,19 @@ const Sales = () => {
         header: 'Actions',
         cell: ({ row }) => {
           const sale = row.original;
+          const isInvoice = (sale.doc_type || 'sale') === 'invoice';
           const printLabel =
             (sale.doc_type || 'sale') === 'quotation'
               ? 'Print quotation'
-              : (sale.doc_type || 'sale') === 'invoice'
+              : isInvoice
               ? 'Print invoice'
               : 'Print sale';
+          // Invoices get their own "Invoice Display" label per the same View action, so the
+          // ability to see/print an invoice right here on the Sales tab (no separate tab) is
+          // explicit rather than buried under a generic "View".
+          const viewLabel = isInvoice ? 'Invoice Display' : 'View';
           const menuItems = [
-            { label: 'View', icon: <Eye className="h-4 w-4" />, onClick: () => void handleView(sale) },
+            { label: viewLabel, icon: <Eye className="h-4 w-4" />, onClick: () => void handleView(sale) },
             { label: printLabel, icon: <Printer className="h-4 w-4" />, onClick: () => void printSaleInvoice(sale) },
             ...(sale.status !== 'void'
               ? [{ label: 'Edit', icon: <Edit3 className="h-4 w-4" />, onClick: () => navigate(`/sales/${sale.sale_id}/edit`) }]
@@ -289,9 +294,9 @@ const Sales = () => {
           return (
             <div className="flex items-center justify-end">
               <div className="hidden lg:flex items-center gap-2 flex-wrap">
-                <button type="button" onClick={() => void handleView(sale)} className={`${btn} border-blue-200 text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-900/30`} aria-label={`View ${getDocRef(sale)}`}>
+                <button type="button" onClick={() => void handleView(sale)} className={`${btn} border-blue-200 text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-900/30`} aria-label={`${viewLabel} ${getDocRef(sale)}`}>
                   <Eye className="h-4 w-4" aria-hidden="true" />
-                  View
+                  {viewLabel}
                 </button>
                 <button type="button" onClick={() => void printSaleInvoice(sale)} className={`${btn} border-indigo-200 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-300 dark:hover:bg-indigo-900/30`} aria-label={printLabel}>
                   <Printer className="h-4 w-4" aria-hidden="true" />
