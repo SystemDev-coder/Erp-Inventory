@@ -113,7 +113,13 @@ export class DashboardService {
     const canViewCustomers = hasPermission(permissions, 'customers.view');
     const canViewEmployees = hasPermission(permissions, 'employees.view') || permissions.includes('users.view');
     const canViewProducts = hasPermission(permissions, 'items.view') || hasPermission(permissions, 'products.view');
-    const canViewStock = hasPermission(permissions, 'stock.view');
+    // 'stock.view' was never a seeded permission key - items/products/warehouse_stock view
+    // rights are what actually gate stock features elsewhere (e.g. the sidebar's Stock
+    // Management item), so check those instead.
+    const canViewStock =
+      hasPermission(permissions, 'items.view') ||
+      hasPermission(permissions, 'products.view') ||
+      hasPermission(permissions, 'warehouse_stock.view');
     const canViewSales = permissions.includes('sales.view');
     const canViewExpenses = permissions.includes('expenses.view');
     const canViewAccounts = permissions.includes('accounts.view');
@@ -514,7 +520,13 @@ export class DashboardService {
     const canViewCustomers = hasPermission(permissions, 'customers.view');
     const canViewEmployees = hasPermission(permissions, 'employees.view') || permissions.includes('users.view');
     const canViewProducts = hasPermission(permissions, 'items.view') || hasPermission(permissions, 'products.view');
-    const canViewStock = hasPermission(permissions, 'stock.view');
+    // 'stock.view' was never a seeded permission key - items/products/warehouse_stock view
+    // rights are what actually gate stock features elsewhere (e.g. the sidebar's Stock
+    // Management item), so check those instead.
+    const canViewStock =
+      hasPermission(permissions, 'items.view') ||
+      hasPermission(permissions, 'products.view') ||
+      hasPermission(permissions, 'warehouse_stock.view');
     const canViewSales = permissions.includes('sales.view');
     const canViewExpenses = permissions.includes('expenses.view');
     const canViewAccounts = permissions.includes('accounts.view');
