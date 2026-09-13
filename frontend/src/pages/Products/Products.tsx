@@ -95,6 +95,7 @@ const Products = () => {
   const [itemForm, setItemForm] = useState<ProductForm>(defaultProductForm);
   const [itemErrors, setItemErrors] = useState<ItemFieldErrors>({});
   const [itemTouched, setItemTouched] = useState<Partial<Record<string, boolean>>>({});
+  const [itemAttemptedSubmit, setItemAttemptedSubmit] = useState(false);
   const [itemStoreId, setItemStoreId] = useState<number | ''>('');
   const [stores, setStores] = useState<StoreType[]>([]);
   const [stateForm, setStateForm] = useState<{ product_id?: number; status: 'active' | 'inactive' }>({
@@ -237,7 +238,7 @@ const Products = () => {
   const getItemInputCls = (field: string) => {
     const base = 'h-12 w-full rounded-md border px-3 text-sm text-slate-900 shadow-sm outline-none transition-all placeholder:text-slate-400 focus:ring-2 dark:text-slate-100 dark:placeholder:text-slate-400 bg-white dark:bg-slate-800/80';
     if (!itemTouched[field]) return `${base} border-slate-300 dark:border-slate-600 focus:border-primary-500 focus:ring-primary-500/20`;
-    if (itemErrors[field]) return `${base} border-red-400 bg-red-50/40 dark:border-red-500 dark:bg-red-900/10 focus:border-red-500 focus:ring-red-500/20`;
+    if (itemFieldError(field)) return `${base} border-red-400 bg-red-50/40 dark:border-red-500 dark:bg-red-900/10 focus:border-red-500 focus:ring-red-500/20`;
     return `${base} border-emerald-500 focus:border-emerald-500 focus:ring-emerald-500/20`;
   };
 
@@ -256,9 +257,21 @@ const Products = () => {
     setItemModalOpen(false);
     setItemErrors({});
     setItemTouched({});
+    setItemAttemptedSubmit(false);
+  };
+
+  // Only surface a field's error immediately when it's genuinely empty (an unambiguous "you
+  // skipped this") or once Save has been attempted at least once. A field that just hasn't
+  // reached its minimum length yet (e.g. one letter typed, then Tab to the next field) stays
+  // quiet so tabbing through the form mid-entry doesn't look like the form rejected the input.
+  const itemFieldError = (field: string): string | undefined => {
+    const value = (itemForm as Record<string, unknown>)[field];
+    const isEmpty = value === '' || value === null || value === undefined;
+    return (itemAttemptedSubmit || isEmpty) ? itemErrors[field] : undefined;
   };
 
   const saveItem = async () => {
+    setItemAttemptedSubmit(true);
     const errs = validateItem(itemForm);
     if (Object.keys(errs).length > 0) {
       setItemErrors(errs);
@@ -371,6 +384,7 @@ const Products = () => {
                 setItemForm(defaultProductForm);
                 setItemErrors({});
                 setItemTouched({});
+                setItemAttemptedSubmit(false);
                 const storeRes = await storeService.list();
                 if (storeRes.success && storeRes.data?.stores) {
                   setStores(storeRes.data.stores);
@@ -404,6 +418,7 @@ const Products = () => {
               setItemForm({ ...row, quantity: Number(row.quantity ?? row.stock ?? 0) });
               setItemErrors({});
               setItemTouched({});
+              setItemAttemptedSubmit(false);
               const storeRes = await storeService.list();
               if (storeRes.success && storeRes.data?.stores) setStores(storeRes.data.stores);
               setItemStoreId(row.store_id || '');
@@ -596,7 +611,7 @@ const Products = () => {
           <div className="md:col-span-2">
             <ItemField
               label="Item Name"
-              error={itemErrors.name}
+              error={itemFieldError('name')}
               touched={itemTouched.name}
               success={!!itemForm.name?.trim() && itemForm.name.trim().length >= 2}
             >
@@ -612,7 +627,7 @@ const Products = () => {
 
           <ItemField
             label="Cost Price"
-            error={itemErrors.cost_price}
+            error={itemFieldError('cost_price')}
             touched={itemTouched.cost_price}
             success={Number(itemForm.cost_price ?? 0) > 0}
           >
@@ -630,7 +645,7 @@ const Products = () => {
 
           <ItemField
             label="Sell Price"
-            error={itemErrors.sell_price}
+            error={itemFieldError('sell_price')}
             touched={itemTouched.sell_price}
             success={Number(itemForm.sell_price ?? 0) > 0}
           >
@@ -648,7 +663,7 @@ const Products = () => {
 
           <ItemField
             label="Barcode"
-            error={itemErrors.barcode}
+            error={itemFieldError('barcode')}
             touched={itemTouched.barcode}
             success={!!(itemForm.barcode?.trim())}
           >
@@ -663,7 +678,7 @@ const Products = () => {
 
           <ItemField
             label="Stock Alert"
-            error={itemErrors.stock_alert}
+            error={itemFieldError('stock_alert')}
             touched={itemTouched.stock_alert}
             success={(itemForm.stock_alert ?? 0) >= 0}
           >
@@ -681,7 +696,7 @@ const Products = () => {
 
           <ItemField
             label="Opening Balance"
-            error={itemErrors.opening_balance}
+            error={itemFieldError('opening_balance')}
             touched={itemTouched.opening_balance}
             success={(itemForm.opening_balance ?? 0) >= 0}
           >
@@ -699,7 +714,7 @@ const Products = () => {
 
           <ItemField
             label="Quantity"
-            error={itemErrors.quantity}
+            error={itemFieldError('quantity')}
             touched={itemTouched.quantity}
             success={(itemForm.quantity ?? 0) >= 0}
           >

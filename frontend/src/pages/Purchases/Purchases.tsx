@@ -110,6 +110,7 @@ const Purchases = () => {
   } as Supplier);
   const [supplierErrors, setSupplierErrors] = useState<SupplierFieldErrors>({});
   const [supplierTouched, setSupplierTouched] = useState<Partial<Record<string, boolean>>>({});
+  const [supplierAttemptedSubmit, setSupplierAttemptedSubmit] = useState(false);
 
   const loadPurchases = async (term?: string, status?: string) => {
     setLoading(true);
@@ -292,7 +293,7 @@ const Purchases = () => {
   const getSupplierInputCls = (field: string) => {
     const base = 'rounded-lg border px-3 py-2 w-full text-sm outline-none transition-all focus:ring-2';
     if (!supplierTouched[field]) return `${base} border-slate-300 dark:border-slate-600 focus:border-primary-500 focus:ring-primary-500/20`;
-    if (supplierErrors[field]) return `${base} border-red-400 bg-red-50/40 dark:border-red-500 dark:bg-red-900/10 focus:border-red-500 focus:ring-red-500/20`;
+    if (supplierFieldError(field, (supplierForm as unknown as Record<string, unknown>)[field])) return `${base} border-red-400 bg-red-50/40 dark:border-red-500 dark:bg-red-900/10 focus:border-red-500 focus:ring-red-500/20`;
     return `${base} border-emerald-500 focus:border-emerald-500 focus:ring-emerald-500/20`;
   };
 
@@ -305,6 +306,15 @@ const Purchases = () => {
     const next = { ...supplierForm, [field]: value } as Supplier;
     setSupplierForm(next);
     if (supplierTouched[field]) setSupplierErrors(validateSupplier(next));
+  };
+
+  // Only surface a field's error immediately when it's genuinely empty (an unambiguous "you
+  // skipped this") or once Save has been attempted at least once. A field that just hasn't
+  // reached its minimum length/digit count yet (e.g. one letter typed, then Tab to the next
+  // field) stays quiet so tabbing through the form mid-entry doesn't look like a rejection.
+  const supplierFieldError = (field: keyof SupplierFieldErrors, value: unknown): string | undefined => {
+    const isEmpty = value === null || value === undefined || String(value).trim() === '';
+    return (supplierAttemptedSubmit || isEmpty) ? supplierErrors[field] : undefined;
   };
 
   const openSupplierModal = (preset?: Supplier) => {
@@ -321,6 +331,7 @@ const Purchases = () => {
     } as Supplier);
     setSupplierErrors({});
     setSupplierTouched({});
+    setSupplierAttemptedSubmit(false);
     setSupplierModalOpen(true);
   };
 
@@ -328,9 +339,11 @@ const Purchases = () => {
     setSupplierModalOpen(false);
     setSupplierErrors({});
     setSupplierTouched({});
+    setSupplierAttemptedSubmit(false);
   };
 
   const saveSupplier = async () => {
+    setSupplierAttemptedSubmit(true);
     const errs = validateSupplier(supplierForm);
     if (Object.keys(errs).length > 0) {
       setSupplierErrors(errs);
@@ -1030,7 +1043,7 @@ const Purchases = () => {
           <div className="md:col-span-2">
             <SupplierField
               label="Supplier Name"
-              error={supplierErrors.supplier_name}
+              error={supplierFieldError('supplier_name', supplierForm.supplier_name)}
               touched={supplierTouched.supplier_name}
               success={supplierForm.supplier_name.trim().length >= 2}
             >
@@ -1046,7 +1059,7 @@ const Purchases = () => {
 
           <SupplierField
             label="Company"
-            error={supplierErrors.company_name}
+            error={supplierFieldError('company_name', supplierForm.company_name)}
             touched={supplierTouched.company_name}
             success={!!(supplierForm.company_name?.trim())}
           >
@@ -1061,7 +1074,7 @@ const Purchases = () => {
 
           <SupplierField
             label="Contact Person"
-            error={supplierErrors.contact_person}
+            error={supplierFieldError('contact_person', supplierForm.contact_person)}
             touched={supplierTouched.contact_person}
             success={!!(supplierForm.contact_person?.trim())}
           >
@@ -1076,7 +1089,7 @@ const Purchases = () => {
 
           <SupplierField
             label="Contact Phone"
-            error={supplierErrors.contact_phone}
+            error={supplierFieldError('contact_phone', supplierForm.contact_phone)}
             touched={supplierTouched.contact_phone}
             success={!!(supplierForm.contact_phone?.trim()) && (supplierForm.contact_phone.match(/\d/g) || []).length >= 2}
           >
@@ -1091,7 +1104,7 @@ const Purchases = () => {
 
           <SupplierField
             label="Phone"
-            error={supplierErrors.phone}
+            error={supplierFieldError('phone', supplierForm.phone)}
             touched={supplierTouched.phone}
             success={!!(supplierForm.phone?.trim()) && (supplierForm.phone.match(/\d/g) || []).length >= 2}
           >
@@ -1106,7 +1119,7 @@ const Purchases = () => {
 
           <SupplierField
             label="Location"
-            error={supplierErrors.location}
+            error={supplierFieldError('location', supplierForm.location)}
             touched={supplierTouched.location}
             success={!!(supplierForm.location?.trim())}
           >
@@ -1121,7 +1134,7 @@ const Purchases = () => {
 
           <SupplierField
             label="Remaining Balance"
-            error={supplierErrors.remaining_balance}
+            error={supplierAttemptedSubmit ? supplierErrors.remaining_balance : undefined}
             touched={supplierTouched.remaining_balance}
             success={(supplierForm.remaining_balance ?? 0) >= 0}
           >

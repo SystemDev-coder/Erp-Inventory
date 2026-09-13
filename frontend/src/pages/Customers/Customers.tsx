@@ -120,6 +120,7 @@ const Customers = () => {
     const [form, setForm] = useState<CustomerForm>(emptyForm);
     const [errors, setErrors] = useState<FieldErrors>({});
     const [touched, setTouched] = useState<Partial<Record<keyof CustomerForm, boolean>>>({});
+    const [attemptedSubmit, setAttemptedSubmit] = useState(false);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null);
     const [importModalOpen, setImportModalOpen] = useState(false);
@@ -142,6 +143,7 @@ const Customers = () => {
         setForm(preset ?? emptyForm);
         setErrors({});
         setTouched({});
+        setAttemptedSubmit(false);
         setIsAddOpen(true);
     };
 
@@ -149,6 +151,17 @@ const Customers = () => {
         setIsAddOpen(false);
         setErrors({});
         setTouched({});
+        setAttemptedSubmit(false);
+    };
+
+    // Only surface a field's error immediately when it's genuinely empty (an unambiguous "you
+    // skipped this") or once Save has been attempted at least once. A field that just hasn't
+    // reached its minimum length yet (e.g. one letter typed, then Tab to the next field) stays
+    // quiet so tabbing through the form mid-entry doesn't look like the form rejected the input.
+    const fieldError = <K extends keyof CustomerForm>(field: K): string | undefined => {
+        const value = form[field];
+        const isEmpty = value === '' || value === null || value === undefined;
+        return (attemptedSubmit || isEmpty) ? errors[field] : undefined;
     };
 
     const fetchCustomers = async () => {
@@ -171,6 +184,7 @@ const Customers = () => {
     }, [activeBranchId]);
 
     const handleSave = async () => {
+        setAttemptedSubmit(true);
         // mark all fields as touched so all errors surface
         const allTouched: Partial<Record<keyof CustomerForm, boolean>> = {
             full_name: true, phone: true, remaining_balance: true,
@@ -352,27 +366,27 @@ const Customers = () => {
                 >
                     {/* Row 1 – Name / Phone */}
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                        <Field label="Customer Name" error={e.full_name} touched={t.full_name} success={!!form.full_name.trim()}>
+                        <Field label="Customer Name" error={fieldError('full_name')} touched={t.full_name} success={form.full_name.trim().length >= 2}>
                             <input
                                 type="text"
                                 placeholder="e.g. Ahmed Hassan"
                                 value={form.full_name}
                                 onChange={(ev) => set('full_name', ev.target.value)}
                                 onBlur={() => touch('full_name')}
-                                className={getInputCls(e.full_name, t.full_name)}
+                                className={getInputCls(fieldError('full_name'), t.full_name)}
                                 disabled={loading}
                                 autoComplete="name"
                             />
                         </Field>
 
-                        <Field label="Phone Number" error={e.phone} touched={t.phone} success={!!form.phone.trim() && !e.phone}>
+                        <Field label="Phone Number" error={fieldError('phone')} touched={t.phone} success={!!form.phone.trim() && !e.phone}>
                             <input
                                 type="tel"
                                 placeholder="e.g. +252 61 123 4567"
                                 value={form.phone}
                                 onChange={(ev) => set('phone', ev.target.value)}
                                 onBlur={() => touch('phone')}
-                                className={getInputCls(e.phone, t.phone)}
+                                className={getInputCls(fieldError('phone'), t.phone)}
                                 disabled={loading}
                                 autoComplete="tel"
                             />
@@ -430,7 +444,7 @@ const Customers = () => {
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                         <Field
                             label="Opening Balance"
-                            error={e.remaining_balance}
+                            error={fieldError('remaining_balance')}
                             touched={t.remaining_balance}
                             hint="Amount the customer already owes (go-live balance)"
                         >
@@ -442,7 +456,7 @@ const Customers = () => {
                                 value={form.remaining_balance}
                                 onChange={(ev) => set('remaining_balance', Number(ev.target.value || 0))}
                                 onBlur={() => touch('remaining_balance')}
-                                className={getInputCls(e.remaining_balance, t.remaining_balance)}
+                                className={getInputCls(fieldError('remaining_balance'), t.remaining_balance)}
                                 disabled={loading}
                             />
                         </Field>
