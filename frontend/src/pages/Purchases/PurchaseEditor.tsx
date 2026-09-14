@@ -529,14 +529,14 @@ const PurchaseEditor = () => {
     }
   };
 
+  // NOTE: this used to chain 'balance' -> 'account' as two sequential dialogs, but
+  // ConfirmDialog always calls onClose() right after onConfirm() (see its handleConfirm),
+  // which nulls confirmStep/pendingPayload before the second dialog could ever render -
+  // silently dropping the save for any Partial purchase with a payment account selected.
+  // The 'balance' message already states the exact account-deduction amount, so a single
+  // confirmation covers it - no chaining needed.
   const handleConfirmSave = () => {
     if (!pendingPayload) return;
-    const needsAccountConfirm =
-      docType !== 'order' && shouldShowPaymentAccount && Boolean(form.acc_id);
-    if (confirmStep === 'balance' && needsAccountConfirm) {
-      setConfirmStep('account');
-      return;
-    }
     const payload = pendingPayload;
     setConfirmStep(null);
     setPendingPayload(null);
@@ -627,6 +627,15 @@ const PurchaseEditor = () => {
     'h-12 w-24 text-center rounded-md border border-slate-300 bg-white px-2 text-base text-slate-900 shadow-sm outline-none transition-all ' +
     'placeholder:text-slate-400 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 ' +
     'dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-400 dark:focus:border-primary-400 dark:focus:ring-primary-500/25';
+
+  const selectedAccountName = accounts.find((a) => Number(a.acc_id) === Number(form.acc_id))?.name;
+  const accountDeductionAmount = effectiveStatus === 'partial' ? paidValue : totalValue;
+  const confirmMessage =
+    confirmStep === 'account'
+      ? `Ma xaqiijinaysaa inaad $${accountDeductionAmount.toFixed(2)} ka jarto account-ka "${selectedAccountName || ''}"?`
+      : effectivePurchaseType === 'credit' || effectiveStatus === 'unpaid'
+      ? `Iibsigan waa mid Deyn ah (Credit) - lacag lagama bixinayo hadda. $${totalValue.toFixed(2)} wuxuu ku darmi doonaa haraaga aad ka leedahay alaab-qeybiyahan. Ma xaqiijinaysaa?`
+      : `Waxaad ka jarayaa $${paidValue.toFixed(2)} account-ka aad dooratay; $${remainingValue.toFixed(2)} wuxuu ku hadhayaa deyn alaab-qeybiyahan. Ma xaqiijinaysaa?`;
 
   return (
     <div className="space-y-4 px-2 md:px-4">
@@ -903,6 +912,15 @@ const PurchaseEditor = () => {
                 <span className="text-xs text-slate-500">
                   Max ${totalValue.toFixed(2)} • Remaining ${remainingValue.toFixed(2)}
                 </span>
+                <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                  <div
+                    className="h-full rounded-full bg-primary-600 transition-all"
+                    style={{ width: `${totalValue > 0 ? Math.min(100, (paidValue / totalValue) * 100) : 0}%` }}
+                  />
+                </div>
+                <span className="text-xs font-medium text-primary-600 dark:text-primary-400">
+                  {(totalValue > 0 ? Math.min(100, (paidValue / totalValue) * 100) : 0).toFixed(1)}% Paid Upfront
+                </span>
               </label>
             )}
           </div>
@@ -922,25 +940,6 @@ const PurchaseEditor = () => {
               <option value="all_items">All items discount</option>
               <option value="per_item">Per item discount</option>
             </select>
-
-            {discountMode === 'all_items' && (
-              <label className="flex items-end gap-2 text-sm text-slate-700 dark:text-slate-200">
-                Discount
-                <input
-                  type="number"
-                  className="h-12 w-28 text-right rounded-md border px-3 text-base transition-colors bg-white border-slate-300 text-slate-900 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 focus:outline-none"
-                  value={form.discount}
-                  min={0}
-                  step="0.01"
-                  onChange={(e) => {
-                    const v = Number(e.target.value || 0);
-                    setForm((prev) => ({ ...prev, discount: v }));
-                    recalcTotals(lineItems, v);
-                  }}
-                  disabled={loading}
-                />
-              </label>
-            )}
 
             <button
               type="button"
@@ -1367,12 +1366,48 @@ const PurchaseEditor = () => {
             </div>
             <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-sm dark:border-slate-800">
               <span className="text-slate-500 dark:text-slate-400">Discount</span>
-              <span className="font-medium text-slate-900 dark:text-slate-100">${Number(discountSummary || 0).toFixed(2)}</span>
+              {discountMode === 'all_items' ? (
+                <input
+                  type="number"
+                  className="h-8 w-28 text-right rounded-md border px-2 text-sm transition-colors bg-white border-slate-300 text-slate-900 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 focus:outline-none"
+                  value={form.discount}
+                  min={0}
+                  step="0.01"
+                  onChange={(e) => {
+                    const v = Number(e.target.value || 0);
+                    setForm((prev) => ({ ...prev, discount: v }));
+                    recalcTotals(lineItems, v);
+                  }}
+                  disabled={loading}
+                />
+              ) : (
+                <span className="font-medium text-slate-900 dark:text-slate-100">${Number(discountSummary || 0).toFixed(2)}</span>
+              )}
             </div>
             <div className="flex items-center justify-between border-t border-slate-200 px-4 py-3 dark:border-slate-700">
               <span className="font-semibold text-slate-800 dark:text-slate-200">Total Amount</span>
               <span className="text-lg font-bold text-slate-900 dark:text-slate-100">${form.total.toFixed(2)}</span>
             </div>
+            {docType !== 'order' && effectiveStatus !== 'void' && (
+              <>
+                <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-sm dark:border-slate-800">
+                  <span className="text-slate-500 dark:text-slate-400">Amount Paid</span>
+                  <span className="font-medium text-slate-900 dark:text-slate-100">${paidValue.toFixed(2)}</span>
+                </div>
+                <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-sm dark:border-slate-800">
+                  <span className="text-slate-500 dark:text-slate-400">Balance Due</span>
+                  <span
+                    className={
+                      remainingValue > 0.004
+                        ? 'font-semibold text-amber-600 dark:text-amber-400'
+                        : 'font-semibold text-green-600 dark:text-green-400'
+                    }
+                  >
+                    {remainingValue > 0.004 ? `$${remainingValue.toFixed(2)}` : 'Fully Paid'}
+                  </span>
+                </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -1404,11 +1439,7 @@ const PurchaseEditor = () => {
         }}
         onConfirm={handleConfirmSave}
         title="Xaqiiji"
-        message={
-          confirmStep === 'balance'
-            ? 'Ma hubtaa inaad lacagta ka jareyso haraaga alaab-qeybiyaha?'
-            : 'Ma hubtaa lacagta inaad account-ka ka jareyso?'
-        }
+        message={confirmMessage}
         confirmText="Haa, kaydi"
         cancelText="Maya"
         variant="warning"

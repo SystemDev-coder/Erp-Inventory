@@ -430,6 +430,10 @@ const SaleCreate = () => {
   const shouldShowDueDate =
     effectiveDocType !== 'quotation' && (effectiveSaleType === 'credit' || isDebt);
 
+  const totalValue = Number(saleForm.total || 0);
+  const paidValue = Number(saleForm.paid_amount || 0);
+  const remainingValue = Math.max(0, totalValue - paidValue);
+
   useEffect(() => {
     if (!saleForm.customer_id || canUseCredit) return;
     setSaleForm((prev) => (prev.sale_type === 'credit' ? { ...prev, sale_type: 'cash' } : prev));
@@ -647,12 +651,14 @@ const SaleCreate = () => {
     }
   };
 
+  // NOTE: this used to chain 'balance' -> 'account' as two sequential dialogs, but
+  // ConfirmDialog always calls onClose() right after onConfirm() (see its handleConfirm),
+  // which nulls confirmStep/pendingPayload before the second dialog could ever render -
+  // silently dropping the save for any Partial sale with a receiving account selected.
+  // The 'balance' message already states the exact account amount, so a single
+  // confirmation covers it - no chaining needed.
   const handleConfirmSave = () => {
     if (!pendingPayload) return;
-    if (confirmStep === 'balance' && needsAccountConfirm()) {
-      setConfirmStep('account');
-      return;
-    }
     const payload = pendingPayload as ReturnType<typeof buildPayload>;
     setConfirmStep(null);
     setPendingPayload(null);
@@ -686,6 +692,15 @@ const SaleCreate = () => {
     await executeSaveSale(payload);
   };
 
+  const selectedAccountName = accounts.find((a) => Number(a.acc_id) === Number(saleForm.acc_id))?.name;
+  const accountReceiptAmount = effectiveStatus === 'partial' ? paidValue : totalValue;
+  const confirmMessage =
+    confirmStep === 'account'
+      ? `Ma xaqiijinaysaa inaad $${accountReceiptAmount.toFixed(2)} ku darto account-ka "${selectedAccountName || ''}"?`
+      : effectiveSaleType === 'credit' || isDebt || effectiveStatus === 'unpaid'
+      ? `Iibkan waa mid Deyn ah (Credit) - lacag lama helayo hadda. $${totalValue.toFixed(2)} wuxuu noqonayaa dayn uu macmiilkan kugu leeyahay. Ma xaqiijinaysaa?`
+      : `Waxaad heli doontaa $${paidValue.toFixed(2)} account-ka aad dooratay; $${remainingValue.toFixed(2)} wuxuu ahaan doonaa dayn uu macmiilkan kugu leeyahay. Ma xaqiijinaysaa?`;
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div>
@@ -704,228 +719,260 @@ const SaleCreate = () => {
 
       <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-6">
 
-        {/* ── Row 1: Doc type / Date / Quote valid until ── */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-            Document Type
-            {effectiveDocType === 'quotation' ? (
-              <input className={controlReadonlyCls} value="Quotation" disabled />
-            ) : (
-              <select
-                className={controlCls}
-                value={saleForm.doc_type}
-                onChange={(e) => {
-                  const nextDoc = e.target.value as SaleDocType;
-                  setIsDebt(false);
-                  setSaleForm((prev) => ({ ...prev, doc_type: nextDoc }));
-                }}
-                disabled={loading}
-              >
-                <option value="sale">Sale</option>
-                <option value="invoice">Invoice</option>
-              </select>
-            )}
-          </label>
-
-          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-            Date
-            <input
-              type="date"
-              className={controlCls}
-              value={saleForm.sale_date}
-              onChange={(e) => setSaleForm((prev) => ({ ...prev, sale_date: e.target.value }))}
-              disabled={loading}
-            />
-          </label>
-
-          {effectiveDocType === 'quotation' && (
-            <div className="flex flex-col gap-1">
+        {/* ── Two-panel header: Customer / Sale Details ── */}
+        <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
+          <div className="space-y-4">
+            <h3 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Customer</h3>
+            <div className="flex flex-col gap-1" data-field-error={formErrors.customer ? '' : undefined}>
               <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                Quote Valid Until <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="date"
-                className={fieldCls('quoteValidUntil')}
-                value={saleForm.quote_valid_until}
-                onChange={(e) => {
-                  clearError('quoteValidUntil');
-                  setSaleForm((prev) => ({ ...prev, quote_valid_until: e.target.value }));
-                }}
-                disabled={loading}
-              />
-              <FieldError field="quoteValidUntil" />
-            </div>
-          )}
-        </div>
-
-        {/* ── Row 2: Customer / Status ── */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="flex flex-col gap-1" data-field-error={formErrors.customer ? '' : undefined}>
-            <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
-              Customer
-              {effectiveDocType !== 'quotation' && effectiveStatus !== 'paid' && effectiveStatus !== 'void' && (
-                <span className="text-red-500 ml-0.5">*</span>
-              )}
-            </label>
-            <SearchableCombobox<number>
-              value={saleForm.customer_id}
-              options={customers.map((customer) => ({
-                value: customer.customer_id,
-                label: customer.full_name,
-              }))}
-              placeholder={creatingCustomer ? 'Adding customer…' : 'Walking Customer'}
-              disabled={loading || creatingCustomer}
-              hasError={!!formErrors.customer}
-              allowCustom
-              onCustomCommit={(text) => void handleAutoCreateCustomer(text)}
-              onChange={(nextValue) => {
-                clearError('customer');
-                const customerId = nextValue === '' ? '' : Number(nextValue);
-                setIsDebt(false);
-                setSaleForm((prev) => ({ ...prev, customer_id: customerId }));
-              }}
-            />
-            <FieldError field="customer" />
-            <p className="text-xs text-slate-400 dark:text-slate-500">
-              Type a name not in the list and click away to register them as a new customer.
-            </p>
-          </div>
-
-          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-            Status
-            <select
-              className={statusLocked ? controlReadonlyCls : controlCls}
-              value={effectiveStatus}
-              disabled={loading || statusLocked}
-              title={
-                statusLocked
-                  ? 'Credit and quotation documents are always unpaid'
-                  : 'Choose how much of this sale is settled now'
-              }
-              onChange={(e) => {
-                const nextStatus = e.target.value as SaleStatus;
-                clearError('account');
-                clearError('paidAmount');
-                setSaleForm((prev) => {
-                  const total = Number(prev.total || 0);
-                  return {
-                    ...prev,
-                    status: nextStatus,
-                    acc_id: nextStatus === 'unpaid' ? '' : prev.acc_id,
-                    paid_amount:
-                      nextStatus === 'paid' ? total : nextStatus === 'unpaid' ? 0 : prev.paid_amount,
-                  };
-                });
-              }}
-            >
-              <option value="paid">Paid</option>
-              <option value="partial">Partial</option>
-              <option value="unpaid">Unpaid</option>
-            </select>
-          </label>
-        </div>
-
-        {/* ── Row 3: Sale type / Account ── */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-            Sale Type
-            <select
-              className={controlCls}
-              value={effectiveSaleType}
-              onChange={(e) =>
-                setSaleForm((prev) => {
-                  const nextType = e.target.value as 'cash' | 'credit';
-                  return {
-                    ...prev,
-                    sale_type: nextType,
-                    acc_id: nextType === 'credit' ? '' : prev.acc_id,
-                    paid_amount: nextType === 'credit' ? 0 : prev.paid_amount,
-                  };
-                })
-              }
-              disabled={loading || saleForm.doc_type === 'quotation' || isDebt}
-            >
-              <option value="cash">Cash</option>
-              <option value="credit">Credit</option>
-            </select>
-            {creditHint && <span className="text-xs text-slate-500">{creditHint}</span>}
-          </label>
-
-          {shouldShowAccount && (
-            <div className="flex flex-col gap-1" data-field-error={formErrors.account ? '' : undefined}>
-              <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                Receive To Account <span className="text-red-500">*</span>
+                Customer
+                {effectiveDocType !== 'quotation' && effectiveStatus !== 'paid' && effectiveStatus !== 'void' && (
+                  <span className="text-red-500 ml-0.5">*</span>
+                )}
               </label>
               <SearchableCombobox<number>
-                value={saleForm.acc_id}
-                options={accounts.map((account) => ({
-                  value: account.acc_id,
-                  label: `${account.name} (${account.institution || 'Cash'})`,
+                value={saleForm.customer_id}
+                options={customers.map((customer) => ({
+                  value: customer.customer_id,
+                  label: customer.full_name,
                 }))}
-                placeholder="Select account"
-                disabled={loading}
-                hasError={!!formErrors.account}
+                placeholder={creatingCustomer ? 'Adding customer…' : 'Walking Customer'}
+                disabled={loading || creatingCustomer}
+                hasError={!!formErrors.customer}
+                allowCustom
+                onCustomCommit={(text) => void handleAutoCreateCustomer(text)}
                 onChange={(nextValue) => {
-                  clearError('account');
-                  setSaleForm((prev) => ({ ...prev, acc_id: nextValue === '' ? '' : Number(nextValue) }));
+                  clearError('customer');
+                  const customerId = nextValue === '' ? '' : Number(nextValue);
+                  setIsDebt(false);
+                  setSaleForm((prev) => ({ ...prev, customer_id: customerId }));
                 }}
               />
-              <FieldError field="account" />
+              <FieldError field="customer" />
+              <p className="text-xs text-slate-400 dark:text-slate-500">
+                Type a name not in the list and click away to register them as a new customer.
+              </p>
             </div>
-          )}
 
-          {shouldShowDueDate && (
+            {saleForm.customer_id && saleForm.doc_type !== 'quotation' && canUseCredit && (
+              <div className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-300">
+                <input
+                  id="debt-toggle"
+                  type="checkbox"
+                  className="h-4 w-4 accent-primary-600"
+                  checked={isDebt}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setIsDebt(checked);
+                    setSaleForm((prev) => ({
+                      ...prev,
+                      sale_type: checked ? 'credit' : 'cash',
+                      acc_id: checked ? '' : prev.acc_id,
+                      paid_amount: checked ? 0 : prev.paid_amount,
+                    }));
+                  }}
+                />
+                <label htmlFor="debt-toggle" className="select-none">
+                  Mark as debt for this customer
+                </label>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-4">
+            <h3 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Sale Details</h3>
+
             <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-              Credit Return Date (Ballanta)
+              Document Type
+              {effectiveDocType === 'quotation' ? (
+                <input className={controlReadonlyCls} value="Quotation" disabled />
+              ) : (
+                <select
+                  className={controlCls}
+                  value={saleForm.doc_type}
+                  onChange={(e) => {
+                    const nextDoc = e.target.value as SaleDocType;
+                    setIsDebt(false);
+                    setSaleForm((prev) => ({ ...prev, doc_type: nextDoc }));
+                  }}
+                  disabled={loading}
+                >
+                  <option value="sale">Sale</option>
+                  <option value="invoice">Invoice</option>
+                </select>
+              )}
+            </label>
+
+            <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+              Date
               <input
                 type="date"
                 className={controlCls}
-                value={saleForm.due_date}
-                onChange={(e) => setSaleForm((prev) => ({ ...prev, due_date: e.target.value }))}
+                value={saleForm.sale_date}
+                onChange={(e) => setSaleForm((prev) => ({ ...prev, sale_date: e.target.value }))}
                 disabled={loading}
               />
             </label>
-          )}
+
+            {effectiveDocType === 'quotation' && (
+              <div className="flex flex-col gap-1">
+                <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                  Quote Valid Until <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  className={fieldCls('quoteValidUntil')}
+                  value={saleForm.quote_valid_until}
+                  onChange={(e) => {
+                    clearError('quoteValidUntil');
+                    setSaleForm((prev) => ({ ...prev, quote_valid_until: e.target.value }));
+                  }}
+                  disabled={loading}
+                />
+                <FieldError field="quoteValidUntil" />
+              </div>
+            )}
+
+            <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+              Sale Type
+              <select
+                className={controlCls}
+                value={effectiveSaleType}
+                onChange={(e) =>
+                  setSaleForm((prev) => {
+                    const nextType = e.target.value as 'cash' | 'credit';
+                    return {
+                      ...prev,
+                      sale_type: nextType,
+                      acc_id: nextType === 'credit' ? '' : prev.acc_id,
+                      paid_amount: nextType === 'credit' ? 0 : prev.paid_amount,
+                    };
+                  })
+                }
+                disabled={loading || saleForm.doc_type === 'quotation' || isDebt}
+              >
+                <option value="cash">Cash</option>
+                <option value="credit">Credit</option>
+              </select>
+              {creditHint && <span className="text-xs text-slate-500">{creditHint}</span>}
+            </label>
+
+            {shouldShowDueDate && (
+              <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+                Credit Return Date (Ballanta)
+                <input
+                  type="date"
+                  className={controlCls}
+                  value={saleForm.due_date}
+                  onChange={(e) => setSaleForm((prev) => ({ ...prev, due_date: e.target.value }))}
+                  disabled={loading}
+                />
+              </label>
+            )}
+
+            {shouldShowAccount && (
+              <div className="flex flex-col gap-1" data-field-error={formErrors.account ? '' : undefined}>
+                <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                  Receive To Account <span className="text-red-500">*</span>
+                </label>
+                <SearchableCombobox<number>
+                  value={saleForm.acc_id}
+                  options={accounts.map((account) => ({
+                    value: account.acc_id,
+                    label: `${account.name} (${account.institution || 'Cash'})`,
+                  }))}
+                  placeholder="Select account"
+                  disabled={loading}
+                  hasError={!!formErrors.account}
+                  onChange={(nextValue) => {
+                    clearError('account');
+                    setSaleForm((prev) => ({ ...prev, acc_id: nextValue === '' ? '' : Number(nextValue) }));
+                  }}
+                />
+                <FieldError field="account" />
+              </div>
+            )}
+
+            <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+              Status
+              <select
+                className={statusLocked ? controlReadonlyCls : controlCls}
+                value={effectiveStatus}
+                disabled={loading || statusLocked}
+                title={
+                  statusLocked
+                    ? 'Credit and quotation documents are always unpaid'
+                    : 'Choose how much of this sale is settled now'
+                }
+                onChange={(e) => {
+                  const nextStatus = e.target.value as SaleStatus;
+                  clearError('account');
+                  clearError('paidAmount');
+                  setSaleForm((prev) => {
+                    const total = Number(prev.total || 0);
+                    return {
+                      ...prev,
+                      status: nextStatus,
+                      acc_id: nextStatus === 'unpaid' ? '' : prev.acc_id,
+                      paid_amount:
+                        nextStatus === 'paid' ? total : nextStatus === 'unpaid' ? 0 : prev.paid_amount,
+                    };
+                  });
+                }}
+              >
+                <option value="paid">Paid</option>
+                <option value="partial">Partial</option>
+                <option value="unpaid">Unpaid</option>
+              </select>
+            </label>
+
+            {shouldShowAccount && (
+              <div
+                className="flex flex-col gap-1"
+                data-field-error={formErrors.paidAmount ? '' : undefined}
+              >
+                <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                  Amount Paid
+                  {effectiveStatus === 'partial' && <span className="text-red-500 ml-0.5">*</span>}
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  className={fieldCls('paidAmount')}
+                  value={saleForm.paid_amount}
+                  max={saleForm.total}
+                  onChange={(e) => {
+                    clearError('paidAmount');
+                    const raw = Number(e.target.value || 0);
+                    setSaleForm((prev) => {
+                      const total = Number(prev.total || 0);
+                      const paid = Math.max(0, Math.min(raw, total));
+                      return { ...prev, paid_amount: paid };
+                    });
+                  }}
+                  disabled={loading || effectiveStatus === 'paid'}
+                />
+                <FieldError field="paidAmount" />
+                <span className="text-xs text-slate-500">
+                  Max ${totalValue.toFixed(2)} • Remaining ${remainingValue.toFixed(2)}
+                </span>
+                <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                  <div
+                    className="h-full rounded-full bg-primary-600 transition-all"
+                    style={{ width: `${totalValue > 0 ? Math.min(100, (paidValue / totalValue) * 100) : 0}%` }}
+                  />
+                </div>
+                <span className="text-xs font-medium text-primary-600 dark:text-primary-400">
+                  {(totalValue > 0 ? Math.min(100, (paidValue / totalValue) * 100) : 0).toFixed(1)}% Paid Upfront
+                </span>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* ── Debt toggle ── */}
-        {saleForm.customer_id && saleForm.doc_type !== 'quotation' && canUseCredit && (
-          <div className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-300">
-            <input
-              id="debt-toggle"
-              type="checkbox"
-              className="h-4 w-4 accent-primary-600"
-              checked={isDebt}
-              onChange={(e) => {
-                const checked = e.target.checked;
-                setIsDebt(checked);
-                setSaleForm((prev) => ({
-                  ...prev,
-                  sale_type: checked ? 'credit' : 'cash',
-                  acc_id: checked ? '' : prev.acc_id,
-                  paid_amount: checked ? 0 : prev.paid_amount,
-                }));
-              }}
-            />
-            <label htmlFor="debt-toggle" className="select-none">
-              Mark as debt for this customer
-            </label>
-          </div>
-        )}
-
-        {/* ── Note ── */}
-        <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-          Note
-          <textarea
-            className={`${textareaCls} min-h-[90px]`}
-            value={saleForm.note}
-            onChange={(e) => setSaleForm((prev) => ({ ...prev, note: e.target.value }))}
-            disabled={loading}
-          />
-        </label>
-
         {/* ── Items ── */}
-        <div className="space-y-2">
+        <div className="space-y-3 border-t border-slate-200 pt-6 dark:border-slate-800">
           <div className="flex items-center justify-between">
             <div>
               <span className="font-semibold text-slate-800 dark:text-slate-200">Items</span>
@@ -945,7 +992,6 @@ const SaleCreate = () => {
             </button>
           </div>
 
-          {/* Items global errors */}
           {(formErrors.items || formErrors.stock) && (
             <div
               data-field-error=""
@@ -956,238 +1002,261 @@ const SaleCreate = () => {
             </div>
           )}
 
-          <div className="hidden md:grid md:grid-cols-[2fr_1fr_1fr_auto] gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400 px-1">
-            <span>Item</span>
-            <span className="text-right">Qty</span>
-            <span className="text-right">Unit Price</span>
-            <span className="text-right pr-6">Line Total / Action</span>
-          </div>
-
-          <div className="space-y-2">
-            {saleForm.items.map((line, idx) => {
-              const lineErr =
-                !!line.item_id && Number(line.quantity || 0) > getLineAvailableQty(line);
-              return (
-                <div
-                  key={idx}
-                  className="grid grid-cols-1 md:grid-cols-[2fr_1fr_1fr_auto] gap-2 items-start"
-                >
-                  <div>
-                    <SearchableCombobox<number>
-                      value={line.item_id}
-                      options={(() => {
-                        const base = itemOptions.map((item) => ({
-                          value: item.item_id,
-                          label: itemLabelWithAvailability(item.item_name, item.available_qty),
-                        }));
-                        const q = lineSearchQuery.trim();
-                        if (!q) return base;
-                        const exists = itemOptions.some((item) => item.item_name.trim().toLowerCase() === q.toLowerCase());
-                        if (exists) return base;
-                        return [{ value: QUICK_CREATE_SENTINEL, label: `+ Create "${q}"` }, ...base];
-                      })()}
-                      placeholder="Select item"
-                      disabled={loading}
-                      onSearch={(q) => setLineSearchQuery(q)}
-                      onChange={(nextValue) => {
-                        if (nextValue === QUICK_CREATE_SENTINEL) {
-                          openNewProductModal(lineSearchQuery.trim(), idx);
-                          return;
-                        }
-                        clearError('items');
-                        clearError('stock');
-                        const itemId = nextValue === '' ? '' : Number(nextValue);
-                        const option = itemOptions.find((item) => Number(item.item_id) === itemId);
-                        const nextItems = [...saleForm.items];
-                        nextItems[idx] = {
-                          ...nextItems[idx],
-                          item_id: itemId,
-                          unit_price: option ? Number(option.unit_price || 0) : nextItems[idx].unit_price,
-                          available_qty: option?.available_qty ?? 0,
-                        };
-                        setSaleForm((prev) => ({ ...prev, items: nextItems }));
-                        recalcTotals(nextItems, saleForm.discount);
-                      }}
-                    />
-                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                      Available:{' '}
-                      <span className="font-medium text-slate-700 dark:text-slate-200">
-                        {formatAvailableQty(getLineAvailableQty(line))} units
-                      </span>
-                    </p>
-                  </div>
-
-                  <div>
-                    <input
-                      type="number"
-                      min={1}
-                      step={1}
-                      className={`${lineErr
-                        ? `${baseCls} ${errBorder}`
-                        : controlCls
-                      } text-right`}
-                      value={line.quantity}
-                      onChange={(e) => {
-                        clearError('items');
-                        clearError('stock');
-                        const quantity = Number(e.target.value || 0);
-                        const nextItems = [...saleForm.items];
-                        const selected = itemOptions.find((item) => Number(item.item_id) === Number(nextItems[idx].item_id));
-                        nextItems[idx] = {
-                          ...nextItems[idx],
-                          quantity,
-                          unit_price:
-                            nextItems[idx].unit_price > 0
-                              ? nextItems[idx].unit_price
-                              : Number(selected?.unit_price || 0),
-                        };
-                        setSaleForm((prev) => ({ ...prev, items: nextItems }));
-                        recalcTotals(nextItems, saleForm.discount);
-                      }}
-                      disabled={loading}
-                    />
-                    {lineErr && (
-                      <p className="mt-1 flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400">
-                        <AlertCircle className="h-3 w-3 shrink-0" />
-                        Exceeds available stock
-                      </p>
-                    )}
-                  </div>
-
-                  <input
-                    type="number"
-                    min={1}
-                    step={1}
-                    className={`${controlReadonlyCls} text-right`}
-                    value={line.unit_price}
-                    readOnly
-                    title="Unit price is set automatically from item price"
-                    disabled={loading}
-                  />
-
-                  <div className="flex items-center justify-between md:justify-end gap-3 text-sm text-slate-600 dark:text-slate-300">
-                    <div className="flex items-center gap-2">
-                      <span className="md:hidden font-medium">Line Total</span>
-                      <span className="font-semibold">
+          <div className="overflow-x-auto">
+            <table className="min-w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-b-2 border-slate-200 dark:border-slate-700">
+                  <th className="px-2 py-2 text-left text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Item</th>
+                  <th className="px-2 py-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Qty</th>
+                  <th className="px-2 py-2 text-right text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Unit Price</th>
+                  <th className="px-2 py-2 text-right text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Line Total</th>
+                  <th className="px-2 py-2 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {saleForm.items.map((line, idx) => {
+                  const lineErr =
+                    !!line.item_id && Number(line.quantity || 0) > getLineAvailableQty(line);
+                  return (
+                    <tr key={idx}>
+                      <td className="px-2 py-2 align-top">
+                        <SearchableCombobox<number>
+                          value={line.item_id}
+                          options={(() => {
+                            const base = itemOptions.map((item) => ({
+                              value: item.item_id,
+                              label: itemLabelWithAvailability(item.item_name, item.available_qty),
+                            }));
+                            const q = lineSearchQuery.trim();
+                            if (!q) return base;
+                            const exists = itemOptions.some((item) => item.item_name.trim().toLowerCase() === q.toLowerCase());
+                            if (exists) return base;
+                            return [{ value: QUICK_CREATE_SENTINEL, label: `+ Create "${q}"` }, ...base];
+                          })()}
+                          placeholder="Select item"
+                          disabled={loading}
+                          onSearch={(q) => setLineSearchQuery(q)}
+                          onChange={(nextValue) => {
+                            if (nextValue === QUICK_CREATE_SENTINEL) {
+                              openNewProductModal(lineSearchQuery.trim(), idx);
+                              return;
+                            }
+                            clearError('items');
+                            clearError('stock');
+                            const itemId = nextValue === '' ? '' : Number(nextValue);
+                            const option = itemOptions.find((item) => Number(item.item_id) === itemId);
+                            const nextItems = [...saleForm.items];
+                            nextItems[idx] = {
+                              ...nextItems[idx],
+                              item_id: itemId,
+                              unit_price: option ? Number(option.unit_price || 0) : nextItems[idx].unit_price,
+                              available_qty: option?.available_qty ?? 0,
+                            };
+                            setSaleForm((prev) => ({ ...prev, items: nextItems }));
+                            recalcTotals(nextItems, saleForm.discount);
+                          }}
+                        />
+                        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                          Available:{' '}
+                          <span className="font-medium text-slate-700 dark:text-slate-200">
+                            {formatAvailableQty(getLineAvailableQty(line))} units
+                          </span>
+                        </p>
+                      </td>
+                      <td className="px-2 py-2 align-top">
+                        <div className="inline-flex items-center gap-1 rounded-md border border-slate-300 dark:border-slate-700">
+                          <button
+                            type="button"
+                            aria-label="Decrease quantity"
+                            className="px-2 py-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+                            onClick={() => {
+                              clearError('items');
+                              clearError('stock');
+                              const quantity = Math.max(0, Number(line.quantity || 0) - 1);
+                              const nextItems = [...saleForm.items];
+                              nextItems[idx] = { ...nextItems[idx], quantity };
+                              setSaleForm((prev) => ({ ...prev, items: nextItems }));
+                              recalcTotals(nextItems, saleForm.discount);
+                            }}
+                            disabled={loading}
+                          >
+                            −
+                          </button>
+                          <input
+                            type="number"
+                            min={1}
+                            step={1}
+                            className={`w-14 border-0 text-center focus:outline-none focus:ring-0 bg-transparent ${lineErr ? 'text-red-600 dark:text-red-400' : 'text-slate-900 dark:text-slate-100'}`}
+                            value={line.quantity}
+                            onChange={(e) => {
+                              clearError('items');
+                              clearError('stock');
+                              const quantity = Number(e.target.value || 0);
+                              const nextItems = [...saleForm.items];
+                              const selected = itemOptions.find((item) => Number(item.item_id) === Number(nextItems[idx].item_id));
+                              nextItems[idx] = {
+                                ...nextItems[idx],
+                                quantity,
+                                unit_price:
+                                  nextItems[idx].unit_price > 0
+                                    ? nextItems[idx].unit_price
+                                    : Number(selected?.unit_price || 0),
+                              };
+                              setSaleForm((prev) => ({ ...prev, items: nextItems }));
+                              recalcTotals(nextItems, saleForm.discount);
+                            }}
+                            disabled={loading}
+                          />
+                          <button
+                            type="button"
+                            aria-label="Increase quantity"
+                            className="px-2 py-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+                            onClick={() => {
+                              clearError('items');
+                              clearError('stock');
+                              const quantity = Number(line.quantity || 0) + 1;
+                              const nextItems = [...saleForm.items];
+                              nextItems[idx] = { ...nextItems[idx], quantity };
+                              setSaleForm((prev) => ({ ...prev, items: nextItems }));
+                              recalcTotals(nextItems, saleForm.discount);
+                            }}
+                            disabled={loading}
+                          >
+                            +
+                          </button>
+                        </div>
+                        {lineErr && (
+                          <p className="mt-1 flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400">
+                            <AlertCircle className="h-3 w-3 shrink-0" />
+                            Exceeds available stock
+                          </p>
+                        )}
+                      </td>
+                      <td className="px-2 py-2 align-top text-right">
+                        <input
+                          type="number"
+                          min={1}
+                          step={1}
+                          className={`${controlReadonlyCls} text-right`}
+                          value={line.unit_price}
+                          readOnly
+                          title="Unit price is set automatically from item price"
+                          disabled={loading}
+                        />
+                      </td>
+                      <td className="px-2 py-2 align-top text-right font-semibold text-slate-900 dark:text-slate-100">
                         ${(Number(line.quantity || 0) * Number(line.unit_price || 0)).toFixed(2)}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const nextItems = saleForm.items.filter((_, i) => i !== idx);
-                        const final: FormLine[] = nextItems.length ? nextItems : [{ item_id: '', quantity: 1, unit_price: 0 }];
-                        setSaleForm((prev) => ({ ...prev, items: final }));
-                        recalcTotals(final, saleForm.discount);
-                      }}
-                      className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 text-red-500 hover:bg-red-50"
-                      aria-label="Remove line"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+                      </td>
+                      <td className="px-2 py-2 align-top">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const nextItems = saleForm.items.filter((_, i) => i !== idx);
+                            const final: FormLine[] = nextItems.length ? nextItems : [{ item_id: '', quantity: 1, unit_price: 0 }];
+                            setSaleForm((prev) => ({ ...prev, items: final }));
+                            recalcTotals(final, saleForm.discount);
+                          }}
+                          className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 text-red-500 hover:bg-red-50"
+                          aria-label="Remove line"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
 
-        {/* ── Totals row ── */}
-        <div className="flex justify-end items-end gap-6 text-sm mt-2">
-          <div className="flex flex-col items-end justify-end">
-            <span className="text-slate-500">Subtotal</span>
-            <span className="mt-1 h-10 flex items-center font-semibold">
-              ${saleForm.subtotal.toFixed(2)}
-            </span>
-          </div>
-          <div className="flex flex-col items-end justify-end">
-            <span className="text-slate-500">Discount</span>
-            <input
-              type="number"
-              min={1}
-              step={1}
-              className={`${controlCls} mt-1 text-right h-10`}
-              value={saleForm.discount}
-              onChange={(e) => {
-                const discount = Number(e.target.value || 0);
-                const next = { ...saleForm, discount };
-                setSaleForm(next);
-                recalcTotals(next.items, discount);
-              }}
+        {/* ── Notes + Totals ── */}
+        <div className="grid grid-cols-1 gap-6 border-t border-slate-200 pt-6 dark:border-slate-800 md:grid-cols-[1fr_320px]">
+          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+            Note
+            <textarea
+              className={`${textareaCls} min-h-[120px]`}
+              value={saleForm.note}
+              onChange={(e) => setSaleForm((prev) => ({ ...prev, note: e.target.value }))}
               disabled={loading}
             />
-          </div>
-          <div className="flex flex-col items-end justify-end">
-            <label className="flex items-center gap-1.5 text-slate-500 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={saleForm.apply_tax}
-                onChange={(e) => {
-                  const applyTax = e.target.checked;
-                  const next = { ...saleForm, apply_tax: applyTax };
-                  setSaleForm(next);
-                  recalcTotals(next.items, next.discount, next.tax_rate, applyTax);
-                }}
-                disabled={loading}
-                className="h-3.5 w-3.5 rounded border-slate-300 dark:border-slate-600 text-primary-600 focus:ring-primary-500"
-              />
-              VAT ({FIXED_TAX_RATE_PERCENT}% fixed)
-            </label>
-            <span
-              className={`${controlCls} mt-1 h-10 w-36 flex items-center justify-end bg-slate-50 dark:bg-slate-800/60 text-slate-600 dark:text-slate-300 cursor-default select-none`}
-              title={saleForm.apply_tax ? 'Tax rate is fixed by policy and can\'t be changed here' : 'This sale is marked VAT-exempt'}
-            >
-              {saleForm.apply_tax ? `$${(saleForm.tax_amount || 0).toFixed(2)}` : 'No VAT'}
-            </span>
-          </div>
-          <div className="flex flex-col items-end justify-end">
-            <span className="text-slate-500">Total</span>
-            <span className="mt-1 h-10 flex items-center font-semibold">
-              ${saleForm.total.toFixed(2)}
-            </span>
-          </div>
-        </div>
+          </label>
 
-        {/* ── Paid amount ── */}
-        {shouldShowAccount && (
-          <div className="flex justify-end">
-            <div
-              className="flex flex-col gap-1 min-w-[220px]"
-              data-field-error={formErrors.paidAmount ? '' : undefined}
-            >
-              <label className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                Amount Paid
-                {effectiveStatus === 'partial' && <span className="text-red-500 ml-0.5">*</span>}
-              </label>
+          <div className="h-fit rounded-lg border border-slate-200 dark:border-slate-800">
+            <div className="flex items-center justify-between px-4 py-3 text-sm">
+              <span className="text-slate-500 dark:text-slate-400">Subtotal</span>
+              <span className="font-medium text-slate-900 dark:text-slate-100">${saleForm.subtotal.toFixed(2)}</span>
+            </div>
+            <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-sm dark:border-slate-800">
+              <span className="text-slate-500 dark:text-slate-400">Discount</span>
               <input
                 type="number"
                 min={0}
                 step={1}
-                className={`${fieldCls('paidAmount')} text-right`}
-                value={saleForm.paid_amount}
-                max={saleForm.total}
+                className="h-8 w-28 text-right rounded-md border px-2 text-sm transition-colors bg-white border-slate-300 text-slate-900 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 focus:outline-none"
+                value={saleForm.discount}
                 onChange={(e) => {
-                  clearError('paidAmount');
-                  const raw = Number(e.target.value || 0);
-                  setSaleForm((prev) => {
-                    const total = Number(prev.total || 0);
-                    const paid = Math.max(0, Math.min(raw, total));
-                    return { ...prev, paid_amount: paid };
-                  });
+                  const discount = Number(e.target.value || 0);
+                  const next = { ...saleForm, discount };
+                  setSaleForm(next);
+                  recalcTotals(next.items, discount);
                 }}
-                disabled={loading || effectiveStatus === 'paid'}
+                disabled={loading}
               />
-              <FieldError field="paidAmount" />
             </div>
+            <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-sm dark:border-slate-800">
+              <label className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={saleForm.apply_tax}
+                  onChange={(e) => {
+                    const applyTax = e.target.checked;
+                    const next = { ...saleForm, apply_tax: applyTax };
+                    setSaleForm(next);
+                    recalcTotals(next.items, next.discount, next.tax_rate, applyTax);
+                  }}
+                  disabled={loading}
+                  className="h-3.5 w-3.5 rounded border-slate-300 dark:border-slate-600 text-primary-600 focus:ring-primary-500"
+                />
+                VAT ({FIXED_TAX_RATE_PERCENT}% fixed)
+              </label>
+              <span className="font-medium text-slate-900 dark:text-slate-100">
+                {saleForm.apply_tax ? `$${(saleForm.tax_amount || 0).toFixed(2)}` : 'No VAT'}
+              </span>
+            </div>
+            <div className="flex items-center justify-between border-t border-slate-200 px-4 py-3 dark:border-slate-700">
+              <span className="font-semibold text-slate-800 dark:text-slate-200">Total</span>
+              <span className="text-lg font-bold text-slate-900 dark:text-slate-100">${saleForm.total.toFixed(2)}</span>
+            </div>
+            {effectiveDocType !== 'quotation' && effectiveStatus !== 'void' && (
+              <>
+                <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-sm dark:border-slate-800">
+                  <span className="text-slate-500 dark:text-slate-400">Amount Paid</span>
+                  <span className="font-medium text-slate-900 dark:text-slate-100">${paidValue.toFixed(2)}</span>
+                </div>
+                <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-sm dark:border-slate-800">
+                  <span className="text-slate-500 dark:text-slate-400">Balance Due</span>
+                  <span
+                    className={
+                      remainingValue > 0.004
+                        ? 'font-semibold text-amber-600 dark:text-amber-400'
+                        : 'font-semibold text-green-600 dark:text-green-400'
+                    }
+                  >
+                    {remainingValue > 0.004 ? `$${remainingValue.toFixed(2)}` : 'Fully Paid'}
+                  </span>
+                </div>
+              </>
+            )}
           </div>
-        )}
+        </div>
 
         {/* ── Actions ── */}
-        <div className="flex justify-end gap-3 pt-4">
+        <div className="flex justify-end gap-2 border-t border-slate-200 pt-6 dark:border-slate-800">
           <button
             type="button"
             onClick={() => navigate('/sales')}
-            className="px-6 py-2.5 font-semibold text-slate-600 bg-slate-100 dark:bg-slate-800 dark:text-slate-200 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
+            className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
           >
             Cancel
           </button>
@@ -1195,7 +1264,7 @@ const SaleCreate = () => {
             type="button"
             onClick={() => void handleSaveSale()}
             disabled={submitting || loading || hasInsufficientStock}
-            className="px-8 py-2.5 bg-primary-600 text-white font-bold rounded-lg hover:bg-primary-700 transition-all shadow-md shadow-primary-500/20 active:scale-95 disabled:opacity-60"
+            className="px-5 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50"
           >
             {submitting
               ? 'Saving...'
@@ -1216,11 +1285,7 @@ const SaleCreate = () => {
         }}
         onConfirm={handleConfirmSave}
         title="Xaqiiji"
-        message={
-          confirmStep === 'balance'
-            ? 'Ma hubtaa inaad lacagta ka jareyso haraaga macmiilka?'
-            : 'Ma hubtaa lacagta inaad account-ka ka jareyso?'
-        }
+        message={confirmMessage}
         confirmText="Haa, kaydi"
         cancelText="Maya"
         variant="warning"
