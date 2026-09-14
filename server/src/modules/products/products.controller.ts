@@ -74,6 +74,8 @@ const normalizeProductBody = (body: any) => ({
   name: body?.name,
   barcode: body?.barcode ?? body?.sku,
   storeId: body?.storeId ?? body?.store_id,
+  categoryId: body?.categoryId ?? body?.category_id,
+  unitId: body?.unitId ?? body?.unit_id,
   quantity: body?.quantity,
   stockAlert: body?.stockAlert ?? body?.stock_alert,
   openingBalance: body?.openingBalance ?? body?.opening_balance,

@@ -45,6 +45,11 @@ export interface Product {
   sku?: string | null;
   store_id?: number | null;
   store_name?: string | null;
+  category_id?: number | null;
+  category_name?: string | null;
+  unit_id?: number | null;
+  unit_name?: string | null;
+  unit_symbol?: string | null;
   stock_alert?: number;
   cost_price: number;
   sell_price: number;

@@ -76,6 +76,11 @@ export interface Product {
   sku?: string | null;
   store_id: number | null;
   store_name?: string | null;
+  category_id: number | null;
+  category_name?: string | null;
+  unit_id: number | null;
+  unit_name?: string | null;
+  unit_symbol?: string | null;
   stock_alert: number;
   cost_price: number;
   sell_price: number;
@@ -236,6 +241,11 @@ const getProductSql = (stockAlertExpr: string, storeIdExpr = 'NULL::bigint') => 
     i.barcode AS sku,
     i.store_id,
     s.store_name,
+    i.category_id,
+    c.cat_name AS category_name,
+    i.unit_id,
+    u.unit_name,
+    u.symbol AS unit_symbol,
     ${stockAlertExpr} AS stock_alert,
     i.cost_price,
     i.sell_price,
@@ -257,6 +267,8 @@ const getProductSql = (stockAlertExpr: string, storeIdExpr = 'NULL::bigint') => 
     i.created_at::text AS updated_at
   FROM ims.items i
   LEFT JOIN ims.stores s ON s.store_id = i.store_id
+  LEFT JOIN ims.categories c ON c.cat_id = i.category_id
+  LEFT JOIN ims.units u ON u.unit_id = i.unit_id
   LEFT JOIN LATERAL (
     SELECT
       COALESCE(SUM(si.quantity), 0)::int AS qty,
@@ -620,6 +632,14 @@ export const productsService = {
       where.push(`(i.name ILIKE $${params.length} OR COALESCE(i.barcode, '') ILIKE $${params.length})`);
     }
     if (!filters.includeInactive) where.push('i.is_active = TRUE');
+    if (filters.categoryId) {
+      params.push(filters.categoryId);
+      where.push(`i.category_id = $${params.length}`);
+    }
+    if (filters.unitId) {
+      params.push(filters.unitId);
+      where.push(`i.unit_id = $${params.length}`);
+    }
     if (filters.fromDate) {
       params.push(filters.fromDate);
       where.push(`i.created_at::date >= $${params.length}::date`);
@@ -666,7 +686,12 @@ export const productsService = {
     const stockAlertColumn = (await hasItemsStockAlertColumn()) ? 'stock_alert' : 'reorder_level';
     const branchId = pickBranchForWrite(scope, input.branchId);
     if (input.storeId) await ensureInBranch('stores', 'store_id', input.storeId, branchId, 'Store');
-    const categoryId = catIdRequired ? await ensureDefaultCategory(branchId) : null;
+    if (input.categoryId) await ensureInBranch('categories', 'cat_id', input.categoryId, branchId, 'Category');
+    if (input.unitId) await ensureInBranch('units', 'unit_id', input.unitId, branchId, 'Unit');
+    // Legacy compat: some older deployments still have a NOT NULL ims.items.cat_id column
+    // from before the current categories/units design - keep it satisfied with a default
+    // row when present, independent of the real category_id selection below.
+    const legacyCatId = catIdRequired ? await ensureDefaultCategory(branchId) : null;
 
     const openingBalance = input.openingBalance ?? 0;
     const active = isActiveValue(input, true);
@@ -677,15 +702,15 @@ export const productsService = {
           : await getOrCreateDefaultStoreId(client, branchId);
       const created = await client.query<{ item_id: number }>(
         `INSERT INTO ims.items (
-           branch_id, ${catIdRequired ? 'cat_id, ' : ''}store_id, name, barcode, ${stockAlertColumn}, opening_balance, cost_price, sell_price, is_active
+           branch_id, ${catIdRequired ? 'cat_id, ' : ''}store_id, name, barcode, ${stockAlertColumn}, opening_balance, cost_price, sell_price, is_active, category_id, unit_id
          ) VALUES (
-           $1, ${catIdRequired ? '$2, ' : ''}$${catIdRequired ? 3 : 2}, $${catIdRequired ? 4 : 3}, NULLIF($${catIdRequired ? 5 : 4}, ''), $${catIdRequired ? 6 : 5}, $${catIdRequired ? 7 : 6}, $${catIdRequired ? 8 : 7}, $${catIdRequired ? 9 : 8}, $${catIdRequired ? 10 : 9}
+           $1, ${catIdRequired ? '$2, ' : ''}$${catIdRequired ? 3 : 2}, $${catIdRequired ? 4 : 3}, NULLIF($${catIdRequired ? 5 : 4}, ''), $${catIdRequired ? 6 : 5}, $${catIdRequired ? 7 : 6}, $${catIdRequired ? 8 : 7}, $${catIdRequired ? 9 : 8}, $${catIdRequired ? 10 : 9}, $${catIdRequired ? 11 : 10}, $${catIdRequired ? 12 : 11}
          )
          RETURNING item_id`,
         catIdRequired
           ? [
               branchId,
-              categoryId,
+              legacyCatId,
               resolvedStoreId,
               input.name,
               input.barcode || '',
@@ -694,6 +719,8 @@ export const productsService = {
               input.costPrice ?? 0,
               input.sellPrice ?? 0,
               active,
+              input.categoryId ?? null,
+              input.unitId ?? null,
             ]
           : [
               branchId,
@@ -705,6 +732,8 @@ export const productsService = {
               input.costPrice ?? 0,
               input.sellPrice ?? 0,
               active,
+              input.categoryId ?? null,
+              input.unitId ?? null,
             ]
       );
       const itemId = Number(created.rows[0]?.item_id || 0);
@@ -743,6 +772,8 @@ export const productsService = {
     if (!current) return null;
 
     if (input.storeId !== undefined && input.storeId !== null) await ensureInBranch('stores', 'store_id', input.storeId, current.branch_id, 'Store');
+    if (input.categoryId !== undefined && input.categoryId !== null) await ensureInBranch('categories', 'cat_id', input.categoryId, current.branch_id, 'Category');
+    if (input.unitId !== undefined && input.unitId !== null) await ensureInBranch('units', 'unit_id', input.unitId, current.branch_id, 'Unit');
 
     const updates: string[] = [];
     const values: unknown[] = [id];
@@ -750,6 +781,8 @@ export const productsService = {
     if (input.name !== undefined) { updates.push(`name = $${p++}`); values.push(input.name); }
     if (input.barcode !== undefined) { updates.push(`barcode = NULLIF($${p++}, '')`); values.push(input.barcode || ''); }
     if (input.storeId !== undefined) { updates.push(`store_id = $${p++}`); values.push(input.storeId ?? null); }
+    if (input.categoryId !== undefined) { updates.push(`category_id = $${p++}`); values.push(input.categoryId ?? null); }
+    if (input.unitId !== undefined) { updates.push(`unit_id = $${p++}`); values.push(input.unitId ?? null); }
     if (input.stockAlert !== undefined) { updates.push(`${stockAlertColumn} = $${p++}`); values.push(input.stockAlert); }
     if (input.sellPrice !== undefined) { updates.push(`sell_price = $${p++}`); values.push(input.sellPrice); }
     if (input.costPrice !== undefined) { updates.push(`cost_price = $${p++}`); values.push(input.costPrice); }
