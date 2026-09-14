@@ -361,7 +361,7 @@ const PurchaseEditor = () => {
   };
 
   const handleSelectProduct = (p: Product) => {
-    const existingIdx = lineItems.findIndex((li) => Number(li.product_id) === p.product_id);
+    const existingIdx = lineItems.findIndex((li) => Number(li.product_id) === Number(p.product_id));
     const filtered = lineItems.filter((li) => li.quantity > 0 || (li.name && li.name.trim()));
     if (existingIdx >= 0) {
       const updated = lineItems.map((li, i) => {
@@ -380,7 +380,7 @@ const PurchaseEditor = () => {
       recalcTotals(updated, effectiveHeaderDiscount);
     } else {
       const newItem: LineItem = {
-        product_id: p.product_id,
+        product_id: Number(p.product_id),
         name: p.name,
         description: p.name,
         quantity: 1,
@@ -436,7 +436,7 @@ const PurchaseEditor = () => {
         if (i !== idx) return li;
         return {
           ...li,
-          product_id: created.product_id,
+          product_id: Number(created.product_id),
           name: created.name,
           description: li.description?.trim() ? li.description : created.name,
           unit_cost: Number(created.cost_price || 0),
@@ -651,270 +651,264 @@ const PurchaseEditor = () => {
             {formError}
           </div>
         )}
-	        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-	          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-	            Supplier
-	            <div className="w-full">
-	              <SearchableCombobox<number>
-	                value={supplierMode === 'existing' ? form.supplier_id : ''}
-	                options={[
-	                  ...suppliers.map((s) => ({
-	                    value: s.supplier_id,
-	                    label: s.supplier_name,
-	                  })),
-	                  { value: -1, label: '+ Add new supplier' },
-	                ]}
-	                placeholder="No supplier (Walk-in)"
-	                disabled={loading}
-	                onChange={(nextValue) => {
-	                  if (nextValue === -1) {
-	                    setSupplierMode('new');
-	                    setForm((prev) => ({ ...prev, supplier_id: '' }));
-	                    return;
-	                  }
-	                  setSupplierMode('existing');
-	                  setForm((prev) => ({
-	                    ...prev,
-	                    supplier_id: nextValue === '' ? '' : Number(nextValue),
-	                  }));
-	                }}
-	              />
-	            </div>
-	          </label>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div className="space-y-4">
+            <h3 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Supplier</h3>
+            <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+              Supplier
+              <div className="w-full">
+                <SearchableCombobox<number>
+                  value={supplierMode === 'existing' ? form.supplier_id : ''}
+                  options={[
+                    ...suppliers.map((s) => ({
+                      value: s.supplier_id,
+                      label: s.supplier_name,
+                    })),
+                    { value: -1, label: '+ Add new supplier' },
+                  ]}
+                  placeholder="No supplier (Walk-in)"
+                  disabled={loading}
+                  onChange={(nextValue) => {
+                    if (nextValue === -1) {
+                      setSupplierMode('new');
+                      setForm((prev) => ({ ...prev, supplier_id: '' }));
+                      return;
+                    }
+                    setSupplierMode('existing');
+                    setForm((prev) => ({
+                      ...prev,
+                      supplier_id: nextValue === '' ? '' : Number(nextValue),
+                    }));
+                  }}
+                />
+              </div>
+            </label>
 
-          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-            Purchase Date
-            <input
-              type="date"
-              className={fieldCls}
-              value={form.purchase_date}
-              onChange={(e) => setForm({ ...form, purchase_date: e.target.value })}
-            />
-          </label>
-
-        {supplierMode === 'new' && (
-          <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-3 p-3 rounded-lg border border-dashed border-primary-300 bg-primary-50/60 dark:border-primary-700 dark:bg-primary-500/10">
-            <div className="md:col-span-3 text-sm font-semibold text-primary-700 dark:text-primary-200">
-              New supplier details
-            </div>
-            <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-              Name
-              <input
-                className={fieldCls}
-                value={newSupplier.supplier_name}
-                onChange={(e) => setNewSupplier({ ...newSupplier, supplier_name: e.target.value })}
-                placeholder="Supplier name"
-              />
-            </label>
-            <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-              Company
-              <input
-                className={fieldCls}
-                value={newSupplier.company_name || ''}
-                onChange={(e) => setNewSupplier({ ...newSupplier, company_name: e.target.value })}
-                placeholder="Company"
-              />
-            </label>
-            <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-              Contact Person
-              <input
-                className={fieldCls}
-                value={newSupplier.contact_person || ''}
-                onChange={(e) => setNewSupplier({ ...newSupplier, contact_person: e.target.value })}
-                placeholder="Contact person"
-              />
-            </label>
-            <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-              Contact Phone
-              <input
-                className={fieldCls}
-                value={newSupplier.contact_phone || ''}
-                onChange={(e) => setNewSupplier({ ...newSupplier, contact_phone: e.target.value })}
-                placeholder="+1 555 000 1234"
-              />
-            </label>
-            <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-              Phone
-              <input
-                className={fieldCls}
-                value={newSupplier.phone || ''}
-                onChange={(e) => setNewSupplier({ ...newSupplier, phone: e.target.value })}
-                placeholder="+1 555 123 4567"
-              />
-            </label>
-            <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-              Remaining Balance
-              <input
-                type="number"
-                className={fieldCls}
-                value={newSupplier.remaining_balance ?? 0}
-                onChange={(e) =>
-                  setNewSupplier({ ...newSupplier, remaining_balance: Number(e.target.value || 0) })
-                }
-                placeholder="0.00"
-              />
-            </label>
-            <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200 md:col-span-3">
-              Location
-              <input
-                className={fieldCls}
-                value={newSupplier.location || ''}
-                onChange={(e) => setNewSupplier({ ...newSupplier, location: e.target.value })}
-                placeholder="City / Area"
-              />
-            </label>
+            {supplierMode === 'new' && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-lg border border-dashed border-primary-300 bg-primary-50/60 dark:border-primary-700 dark:bg-primary-500/10">
+                <div className="sm:col-span-2 text-sm font-semibold text-primary-700 dark:text-primary-200">
+                  New supplier details
+                </div>
+                <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+                  Name
+                  <input
+                    className={fieldCls}
+                    value={newSupplier.supplier_name}
+                    onChange={(e) => setNewSupplier({ ...newSupplier, supplier_name: e.target.value })}
+                    placeholder="Supplier name"
+                  />
+                </label>
+                <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+                  Company
+                  <input
+                    className={fieldCls}
+                    value={newSupplier.company_name || ''}
+                    onChange={(e) => setNewSupplier({ ...newSupplier, company_name: e.target.value })}
+                    placeholder="Company"
+                  />
+                </label>
+                <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+                  Contact Person
+                  <input
+                    className={fieldCls}
+                    value={newSupplier.contact_person || ''}
+                    onChange={(e) => setNewSupplier({ ...newSupplier, contact_person: e.target.value })}
+                    placeholder="Contact person"
+                  />
+                </label>
+                <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+                  Contact Phone
+                  <input
+                    className={fieldCls}
+                    value={newSupplier.contact_phone || ''}
+                    onChange={(e) => setNewSupplier({ ...newSupplier, contact_phone: e.target.value })}
+                    placeholder="+1 555 000 1234"
+                  />
+                </label>
+                <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+                  Phone
+                  <input
+                    className={fieldCls}
+                    value={newSupplier.phone || ''}
+                    onChange={(e) => setNewSupplier({ ...newSupplier, phone: e.target.value })}
+                    placeholder="+1 555 123 4567"
+                  />
+                </label>
+                <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+                  Remaining Balance
+                  <input
+                    type="number"
+                    className={fieldCls}
+                    value={newSupplier.remaining_balance ?? 0}
+                    onChange={(e) =>
+                      setNewSupplier({ ...newSupplier, remaining_balance: Number(e.target.value || 0) })
+                    }
+                    placeholder="0.00"
+                  />
+                </label>
+                <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200 sm:col-span-2">
+                  Location
+                  <input
+                    className={fieldCls}
+                    value={newSupplier.location || ''}
+                    onChange={(e) => setNewSupplier({ ...newSupplier, location: e.target.value })}
+                    placeholder="City / Area"
+                  />
+                </label>
+              </div>
+            )}
           </div>
-        )}
 
-        {docType !== 'order' && (
-          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-            Purchase Type
-            <select
-              className={fieldCls}
-              value={effectivePurchaseType}
-              onChange={(e) =>
-                setForm((prev) => {
-                  const nextType = e.target.value as 'cash' | 'credit';
-                  return {
-                    ...prev,
-                    purchase_type: nextType,
-                    status: nextType === 'credit' ? 'unpaid' : prev.status === 'unpaid' ? 'received' : prev.status,
-                    acc_id: nextType === 'credit' ? '' : prev.acc_id,
-                    paid_amount: nextType === 'credit' ? 0 : prev.paid_amount,
-                  };
-                })
-              }
-            >
-              <option value="cash">Cash</option>
-              <option value="credit">Credit</option>
-            </select>
-          </label>
-        )}
+          <div className="space-y-4">
+            <h3 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Purchase Details</h3>
 
-        {shouldShowDueDate && (
-          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-            Credit Return Date (Ballanta)
-            <input
-              type="date"
-              className={fieldCls}
-              value={form.due_date}
-              onChange={(e) => setForm((prev) => ({ ...prev, due_date: e.target.value }))}
-              disabled={loading}
-            />
-          </label>
-        )}
+            <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+              Purchase Date
+              <input
+                type="date"
+                className={fieldCls}
+                value={form.purchase_date}
+                onChange={(e) => setForm({ ...form, purchase_date: e.target.value })}
+              />
+            </label>
 
-        {docType === 'order' ? (
-          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-            Expected Date
-            <input
-              type="date"
-              className={fieldCls}
-              value={form.expected_date}
-              onChange={(e) => setForm((prev) => ({ ...prev, expected_date: e.target.value }))}
-              disabled={loading}
-            />
-            <span className="text-xs text-slate-500">Planned delivery date for this purchase order.</span>
-          </label>
-        ) : (
-          <div className="hidden md:block" />
-        )}
+            {docType !== 'order' && (
+              <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+                Purchase Type
+                <select
+                  className={fieldCls}
+                  value={effectivePurchaseType}
+                  onChange={(e) =>
+                    setForm((prev) => {
+                      const nextType = e.target.value as 'cash' | 'credit';
+                      return {
+                        ...prev,
+                        purchase_type: nextType,
+                        status: nextType === 'credit' ? 'unpaid' : prev.status === 'unpaid' ? 'received' : prev.status,
+                        acc_id: nextType === 'credit' ? '' : prev.acc_id,
+                        paid_amount: nextType === 'credit' ? 0 : prev.paid_amount,
+                      };
+                    })
+                  }
+                >
+                  <option value="cash">Cash</option>
+                  <option value="credit">Credit</option>
+                </select>
+              </label>
+            )}
 
-        {docType !== 'order' && (shouldShowPaymentAccount ? (
-          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-            Pay from Account
-            <SearchableCombobox<number>
-              value={form.acc_id}
-              options={accounts.map((a) => ({
-                value: a.acc_id,
-                label: `${a.name}${a.institution ? ` (${a.institution})` : ''}`,
-              }))}
-              placeholder="Select account"
-              disabled={loading}
-              onChange={(nextValue) => setForm({ ...form, acc_id: nextValue === '' ? '' : Number(nextValue) })}
-            />
-            <span className="text-xs text-slate-500">Required for cash/partial payments.</span>
-          </label>
-        ) : (
-          <div className="hidden md:block" />
-        ))}
+            {shouldShowDueDate && (
+              <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+                Credit Return Date (Ballanta)
+                <input
+                  type="date"
+                  className={fieldCls}
+                  value={form.due_date}
+                  onChange={(e) => setForm((prev) => ({ ...prev, due_date: e.target.value }))}
+                  disabled={loading}
+                />
+              </label>
+            )}
 
-        {docType !== 'order' && (
-          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-            Purchase Status
-            <select
-              className={fieldCls}
-              value={effectiveStatus}
-              onChange={(e) => {
-                const nextStatus = e.target.value as any;
-                setForm((prev) => ({
-                  ...prev,
-                  status: nextStatus,
-                  paid_amount: nextStatus === 'void' ? 0 : prev.paid_amount,
-                  acc_id: nextStatus === 'void' ? '' : prev.acc_id,
-                }));
-              }}
-              disabled={effectivePurchaseType === 'credit'}
-            >
-              <option value="received">Received</option>
-              <option value="partial">Incomplete</option>
-              <option value="unpaid">Unpaid</option>
-              <option value="void">Cancelled</option>
-            </select>
-            <span className="text-xs text-slate-500">Status controls how payment is recorded.</span>
-          </label>
-        )}
+            {docType === 'order' && (
+              <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+                Expected Date
+                <input
+                  type="date"
+                  className={fieldCls}
+                  value={form.expected_date}
+                  onChange={(e) => setForm((prev) => ({ ...prev, expected_date: e.target.value }))}
+                  disabled={loading}
+                />
+                <span className="text-xs text-slate-500">Planned delivery date for this purchase order.</span>
+              </label>
+            )}
 
-        {docType !== 'order' && effectivePurchaseType !== 'credit' && effectiveStatus !== 'void' && (
-          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-            Amount Paid
-            <input
-              type="number"
-              className={fieldCls}
-              value={form.paid_amount}
-              min={0}
-              max={form.total}
-              step="0.01"
-              inputMode="decimal"
-              onChange={(e) => {
-                const raw = Number(e.target.value || 0);
-                setForm((prev) => {
-                  const total = Number(prev.total || 0);
-                  const paid = Math.max(0, Math.min(raw, total));
-                  const nextStatus =
-                    paid <= 0
-                      ? 'unpaid'
-                      : paid + 0.000001 < total
-                      ? 'partial'
-                      : 'received';
-                  return {
-                    ...prev,
-                    paid_amount: paid,
-                    status: nextStatus as any,
-                    acc_id: nextStatus === 'unpaid' ? '' : prev.acc_id,
-                  };
-                });
-              }}
-              placeholder="0.00"
-              disabled={loading}
-            />
-            <span className="text-xs text-slate-500">
-              Max ${totalValue.toFixed(2)} • Remaining ${remainingValue.toFixed(2)}
-            </span>
-          </label>
-        )}
+            {docType !== 'order' && shouldShowPaymentAccount && (
+              <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+                Pay from Account
+                <SearchableCombobox<number>
+                  value={form.acc_id}
+                  options={accounts.map((a) => ({
+                    value: a.acc_id,
+                    label: `${a.name}${a.institution ? ` (${a.institution})` : ''}`,
+                  }))}
+                  placeholder="Select account"
+                  disabled={loading}
+                  onChange={(nextValue) => setForm({ ...form, acc_id: nextValue === '' ? '' : Number(nextValue) })}
+                />
+                <span className="text-xs text-slate-500">Required for cash/partial payments.</span>
+              </label>
+            )}
 
-        <label className="flex flex-col text-sm font-medium gap-1 md:col-span-2 text-slate-800 dark:text-slate-200">
-          Note
-          <textarea
-            className={`${fieldCls} min-h-[80px]`}
-            value={form.note}
-            onChange={(e) => setForm({ ...form, note: e.target.value })}
-          />
-        </label>
-      </div>
+            {docType !== 'order' && (
+              <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+                Purchase Status
+                <select
+                  className={fieldCls}
+                  value={effectiveStatus}
+                  onChange={(e) => {
+                    const nextStatus = e.target.value as any;
+                    setForm((prev) => ({
+                      ...prev,
+                      status: nextStatus,
+                      paid_amount: nextStatus === 'void' ? 0 : prev.paid_amount,
+                      acc_id: nextStatus === 'void' ? '' : prev.acc_id,
+                    }));
+                  }}
+                  disabled={effectivePurchaseType === 'credit'}
+                >
+                  <option value="received">Received</option>
+                  <option value="partial">Incomplete</option>
+                  <option value="unpaid">Unpaid</option>
+                  <option value="void">Cancelled</option>
+                </select>
+                <span className="text-xs text-slate-500">Status controls how payment is recorded.</span>
+              </label>
+            )}
 
-        <div className="space-y-3">
+            {docType !== 'order' && effectivePurchaseType !== 'credit' && effectiveStatus !== 'void' && (
+              <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+                Amount Paid
+                <input
+                  type="number"
+                  className={fieldCls}
+                  value={form.paid_amount}
+                  min={0}
+                  max={form.total}
+                  step="0.01"
+                  inputMode="decimal"
+                  onChange={(e) => {
+                    const raw = Number(e.target.value || 0);
+                    setForm((prev) => {
+                      const total = Number(prev.total || 0);
+                      const paid = Math.max(0, Math.min(raw, total));
+                      const nextStatus =
+                        paid <= 0
+                          ? 'unpaid'
+                          : paid + 0.000001 < total
+                          ? 'partial'
+                          : 'received';
+                      return {
+                        ...prev,
+                        paid_amount: paid,
+                        status: nextStatus as any,
+                        acc_id: nextStatus === 'unpaid' ? '' : prev.acc_id,
+                      };
+                    });
+                  }}
+                  placeholder="0.00"
+                  disabled={loading}
+                />
+                <span className="text-xs text-slate-500">
+                  Max ${totalValue.toFixed(2)} • Remaining ${remainingValue.toFixed(2)}
+                </span>
+              </label>
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-3 border-t border-slate-200 pt-6 dark:border-slate-800">
         <div className="flex items-center justify-between">
           <span className="font-semibold text-slate-800 dark:text-slate-200">Items</span>
           <div className="flex flex-wrap items-end gap-2 justify-end">
@@ -1150,23 +1144,23 @@ const PurchaseEditor = () => {
         </Modal>
 
 	        <div className="overflow-x-auto">
-	          <div className="min-w-[980px] rounded-lg border border-slate-200 dark:border-slate-800 overflow-visible">
-	            <table className="min-w-full text-sm">
-	              <thead className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-	              <tr>
-	                <th className="py-2 pr-2 pl-5 text-left">Item name</th>
-	                <th className="py-2 pr-2 pl-5 text-left">Description</th>
-	                <th className="px-2 py-2 text-center">Qty</th>
-	                <th className="px-2 py-2 text-center">Unit Cost</th>
-                <th className="px-2 py-2 text-center">Sale Price</th>
-                {discountMode === 'per_item' && <th className="px-2 py-2 text-center">Discount</th>}
-                <th className="px-2 py-2 text-right">Line Total</th>
-                <th className="px-2 py-2 text-center">Action</th>
+	          <div className="min-w-[980px] overflow-visible">
+	            <table className="min-w-full border-collapse text-sm">
+	              <thead>
+	              <tr className="border-b-2 border-slate-200 dark:border-slate-700">
+	                <th className="py-2 pr-2 pl-5 text-left text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Item name</th>
+	                <th className="py-2 pr-2 pl-5 text-left text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Description</th>
+	                <th className="px-2 py-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Qty</th>
+	                <th className="px-2 py-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Unit Cost</th>
+                <th className="px-2 py-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Sale Price</th>
+                {discountMode === 'per_item' && <th className="px-2 py-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Discount</th>}
+                <th className="px-2 py-2 text-right text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Line Total</th>
+                <th className="px-2 py-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Action</th>
               </tr>
 	              </thead>
-	              <tbody>
+	              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
 	              {lineItems.map((item, idx) => (
-	                <tr key={idx} className="border-t border-slate-200 dark:border-slate-800">
+	                <tr key={idx}>
 	                  <td className="px-2 py-2">
 	                    <SearchableCombobox<number>
 	                      value={item.product_id}
@@ -1190,7 +1184,7 @@ const PurchaseEditor = () => {
 	                          return;
 	                        }
 	                        const productId = nextValue === '' ? '' : Number(nextValue);
-	                        const p = products.find((x) => x.product_id === productId);
+	                        const p = products.find((x) => Number(x.product_id) === productId);
 	                        const next = lineItems.map((li, i) => {
 	                          if (i !== idx) return li;
 	                          if (!productId || !p) {
@@ -1226,21 +1220,55 @@ const PurchaseEditor = () => {
                     />
                   </td>
                   <td className="px-2 py-2">
-                    <input
-                      type="number"
-                      className={compactNumberCls}
-                      value={item.quantity}
-                      min={0}
-                      step="1"
-                      onChange={(e) => {
-                        const v = Number(e.target.value || 0);
-                        setLineItemValue(idx, 'quantity', v);
-                        recalcTotals(
-                          lineItems.map((li, i) => (i === idx ? { ...li, quantity: v } : li)),
-                          effectiveHeaderDiscount
-                        );
-                      }}
-                    />
+                    <div className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900">
+                      <button
+                        type="button"
+                        aria-label="Decrease quantity"
+                        disabled={loading}
+                        onClick={() => {
+                          const v = Math.max(0, Number(item.quantity || 0) - 1);
+                          setLineItemValue(idx, 'quantity', v);
+                          recalcTotals(
+                            lineItems.map((li, i) => (i === idx ? { ...li, quantity: v } : li)),
+                            effectiveHeaderDiscount
+                          );
+                        }}
+                        className="flex h-10 w-9 items-center justify-center text-lg text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800"
+                      >
+                        −
+                      </button>
+                      <input
+                        type="number"
+                        className="h-10 w-14 border-x border-slate-300 bg-transparent text-center text-base text-slate-900 outline-none dark:border-slate-700 dark:text-slate-100"
+                        value={item.quantity}
+                        min={0}
+                        step="1"
+                        onChange={(e) => {
+                          const v = Number(e.target.value || 0);
+                          setLineItemValue(idx, 'quantity', v);
+                          recalcTotals(
+                            lineItems.map((li, i) => (i === idx ? { ...li, quantity: v } : li)),
+                            effectiveHeaderDiscount
+                          );
+                        }}
+                      />
+                      <button
+                        type="button"
+                        aria-label="Increase quantity"
+                        disabled={loading}
+                        onClick={() => {
+                          const v = Number(item.quantity || 0) + 1;
+                          setLineItemValue(idx, 'quantity', v);
+                          recalcTotals(
+                            lineItems.map((li, i) => (i === idx ? { ...li, quantity: v } : li)),
+                            effectiveHeaderDiscount
+                          );
+                        }}
+                        className="flex h-10 w-9 items-center justify-center text-lg text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800"
+                      >
+                        +
+                      </button>
+                    </div>
                   </td>
                   <td className="px-2 py-2">
                     <input
@@ -1322,22 +1350,33 @@ const PurchaseEditor = () => {
 	          </div>
 	        </div>
 
-        <div className="flex justify-end gap-6 text-sm mt-2">
-          <div className="flex flex-col items-end">
-            <span className="text-slate-500">Subtotal</span>
-            <span className="font-semibold">${form.subtotal.toFixed(2)}</span>
-          </div>
-          <div className="flex flex-col items-end">
-            <span className="text-slate-500">Discount</span>
-            <span className="font-semibold">${Number(discountSummary || 0).toFixed(2)}</span>
-          </div>
-          <div className="flex flex-col items-end">
-            <span className="text-slate-500">Total</span>
-            <span className="font-semibold">${form.total.toFixed(2)}</span>
+        <div className="grid grid-cols-1 gap-6 border-t border-slate-200 pt-6 dark:border-slate-800 md:grid-cols-[1fr_320px]">
+          <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+            Note
+            <textarea
+              className={`${fieldCls} min-h-[120px]`}
+              value={form.note}
+              onChange={(e) => setForm({ ...form, note: e.target.value })}
+            />
+          </label>
+
+          <div className="h-fit rounded-lg border border-slate-200 dark:border-slate-800">
+            <div className="flex items-center justify-between px-4 py-3 text-sm">
+              <span className="text-slate-500 dark:text-slate-400">Subtotal</span>
+              <span className="font-medium text-slate-900 dark:text-slate-100">${form.subtotal.toFixed(2)}</span>
+            </div>
+            <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-sm dark:border-slate-800">
+              <span className="text-slate-500 dark:text-slate-400">Discount</span>
+              <span className="font-medium text-slate-900 dark:text-slate-100">${Number(discountSummary || 0).toFixed(2)}</span>
+            </div>
+            <div className="flex items-center justify-between border-t border-slate-200 px-4 py-3 dark:border-slate-700">
+              <span className="font-semibold text-slate-800 dark:text-slate-200">Total Amount</span>
+              <span className="text-lg font-bold text-slate-900 dark:text-slate-100">${form.total.toFixed(2)}</span>
+            </div>
           </div>
         </div>
 
-        <div className="flex justify-end gap-2 pt-2">
+        <div className="flex justify-end gap-2 border-t border-slate-200 pt-6 dark:border-slate-800">
           <button
             type="button"
             className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"

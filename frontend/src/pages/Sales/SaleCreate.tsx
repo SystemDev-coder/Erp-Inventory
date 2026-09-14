@@ -354,7 +354,7 @@ const SaleCreate = () => {
     }
     const created = res.data.product;
     const option: SaleItemOption = {
-      item_id: created.product_id,
+      item_id: Number(created.product_id),
       item_name: created.name,
       unit_price: Number(created.sell_price || 0),
       available_qty: 0,
@@ -997,7 +997,7 @@ const SaleCreate = () => {
                         clearError('items');
                         clearError('stock');
                         const itemId = nextValue === '' ? '' : Number(nextValue);
-                        const option = itemOptions.find((item) => item.item_id === itemId);
+                        const option = itemOptions.find((item) => Number(item.item_id) === itemId);
                         const nextItems = [...saleForm.items];
                         nextItems[idx] = {
                           ...nextItems[idx],
@@ -1032,7 +1032,7 @@ const SaleCreate = () => {
                         clearError('stock');
                         const quantity = Number(e.target.value || 0);
                         const nextItems = [...saleForm.items];
-                        const selected = itemOptions.find((item) => item.item_id === nextItems[idx].item_id);
+                        const selected = itemOptions.find((item) => Number(item.item_id) === Number(nextItems[idx].item_id));
                         nextItems[idx] = {
                           ...nextItems[idx],
                           quantity,
