@@ -6,7 +6,7 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { purchaseService, PurchaseItem } from '../../services/purchase.service';
 import { supplierService, Supplier } from '../../services/supplier.service';
 import { accountService, Account } from '../../services/account.service';
-import { productService, Product } from '../../services/product.service';
+import { productService, Product, Category, Unit } from '../../services/product.service';
 import { Modal } from '../../components/ui/modal/Modal';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
@@ -96,7 +96,20 @@ const PurchaseEditor = () => {
   const [pendingPayload, setPendingPayload] = useState<Record<string, unknown> | null>(null);
   const [newProductModalOpen, setNewProductModalOpen] = useState(false);
   const [newProductSaving, setNewProductSaving] = useState(false);
-  const [newProductForm, setNewProductForm] = useState({ name: '', cost_price: 0, sell_price: 0 });
+  const [newProductForm, setNewProductForm] = useState({
+    name: '',
+    cost_price: 0,
+    sell_price: 0,
+    category_id: '' as number | '',
+    unit_id: '' as number | '',
+    barcode: '',
+  });
+  // Which line to drop the created product into once saved - '' when the
+  // modal was opened from the "Select from products" picker (which appends
+  // a new line instead), a real index when opened from a line's own search box.
+  const [newProductTargetIdx, setNewProductTargetIdx] = useState<number | ''>('');
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [units, setUnits] = useState<Unit[]>([]);
   // Tracks whatever text is currently being typed into a line's item search box,
   // so that box can offer "+ Create '<text>'" inline when nothing matches -
   // only one combobox can be focused/typed into at a time in practice, so a
@@ -259,10 +272,20 @@ const PurchaseEditor = () => {
     setLoading(false);
   };
 
+  const loadCategoriesAndUnits = async () => {
+    const [catRes, unitRes] = await Promise.all([
+      productService.listCategories({ branchId: activeBranchId ?? undefined }),
+      productService.listUnits({ branchId: activeBranchId ?? undefined }),
+    ]);
+    if (catRes.success && catRes.data?.categories) setCategories(catRes.data.categories);
+    if (unitRes.success && unitRes.data?.units) setUnits(unitRes.data.units);
+  };
+
   useEffect(() => {
     loadOptions();
     // preload some items for the inline item combobox (and keep using server-side search while typing)
     void loadProducts('');
+    void loadCategoriesAndUnits();
     if (isEdit && Number(id)) loadPurchase(Number(id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, activeBranchId]);
@@ -373,6 +396,15 @@ const PurchaseEditor = () => {
     setProductPickerOpen(false);
   };
 
+  // Opens the "Create new product" modal - reused from both the "Select from
+  // products" picker (targetIdx '' appends a new line) and a line's own item
+  // search box (targetIdx set, so the created product lands on that exact line).
+  const openNewProductModal = (prefillName: string, targetIdx: number | '') => {
+    setNewProductForm({ name: prefillName, cost_price: 0, sell_price: 0, category_id: '', unit_id: '', barcode: '' });
+    setNewProductTargetIdx(targetIdx);
+    setNewProductModalOpen(true);
+  };
+
   const handleCreateProduct = async () => {
     const name = newProductForm.name.trim();
     if (!name) {
@@ -384,6 +416,9 @@ const PurchaseEditor = () => {
       name,
       cost_price: newProductForm.cost_price,
       sell_price: newProductForm.sell_price,
+      category_id: newProductForm.category_id || undefined,
+      unit_id: newProductForm.unit_id || undefined,
+      barcode: newProductForm.barcode.trim() || undefined,
     });
     setNewProductSaving(false);
     if (!res.success || !res.data?.product) {
@@ -392,39 +427,27 @@ const PurchaseEditor = () => {
     }
     const created = res.data.product;
     setProducts((prev) => [created, ...prev]);
-    setNewProductForm({ name: '', cost_price: 0, sell_price: 0 });
     setNewProductModalOpen(false);
-    handleSelectProduct(created);
-    showToast('success', 'New Product', `"${created.name}" created and added to this purchase`);
-  };
-
-  // Lets a line's own item-search box create a brand-new product straight from
-  // what was typed, without a modal - cost/sale price default to 0 and are
-  // filled in on the line itself, same as any other field on this form.
-  const handleQuickCreateProduct = async (idx: number, name: string) => {
-    if (!name.trim()) return;
-    const res = await productService.create({ name: name.trim(), cost_price: 0, sell_price: 0 });
-    if (!res.success || !res.data?.product) {
-      showToast('error', 'New Product', res.error || 'Failed to create product');
-      return;
+    if (newProductTargetIdx === '') {
+      handleSelectProduct(created);
+    } else {
+      const idx = newProductTargetIdx;
+      const next = lineItems.map((li, i) => {
+        if (i !== idx) return li;
+        return {
+          ...li,
+          product_id: created.product_id,
+          name: created.name,
+          description: li.description?.trim() ? li.description : created.name,
+          unit_cost: Number(created.cost_price || 0),
+          sale_price: Number(created.sell_price || 0),
+        } as LineItem;
+      });
+      setLineItems(next);
+      recalcTotals(next, effectiveHeaderDiscount);
     }
-    const created = res.data.product;
-    setProducts((prev) => [created, ...prev]);
-    const next = lineItems.map((li, i) => {
-      if (i !== idx) return li;
-      return {
-        ...li,
-        product_id: created.product_id,
-        name: created.name,
-        description: li.description?.trim() ? li.description : created.name,
-        unit_cost: 0,
-        sale_price: 0,
-        line_total: 0,
-      } as LineItem;
-    });
-    setLineItems(next);
-    recalcTotals(next, effectiveHeaderDiscount);
-    showToast('success', 'New Product', `"${created.name}" created - set its cost/sale price on this line`);
+    setNewProductTargetIdx('');
+    showToast('success', 'New Product', `"${created.name}" created and added to this purchase`);
   };
 
   const continueSaveAfterValidation = async (
@@ -963,10 +986,7 @@ const PurchaseEditor = () => {
               />
               <button
                 type="button"
-                onClick={() => {
-                  setNewProductForm({ name: productSearch.trim(), cost_price: 0, sell_price: 0 });
-                  setNewProductModalOpen(true);
-                }}
+                onClick={() => openNewProductModal(productSearch.trim(), '')}
                 className="h-12 inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md border border-primary-600 px-4 text-sm font-medium text-primary-700 hover:bg-primary-50 dark:border-primary-500/40 dark:text-primary-300 dark:hover:bg-primary-500/10"
               >
                 <Plus size={16} /> New product
@@ -1023,7 +1043,10 @@ const PurchaseEditor = () => {
             leaving the page to set the item up on the Items page first. */}
         <Modal
           isOpen={newProductModalOpen}
-          onClose={() => setNewProductModalOpen(false)}
+          onClose={() => {
+            setNewProductModalOpen(false);
+            setNewProductTargetIdx('');
+          }}
           title="Create new product"
           size="sm"
         >
@@ -1036,6 +1059,44 @@ const PurchaseEditor = () => {
                 value={newProductForm.name}
                 onChange={(e) => setNewProductForm((prev) => ({ ...prev, name: e.target.value }))}
                 autoFocus
+              />
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="font-medium text-slate-700 dark:text-slate-300">Category</span>
+                <select
+                  className={fieldCls}
+                  value={newProductForm.category_id}
+                  onChange={(e) => setNewProductForm((prev) => ({ ...prev, category_id: e.target.value ? Number(e.target.value) : '' }))}
+                >
+                  <option value="">Auto (default category)</option>
+                  {categories.map((c) => (
+                    <option key={c.category_id} value={c.category_id}>{c.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="font-medium text-slate-700 dark:text-slate-300">Unit</span>
+                <select
+                  className={fieldCls}
+                  value={newProductForm.unit_id}
+                  onChange={(e) => setNewProductForm((prev) => ({ ...prev, unit_id: e.target.value ? Number(e.target.value) : '' }))}
+                >
+                  <option value="">Auto (default unit)</option>
+                  {units.map((u) => (
+                    <option key={u.unit_id} value={u.unit_id}>{u.unit_name}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="font-medium text-slate-700 dark:text-slate-300">Barcode</span>
+              <input
+                type="text"
+                className={fieldCls}
+                value={newProductForm.barcode}
+                onChange={(e) => setNewProductForm((prev) => ({ ...prev, barcode: e.target.value }))}
+                placeholder="Scan or type a barcode (optional)"
               />
             </label>
             <div className="grid grid-cols-2 gap-3">
@@ -1063,12 +1124,15 @@ const PurchaseEditor = () => {
               </label>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Category, unit, and brand can be added later from the Items page - this just gets it into the purchase now.
+              Leaving Category or Unit as "Auto" assigns the branch's default - same as importing items without one.
             </p>
             <div className="flex justify-end gap-2 pt-2">
               <button
                 type="button"
-                onClick={() => setNewProductModalOpen(false)}
+                onClick={() => {
+                  setNewProductModalOpen(false);
+                  setNewProductTargetIdx('');
+                }}
                 className="h-10 rounded-md border border-slate-300 px-4 text-sm dark:border-slate-600"
               >
                 Cancel
@@ -1122,7 +1186,7 @@ const PurchaseEditor = () => {
 	                      onSearch={(q) => setLineSearchQuery(q)}
 	                      onChange={(nextValue) => {
 	                        if (nextValue === QUICK_CREATE_SENTINEL) {
-	                          void handleQuickCreateProduct(idx, lineSearchQuery);
+	                          openNewProductModal(lineSearchQuery.trim(), idx);
 	                          return;
 	                        }
 	                        const productId = nextValue === '' ? '' : Number(nextValue);

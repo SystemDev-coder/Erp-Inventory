@@ -6,11 +6,12 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { accountService, Account } from '../../services/account.service';
 import { customerService, Customer } from '../../services/customer.service';
 import { inventoryService, InventoryItem } from '../../services/inventory.service';
-import { productService } from '../../services/product.service';
+import { productService, Category, Unit } from '../../services/product.service';
 import { SaleDocType, SaleStatus, salesService } from '../../services/sales.service';
 import { formatAvailableQty, itemLabelWithAvailability } from '../../utils/itemAvailability';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
+import { Modal } from '../../components/ui/modal/Modal';
 import { useBranch } from '../../context/BranchContext';
 
 type FormLine = {
@@ -83,6 +84,19 @@ const SaleCreate = () => {
   // actually selling it until it's been purchased/stocked first.
   const [lineSearchQuery, setLineSearchQuery] = useState('');
   const QUICK_CREATE_SENTINEL = -1;
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [units, setUnits] = useState<Unit[]>([]);
+  const [newProductModalOpen, setNewProductModalOpen] = useState(false);
+  const [newProductSaving, setNewProductSaving] = useState(false);
+  const [newProductTargetIdx, setNewProductTargetIdx] = useState<number | ''>('');
+  const [newProductForm, setNewProductForm] = useState({
+    name: '',
+    cost_price: 0,
+    sell_price: 0,
+    category_id: '' as number | '',
+    unit_id: '' as number | '',
+    barcode: '',
+  });
 
   // ── CSS helpers ───────────────────────────────────────────────────────────
   const baseCls =
@@ -149,15 +163,19 @@ const SaleCreate = () => {
   useEffect(() => {
     const loadLookups = async () => {
       setLoading(true);
-      const [cRes, aRes, iRes, stockRes] = await Promise.all([
+      const [cRes, aRes, iRes, stockRes, catRes, unitRes] = await Promise.all([
         customerService.list({ branchId: activeBranchId ?? undefined }),
         accountService.list({ branchId: activeBranchId ?? undefined }),
         inventoryService.listItems({ branchId: activeBranchId ?? undefined }),
         inventoryService.listStock({ page: 1, limit: 100, branchId: activeBranchId ?? undefined }),
+        productService.listCategories({ branchId: activeBranchId ?? undefined }),
+        productService.listUnits({ branchId: activeBranchId ?? undefined }),
       ]);
 
       if (cRes.success && cRes.data?.customers) setCustomers(cRes.data.customers);
       if (aRes.success && aRes.data?.accounts) setAccounts(aRes.data.accounts);
+      if (catRes.success && catRes.data?.categories) setCategories(catRes.data.categories);
+      if (unitRes.success && unitRes.data?.units) setUnits(unitRes.data.units);
       const stockMap = new Map<number, number>();
       if (stockRes.success && stockRes.data?.rows) {
         stockRes.data.rows.forEach((row) =>
@@ -305,14 +323,31 @@ const SaleCreate = () => {
   // what was typed, mirroring handleAutoCreateCustomer above - no need to
   // leave the page to add it via the Items page first. It starts with 0
   // available stock, so the quantity-vs-availability check below still
-  // blocks actually selling it until it's been purchased/stocked.
-  const [creatingProduct, setCreatingProduct] = useState(false);
-  const handleQuickCreateProduct = async (idx: number, typedName: string) => {
-    const name = typedName.trim();
-    if (!name) return;
-    setCreatingProduct(true);
-    const res = await productService.create({ name, cost_price: 0, sell_price: 0 });
-    setCreatingProduct(false);
+  // blocks actually selling it until it's been purchased/stocked. Opens a
+  // small modal (instead of creating instantly) so category/unit/barcode can
+  // be set too, not just a bare name.
+  const openNewProductModal = (prefillName: string, targetIdx: number) => {
+    setNewProductForm({ name: prefillName, cost_price: 0, sell_price: 0, category_id: '', unit_id: '', barcode: '' });
+    setNewProductTargetIdx(targetIdx);
+    setNewProductModalOpen(true);
+  };
+
+  const handleCreateProduct = async () => {
+    const name = newProductForm.name.trim();
+    if (!name) {
+      showToast('error', 'New Item', 'Item name is required');
+      return;
+    }
+    setNewProductSaving(true);
+    const res = await productService.create({
+      name,
+      cost_price: newProductForm.cost_price,
+      sell_price: newProductForm.sell_price,
+      category_id: newProductForm.category_id || undefined,
+      unit_id: newProductForm.unit_id || undefined,
+      barcode: newProductForm.barcode.trim() || undefined,
+    });
+    setNewProductSaving(false);
     if (!res.success || !res.data?.product) {
       showToast('error', 'New Item', res.error || 'Could not create this item.');
       return;
@@ -321,19 +356,24 @@ const SaleCreate = () => {
     const option: SaleItemOption = {
       item_id: created.product_id,
       item_name: created.name,
-      unit_price: 0,
+      unit_price: Number(created.sell_price || 0),
       available_qty: 0,
     };
     setItemOptions((prev) => [option, ...prev]);
-    const nextItems = [...saleForm.items];
-    nextItems[idx] = {
-      ...nextItems[idx],
-      item_id: option.item_id,
-      unit_price: 0,
-      available_qty: 0,
-    };
-    setSaleForm((prev) => ({ ...prev, items: nextItems }));
-    recalcTotals(nextItems, saleForm.discount);
+    if (newProductTargetIdx !== '') {
+      const idx = newProductTargetIdx;
+      const nextItems = [...saleForm.items];
+      nextItems[idx] = {
+        ...nextItems[idx],
+        item_id: option.item_id,
+        unit_price: option.unit_price,
+        available_qty: 0,
+      };
+      setSaleForm((prev) => ({ ...prev, items: nextItems }));
+      recalcTotals(nextItems, saleForm.discount);
+    }
+    setNewProductModalOpen(false);
+    setNewProductTargetIdx('');
     showToast('success', 'New Item', `"${created.name}" was added - it has 0 stock until purchased/stocked.`);
   };
 
@@ -951,7 +991,7 @@ const SaleCreate = () => {
                       onSearch={(q) => setLineSearchQuery(q)}
                       onChange={(nextValue) => {
                         if (nextValue === QUICK_CREATE_SENTINEL) {
-                          void handleQuickCreateProduct(idx, lineSearchQuery);
+                          openNewProductModal(lineSearchQuery.trim(), idx);
                           return;
                         }
                         clearError('items');
@@ -1186,6 +1226,117 @@ const SaleCreate = () => {
         variant="warning"
         isLoading={submitting}
       />
+
+      {/* Inline "create new item" - lets a line's own search box add a brand-new
+          item (with category/unit/barcode, same as the Items page) without
+          leaving this form first. */}
+      <Modal
+        isOpen={newProductModalOpen}
+        onClose={() => {
+          setNewProductModalOpen(false);
+          setNewProductTargetIdx('');
+        }}
+        title="Create new item"
+        size="sm"
+      >
+        <div className="space-y-3">
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="font-medium text-slate-700 dark:text-slate-300">Item name *</span>
+            <input
+              type="text"
+              className={controlCls}
+              value={newProductForm.name}
+              onChange={(e) => setNewProductForm((prev) => ({ ...prev, name: e.target.value }))}
+              autoFocus
+            />
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="font-medium text-slate-700 dark:text-slate-300">Category</span>
+              <select
+                className={controlCls}
+                value={newProductForm.category_id}
+                onChange={(e) => setNewProductForm((prev) => ({ ...prev, category_id: e.target.value ? Number(e.target.value) : '' }))}
+              >
+                <option value="">Auto (default category)</option>
+                {categories.map((c) => (
+                  <option key={c.category_id} value={c.category_id}>{c.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="font-medium text-slate-700 dark:text-slate-300">Unit</span>
+              <select
+                className={controlCls}
+                value={newProductForm.unit_id}
+                onChange={(e) => setNewProductForm((prev) => ({ ...prev, unit_id: e.target.value ? Number(e.target.value) : '' }))}
+              >
+                <option value="">Auto (default unit)</option>
+                {units.map((u) => (
+                  <option key={u.unit_id} value={u.unit_id}>{u.unit_name}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="font-medium text-slate-700 dark:text-slate-300">Barcode</span>
+            <input
+              type="text"
+              className={controlCls}
+              value={newProductForm.barcode}
+              onChange={(e) => setNewProductForm((prev) => ({ ...prev, barcode: e.target.value }))}
+              placeholder="Scan or type a barcode (optional)"
+            />
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="font-medium text-slate-700 dark:text-slate-300">Cost price</span>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                className={controlCls}
+                value={newProductForm.cost_price}
+                onChange={(e) => setNewProductForm((prev) => ({ ...prev, cost_price: Number(e.target.value || 0) }))}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="font-medium text-slate-700 dark:text-slate-300">Sell price</span>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                className={controlCls}
+                value={newProductForm.sell_price}
+                onChange={(e) => setNewProductForm((prev) => ({ ...prev, sell_price: Number(e.target.value || 0) }))}
+              />
+            </label>
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            This item starts with 0 stock - it can't actually be sold until it's been purchased/stocked.
+          </p>
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                setNewProductModalOpen(false);
+                setNewProductTargetIdx('');
+              }}
+              className="h-10 rounded-md border border-slate-300 px-4 text-sm dark:border-slate-600"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleCreateProduct}
+              disabled={newProductSaving}
+              className="h-10 rounded-md bg-primary-600 px-4 text-sm font-medium text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {newProductSaving ? 'Creating…' : 'Create & add to sale'}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 };
