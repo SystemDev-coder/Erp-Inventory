@@ -108,7 +108,8 @@ export const updateAccountTransfer = asyncHandler(async (req: AuthRequest, res: 
 export const listLiabilityAccounts = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
-  const accounts = await financeService.listLiabilityAccounts(scope, branchId);
+  const onlyOutstanding = req.query.onlyOutstanding !== 'false';
+  const accounts = await financeService.listLiabilityAccounts(scope, branchId, onlyOutstanding);
   return ApiResponse.success(res, { accounts });
 });
 

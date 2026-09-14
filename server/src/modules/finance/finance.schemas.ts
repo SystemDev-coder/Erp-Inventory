@@ -23,6 +23,7 @@ export const liabilityPaymentSchema = z.object({
   payDate: z.string().optional(),
   referenceNo: z.string().optional().or(z.literal('')),
   note: z.string().optional().or(z.literal('')),
+  direction: z.enum(['payment', 'borrow']).optional().default('payment'),
 });
 
 export const customerReceiptSchema = z.object({

@@ -14,6 +14,7 @@ export type CoaKey =
   | 'supplierAdvances'
   | 'expensePayable'
   | 'payrollPayable'
+  | 'notesPayable'
   | 'operatingExpense'
   | 'payrollExpense'
   | 'ownerCapital'
@@ -43,6 +44,7 @@ const COA_SPECS: Record<CoaKey, CoaAccountSpec> = {
   supplierAdvances: { name: 'Supplier Advances', accountType: 'asset' },
   expensePayable: { name: 'Expense Payable', accountType: 'liability' },
   payrollPayable: { name: 'Payroll Payable', accountType: 'liability' },
+  notesPayable: { name: 'Note Payable', accountType: 'liability' },
   operatingExpense: { name: 'Operating Expense', accountType: 'expense' },
   payrollExpense: { name: 'Payroll Expense', accountType: 'expense' },
   ownerCapital: { name: 'Owner Capital', accountType: 'equity' },

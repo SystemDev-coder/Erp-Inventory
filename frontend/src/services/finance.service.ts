@@ -31,6 +31,7 @@ export interface LiabilityPayment {
   pay_date: string;
   reference_no?: string | null;
   note?: string | null;
+  direction: 'payment' | 'borrow';
   liability_account_name?: string;
   pay_from_account_name?: string;
 }
@@ -277,8 +278,11 @@ export const financeService = {
   },
 
   // Liability payments
-  async listLiabilityAccounts(params?: { branchId?: number }) {
-    const qs = params?.branchId ? `?branchId=${params.branchId}` : '';
+  async listLiabilityAccounts(params?: { branchId?: number; onlyOutstanding?: boolean }) {
+    const qsParts: string[] = [];
+    if (params?.branchId) qsParts.push(`branchId=${params.branchId}`);
+    if (params?.onlyOutstanding === false) qsParts.push('onlyOutstanding=false');
+    const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
     return apiClient.get<{ accounts: LiabilityAccount[] }>(`${API.FINANCE.LIABILITY_ACCOUNTS}${qs}`);
   },
   async listLiabilityPayments(params?: { branchId?: number; fromDate?: string; toDate?: string }) {
@@ -297,6 +301,7 @@ export const financeService = {
     pay_date?: string;
     reference_no?: string;
     note?: string;
+    direction?: 'payment' | 'borrow';
   }) {
     return apiClient.post<{ payment: LiabilityPayment }>(API.FINANCE.LIABILITY_PAYMENTS, {
       branchId: payload.branch_id,
@@ -306,6 +311,7 @@ export const financeService = {
       payDate: payload.pay_date,
       referenceNo: payload.reference_no,
       note: payload.note,
+      direction: payload.direction,
     });
   },
   async deleteLiabilityPayment(id: number) {

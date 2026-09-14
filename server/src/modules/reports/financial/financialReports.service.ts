@@ -507,6 +507,7 @@ const isEquityLikeAccount = (name: string) => {
   const n = normalizeAccountName(name);
   return n.includes('capital') || n.includes('equity') || n.includes('retained') || n.includes('owner');
 };
+const isOpeningBalanceEquityAccount = (name: string) => normalizeAccountName(name).includes('opening balance');
 
 type BalanceSheetKind = 'asset' | 'liability' | 'equity' | 'revenue' | 'expense';
 
@@ -1322,6 +1323,18 @@ export const buildBalanceSheetFromLedger = async (
   let receivableFromAccounts = 0;
   let accountsPayableFromAccounts = 0;
   let inventoryFromAccounts = 0;
+  // Ledger-only twins of the two accumulators above, used solely for the equity
+  // reconciliation below - accountsPayableFromAccounts/inventoryFromAccounts use
+  // naturalBalance, which (lines ~1351-1355) prefers the stored accounts.balance
+  // whenever it's non-zero, even if it's gone stale relative to real new ledger
+  // activity (postGl never updates accounts.balance for non-cash accounts, so a
+  // one-time opening balance stays frozen forever unless a fallback overrides it).
+  // The reconciliation needs to compare against what the ledger actually contains,
+  // since that's the only figure double-entry bookkeeping guarantees is internally
+  // consistent - comparing against the "preferred" (possibly stale) value would
+  // under- or over-correct, as an isolated test transaction proved during review.
+  let inventoryLedgerTotal = 0;
+  let accountsPayableLedgerTotal = 0;
   let drawingFromAccounts = 0;
   let usedPrepaidAccounts = false;
   let usedOwnerEquityBreakdown = false;
@@ -1370,6 +1383,7 @@ export const buildBalanceSheetFromLedger = async (
     if (kind === 'liability' || isPayableAccount(accountName)) {
       if (isAccountsPayableAccount(accountName)) {
         accountsPayableFromAccounts += moneyPos(naturalBalance);
+        accountsPayableLedgerTotal += moneyPos(toNaturalBalance(txnBalanceRaw, accountTypeRaw, accountName));
         continue;
       }
       currentLiabilities.push({
@@ -1418,6 +1432,7 @@ export const buildBalanceSheetFromLedger = async (
 
     if (kind === 'asset' && isInventoryAssetAccountName(accountName)) {
       inventoryFromAccounts += Number(naturalBalance || 0);
+      inventoryLedgerTotal += Number(toNaturalBalance(txnBalanceRaw, accountTypeRaw, accountName) || 0);
       continue;
     }
 
@@ -1562,6 +1577,48 @@ export const buildBalanceSheetFromLedger = async (
         row_type: 'detail',
       });
     }
+
+  // Inventory (above, line ~1476) and Accounts Payable (above, line ~1460) are both
+  // deliberately sourced from operational truth - on-hand stock valuation, the supplier
+  // ledger - rather than whatever ended up posted to their own GL account, since those
+  // are more trustworthy than a GL row that may be stale or never posted to at all. But
+  // neither substitution has a matching entry anywhere else on the statement, so
+  // totalAssets/totalLiabilities can move without totalEquity moving to match - this is
+  // NOT the generic residual/plug the comment below forbids for retained earnings, it's a
+  // specific, understood reconciliation for two named substitution mechanisms. Trial
+  // Balance (getTrialBalance) already solves the identical Inventory case by carrying that
+  // exact gap through Opening Balance Equity so the statement still balances - mirror that
+  // here for both gaps instead of letting them surface as an unexplained "Balance
+  // Difference."
+  //
+  // Compared against inventoryLedgerTotal/accountsPayableLedgerTotal (pure ledger sums),
+  // NOT inventoryFromAccounts/accountsPayableFromAccounts - those prefer the stored
+  // accounts.balance whenever it's non-zero (line ~1338, deliberately, to cover legacy
+  // deployments with incomplete ledger history), which can itself be stale relative to
+  // real new activity since postGl never updates accounts.balance for non-cash accounts.
+  // The whole-ledger accounting identity is only guaranteed by the ledger itself (postGl
+  // enforces debit=credit per posting), so that's what this reconciliation must compare
+  // against to land on the correct adjustment - comparing against the "preferred" (and
+  // possibly stale) value would under- or over-correct, as verified against a real test
+  // transaction during review.
+  const inventoryReconciliation = inventoryValue - Number(inventoryLedgerTotal || 0);
+  const accountsPayableReconciliation = effectiveAccountsPayable - moneyPos(accountsPayableLedgerTotal);
+  // Assets up with nothing else moving means equity must be up by the same amount;
+  // liabilities up with nothing else moving means equity must be down by the same amount.
+  const equityReconciliation = inventoryReconciliation - accountsPayableReconciliation;
+  if (!isApproxZero(equityReconciliation)) {
+    const obeRow = equityRows.find((row) => isOpeningBalanceEquityAccount(String(row.line_item || '')));
+    if (obeRow) {
+      obeRow.amount = Number(obeRow.amount || 0) + equityReconciliation;
+    } else {
+      equityRows.push({
+        section: 'Equity',
+        line_item: 'Opening Balance Equity',
+        amount: equityReconciliation,
+        row_type: 'detail',
+      });
+    }
+  }
 
   const formatPrepaidLabel = (raw: string) => {
     const trimmed = String(raw || '').trim();

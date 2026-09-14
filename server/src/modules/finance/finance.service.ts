@@ -2442,33 +2442,50 @@ export const financeService = {
      buildBalanceSheetFromLedger already falls back to summing the ledger whenever the
      stored balance is 0. Writing a wrong non-zero value here would break that
      fallback for every liability account, not just this one. */
-  async listLiabilityAccounts(scope: BranchScope, branchId?: number) {
+  async listLiabilityAccounts(scope: BranchScope, branchId?: number, onlyOutstanding = true) {
     const effectiveBranchId = branchId ?? scope.branchIds[0];
     if (!effectiveBranchId) return [];
     assertBranchAccess(scope, effectiveBranchId);
+    if (!onlyOutstanding) {
+      // Borrowing against a brand-new liability (e.g. Note Payable) needs the account to
+      // exist and be selectable before it has any balance - ensure it's there.
+      await withTransaction(async (client) => {
+        await ensureCoaAccounts(client, effectiveBranchId, ['notesPayable']);
+      });
+    }
     return queryMany<{
       acc_id: number;
       name: string;
       institution: string | null;
       outstanding_balance: string;
     }>(
-      `SELECT
-          a.acc_id,
-          a.name,
-          a.institution,
-          COALESCE((
-            SELECT SUM(t.credit) - SUM(t.debit)
-              FROM ims.account_transactions t
-             WHERE t.acc_id = a.acc_id
-               AND t.branch_id = a.branch_id
-               AND t.is_deleted = 0
-          ), 0)::text AS outstanding_balance
-         FROM ims.accounts a
-        WHERE a.branch_id = $1
-          AND a.account_type = 'liability'
-          AND a.is_active = TRUE
-        ORDER BY a.name`,
-      [effectiveBranchId]
+      `WITH liability_accounts AS (
+         SELECT
+            a.acc_id,
+            a.name,
+            a.institution,
+            COALESCE((
+              SELECT SUM(t.credit) - SUM(t.debit)
+                FROM ims.account_transactions t
+               WHERE t.acc_id = a.acc_id
+                 AND t.branch_id = a.branch_id
+                 AND t.is_deleted = 0
+            ), 0) AS outstanding_balance
+           FROM ims.accounts a
+          WHERE a.branch_id = $1
+            AND a.account_type = 'liability'
+            AND a.is_active = TRUE
+            -- Accounts Payable is an aggregate across every supplier - paying it down as
+            -- one lump sum here would not touch any specific supplier's ledger. Supplier
+            -- Receipts is the correct, already-existing way to settle a supplier balance.
+            AND LOWER(a.name) NOT LIKE 'accounts payable%'
+            AND LOWER(a.name) NOT LIKE 'account payable%'
+       )
+       SELECT acc_id, name, institution, outstanding_balance::text AS outstanding_balance
+         FROM liability_accounts
+        WHERE ($2 = FALSE) OR (outstanding_balance > 0.004)
+        ORDER BY name`,
+      [effectiveBranchId, onlyOutstanding]
     );
   },
 
@@ -2490,15 +2507,23 @@ export const financeService = {
     }
 
     const payDate = input.payDate || null;
+    const direction = input.direction || 'payment';
 
     return withTransaction(async (client) => {
-      await debitAccount(client, branchId, input.payFromAccId, amount);
+      // 'payment' pays a liability down: money leaves the chosen account, so it must
+      // actually have the funds. 'borrow' records new debt (e.g. a Note Payable): money
+      // comes IN, so there's nothing to check - creditAccount just adds to the balance.
+      if (direction === 'borrow') {
+        await creditAccount(client, branchId, input.payFromAccId, amount);
+      } else {
+        await debitAccount(client, branchId, input.payFromAccId, amount);
+      }
 
       const row = (
         await client.query<{ liability_payment_id: number; pay_date: string }>(
           `INSERT INTO ims.liability_payments
-             (branch_id, liability_acc_id, pay_from_acc_id, amount, pay_date, reference_no, note, user_id)
-           VALUES ($1,$2,$3,$4,COALESCE($5, NOW()),$6,$7,$8)
+             (branch_id, liability_acc_id, pay_from_acc_id, amount, pay_date, reference_no, note, user_id, direction)
+           VALUES ($1,$2,$3,$4,COALESCE($5, NOW()),$6,$7,$8,$9)
            RETURNING liability_payment_id, pay_date::text AS pay_date`,
           [
             branchId,
@@ -2509,22 +2534,30 @@ export const financeService = {
             input.referenceNo || null,
             input.note || null,
             userId,
+            direction,
           ]
         )
       ).rows[0];
       if (!row?.liability_payment_id) throw ApiError.internal('Failed to record liability payment');
 
+      const glLines =
+        direction === 'borrow'
+          ? [
+              { accId: input.payFromAccId, debit: amount, credit: 0, note: 'Cash/bank received' },
+              { accId: input.liabilityAccId, debit: 0, credit: amount, note: 'New liability incurred' },
+            ]
+          : [
+              { accId: input.liabilityAccId, debit: amount, credit: 0, note: 'Pay down liability' },
+              { accId: input.payFromAccId, debit: 0, credit: amount, note: 'Cash/bank paid' },
+            ];
       await postGl(client, {
         branchId,
         txnDate: row.pay_date || payDate,
         txnType: 'other',
         refTable: 'liability_payments',
         refId: Number(row.liability_payment_id),
-        note: `Liability payment #${row.liability_payment_id} - ${liabilityAccount.name}`,
-        lines: [
-          { accId: input.liabilityAccId, debit: amount, credit: 0, note: 'Pay down liability' },
-          { accId: input.payFromAccId, debit: 0, credit: amount, note: 'Cash/bank paid' },
-        ],
+        note: `${direction === 'borrow' ? 'New liability' : 'Liability payment'} #${row.liability_payment_id} - ${liabilityAccount.name}`,
+        lines: glLines,
       });
 
       return (
@@ -2570,8 +2603,9 @@ export const financeService = {
           branch_id: number;
           pay_from_acc_id: number;
           amount: string;
+          direction: string;
         }>(
-          `SELECT liability_payment_id, branch_id, pay_from_acc_id, amount::text AS amount
+          `SELECT liability_payment_id, branch_id, pay_from_acc_id, amount::text AS amount, direction
              FROM ims.liability_payments
             WHERE liability_payment_id = $1
             FOR UPDATE`,
@@ -2582,7 +2616,15 @@ export const financeService = {
       assertBranchAccess(scope, payment.branch_id);
 
       const amount = roundMoney(Number(payment.amount || 0));
-      await creditAccount(client, payment.branch_id, payment.pay_from_acc_id, amount);
+      // Reverse whichever side the original posting touched: a 'payment' credited the
+      // cash account back out of nothing, so undoing it credits it again; a 'borrow'
+      // added received cash, so undoing it must debit it back out (and can fail with
+      // insufficient funds if that money has since been spent - same as any reversal).
+      if (payment.direction === 'borrow') {
+        await debitAccount(client, payment.branch_id, payment.pay_from_acc_id, amount);
+      } else {
+        await creditAccount(client, payment.branch_id, payment.pay_from_acc_id, amount);
+      }
 
       await client.query(
         `DELETE FROM ims.account_transactions

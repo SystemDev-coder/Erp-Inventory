@@ -1,5 +1,5 @@
 ﻿import React, { useMemo, useRef, useState } from "react";
-import { FileSpreadsheet, Maximize2, Minimize2, Printer } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileSpreadsheet, Maximize2, Minimize2, Printer } from "lucide-react";
 import { Modal } from "../ui/modal/Modal";
 
 const REPORT_SCREEN_MAX_WIDTH = "1120px";
@@ -218,6 +218,37 @@ export function ReportModal<T extends Record<string, any>>({
       );
     }
     return label;
+  };
+
+  // Shared balance/imbalance banner for Balance Sheet and Trial Balance - previously a
+  // bare bordered text strip shown only when out of balance, with no confirmation ever
+  // shown when a statement genuinely does balance. Now both states render, with an icon.
+  const renderBalanceBanner = (
+    difference: number,
+    formatAmount: (value: number) => string,
+    reportLabel: string
+  ) => {
+    const isBalanced = Math.abs(difference) <= 0.005;
+    return (
+      <div
+        className={`mt-3 flex items-center gap-2 rounded-lg border px-3 py-2.5 text-xs font-semibold print:break-inside-avoid ${
+          isBalanced
+            ? "border-green-200 bg-green-50 text-green-700"
+            : "border-red-200 bg-red-50 text-red-700"
+        }`}
+      >
+        {isBalanced ? (
+          <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+        ) : (
+          <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
+        )}
+        <span>
+          {isBalanced
+            ? `${reportLabel} is balanced.`
+            : `${reportLabel} does not balance. Difference: ${formatAmount(difference)}`}
+        </span>
+      </div>
+    );
   };
 
   const tableRows = useMemo(() => {
@@ -544,10 +575,17 @@ export function ReportModal<T extends Record<string, any>>({
     const doc = iframe.contentDocument || iframe.contentWindow?.document;
     if (!doc) return;
 
+    // Statement-style reports (Balance Sheet, Income Statement, Cash Flow, Trial Balance)
+    // are narrow label+amount documents, not wide multi-column tables - portrait reads far
+    // better for them. Everything else (General Ledger, Account Statement, the generic
+    // default table) stays landscape, since those can have many columns.
+    const isNarrowStatement = isIncomeStatement || isBalanceSheet || isCashFlowStatement || isTrialBalance;
+    const pageOrientation = isNarrowStatement ? "portrait" : "landscape";
+
     doc.open();
       doc.write(
         `<!doctype html><html><head><base href="${escapeHtml(document.baseURI)}" /><title></title>${styles}<style>
-         @page { size: A4 landscape; margin: 8mm; }
+         @page { size: A4 ${pageOrientation}; margin: 8mm; }
          body { margin: 0; padding: 0; background: #ffffff; color: #0f172a; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
          #report-print-area { width: 100% !important; max-width: none !important; margin: 0 auto !important; box-shadow: none !important; border: none !important; border-radius: 0 !important; overflow: visible !important; break-inside: auto !important; page-break-inside: auto !important; }
          #report-print-area .overflow-x-auto { overflow: visible !important; }
@@ -1002,11 +1040,7 @@ export function ReportModal<T extends Record<string, any>>({
                 </table>
               </div>
 
-              {Math.abs(balanceSheetData.balanceDelta) > 0.005 && (
-                <div className="mt-2 border border-red-200 px-3 py-2 text-xs font-semibold text-red-700">
-                  Balance Sheet does not balance. Difference: {formatStatementCurrency(balanceSheetData.balanceDelta)}
-                </div>
-              )}
+              {renderBalanceBanner(balanceSheetData.balanceDelta, formatStatementCurrency, "Balance Sheet")}
             </div>
           ) : isCashFlowStatement && cashFlowData ? (
             <div className="px-6 pb-6 pt-5 text-slate-900" style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}>
@@ -1117,11 +1151,7 @@ export function ReportModal<T extends Record<string, any>>({
                   </tbody>
                 </table>
               </div>
-              {!trialBalanceData.totals.balanced && (
-                <div className="mt-2 border border-red-200 px-3 py-2 text-xs font-semibold text-red-700">
-                  Trial Balance is not balanced. Difference: {formatTrialAmount(trialBalanceData.totals.difference)}
-                </div>
-              )}
+              {renderBalanceBanner(trialBalanceData.totals.difference, formatTrialAmount, "Trial Balance")}
             </div>
           ) : (
             <>

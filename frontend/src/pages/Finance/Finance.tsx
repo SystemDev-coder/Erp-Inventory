@@ -86,13 +86,14 @@ const [liabilityAccounts, setLiabilityAccounts] = useState<LiabilityAccount[]>([
 const [liabilityPayments, setLiabilityPayments] = useState<LiabilityPayment[]>([]);
 const [isLiabilityPaymentModalOpen, setIsLiabilityPaymentModalOpen] = useState(false);
 const [liabilityPaymentForm, setLiabilityPaymentForm] = useState<{
+  direction: 'payment' | 'borrow';
   liability_acc_id?: number;
   pay_from_acc_id?: number;
   amount?: number;
   pay_date?: string;
   reference_no?: string;
   note?: string;
-}>({});
+}>({ direction: 'payment' });
 const [liabilityPaymentErrors, setLiabilityPaymentErrors] = useState<{ liability?: string; payFrom?: string; amount?: string }>({});
 const [pendingDeleteLiabilityPayment, setPendingDeleteLiabilityPayment] = useState<LiabilityPayment | null>(null);
 const [deletingLiabilityPayment, setDeletingLiabilityPayment] = useState(false);
@@ -289,8 +290,26 @@ const [deletingBudget, setDeletingBudget] = useState(false);
   const liabilityPaymentColumns: ColumnDef<LiabilityPayment>[] = useMemo(
     () => [
       { accessorKey: 'pay_date', header: 'Date', cell: ({ row }) => formatDate(row.original.pay_date) },
+      {
+        accessorKey: 'direction',
+        header: 'Type',
+        cell: ({ row }) =>
+          row.original.direction === 'borrow' ? (
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+              Borrow
+            </span>
+          ) : (
+            <span className="rounded-full bg-primary-100 px-2 py-0.5 text-xs font-medium text-primary-700 dark:bg-primary-900/30 dark:text-primary-300">
+              Payment
+            </span>
+          ),
+      },
       { accessorKey: 'liability_account_name', header: 'Liability Account' },
-      { accessorKey: 'pay_from_account_name', header: 'Paid From' },
+      {
+        accessorKey: 'pay_from_account_name',
+        header: 'Account',
+        cell: ({ row }) => (row.original.direction === 'borrow' ? 'Received into ' : 'Paid from ') + (row.original.pay_from_account_name || ''),
+      },
       { accessorKey: 'amount', header: 'Amount', cell: ({ row }) => `$${Number(row.original.amount || 0).toFixed(2)}` },
       { accessorKey: 'reference_no', header: 'Reference', cell: ({ row }) => row.original.reference_no || '-' },
       {
@@ -948,36 +967,52 @@ const [deletingBudget, setDeletingBudget] = useState(false);
     } else quickError(res.error || 'Transfer failed');
   };
 
-  const openLiabilityPaymentModal = async () => {
-    setLiabilityPaymentForm({});
-    setLiabilityPaymentErrors({});
-    setIsLiabilityPaymentModalOpen(true);
-    // Fetched fresh on open (not trusted from state loaded by "Display", which may be
-    // stale or never loaded) so the outstanding-balance figures shown are current.
-    const res = await financeService.listLiabilityAccounts({ branchId: activeBranchId ?? undefined });
+  const loadLiabilityAccountsFor = async (direction: 'payment' | 'borrow') => {
+    // Fetched fresh (not trusted from state loaded by "Display", which may be stale or
+    // never loaded) so the outstanding-balance figures shown are current. Paying down
+    // only offers liabilities that currently have money owed; borrowing needs the full
+    // list since a brand-new liability (e.g. Note Payable) starts at zero.
+    const res = await financeService.listLiabilityAccounts({
+      branchId: activeBranchId ?? undefined,
+      onlyOutstanding: direction === 'payment',
+    });
     if (res.success && res.data?.accounts) setLiabilityAccounts(res.data.accounts);
   };
 
+  const openLiabilityPaymentModal = async () => {
+    setLiabilityPaymentForm({ direction: 'payment' });
+    setLiabilityPaymentErrors({});
+    setIsLiabilityPaymentModalOpen(true);
+    await loadLiabilityAccountsFor('payment');
+  };
+
+  const switchLiabilityPaymentDirection = async (direction: 'payment' | 'borrow') => {
+    setLiabilityPaymentForm((prev) => ({ ...prev, direction, liability_acc_id: undefined }));
+    setLiabilityPaymentErrors({});
+    await loadLiabilityAccountsFor(direction);
+  };
+
   const submitLiabilityPayment = async () => {
+    const direction = liabilityPaymentForm.direction;
     const errs: typeof liabilityPaymentErrors = {};
     if (!liabilityPaymentForm.liability_acc_id) errs.liability = 'Liability account required';
-    if (!liabilityPaymentForm.pay_from_acc_id) errs.payFrom = 'Pay from account required';
+    if (!liabilityPaymentForm.pay_from_acc_id) errs.payFrom = 'Account required';
     if (
       liabilityPaymentForm.liability_acc_id &&
       liabilityPaymentForm.pay_from_acc_id &&
       liabilityPaymentForm.liability_acc_id === liabilityPaymentForm.pay_from_acc_id
     ) {
-      errs.payFrom = 'Liability and pay-from accounts must differ';
+      errs.payFrom = 'Liability and cash accounts must differ';
     }
-    const payFromAcc = accounts.find((a) => a.acc_id === liabilityPaymentForm.pay_from_acc_id);
-    if (!payFromAcc) errs.payFrom = errs.payFrom || 'Select a valid account';
+    const counterpartAcc = accounts.find((a) => a.acc_id === liabilityPaymentForm.pay_from_acc_id);
+    if (!counterpartAcc) errs.payFrom = errs.payFrom || 'Select a valid account';
     const amt = Number(liabilityPaymentForm.amount);
     if (amt <= 0 || Number.isNaN(amt)) errs.amount = 'Amount must be > 0';
     setLiabilityPaymentErrors(errs);
     if (Object.keys(errs).length) return;
-    if (!payFromAcc) return;
-    if (amt > Number(payFromAcc.balance || 0)) {
-      return quickError(`Insufficient balance in ${payFromAcc.name} (available $${Number(payFromAcc.balance || 0).toFixed(2)})`);
+    if (!counterpartAcc) return;
+    if (direction === 'payment' && amt > Number(counterpartAcc.balance || 0)) {
+      return quickError(`Insufficient balance in ${counterpartAcc.name} (available $${Number(counterpartAcc.balance || 0).toFixed(2)})`);
     }
 
     const res = await financeService.createLiabilityPayment({
@@ -987,14 +1022,15 @@ const [deletingBudget, setDeletingBudget] = useState(false);
       pay_date: liabilityPaymentForm.pay_date,
       reference_no: liabilityPaymentForm.reference_no,
       note: liabilityPaymentForm.note,
+      direction,
     });
     if (res.success) {
-      showToast('success', 'Finance', 'Liability payment recorded');
+      showToast('success', 'Finance', direction === 'borrow' ? 'New liability recorded' : 'Liability payment recorded');
       setIsLiabilityPaymentModalOpen(false);
-      setLiabilityPaymentForm({});
+      setLiabilityPaymentForm({ direction: 'payment' });
       setLiabilityPaymentErrors({});
       reloadIfDisplayed();
-    } else quickError(res.error || 'Liability payment failed');
+    } else quickError(res.error || 'Save failed');
   };
 
   const confirmDeleteLiabilityPayment = async () => {
@@ -2038,10 +2074,34 @@ const submitBudgetCharge = async () => {
       <Modal
         isOpen={isLiabilityPaymentModalOpen}
         onClose={() => setIsLiabilityPaymentModalOpen(false)}
-        title="New Liability Payment"
+        title={liabilityPaymentForm.direction === 'borrow' ? 'Record New Liability' : 'New Liability Payment'}
         size="md"
       >
         <div className="space-y-4 text-slate-900 dark:text-slate-100">
+          <div className="grid grid-cols-2 gap-2 rounded-lg border border-slate-300 p-1 dark:border-slate-600">
+            <button
+              type="button"
+              onClick={() => void switchLiabilityPaymentDirection('payment')}
+              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                liabilityPaymentForm.direction === 'payment'
+                  ? 'bg-primary-600 text-white'
+                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
+              }`}
+            >
+              Pay Down
+            </button>
+            <button
+              type="button"
+              onClick={() => void switchLiabilityPaymentDirection('borrow')}
+              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                liabilityPaymentForm.direction === 'borrow'
+                  ? 'bg-primary-600 text-white'
+                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
+              }`}
+            >
+              Borrow (New Liability)
+            </button>
+          </div>
           <label htmlFor="liability-account" className="text-sm block">
             <span className="mb-1 block font-medium">Liability Account</span>
             <select
@@ -2064,7 +2124,9 @@ const submitBudgetCharge = async () => {
             )}
           </label>
           <label htmlFor="liability-pay-from" className="text-sm block">
-            <span className="mb-1 block font-medium">Pay From Account</span>
+            <span className="mb-1 block font-medium">
+              {liabilityPaymentForm.direction === 'borrow' ? 'Receive Into Account' : 'Pay From Account'}
+            </span>
             <select
               id="liability-pay-from"
               className={fieldClass}
