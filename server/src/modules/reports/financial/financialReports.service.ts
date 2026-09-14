@@ -18,6 +18,7 @@ export interface BalanceSheetRow {
   line_item: string;
   amount: number;
   row_type: 'detail' | 'total';
+  account_id?: number;
 }
 
 export interface CashFlowRow {
@@ -1021,6 +1022,7 @@ export const buildBalanceSheetFromLedger = async (
   ] =
     await Promise.all([
       queryMany<{
+        account_id: number;
         account_name: string;
         institution: string;
         account_type: string;
@@ -1039,6 +1041,7 @@ export const buildBalanceSheetFromLedger = async (
             GROUP BY at.acc_id
           )
           SELECT
+            a.acc_id AS account_id,
             COALESCE(NULLIF(BTRIM(a.name), ''), 'Account #' || a.acc_id::text) AS account_name,
             COALESCE(a.institution, '') AS institution,
             COALESCE(a.account_type::text, 'asset') AS account_type,
@@ -1374,6 +1377,7 @@ export const buildBalanceSheetFromLedger = async (
         line_item: accountName,
         amount: naturalBalance,
         row_type: 'detail',
+        account_id: Number(row.account_id) || undefined,
       });
       continue;
     }
@@ -1384,6 +1388,7 @@ export const buildBalanceSheetFromLedger = async (
         line_item: accountName,
         amount: naturalBalance,
         row_type: 'detail',
+        account_id: Number(row.account_id) || undefined,
       });
       continue;
     }
@@ -1394,6 +1399,7 @@ export const buildBalanceSheetFromLedger = async (
         line_item: accountName,
         amount: naturalBalance,
         row_type: 'detail',
+        account_id: Number(row.account_id) || undefined,
       });
       continue;
     }
@@ -1405,6 +1411,7 @@ export const buildBalanceSheetFromLedger = async (
         line_item: accountName,
         amount: naturalBalance,
         row_type: 'detail',
+        account_id: Number(row.account_id) || undefined,
       });
       continue;
     }
@@ -1421,6 +1428,7 @@ export const buildBalanceSheetFromLedger = async (
         line_item: accountName,
         amount: naturalBalance,
         row_type: 'detail',
+        account_id: Number(row.account_id) || undefined,
       });
       continue;
     }
@@ -1431,6 +1439,7 @@ export const buildBalanceSheetFromLedger = async (
         line_item: accountName,
         amount: naturalBalance,
         row_type: 'detail',
+        account_id: Number(row.account_id) || undefined,
       });
     }
   }
@@ -1603,11 +1612,18 @@ export const buildBalanceSheetFromLedger = async (
   const totalLiabilities = totalCurrentLiabilities;
   const baseEquity = equityRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
 
-  // Retained earnings must stay synchronized with the Income Statement.
-  // We compute:
+  // Retained earnings must be computed independently from actual net-income
+  // history - NOT as a residual/plug that forces the balance sheet to always
+  // look balanced. We compute:
   // - netIncomeYtd: Net Income from last closed period (or year start) to asOfDate
-  // - openingRetained: prior retained earnings / opening imbalance
-  // - retainedEarnings: openingRetained + netIncomeYtd (must equal residual for the BS to balance)
+  // - openingRetained: Net Income from a fixed early floor date (well before any
+  //   real data) through the day before profitStart - i.e. everything the YTD
+  //   window doesn't already cover
+  // - retainedEarnings: openingRetained + netIncomeYtd (both independently
+  //   computed from the Income Statement, so they are NOT guaranteed to make
+  //   totalAssets == totalLiabilities + totalEquity - any real discrepancy
+  //   shows up in `balanceDifference` below instead of being hidden)
+  const RETAINED_EARNINGS_FLOOR_DATE = '2000-01-01';
   const profitStart = await resolveProfitStartDate(branchId, asOfDate);
   const netIncomeStart = netIncomeFromDate || profitStart;
   const hasClosedPeriods = await hasAnyClosedClosingPeriod(branchId, asOfDate);
@@ -1625,8 +1641,19 @@ export const buildBalanceSheetFromLedger = async (
           ).find((row) => String(row.line_item || '').toLowerCase() === 'net income')?.amount ?? 0
         ) || 0);
 
-  const residualRetained = totalAssets - totalLiabilities - baseEquity;
-  const openingRetained = residualRetained - netIncomeYtd;
+  const openingRetainedThrough = addDaysIsoDate(profitStart, -1);
+  const openingRetained =
+    openingRetainedThrough >= RETAINED_EARNINGS_FLOOR_DATE
+      ? Number(
+          (
+            await financialReportsService.getIncomeStatement(
+              branchId,
+              RETAINED_EARNINGS_FLOOR_DATE,
+              openingRetainedThrough
+            )
+          ).find((row) => String(row.line_item || '').toLowerCase() === 'net income')?.amount ?? 0
+        ) || 0
+      : 0;
   const retainedEarnings = openingRetained + netIncomeYtd;
 
   // Replace any previously-computed retained rows.

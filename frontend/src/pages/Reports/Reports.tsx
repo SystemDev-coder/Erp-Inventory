@@ -3,8 +3,9 @@ import { Boxes, LineChart, ShoppingBag, TrendingUp, Truck, UserCheck, UserSquare
 import type { LucideIcon } from 'lucide-react';
 import { ReportModal } from '../../components/reports/ReportModal';
 import { settingsService } from '../../services/settings.service';
+import { financialReportsService } from '../../services/reports/financialReports.service';
 import { CustomerReportsTab } from './customer/CustomerReportsTab';
-import { FinancialReportsTab } from './financial/FinancialReportsTab';
+import { FinancialReportsTab, generalLedgerColumns } from './financial/FinancialReportsTab';
 import { HrReportsTab } from './hr/HrReportsTab';
 import { InventoryReportsTab } from './inventory/InventoryReportsTab';
 import { PurchaseReportsTab } from './purchase/PurchaseReportsTab';
@@ -12,8 +13,10 @@ import { SalesReportsTab } from './sales/SalesReportsTab';
 import { SupplierReportsTab } from './supplier/SupplierReportsTab';
 import { ProfitReportsTab } from './profit/ProfitReportsTab';
 import type { ModalReportState, TabId } from './types';
+import { formatCurrency, formatDateOnly, toRecordRows } from './reportUtils';
 import { env } from '../../config/env';
 import { useAuth } from '../../context/AuthContext';
+import { useBranch } from '../../context/BranchContext';
 import { useLanguage } from '../../context/LanguageContext';
 import type { TranslationKey } from '../../translations';
 
@@ -133,6 +136,7 @@ const tabPermissionAny: Record<TabId, string[]> = {
 
 export default function Reports() {
   const { user, permissions } = useAuth();
+  const { activeBranchId } = useBranch();
   const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState<TabId>('sales');
   const [companyInfo, setCompanyInfo] = useState<{
@@ -188,6 +192,38 @@ export default function Reports() {
         return [];
       }
       return prev.slice(0, -1);
+    });
+  };
+
+  // Balance Sheet / Trial Balance lines with an account_id drill into that
+  // account's General Ledger, pushed on top of the modal stack so "Back"
+  // returns to the statement - mirrors clicking a line in QuickBooks.
+  const handleDrillDownAccount = async (accountId: number, accountLabel: string) => {
+    if (!accountId) return;
+    const throughDate = String(modalReport?.filters?.['To Date'] || new Date().toISOString().slice(0, 10));
+    const response = await financialReportsService.getAccountTransactions({
+      fromDate: '2000-01-01',
+      toDate: throughDate,
+      mode: 'show',
+      accountId,
+      branchId: activeBranchId ?? undefined,
+    });
+    if (!response.success || !response.data) return;
+    const rows = toRecordRows(response.data.rows || []);
+    handleOpenModal({
+      title: `General Ledger — ${accountLabel}`,
+      subtitle: `Through ${formatDateOnly(throughDate)}`,
+      fileName: 'general-ledger-drill-down',
+      data: rows,
+      columns: generalLedgerColumns,
+      tableTotals: {
+        label: 'Total',
+        values: {
+          debit: formatCurrency(rows.reduce((sum, row) => sum + Number(row.debit || 0), 0)),
+          credit: formatCurrency(rows.reduce((sum, row) => sum + Number(row.credit || 0), 0)),
+        },
+      },
+      filters: { Account: accountLabel, 'Through Date': throughDate },
     });
   };
 
@@ -295,6 +331,7 @@ export default function Reports() {
         tableTotals={modalReport?.tableTotals}
         variant={modalReport?.variant || 'default'}
         fileName={modalReport?.fileName || 'report'}
+        onDrillDownAccount={handleDrillDownAccount}
       />
     </div>
   );

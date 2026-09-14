@@ -163,7 +163,7 @@ const trialBalanceColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'closing_credit', header: 'Closing CR', align: 'right', render: (row) => formatCurrency(row.closing_credit) },
 ];
 
-const generalLedgerColumns: ReportColumn<Record<string, unknown>>[] = [
+export const generalLedgerColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'txn_date', header: 'Date', render: (row) => formatDateOnly(row.txn_date) },
   { key: 'account_name', header: 'Account' },
   { key: 'txn_type', header: 'Type' },

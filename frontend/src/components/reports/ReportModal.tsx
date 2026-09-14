@@ -94,6 +94,7 @@ type ReportModalProps<T> = {
   enablePdf?: boolean;
   autoAction?: "print" | "excel" | null;
   onAutoActionComplete?: () => void;
+  onDrillDownAccount?: (accountId: number, accountLabel: string) => void;
 };
 
 const escapeHtml = (value: string) => {
@@ -183,6 +184,7 @@ export function ReportModal<T extends Record<string, any>>({
   enablePdf = true,
   autoAction = null,
   onAutoActionComplete,
+  onDrillDownAccount,
 }: ReportModalProps<T>) {
   const printRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -198,6 +200,25 @@ export function ReportModal<T extends Record<string, any>>({
   const isCashFlowStatement = variant === "cash-flow-statement";
   const isTrialBalance = variant === "trial-balance";
   const reportSurfaceWidth = isFullscreen ? "100%" : REPORT_SCREEN_MAX_WIDTH;
+
+  // Balance Sheet / Trial Balance detail rows that carry an account_id become
+  // clickable, drilling into that account's General Ledger - mirrors clicking
+  // a line in QuickBooks.
+  const renderLineItem = (lineItem: string, accountId?: number) => {
+    const label = cleanText(lineItem);
+    if (accountId && onDrillDownAccount) {
+      return (
+        <button
+          type="button"
+          onClick={() => onDrillDownAccount(accountId, label)}
+          className="text-left text-primary-700 underline decoration-dotted underline-offset-2 hover:text-primary-900 print:text-inherit print:no-underline"
+        >
+          {label}
+        </button>
+      );
+    }
+    return label;
+  };
 
   const tableRows = useMemo(() => {
     if (isIncomeStatement || isBalanceSheet || isCashFlowStatement || isTrialBalance) return data;
@@ -294,6 +315,7 @@ export function ReportModal<T extends Record<string, any>>({
       lineItem: String((row as Record<string, unknown>).line_item || ""),
       amount: Number((row as Record<string, unknown>).amount || 0),
       rowType: String((row as Record<string, unknown>).row_type || ""),
+      accountId: Number((row as Record<string, unknown>).account_id || 0),
     }));
 
     const detailRows = rows.filter((row) => row.rowType === "detail");
@@ -827,7 +849,7 @@ export function ReportModal<T extends Record<string, any>>({
 
                       return rows.map((row, index) => (
                         <tr key={`ca-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
-                          <td className="border-b border-slate-200 px-2 py-1.5 pl-4">{cleanText(row.lineItem)}</td>
+                          <td className="border-b border-slate-200 px-2 py-1.5 pl-4">{renderLineItem(row.lineItem, row.accountId)}</td>
                           <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
                         </tr>
                       ));
@@ -865,7 +887,7 @@ export function ReportModal<T extends Record<string, any>>({
 
                           return rows.map((row, index) => (
                             <tr key={`fa-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
-                              <td className="border-b border-slate-200 px-2 py-1.5 pl-4">{cleanText(row.lineItem)}</td>
+                              <td className="border-b border-slate-200 px-2 py-1.5 pl-4">{renderLineItem(row.lineItem, row.accountId)}</td>
                               <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
                             </tr>
                           ));
@@ -892,7 +914,7 @@ export function ReportModal<T extends Record<string, any>>({
                       );
                       return rows.map((row, index) => (
                         <tr key={`li-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
-                          <td className="border-b border-slate-200 px-2 py-1.5 pl-4">{cleanText(row.lineItem)}</td>
+                          <td className="border-b border-slate-200 px-2 py-1.5 pl-4">{renderLineItem(row.lineItem, row.accountId)}</td>
                           <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
                         </tr>
                       ));
@@ -962,7 +984,7 @@ export function ReportModal<T extends Record<string, any>>({
 
                       return rows.map((row, index) => (
                         <tr key={`eq-${row.lineItem}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}>
-                          <td className="border-b border-slate-200 px-2 py-1.5 pl-4">{cleanText(row.lineItem)}</td>
+                          <td className="border-b border-slate-200 px-2 py-1.5 pl-4">{renderLineItem(row.lineItem, (row as { accountId?: number }).accountId)}</td>
                           <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">{formatStatementCurrency(row.amount)}</td>
                         </tr>
                       ));
@@ -1070,7 +1092,7 @@ export function ReportModal<T extends Record<string, any>>({
                         className={index % 2 === 0 ? "bg-white" : "bg-slate-50"}
                       >
                         <td className="border-b border-slate-200 px-2 py-1.5">{row.accountId || EMPTY_CELL}</td>
-                        <td className="border-b border-slate-200 px-2 py-1.5">{row.accountName}</td>
+                        <td className="border-b border-slate-200 px-2 py-1.5">{renderLineItem(row.accountName, row.accountId)}</td>
                         <td className="border-b border-slate-200 px-2 py-1.5 text-right tabular-nums">
                           {Math.max(Number(row.closingDebit || 0), 0) > 0.000001
                             ? formatTrialAmount(Math.max(Number(row.closingDebit || 0), 0))
@@ -1103,7 +1125,15 @@ export function ReportModal<T extends Record<string, any>>({
             </div>
           ) : (
             <>
-              <div className="px-6 pb-6 pt-6">
+              <div className="px-6 pb-6 pt-6" style={{ fontFamily: "Calibri, 'Segoe UI', Arial, sans-serif" }}>
+                {!companyInfo?.bannerUrl ? (
+                  <div className="mb-4 text-center">
+                    <h2 className="text-[22px] font-semibold leading-tight text-slate-900">{cleanText(title)}</h2>
+                    {subtitle && <p className="text-[13px] text-slate-600">{cleanText(subtitle)}</p>}
+                  </div>
+                ) : subtitle ? (
+                  <div className="mb-3 text-right text-xs font-semibold text-slate-600">{cleanText(subtitle)}</div>
+                ) : null}
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[520px] border-collapse text-sm">
                     <thead>
