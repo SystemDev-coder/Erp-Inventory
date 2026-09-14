@@ -1242,7 +1242,7 @@ const PurchaseEditor = () => {
                       placeholder="Description"
                     />
                   </td>
-                  <td className="px-2 py-2">
+                  <td className="px-2 py-2 text-center">
                     <div className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900">
                       <button
                         type="button"

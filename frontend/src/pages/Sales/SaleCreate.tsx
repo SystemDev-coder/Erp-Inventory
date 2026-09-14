@@ -1005,10 +1005,10 @@ const SaleCreate = () => {
           <div className="overflow-x-auto">
             <table className="min-w-full table-fixed border-collapse text-sm">
               <colgroup>
-                <col style={{ width: '38%' }} />
-                <col style={{ width: '16%' }} />
-                <col style={{ width: '18%' }} />
-                <col style={{ width: '16%' }} />
+                <col style={{ width: '36%' }} />
+                <col style={{ width: '12%' }} />
+                <col style={{ width: '20%' }} />
+                <col style={{ width: '20%' }} />
                 <col style={{ width: '12%' }} />
               </colgroup>
               <thead>
@@ -1017,7 +1017,7 @@ const SaleCreate = () => {
                   <th className="px-2 py-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Qty</th>
                   <th className="px-2 py-2 text-right text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Unit Price</th>
                   <th className="px-2 py-2 text-right text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Line Total</th>
-                  <th className="px-2 py-2 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Action</th>
+                  <th className="px-2 py-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1070,7 +1070,7 @@ const SaleCreate = () => {
                           </span>
                         </p>
                       </td>
-                      <td className="px-2 py-2 align-top">
+                      <td className="px-2 py-2 align-top text-center">
                         <div className="inline-flex items-center gap-1 rounded-md border border-slate-300 dark:border-slate-700">
                           <button
                             type="button"
@@ -1140,21 +1140,26 @@ const SaleCreate = () => {
                         )}
                       </td>
                       <td className="px-2 py-2 align-top text-right">
-                        <input
-                          type="number"
-                          min={1}
-                          step={1}
-                          className={`${controlReadonlyCls} text-right`}
-                          value={line.unit_price}
-                          readOnly
-                          title="Unit price is set automatically from item price"
-                          disabled={loading}
-                        />
+                        <div className="relative">
+                          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400 dark:text-slate-500">
+                            $
+                          </span>
+                          <input
+                            type="number"
+                            min={1}
+                            step={1}
+                            className={`${controlReadonlyCls} pl-6 text-right`}
+                            value={line.unit_price}
+                            readOnly
+                            title="Unit price is set automatically from item price"
+                            disabled={loading}
+                          />
+                        </div>
                       </td>
                       <td className="px-2 py-2 align-top text-right font-semibold text-slate-900 dark:text-slate-100">
                         ${(Number(line.quantity || 0) * Number(line.unit_price || 0)).toFixed(2)}
                       </td>
-                      <td className="px-2 py-2 align-top">
+                      <td className="px-2 py-2 align-top text-center">
                         <button
                           type="button"
                           onClick={() => {
