@@ -124,6 +124,7 @@ export const productCreateSchema = z.object({
   storeId: nullablePositiveInt.optional(),
   categoryId: nullablePositiveInt.optional(),
   unitId: nullablePositiveInt.optional(),
+  brand: z.string().trim().max(120).or(z.literal('')).nullable().optional(),
   quantity: optionalNonnegativeRoundedInt,
   stockAlert: nonnegativeRoundedInt.default(5),
   openingBalance: optionalNonnegativeRoundedInt,

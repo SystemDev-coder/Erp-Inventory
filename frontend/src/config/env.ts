@@ -94,6 +94,7 @@ export const API = {
   // Products endpoints
   PRODUCTS: {
     LIST: '/api/products',
+    SUMMARY: '/api/products/summary',
     ITEM: (id: number) => `/api/products/${id}`,
     CATEGORIES: '/api/products/categories',
     CATEGORY: (id: number) => `/api/products/categories/${id}`,

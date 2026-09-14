@@ -81,6 +81,7 @@ export interface Product {
   unit_id: number | null;
   unit_name?: string | null;
   unit_symbol?: string | null;
+  brand?: string | null;
   stock_alert: number;
   cost_price: number;
   sell_price: number;
@@ -246,6 +247,7 @@ const getProductSql = (stockAlertExpr: string, storeIdExpr = 'NULL::bigint') => 
     i.unit_id,
     u.unit_name,
     u.symbol AS unit_symbol,
+    i.brand,
     ${stockAlertExpr} AS stock_alert,
     i.cost_price,
     i.sell_price,
@@ -622,6 +624,53 @@ export const productsService = {
     else await queryOne(`DELETE FROM ims.taxes WHERE tax_id = $1 AND branch_id = ANY($2::bigint[])`, [id, scope.branchIds]);
   },
 
+  // Powers the Items page's summary cards (Total/In Stock/Low Stock/No Stock). Current
+  // quantity per item mirrors the same store_items-with-opening-balance-fallback logic
+  // getProductSql uses, so these counts stay consistent with what the list itself shows.
+  async getProductsSummary(
+    scope: BranchScope,
+    branchId?: number
+  ): Promise<{ total: number; inStock: number; lowStock: number; noStock: number }> {
+    const stockAlertExpr = (await hasItemsStockAlertColumn()) ? 'i.stock_alert' : 'COALESCE(i.reorder_level, 5)';
+    const params: unknown[] = [];
+    const where = scopeClause(scope, params, 'i', branchId);
+    const row = await queryOne<{ total: string; in_stock: string; low_stock: string; no_stock: string }>(
+      `WITH item_stock AS (
+         SELECT
+           ${stockAlertExpr}::numeric AS stock_alert,
+           CASE
+             WHEN COALESCE(sq.row_count, 0) = 0 THEN COALESCE(i.opening_balance, 0)
+             ELSE COALESCE(sq.qty, 0)
+           END::numeric AS quantity
+           FROM ims.items i
+           LEFT JOIN LATERAL (
+             SELECT
+               COALESCE(SUM(si.quantity), 0)::numeric AS qty,
+               COUNT(*)::int AS row_count
+               FROM ims.store_items si
+               JOIN ims.stores s2 ON s2.store_id = si.store_id
+              WHERE si.product_id = i.item_id
+                AND s2.branch_id = i.branch_id
+           ) sq ON TRUE
+          WHERE ${where}
+            AND i.is_active = TRUE
+       )
+       SELECT
+         COUNT(*)::text AS total,
+         COUNT(*) FILTER (WHERE quantity > stock_alert)::text AS in_stock,
+         COUNT(*) FILTER (WHERE quantity > 0 AND quantity <= stock_alert)::text AS low_stock,
+         COUNT(*) FILTER (WHERE quantity <= 0)::text AS no_stock
+         FROM item_stock`,
+      params
+    );
+    return {
+      total: Number(row?.total || 0),
+      inStock: Number(row?.in_stock || 0),
+      lowStock: Number(row?.low_stock || 0),
+      noStock: Number(row?.no_stock || 0),
+    };
+  },
+
   async listProducts(scope: BranchScope, filters: ProductFilters): Promise<Paged<Product>> {
     const stockAlertExpr = (await hasItemsStockAlertColumn()) ? 'i.stock_alert' : 'COALESCE(i.reorder_level, 5)';
     const params: unknown[] = [];
@@ -702,9 +751,9 @@ export const productsService = {
           : await getOrCreateDefaultStoreId(client, branchId);
       const created = await client.query<{ item_id: number }>(
         `INSERT INTO ims.items (
-           branch_id, ${catIdRequired ? 'cat_id, ' : ''}store_id, name, barcode, ${stockAlertColumn}, opening_balance, cost_price, sell_price, is_active, category_id, unit_id
+           branch_id, ${catIdRequired ? 'cat_id, ' : ''}store_id, name, barcode, ${stockAlertColumn}, opening_balance, cost_price, sell_price, is_active, category_id, unit_id, brand
          ) VALUES (
-           $1, ${catIdRequired ? '$2, ' : ''}$${catIdRequired ? 3 : 2}, $${catIdRequired ? 4 : 3}, NULLIF($${catIdRequired ? 5 : 4}, ''), $${catIdRequired ? 6 : 5}, $${catIdRequired ? 7 : 6}, $${catIdRequired ? 8 : 7}, $${catIdRequired ? 9 : 8}, $${catIdRequired ? 10 : 9}, $${catIdRequired ? 11 : 10}, $${catIdRequired ? 12 : 11}
+           $1, ${catIdRequired ? '$2, ' : ''}$${catIdRequired ? 3 : 2}, $${catIdRequired ? 4 : 3}, NULLIF($${catIdRequired ? 5 : 4}, ''), $${catIdRequired ? 6 : 5}, $${catIdRequired ? 7 : 6}, $${catIdRequired ? 8 : 7}, $${catIdRequired ? 9 : 8}, $${catIdRequired ? 10 : 9}, $${catIdRequired ? 11 : 10}, $${catIdRequired ? 12 : 11}, $${catIdRequired ? 13 : 12}
          )
          RETURNING item_id`,
         catIdRequired
@@ -721,6 +770,7 @@ export const productsService = {
               active,
               input.categoryId ?? null,
               input.unitId ?? null,
+              input.brand || null,
             ]
           : [
               branchId,
@@ -734,6 +784,7 @@ export const productsService = {
               active,
               input.categoryId ?? null,
               input.unitId ?? null,
+              input.brand || null,
             ]
       );
       const itemId = Number(created.rows[0]?.item_id || 0);
@@ -783,6 +834,7 @@ export const productsService = {
     if (input.storeId !== undefined) { updates.push(`store_id = $${p++}`); values.push(input.storeId ?? null); }
     if (input.categoryId !== undefined) { updates.push(`category_id = $${p++}`); values.push(input.categoryId ?? null); }
     if (input.unitId !== undefined) { updates.push(`unit_id = $${p++}`); values.push(input.unitId ?? null); }
+    if (input.brand !== undefined) { updates.push(`brand = NULLIF($${p++}, '')`); values.push(input.brand || ''); }
     if (input.stockAlert !== undefined) { updates.push(`${stockAlertColumn} = $${p++}`); values.push(input.stockAlert); }
     if (input.sellPrice !== undefined) { updates.push(`sell_price = $${p++}`); values.push(input.sellPrice); }
     if (input.costPrice !== undefined) { updates.push(`cost_price = $${p++}`); values.push(input.costPrice); }

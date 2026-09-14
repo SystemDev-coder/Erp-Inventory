@@ -76,6 +76,7 @@ const normalizeProductBody = (body: any) => ({
   storeId: body?.storeId ?? body?.store_id,
   categoryId: body?.categoryId ?? body?.category_id,
   unitId: body?.unitId ?? body?.unit_id,
+  brand: body?.brand,
   quantity: body?.quantity,
   stockAlert: body?.stockAlert ?? body?.stock_alert,
   openingBalance: body?.openingBalance ?? body?.opening_balance,
@@ -91,6 +92,13 @@ export const listProducts = asyncHandler(async (req: AuthRequest, res: Response)
   const filters = parseListFilters(req.query as Record<string, unknown>);
   const result = await productsService.listProducts(scope, filters);
   return ApiResponse.success(res, listPayload('products', result));
+});
+
+export const getProductsSummary = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
+  const summary = await productsService.getProductsSummary(scope, branchId);
+  return ApiResponse.success(res, { summary });
 });
 
 export const getProduct = asyncHandler(async (req: AuthRequest, res: Response) => {

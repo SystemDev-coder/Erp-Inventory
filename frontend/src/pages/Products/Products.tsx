@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
-import { BadgeAlert, Boxes, RefreshCw, Ruler, Store, Tags } from 'lucide-react';
+import { BadgeAlert, Boxes, Edit3, MoreVertical, PackageCheck, PackageSearch, PackageX, RefreshCw, Ruler, Store, Tags, Trash2 } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
 import { DataTable } from '../../components/ui/table/DataTable';
+import { ActionDropdown } from '../../components/ui/dropdown/ActionDropdown';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { Modal } from '../../components/ui/modal/Modal';
 import { PageHeader } from '../../components/ui/layout';
@@ -46,6 +47,7 @@ const defaultProductForm: ProductForm = {
   barcode: '',
   category_id: undefined,
   unit_id: undefined,
+  brand: '',
   stock_alert: 5,
   opening_balance: 0,
   quantity: 0,
@@ -73,6 +75,7 @@ const Products = () => {
 
   const [loading, setLoading] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
+  const [itemsSummary, setItemsSummary] = useState({ total: 0, inStock: 0, lowStock: 0, noStock: 0 });
   const [stateProducts, setStateProducts] = useState<Product[]>([]);
   const [transactions, setTransactions] = useState<InventoryTransactionRow[]>([]);
   const [itemsDisplayed, setItemsDisplayed] = useState(false);
@@ -222,9 +225,14 @@ const Products = () => {
     }
   };
 
+  const loadSummary = async () => {
+    const res = await productService.getSummary(activeBranchId ?? undefined);
+    if (res.success && res.data?.summary) setItemsSummary(res.data.summary);
+  };
+
   const loadProducts = async (nextPageIndex = itemsPageIndex, search = itemsSearch) => {
     setLoading(true);
-    await Promise.all([resolveStores(), resolveCategories(), resolveUnits()]);
+    await Promise.all([resolveStores(), resolveCategories(), resolveUnits(), loadSummary()]);
     const res = await productService.list({
       page: nextPageIndex + 1,
       limit: ITEMS_PAGE_SIZE,
@@ -292,6 +300,7 @@ const Products = () => {
   };
 
   useEffect(() => {
+    void loadSummary();
     if (itemsDisplayed) {
       setItemsPageIndex(0);
       void loadProducts(0, itemsSearch);
@@ -305,29 +314,86 @@ const Products = () => {
     return transactions;
   }, [transactions]);
 
+  const openEditItem = async (row: Product) => {
+    setItemForm({ ...row, quantity: Number(row.quantity ?? row.stock ?? 0) });
+    const [loaded] = await Promise.all([resolveStores(), resolveCategories(), resolveUnits()]);
+    setItemStoreId(row.store_id || loaded[0]?.store_id || '');
+    setItemModalOpen(true);
+  };
+
   const itemColumns: ColumnDef<Product>[] = useMemo(
     () => [
+      {
+        id: 'code',
+        header: 'Code',
+        cell: ({ row }) => `#PRD${String(row.original.product_id).padStart(4, '0')}`,
+      },
       { accessorKey: 'name', header: 'Item' },
       { accessorKey: 'category_name', header: 'Category', cell: ({ row }) => row.original.category_name || '-' },
+      { accessorKey: 'brand', header: 'Brand', cell: ({ row }) => row.original.brand || '-' },
       {
         accessorKey: 'unit_name',
         header: 'Unit',
         cell: ({ row }) => row.original.unit_symbol || row.original.unit_name || '-',
       },
       { accessorKey: 'quantity', header: 'Quantity', cell: ({ row }) => Number(row.original.quantity ?? row.original.stock ?? 0).toFixed(0) },
-      { accessorKey: 'cost_price', header: 'Cost Price', cell: ({ row }) => `$${Number(row.original.cost_price || 0).toFixed(2)}` },
       {
-        accessorKey: 'amount',
-        header: 'Amount',
+        id: 'status',
+        header: 'Status',
         cell: ({ row }) => {
           const qty = Number(row.original.quantity ?? row.original.stock ?? 0);
-          const cost = Number(row.original.cost_price || 0);
-          return `$${(qty * cost).toFixed(2)}`;
+          const alert = Number(row.original.stock_alert ?? 0);
+          const state =
+            qty <= 0 ? { label: 'No Stock', cls: 'bg-rose-100 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300' }
+            : qty <= alert ? { label: 'Low Stock', cls: 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300' }
+            : { label: 'In Stock', cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300' };
+          return (
+            <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${state.cls}`}>
+              {state.label}
+            </span>
+          );
         },
       },
-      { accessorKey: 'sell_price', header: 'Sell Price', cell: ({ row }) => `$${Number(row.original.sell_price || 0).toFixed(2)}` },
+      { accessorKey: 'cost_price', header: 'Purchase Price', cell: ({ row }) => `$${Number(row.original.cost_price || 0).toFixed(2)}` },
+      { accessorKey: 'sell_price', header: 'Selling Price', cell: ({ row }) => `$${Number(row.original.sell_price || 0).toFixed(2)}` },
+      {
+        id: 'actions',
+        header: 'Action',
+        cell: ({ row }) => {
+          const item = row.original;
+          const menuItems = [
+            can('items.update') && {
+              label: 'Edit',
+              icon: <Edit3 className="h-4 w-4" aria-hidden="true" />,
+              onClick: () => void openEditItem(item),
+            },
+            can('items.delete') && {
+              label: 'Delete',
+              icon: <Trash2 className="h-4 w-4" aria-hidden="true" />,
+              variant: 'danger' as const,
+              onClick: () => setItemToDelete(item),
+            },
+          ].filter(Boolean) as { label: string; icon: React.ReactNode; onClick: () => void; variant?: 'danger' }[];
+          if (!menuItems.length) return null;
+          return (
+            <ActionDropdown
+              trigger={
+                <button
+                  type="button"
+                  aria-label={`Actions for ${item.name}`}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                >
+                  <MoreVertical className="h-4 w-4" aria-hidden="true" />
+                </button>
+              }
+              items={menuItems}
+            />
+          );
+        },
+      },
     ],
-    []
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [can]
   );
 
   const stateColumns: ColumnDef<Product>[] = useMemo(
@@ -442,6 +508,27 @@ const Products = () => {
       icon: Boxes,
       content: (
         <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {[
+              { label: 'Total Products', value: itemsSummary.total, icon: Boxes, cls: 'text-primary-600 dark:text-primary-300 bg-primary-50 dark:bg-primary-500/10' },
+              { label: 'In Stock', value: itemsSummary.inStock, icon: PackageCheck, cls: 'text-emerald-600 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/10' },
+              { label: 'Low Stock', value: itemsSummary.lowStock, icon: PackageSearch, cls: 'text-amber-600 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10' },
+              { label: 'No Stock', value: itemsSummary.noStock, icon: PackageX, cls: 'text-rose-600 dark:text-rose-300 bg-rose-50 dark:bg-rose-500/10' },
+            ].map(({ label, value, icon: Icon, cls }) => (
+              <div
+                key={label}
+                className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
+              >
+                <div className={`flex h-11 w-11 items-center justify-center rounded-xl ${cls}`}>
+                  <Icon className="h-5 w-5" aria-hidden="true" />
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</p>
+                  <p className="text-xl font-bold text-slate-900 dark:text-white">{value}</p>
+                </div>
+              </div>
+            ))}
+          </div>
           <div className="flex flex-wrap items-center justify-end gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
             <button
               type="button"
@@ -494,13 +581,6 @@ const Products = () => {
             data={itemsDisplayed ? products : []}
             columns={itemColumns}
             isLoading={loading}
-            onEdit={can('items.update') ? async (row) => {
-              setItemForm({ ...row, quantity: Number(row.quantity ?? row.stock ?? 0) });
-              const [loaded] = await Promise.all([resolveStores(), resolveCategories(), resolveUnits()]);
-              setItemStoreId(row.store_id || loaded[0]?.store_id || '');
-              setItemModalOpen(true);
-            } : undefined}
-            onDelete={can('items.delete') ? (row) => setItemToDelete(row) : undefined}
             searchPlaceholder="Search items..."
             serverPagination={{
               pageIndex: itemsPageIndex,
@@ -846,6 +926,14 @@ const Products = () => {
               <option value="" disabled>Select unit</option>
               {units.map((u) => <option key={u.unit_id} value={u.unit_id}>{u.unit_name}{u.symbol ? ` (${u.symbol})` : ''}</option>)}
             </select>
+          </ItemField>
+
+          <ItemField label="Brand">
+            <input
+              placeholder="e.g. Apple, Dell, Adidas"
+              value={itemForm.brand || ''}
+              onChange={(e) => setItemField('brand', e.target.value)}
+            />
           </ItemField>
 
           <ItemField label="Stock Alert">
