@@ -15,6 +15,16 @@ export const accountTransferUpdateSchema = accountTransferSchema.partial().exten
   status: z.enum(['draft', 'posted', 'void']).optional(),
 });
 
+export const liabilityPaymentSchema = z.object({
+  branchId: z.coerce.number().int().positive().optional(),
+  liabilityAccId: z.coerce.number().int().positive(),
+  payFromAccId: z.coerce.number().int().positive(),
+  amount: z.coerce.number().positive(),
+  payDate: z.string().optional(),
+  referenceNo: z.string().optional().or(z.literal('')),
+  note: z.string().optional().or(z.literal('')),
+});
+
 export const customerReceiptSchema = z.object({
   branchId: z.coerce.number().int().positive().optional(),
   customerId: z.coerce.number().int().positive().optional(),
@@ -126,6 +136,7 @@ export const expensePaymentQuerySchema = z.object({
 
 export type AccountTransferInput = z.infer<typeof accountTransferSchema>;
 export type AccountTransferUpdateInput = z.infer<typeof accountTransferUpdateSchema>;
+export type LiabilityPaymentInput = z.infer<typeof liabilityPaymentSchema>;
 export type CustomerReceiptInput = z.infer<typeof customerReceiptSchema>;
 export type SupplierReceiptInput = z.infer<typeof supplierReceiptSchema>;
 export type OtherIncomeInput = z.infer<typeof otherIncomeSchema>;

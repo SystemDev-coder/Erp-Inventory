@@ -218,6 +218,8 @@ export const API = {
 
   FINANCE: {
     TRANSFERS: '/api/finance/transfers',
+    LIABILITY_ACCOUNTS: '/api/finance/liability-accounts',
+    LIABILITY_PAYMENTS: '/api/finance/liability-payments',
     CUSTOMER_RECEIPTS: '/api/finance/receipts/customers',
     CUSTOMER_RECEIPTS_UNPAID: '/api/finance/receipts/customers/unpaid',
     CUSTOMER_BALANCE: (customerId: number) => `/api/finance/receipts/customers/${customerId}/balance`,

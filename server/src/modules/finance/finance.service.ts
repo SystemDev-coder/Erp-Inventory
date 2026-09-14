@@ -19,6 +19,7 @@ import {
   ExpenseInput,
   ExpenseBudgetChargeInput,
   ExpensePaymentInput,
+  LiabilityPaymentInput,
   PayrollChargeInput,
   PayrollPayInput,
   PayrollDeleteInput,
@@ -2426,6 +2427,172 @@ export const financeService = {
       );
 
       await client.query(`DELETE FROM ims.expense_payments WHERE exp_payment_id = $1`, [id]);
+      return { deleted: true };
+    });
+  },
+
+  /* Liability payments - a generic way to pay down any liability account (Sales Tax
+     Payable, Expense Payable, Payroll Payable, Customer Advances, etc). Modeled on
+     createExpensePayment above: debit the chosen cash account (existing debitAccount
+     helper, enforces sufficient funds), post the GL entry, and - deliberately -
+     never write to the liability account's own accounts.balance column. That column
+     is never touched by any other code path for these accounts either (postGl only
+     writes account_transactions; the periodic syncSystemAccountBalances in server.ts
+     only covers Receivable/Payable), so it sits at 0 forever, which is exactly why
+     buildBalanceSheetFromLedger already falls back to summing the ledger whenever the
+     stored balance is 0. Writing a wrong non-zero value here would break that
+     fallback for every liability account, not just this one. */
+  async listLiabilityAccounts(scope: BranchScope, branchId?: number) {
+    const effectiveBranchId = branchId ?? scope.branchIds[0];
+    if (!effectiveBranchId) return [];
+    assertBranchAccess(scope, effectiveBranchId);
+    return queryMany<{
+      acc_id: number;
+      name: string;
+      institution: string | null;
+      outstanding_balance: string;
+    }>(
+      `SELECT
+          a.acc_id,
+          a.name,
+          a.institution,
+          COALESCE((
+            SELECT SUM(t.credit) - SUM(t.debit)
+              FROM ims.account_transactions t
+             WHERE t.acc_id = a.acc_id
+               AND t.branch_id = a.branch_id
+               AND t.is_deleted = 0
+          ), 0)::text AS outstanding_balance
+         FROM ims.accounts a
+        WHERE a.branch_id = $1
+          AND a.account_type = 'liability'
+          AND a.is_active = TRUE
+        ORDER BY a.name`,
+      [effectiveBranchId]
+    );
+  },
+
+  async createLiabilityPayment(input: LiabilityPaymentInput, scope: BranchScope, userId: number) {
+    const branchId = pickBranchForWrite(scope, input.branchId);
+    if (input.liabilityAccId === input.payFromAccId) {
+      throw ApiError.badRequest('Liability account and pay-from account must differ');
+    }
+    const amount = roundMoney(Number(input.amount));
+    if (amount <= 0) throw ApiError.badRequest('Amount must be greater than zero');
+
+    const liabilityAccount = await queryOne<{ acc_id: number; account_type: string; name: string }>(
+      `SELECT acc_id, account_type, name FROM ims.accounts WHERE acc_id = $1 AND branch_id = $2`,
+      [input.liabilityAccId, branchId]
+    );
+    if (!liabilityAccount) throw ApiError.notFound('Liability account not found');
+    if (liabilityAccount.account_type !== 'liability') {
+      throw ApiError.badRequest('Selected account is not a liability account');
+    }
+
+    const payDate = input.payDate || null;
+
+    return withTransaction(async (client) => {
+      await debitAccount(client, branchId, input.payFromAccId, amount);
+
+      const row = (
+        await client.query<{ liability_payment_id: number; pay_date: string }>(
+          `INSERT INTO ims.liability_payments
+             (branch_id, liability_acc_id, pay_from_acc_id, amount, pay_date, reference_no, note, user_id)
+           VALUES ($1,$2,$3,$4,COALESCE($5, NOW()),$6,$7,$8)
+           RETURNING liability_payment_id, pay_date::text AS pay_date`,
+          [
+            branchId,
+            input.liabilityAccId,
+            input.payFromAccId,
+            amount,
+            payDate,
+            input.referenceNo || null,
+            input.note || null,
+            userId,
+          ]
+        )
+      ).rows[0];
+      if (!row?.liability_payment_id) throw ApiError.internal('Failed to record liability payment');
+
+      await postGl(client, {
+        branchId,
+        txnDate: row.pay_date || payDate,
+        txnType: 'other',
+        refTable: 'liability_payments',
+        refId: Number(row.liability_payment_id),
+        note: `Liability payment #${row.liability_payment_id} - ${liabilityAccount.name}`,
+        lines: [
+          { accId: input.liabilityAccId, debit: amount, credit: 0, note: 'Pay down liability' },
+          { accId: input.payFromAccId, debit: 0, credit: amount, note: 'Cash/bank paid' },
+        ],
+      });
+
+      return (
+        await client.query(
+          `SELECT * FROM ims.liability_payments WHERE liability_payment_id = $1`,
+          [row.liability_payment_id]
+        )
+      ).rows[0];
+    });
+  },
+
+  async listLiabilityPayments(scope: BranchScope, branchId?: number, range: DateRange = {}) {
+    const effectiveBranchId = branchId ?? scope.branchIds[0];
+    if (!effectiveBranchId) return [];
+    assertBranchAccess(scope, effectiveBranchId);
+    const params: any[] = [effectiveBranchId];
+    let dateFilter = '';
+    if (range.fromDate) {
+      params.push(range.fromDate);
+      dateFilter += ` AND p.pay_date >= $${params.length}`;
+    }
+    if (range.toDate) {
+      params.push(range.toDate);
+      dateFilter += ` AND p.pay_date <= $${params.length}::date + interval '1 day'`;
+    }
+    return queryMany(
+      `SELECT p.*, la.name AS liability_account_name, pa.name AS pay_from_account_name
+         FROM ims.liability_payments p
+         JOIN ims.accounts la ON la.acc_id = p.liability_acc_id
+         JOIN ims.accounts pa ON pa.acc_id = p.pay_from_acc_id
+        WHERE p.branch_id = $1
+          ${dateFilter}
+        ORDER BY p.pay_date DESC, p.liability_payment_id DESC`,
+      params
+    );
+  },
+
+  async deleteLiabilityPayment(id: number, scope: BranchScope) {
+    return withTransaction(async (client) => {
+      const payment = (
+        await client.query<{
+          liability_payment_id: number;
+          branch_id: number;
+          pay_from_acc_id: number;
+          amount: string;
+        }>(
+          `SELECT liability_payment_id, branch_id, pay_from_acc_id, amount::text AS amount
+             FROM ims.liability_payments
+            WHERE liability_payment_id = $1
+            FOR UPDATE`,
+          [id]
+        )
+      ).rows[0];
+      if (!payment) throw ApiError.notFound('Liability payment not found');
+      assertBranchAccess(scope, payment.branch_id);
+
+      const amount = roundMoney(Number(payment.amount || 0));
+      await creditAccount(client, payment.branch_id, payment.pay_from_acc_id, amount);
+
+      await client.query(
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'liability_payments'
+            AND ref_id = $2`,
+        [payment.branch_id, id]
+      );
+
+      await client.query(`DELETE FROM ims.liability_payments WHERE liability_payment_id = $1`, [id]);
       return { deleted: true };
     });
   },

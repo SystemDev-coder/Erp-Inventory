@@ -624,7 +624,7 @@ const PurchaseEditor = () => {
     'dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-400 dark:focus:border-primary-400 dark:focus:ring-primary-500/25';
 
   const compactNumberCls =
-    'h-12 w-24 text-center rounded-md border border-slate-300 bg-white px-2 text-base text-slate-900 shadow-sm outline-none transition-all ' +
+    'h-12 w-full text-center rounded-md border border-slate-300 bg-white px-2 text-base text-slate-900 shadow-sm outline-none transition-all ' +
     'placeholder:text-slate-400 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 ' +
     'dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-400 dark:focus:border-primary-400 dark:focus:ring-primary-500/25';
 
@@ -766,10 +766,6 @@ const PurchaseEditor = () => {
                 </label>
               </div>
             )}
-          </div>
-
-          <div className="space-y-4">
-            <h3 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Purchase Details</h3>
 
             <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
               Purchase Date
@@ -780,6 +776,36 @@ const PurchaseEditor = () => {
                 onChange={(e) => setForm({ ...form, purchase_date: e.target.value })}
               />
             </label>
+
+            {docType !== 'order' && (
+              <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+                Purchase Status
+                <select
+                  className={fieldCls}
+                  value={effectiveStatus}
+                  onChange={(e) => {
+                    const nextStatus = e.target.value as any;
+                    setForm((prev) => ({
+                      ...prev,
+                      status: nextStatus,
+                      paid_amount: nextStatus === 'void' ? 0 : prev.paid_amount,
+                      acc_id: nextStatus === 'void' ? '' : prev.acc_id,
+                    }));
+                  }}
+                  disabled={effectivePurchaseType === 'credit'}
+                >
+                  <option value="received">Received</option>
+                  <option value="partial">Incomplete</option>
+                  <option value="unpaid">Unpaid</option>
+                  <option value="void">Cancelled</option>
+                </select>
+                <span className="text-xs text-slate-500">Status controls how payment is recorded.</span>
+              </label>
+            )}
+          </div>
+
+          <div className="space-y-4">
+            <h3 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Purchase Details</h3>
 
             {docType !== 'order' && (
               <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
@@ -847,32 +873,6 @@ const PurchaseEditor = () => {
                   onChange={(nextValue) => setForm({ ...form, acc_id: nextValue === '' ? '' : Number(nextValue) })}
                 />
                 <span className="text-xs text-slate-500">Required for cash/partial payments.</span>
-              </label>
-            )}
-
-            {docType !== 'order' && (
-              <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-                Purchase Status
-                <select
-                  className={fieldCls}
-                  value={effectiveStatus}
-                  onChange={(e) => {
-                    const nextStatus = e.target.value as any;
-                    setForm((prev) => ({
-                      ...prev,
-                      status: nextStatus,
-                      paid_amount: nextStatus === 'void' ? 0 : prev.paid_amount,
-                      acc_id: nextStatus === 'void' ? '' : prev.acc_id,
-                    }));
-                  }}
-                  disabled={effectivePurchaseType === 'credit'}
-                >
-                  <option value="received">Received</option>
-                  <option value="partial">Incomplete</option>
-                  <option value="unpaid">Unpaid</option>
-                  <option value="void">Cancelled</option>
-                </select>
-                <span className="text-xs text-slate-500">Status controls how payment is recorded.</span>
               </label>
             )}
 
@@ -1144,7 +1144,31 @@ const PurchaseEditor = () => {
 
 	        <div className="overflow-x-auto">
 	          <div className="min-w-[980px] overflow-visible">
-	            <table className="min-w-full border-collapse text-sm">
+	            <table className="min-w-full table-fixed border-collapse text-sm">
+	              <colgroup>
+	                {discountMode === 'per_item' ? (
+	                  <>
+	                    <col style={{ width: '20%' }} />
+	                    <col style={{ width: '17%' }} />
+	                    <col style={{ width: '10%' }} />
+	                    <col style={{ width: '12%' }} />
+	                    <col style={{ width: '12%' }} />
+	                    <col style={{ width: '11%' }} />
+	                    <col style={{ width: '11%' }} />
+	                    <col style={{ width: '7%' }} />
+	                  </>
+	                ) : (
+	                  <>
+	                    <col style={{ width: '22%' }} />
+	                    <col style={{ width: '20%' }} />
+	                    <col style={{ width: '12%' }} />
+	                    <col style={{ width: '13%' }} />
+	                    <col style={{ width: '13%' }} />
+	                    <col style={{ width: '12%' }} />
+	                    <col style={{ width: '8%' }} />
+	                  </>
+	                )}
+	              </colgroup>
 	              <thead>
 	              <tr className="border-b-2 border-slate-200 dark:border-slate-700">
 	                <th className="py-2 pr-2 pl-5 text-left text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Item name</th>

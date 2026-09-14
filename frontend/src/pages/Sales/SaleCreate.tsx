@@ -754,34 +754,6 @@ const SaleCreate = () => {
               </p>
             </div>
 
-            {saleForm.customer_id && saleForm.doc_type !== 'quotation' && canUseCredit && (
-              <div className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-300">
-                <input
-                  id="debt-toggle"
-                  type="checkbox"
-                  className="h-4 w-4 accent-primary-600"
-                  checked={isDebt}
-                  onChange={(e) => {
-                    const checked = e.target.checked;
-                    setIsDebt(checked);
-                    setSaleForm((prev) => ({
-                      ...prev,
-                      sale_type: checked ? 'credit' : 'cash',
-                      acc_id: checked ? '' : prev.acc_id,
-                      paid_amount: checked ? 0 : prev.paid_amount,
-                    }));
-                  }}
-                />
-                <label htmlFor="debt-toggle" className="select-none">
-                  Mark as debt for this customer
-                </label>
-              </div>
-            )}
-          </div>
-
-          <div className="space-y-4">
-            <h3 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Sale Details</h3>
-
             <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
               Document Type
               {effectiveDocType === 'quotation' ? (
@@ -813,6 +785,67 @@ const SaleCreate = () => {
                 disabled={loading}
               />
             </label>
+
+            <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
+              Status
+              <select
+                className={statusLocked ? controlReadonlyCls : controlCls}
+                value={effectiveStatus}
+                disabled={loading || statusLocked}
+                title={
+                  statusLocked
+                    ? 'Credit and quotation documents are always unpaid'
+                    : 'Choose how much of this sale is settled now'
+                }
+                onChange={(e) => {
+                  const nextStatus = e.target.value as SaleStatus;
+                  clearError('account');
+                  clearError('paidAmount');
+                  setSaleForm((prev) => {
+                    const total = Number(prev.total || 0);
+                    return {
+                      ...prev,
+                      status: nextStatus,
+                      acc_id: nextStatus === 'unpaid' ? '' : prev.acc_id,
+                      paid_amount:
+                        nextStatus === 'paid' ? total : nextStatus === 'unpaid' ? 0 : prev.paid_amount,
+                    };
+                  });
+                }}
+              >
+                <option value="paid">Paid</option>
+                <option value="partial">Partial</option>
+                <option value="unpaid">Unpaid</option>
+              </select>
+            </label>
+
+            {saleForm.customer_id && saleForm.doc_type !== 'quotation' && canUseCredit && (
+              <div className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-300">
+                <input
+                  id="debt-toggle"
+                  type="checkbox"
+                  className="h-4 w-4 accent-primary-600"
+                  checked={isDebt}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setIsDebt(checked);
+                    setSaleForm((prev) => ({
+                      ...prev,
+                      sale_type: checked ? 'credit' : 'cash',
+                      acc_id: checked ? '' : prev.acc_id,
+                      paid_amount: checked ? 0 : prev.paid_amount,
+                    }));
+                  }}
+                />
+                <label htmlFor="debt-toggle" className="select-none">
+                  Mark as debt for this customer
+                </label>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-4">
+            <h3 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Sale Details</h3>
 
             {effectiveDocType === 'quotation' && (
               <div className="flex flex-col gap-1">
@@ -893,39 +926,6 @@ const SaleCreate = () => {
               </div>
             )}
 
-            <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-              Status
-              <select
-                className={statusLocked ? controlReadonlyCls : controlCls}
-                value={effectiveStatus}
-                disabled={loading || statusLocked}
-                title={
-                  statusLocked
-                    ? 'Credit and quotation documents are always unpaid'
-                    : 'Choose how much of this sale is settled now'
-                }
-                onChange={(e) => {
-                  const nextStatus = e.target.value as SaleStatus;
-                  clearError('account');
-                  clearError('paidAmount');
-                  setSaleForm((prev) => {
-                    const total = Number(prev.total || 0);
-                    return {
-                      ...prev,
-                      status: nextStatus,
-                      acc_id: nextStatus === 'unpaid' ? '' : prev.acc_id,
-                      paid_amount:
-                        nextStatus === 'paid' ? total : nextStatus === 'unpaid' ? 0 : prev.paid_amount,
-                    };
-                  });
-                }}
-              >
-                <option value="paid">Paid</option>
-                <option value="partial">Partial</option>
-                <option value="unpaid">Unpaid</option>
-              </select>
-            </label>
-
             {shouldShowAccount && (
               <div
                 className="flex flex-col gap-1"
@@ -1003,7 +1003,14 @@ const SaleCreate = () => {
           )}
 
           <div className="overflow-x-auto">
-            <table className="min-w-full border-collapse text-sm">
+            <table className="min-w-full table-fixed border-collapse text-sm">
+              <colgroup>
+                <col style={{ width: '38%' }} />
+                <col style={{ width: '16%' }} />
+                <col style={{ width: '18%' }} />
+                <col style={{ width: '16%' }} />
+                <col style={{ width: '12%' }} />
+              </colgroup>
               <thead>
                 <tr className="border-b-2 border-slate-200 dark:border-slate-700">
                   <th className="px-2 py-2 text-left text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Item</th>

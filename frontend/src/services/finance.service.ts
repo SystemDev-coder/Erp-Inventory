@@ -15,6 +15,26 @@ export interface AccountTransfer {
   to_account?: string;
 }
 
+export interface LiabilityAccount {
+  acc_id: number;
+  name: string;
+  institution?: string | null;
+  outstanding_balance: number;
+}
+
+export interface LiabilityPayment {
+  liability_payment_id: number;
+  branch_id: number;
+  liability_acc_id: number;
+  pay_from_acc_id: number;
+  amount: number;
+  pay_date: string;
+  reference_no?: string | null;
+  note?: string | null;
+  liability_account_name?: string;
+  pay_from_account_name?: string;
+}
+
 export interface Receipt {
   receipt_id: number;
   branch_id: number;
@@ -254,6 +274,42 @@ export const financeService = {
       referenceNo: (payload as any).reference_no,
       note: payload.note,
     });
+  },
+
+  // Liability payments
+  async listLiabilityAccounts(params?: { branchId?: number }) {
+    const qs = params?.branchId ? `?branchId=${params.branchId}` : '';
+    return apiClient.get<{ accounts: LiabilityAccount[] }>(`${API.FINANCE.LIABILITY_ACCOUNTS}${qs}`);
+  },
+  async listLiabilityPayments(params?: { branchId?: number; fromDate?: string; toDate?: string }) {
+    const qsParts: string[] = [];
+    if (params?.branchId) qsParts.push(`branchId=${params.branchId}`);
+    if (params?.fromDate) qsParts.push(`fromDate=${encodeURIComponent(params.fromDate)}`);
+    if (params?.toDate) qsParts.push(`toDate=${encodeURIComponent(params.toDate)}`);
+    const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
+    return apiClient.get<{ payments: LiabilityPayment[] }>(`${API.FINANCE.LIABILITY_PAYMENTS}${qs}`);
+  },
+  async createLiabilityPayment(payload: {
+    branch_id?: number;
+    liability_acc_id: number;
+    pay_from_acc_id: number;
+    amount: number;
+    pay_date?: string;
+    reference_no?: string;
+    note?: string;
+  }) {
+    return apiClient.post<{ payment: LiabilityPayment }>(API.FINANCE.LIABILITY_PAYMENTS, {
+      branchId: payload.branch_id,
+      liabilityAccId: payload.liability_acc_id,
+      payFromAccId: payload.pay_from_acc_id,
+      amount: payload.amount,
+      payDate: payload.pay_date,
+      referenceNo: payload.reference_no,
+      note: payload.note,
+    });
+  },
+  async deleteLiabilityPayment(id: number) {
+    return apiClient.delete(`${API.FINANCE.LIABILITY_PAYMENTS}/${id}`);
   },
 
   async listCustomerReceipts(params?: { branchId?: number; fromDate?: string; toDate?: string }) {

@@ -5,6 +5,10 @@ import {
   listAccountTransfers,
   createAccountTransfer,
   updateAccountTransfer,
+  listLiabilityAccounts,
+  listLiabilityPayments,
+  createLiabilityPayment,
+  deleteLiabilityPayment,
   listCustomerReceipts,
   createCustomerReceipt,
   updateCustomerReceipt,
@@ -66,6 +70,12 @@ router.use(requireAuth);
 router.get('/transfers', listAccountTransfers);
 router.post('/transfers', createAccountTransfer);
 router.put('/transfers/:id', updateAccountTransfer);
+
+// Liability payments
+router.get('/liability-accounts', listLiabilityAccounts);
+router.get('/liability-payments', listLiabilityPayments);
+router.post('/liability-payments', createLiabilityPayment);
+router.delete('/liability-payments/:id', deleteLiabilityPayment);
 
 // Receipts - customers
 router.get('/receipts/customers/unpaid', listCustomerUnpaid);
