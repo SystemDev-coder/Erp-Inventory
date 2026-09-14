@@ -35,6 +35,7 @@ type CandidateRow<T> = {
 
 type ImportExecutionOptions = {
   updateExistingBalances?: boolean;
+  mode?: ImportMode;
 };
 
 type ImportDefinition<T> = {
@@ -85,6 +86,12 @@ type ItemImportRow = {
   sell_price: number;
   is_active: boolean;
   store_id: number | null;
+  // Raw name text from the file, resolved (and auto-created if new) to an id by
+  // applyItemChecks before insertRow runs - mirrors how store_id gets defaulted.
+  category_name: string | null;
+  unit_name: string | null;
+  category_id: number | null;
+  unit_id: number | null;
 };
 
 type CustomerShape = {
@@ -114,6 +121,7 @@ let customerShapeCache: CustomerShape | null = null;
 let supplierShapeCache: SupplierShape | null = null;
 let itemShapeCache: ItemShape | null = null;
 const defaultCategoryByBranch = new Map<number, number>();
+const defaultUnitByBranch = new Map<number, number>();
 
 const PREVIEW_LIMIT = 200;
 
@@ -319,6 +327,138 @@ const ensureDefaultCategory = async (client: PoolClient, branchId: number): Prom
   return createdId;
 };
 
+const ensureDefaultUnit = async (client: PoolClient, branchId: number): Promise<number> => {
+  const cached = defaultUnitByBranch.get(branchId);
+  if (cached) return cached;
+
+  const existing = await client.query<{ unit_id: number }>(
+    `SELECT unit_id
+       FROM ims.units
+      WHERE branch_id = $1
+      ORDER BY unit_id
+      LIMIT 1`,
+    [branchId]
+  );
+  if (existing.rows[0]?.unit_id) {
+    const id = Number(existing.rows[0].unit_id);
+    defaultUnitByBranch.set(branchId, id);
+    return id;
+  }
+
+  const created = await client.query<{ unit_id: number }>(
+    `INSERT INTO ims.units (branch_id, unit_name, symbol, is_active)
+     VALUES ($1, 'Piece', 'pc', TRUE)
+     RETURNING unit_id`,
+    [branchId]
+  );
+  const createdId = Number(created.rows[0]?.unit_id || 0);
+  if (!createdId) {
+    throw new Error('Failed to create default unit');
+  }
+  defaultUnitByBranch.set(branchId, createdId);
+  return createdId;
+};
+
+// Resolve each row's category/unit NAME (from the uploaded file) to an id, auto-creating a
+// new category/unit row the first time a name is seen for this branch, and falling back to
+// the branch's default when a row left the column blank - the same "never leave it unset"
+// behavior store_id already has via defaultStoreId above.
+const resolveItemCategoriesAndUnits = async (
+  rows: CandidateRow<ItemImportRow>[],
+  branchId: number,
+  options: ImportExecutionOptions
+) => {
+  // Preview is a read-only dry run: toPreviewData shows the raw category/unit text the
+  // user typed (falling back to a literal "(default)" label), never the resolved id, so
+  // there is nothing for a preview to gain by resolving anything here - and doing so would
+  // create real category/unit rows for a file the user hasn't actually committed yet.
+  if (options.mode !== 'import') return;
+
+  const activeRows = rows.filter((row) => !row.errors.length && !row.skipReason);
+  if (!activeRows.length) return;
+
+  const resolveMasterList = async (
+    table: 'categories' | 'units',
+    idColumn: 'cat_id' | 'unit_id',
+    nameColumn: 'cat_name' | 'unit_name',
+    namesByKey: Map<string, string>
+  ) => {
+    const map = new Map<string, number>();
+    const keys = Array.from(namesByKey.keys());
+    if (!keys.length) return map;
+    const existing = await queryMany<{ id: number; name_key: string }>(
+      `SELECT ${idColumn} AS id, LOWER(${nameColumn}) AS name_key
+         FROM ims.${table}
+        WHERE branch_id = $1
+          AND LOWER(${nameColumn}) = ANY($2::text[])`,
+      [branchId, keys]
+    );
+    for (const row of existing) map.set(row.name_key, Number(row.id));
+
+    const missing = keys.filter((key) => !map.has(key));
+    for (const key of missing) {
+      // Insert with the original casing the user typed (e.g. "Electronics"), not the
+      // lowercase lookup key, so newly auto-created rows read naturally afterward.
+      const originalName = namesByKey.get(key) as string;
+      const created = await queryOne<{ id: number }>(
+        `INSERT INTO ims.${table} (branch_id, ${nameColumn}, is_active)
+         VALUES ($1, $2, TRUE)
+         ON CONFLICT (branch_id, ${nameColumn}) DO UPDATE SET is_active = ims.${table}.is_active
+         RETURNING ${idColumn} AS id`,
+        [branchId, originalName]
+      );
+      if (created?.id) map.set(key, Number(created.id));
+    }
+    return map;
+  };
+
+  const collectNamesByKey = (values: string[]) => {
+    const map = new Map<string, string>();
+    for (const value of values) {
+      const key = normalizeLookup(value);
+      if (key && !map.has(key)) map.set(key, value.trim());
+    }
+    return map;
+  };
+
+  const categoryNamesByKey = collectNamesByKey(
+    activeRows.filter((row) => row.data.category_name).map((row) => row.data.category_name as string)
+  );
+  const unitNamesByKey = collectNamesByKey(
+    activeRows.filter((row) => row.data.unit_name).map((row) => row.data.unit_name as string)
+  );
+
+  const [categoryMap, unitMap] = await Promise.all([
+    resolveMasterList('categories', 'cat_id', 'cat_name', categoryNamesByKey),
+    resolveMasterList('units', 'unit_id', 'unit_name', unitNamesByKey),
+  ]);
+
+  let defaultCategoryId: number | null = null;
+  let defaultUnitId: number | null = null;
+
+  for (const row of activeRows) {
+    if (row.data.category_name) {
+      row.data.category_id = categoryMap.get(normalizeLookup(row.data.category_name)) ?? null;
+    }
+    if (!row.data.category_id) {
+      if (defaultCategoryId === null) {
+        defaultCategoryId = await withTransaction((client) => ensureDefaultCategory(client, branchId));
+      }
+      row.data.category_id = defaultCategoryId;
+    }
+
+    if (row.data.unit_name) {
+      row.data.unit_id = unitMap.get(normalizeLookup(row.data.unit_name)) ?? null;
+    }
+    if (!row.data.unit_id) {
+      if (defaultUnitId === null) {
+        defaultUnitId = await withTransaction((client) => ensureDefaultUnit(client, branchId));
+      }
+      row.data.unit_id = defaultUnitId;
+    }
+  }
+};
+
 const uniqueLowerSet = (values: string[]) =>
   Array.from(new Set(values.map((value) => normalizeLookup(value))));
 
@@ -502,6 +642,8 @@ const parseItemRow = (raw: Record<string, unknown>): ParseResult<ItemImportRow> 
   const isActiveRaw = readRawValue(raw, ['is_active', 'active', 'status']);
   const storeIdRaw = readRawValue(raw, ['store_id', 'store']);
   const branchFromFile = readRawValue(raw, ['branch_id', 'branch']);
+  const categoryName = readString(raw, ['category', 'category_name']);
+  const unitName = readString(raw, ['unit', 'unit_name']);
 
   if (!name) {
     errors.push('item is required');
@@ -548,6 +690,10 @@ const parseItemRow = (raw: Record<string, unknown>): ParseResult<ItemImportRow> 
     sell_price: sellPrice,
     is_active: isActive,
     store_id: storeId,
+    category_name: categoryName || null,
+    unit_name: unitName || null,
+    category_id: null,
+    unit_id: null,
   };
 
   return {
@@ -629,7 +775,7 @@ const applySupplierChecks = async (
 const applyItemChecks = async (
   rows: CandidateRow<ItemImportRow>[],
   branchId: number,
-  _options: ImportExecutionOptions
+  options: ImportExecutionOptions
 ) => {
   addFileDuplicateSkips(rows, (row) => row.data.name, 'Item name');
   addFileDuplicateSkips(
@@ -749,6 +895,8 @@ const applyItemChecks = async (
       row.errors.push(`store_id ${row.data.store_id} does not exist in this branch`);
     }
   }
+
+  await resolveItemCategoriesAndUnits(rows, branchId, options);
 };
 
 const hasCustomerNonOpeningLedger = async (
@@ -1129,7 +1277,9 @@ const insertItem = async (
     'opening_balance',
     'cost_price',
     'sell_price',
-    'is_active'
+    'is_active',
+    'category_id',
+    'unit_id'
   );
   values.push(
     row.store_id,
@@ -1139,7 +1289,9 @@ const insertItem = async (
     row.opening_balance,
     row.cost_price,
     row.sell_price,
-    row.is_active
+    row.is_active,
+    row.category_id,
+    row.unit_id
   );
 
   const placeholders = values.map((_, index) => `$${index + 1}`);
@@ -1246,7 +1398,9 @@ const itemsDefinition: ImportDefinition<ItemImportRow> = {
     { field: 'quantity', aliases: ['quantity', 'opening_balance', 'opening_stock'] },
     { field: 'cost_price', aliases: ['cost_price', 'cost'] },
     { field: 'sell_price', aliases: ['sell_price', 'price'] },
-    // store_id is preferred in file; if omitted, import auto-assigns Main Store.
+    // store_id, category, and unit are all optional in the file - if omitted, import
+    // auto-assigns Main Store / the branch's default category / the branch's default unit.
+    // A category or unit name that doesn't exist yet gets created automatically.
   ],
   parseRow: (raw, _row) => parseItemRow(raw),
   applyBusinessChecks: applyItemChecks,
@@ -1263,6 +1417,8 @@ const itemsDefinition: ImportDefinition<ItemImportRow> = {
       store_id: row.store_id,
       barcode: row.barcode,
       stock_alert: Number(row.stock_alert || 0),
+      category: row.category_name || '(default)',
+      unit: row.unit_name || '(default)',
     };
   },
 };
@@ -1356,7 +1512,7 @@ const executeImport = async <
     });
   }
 
-  await definition.applyBusinessChecks(candidates, branchId, options);
+  await definition.applyBusinessChecks(candidates, branchId, { ...options, mode });
 
   const rowsToInsert: CandidateRow<T>[] = [];
   for (const row of candidates) {

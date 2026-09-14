@@ -979,9 +979,9 @@ const Products = () => {
         onClose={() => setItemImportOpen(false)}
         importType="items"
         title="Upload Items"
-        columns={['item', 'quantity', 'cost_price', 'amount', 'sell_price']}
-        templateHeaders={['item', 'quantity', 'cost_price', 'sell_price', 'store_id', 'barcode', 'stock_alert', 'is_active']}
-        hint="store_id is recommended. If omitted, the system assigns Main Store (creates it when missing)."
+        columns={['item', 'quantity', 'cost_price', 'amount', 'sell_price', 'category', 'unit']}
+        templateHeaders={['item', 'quantity', 'cost_price', 'sell_price', 'store_id', 'barcode', 'stock_alert', 'is_active', 'category', 'unit']}
+        hint="store_id, category, and unit are all optional. If left blank, the system assigns Main Store / the default category / the default unit - and creates a new category or unit automatically if you type a name that doesn't exist yet."
         onImported={async () => {
           if (itemsDisplayed) await loadProducts();
         }}
