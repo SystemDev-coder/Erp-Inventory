@@ -2571,7 +2571,11 @@ export const financeService = {
   },
 
   /* Expense budgets */
-  async listExpenseBudgets(scope: BranchScope, branchId?: number, range: DateRange = {}) {
+  // Budgets are a standing monthly limit, not a dated transaction - unlike
+  // charges/receipts/transfers, they should never be filtered by the page's
+  // From/To Date picker, or a budget created outside that window silently
+  // disappears from "Display" even though it's still active.
+  async listExpenseBudgets(scope: BranchScope, branchId?: number, _range: DateRange = {}) {
     const params: any[] = [];
     let where = 'WHERE 1=1';
     if (branchId) {
@@ -2581,17 +2585,6 @@ export const financeService = {
     } else if (!scope.isAdmin) {
       params.push(scope.branchIds);
       where += ` AND e.branch_id = ANY($${params.length})`;
-    }
-    if (range.fromDate) {
-      const hasCreatedAt = await hasColumn('expense_budgets', 'created_at');
-      if (hasCreatedAt) {
-      params.push(range.fromDate);
-      where += ` AND b.created_at::date >= $${params.length}::date`;
-    }
-    if (range.toDate) {
-      params.push(range.toDate);
-      where += ` AND b.created_at::date <= $${params.length}::date`;
-      }
     }
 
     return queryMany(

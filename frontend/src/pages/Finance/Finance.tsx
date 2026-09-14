@@ -115,6 +115,11 @@ const [isBudgetModalOpen, setIsBudgetModalOpen] = useState(false);
 const [editingBudget, setEditingBudget] = useState<ExpenseBudget | null>(null);
 const [budgetForm, setBudgetForm] = useState<{ exp_id?: number; fixed_amount?: number; note?: string }>({});
 const [budgetErrors, setBudgetErrors] = useState<{ exp?: string; amount?: string }>({});
+// Expense categories that already have a budget - fetched fresh whenever the
+// New Budget modal opens (not trusted from `expenseBudgets`, which is only
+// populated after clicking "Display"), so the picker doesn't offer to create
+// a second budget for the same category.
+const [budgetedExpIds, setBudgetedExpIds] = useState<Set<number>>(new Set());
 
 const [isChargeModalOpen, setIsChargeModalOpen] = useState(false);
 const [editingChargeId, setEditingChargeId] = useState<number | null>(null);
@@ -1623,10 +1628,16 @@ const submitBudgetCharge = async () => {
                 <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
               </button>
               <button
-                onClick={() => {
+                onClick={async () => {
                   setEditingBudget(null);
+                  const res = await financeService.listExpenseBudgets({ branchId: activeBranchId ?? undefined });
+                  const taken = new Set(
+                    (res.success && res.data?.budgets ? res.data.budgets : []).map((b) => Number(b.exp_id))
+                  );
+                  setBudgetedExpIds(taken);
+                  const firstAvailable = expenses.find((ex) => !taken.has(Number(ex.exp_id)));
                   setBudgetForm({
-                    exp_id: expenses[0]?.exp_id,
+                    exp_id: firstAvailable?.exp_id,
                     fixed_amount: undefined,
                     note: '',
                   });
@@ -2250,12 +2261,19 @@ const submitBudgetCharge = async () => {
               onChange={(e) => setBudgetForm({ ...budgetForm, exp_id: Number(e.target.value) })}
             >
               <option value="">Select</option>
-              {expenses.map((ex) => (
-                <option key={ex.exp_id} value={ex.exp_id}>
-                  {ex.name}
-                </option>
-              ))}
+              {expenses
+                .filter((ex) => !budgetedExpIds.has(Number(ex.exp_id)) || Number(ex.exp_id) === Number(budgetForm.exp_id))
+                .map((ex) => (
+                  <option key={ex.exp_id} value={ex.exp_id}>
+                    {ex.name}
+                  </option>
+                ))}
             </select>
+            {!editingBudget && expenses.length > 0 && expenses.every((ex) => budgetedExpIds.has(Number(ex.exp_id))) && (
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                Every expense category already has a budget.
+              </p>
+            )}
             {budgetErrors.exp && <p className="mt-1 text-xs text-red-500">{budgetErrors.exp}</p>}
           </label>
           <label className="text-sm">
