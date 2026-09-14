@@ -1084,7 +1084,13 @@ const submitBudgetCharge = async () => {
     setBudgetChargeError('Date is required to charge budgets');
     return;
   }
-  if (!expenseBudgets.length) {
+  // Don't trust local `expenseBudgets` state here - it's only populated after
+  // clicking "Display" on this page, and even then it's filtered by the
+  // current date-range picker, which has nothing to do with whether a budget
+  // exists. "Charge Budget" is reachable without either of those, so check
+  // the server directly instead of reporting a false "no budgets available".
+  const budgetsCheck = await financeService.listExpenseBudgets({ branchId: activeBranchId ?? undefined });
+  if (!budgetsCheck.success || !budgetsCheck.data?.budgets?.length) {
     setBudgetChargeError('No expense budgets available. Create one first.');
     return;
   }
