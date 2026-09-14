@@ -6,6 +6,7 @@ import { AuthRequest } from '../../middlewares/requireAuth';
 import { resolveBranchScope } from '../../utils/branchScope';
 import {
   accountTransferSchema,
+  liabilityAccountCreateSchema,
   liabilityPaymentSchema,
   customerReceiptSchema,
   supplierReceiptSchema,
@@ -111,6 +112,13 @@ export const listLiabilityAccounts = asyncHandler(async (req: AuthRequest, res: 
   const onlyOutstanding = req.query.onlyOutstanding !== 'false';
   const accounts = await financeService.listLiabilityAccounts(scope, branchId, onlyOutstanding);
   return ApiResponse.success(res, { accounts });
+});
+
+export const createLiabilityAccount = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const input = liabilityAccountCreateSchema.parse(req.body);
+  const account = await financeService.createLiabilityAccount(input.name, scope, input.branchId);
+  return ApiResponse.created(res, { account }, 'Liability account created');
 });
 
 export const listLiabilityPayments = asyncHandler(async (req: AuthRequest, res: Response) => {

@@ -285,6 +285,12 @@ export const financeService = {
     const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
     return apiClient.get<{ accounts: LiabilityAccount[] }>(`${API.FINANCE.LIABILITY_ACCOUNTS}${qs}`);
   },
+  async createLiabilityAccount(payload: { name: string; branch_id?: number }) {
+    return apiClient.post<{ account: LiabilityAccount }>(API.FINANCE.LIABILITY_ACCOUNTS, {
+      name: payload.name,
+      branchId: payload.branch_id,
+    });
+  },
   async listLiabilityPayments(params?: { branchId?: number; fromDate?: string; toDate?: string }) {
     const qsParts: string[] = [];
     if (params?.branchId) qsParts.push(`branchId=${params.branchId}`);

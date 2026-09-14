@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router';
 import { ColumnDef } from '@tanstack/react-table';
-import { Plus, RefreshCw, SquarePen, Trash, History, CalendarClock } from 'lucide-react';
+import { Plus, RefreshCw, SquarePen, Trash, History, CalendarClock, ArrowDownCircle, ArrowUpCircle, Landmark, Wallet } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
 import { PageHeader } from '../../components/ui/layout';
 import { DataTable } from '../../components/ui/table/DataTable';
+import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
 import { useToast } from '../../components/ui/toast/Toast';
 import { accountService, Account } from '../../services/account.service';
 import {
@@ -95,6 +96,7 @@ const [liabilityPaymentForm, setLiabilityPaymentForm] = useState<{
   note?: string;
 }>({ direction: 'payment' });
 const [liabilityPaymentErrors, setLiabilityPaymentErrors] = useState<{ liability?: string; payFrom?: string; amount?: string }>({});
+const [creatingLiabilityAccount, setCreatingLiabilityAccount] = useState(false);
 const [pendingDeleteLiabilityPayment, setPendingDeleteLiabilityPayment] = useState<LiabilityPayment | null>(null);
 const [deletingLiabilityPayment, setDeletingLiabilityPayment] = useState(false);
 
@@ -990,6 +992,31 @@ const [deletingBudget, setDeletingBudget] = useState(false);
     setLiabilityPaymentForm((prev) => ({ ...prev, direction, liability_acc_id: undefined }));
     setLiabilityPaymentErrors({});
     await loadLiabilityAccountsFor(direction);
+  };
+
+  // Lets the Liability Account field create a brand-new liability (e.g. a specific
+  // bank loan) on the spot instead of being limited to the standing list - mirrors
+  // handleAutoCreateCustomer in SaleCreate.tsx (type a name not in the list, it's
+  // registered and attached automatically on blur).
+  const handleAutoCreateLiabilityAccount = async (typedName: string) => {
+    const name = typedName.trim();
+    if (!name) return;
+    const existing = liabilityAccounts.find((a) => a.name.trim().toLowerCase() === name.toLowerCase());
+    if (existing) {
+      setLiabilityPaymentForm((prev) => ({ ...prev, liability_acc_id: existing.acc_id }));
+      return;
+    }
+    setCreatingLiabilityAccount(true);
+    const res = await financeService.createLiabilityAccount({ name, branch_id: activeBranchId ?? undefined });
+    setCreatingLiabilityAccount(false);
+    if (res.success && res.data?.account) {
+      const created = res.data.account;
+      setLiabilityAccounts((prev) => [...prev, created]);
+      setLiabilityPaymentForm((prev) => ({ ...prev, liability_acc_id: created.acc_id }));
+      showToast('success', 'Finance', `"${created.name}" was added as a new liability account.`);
+    } else {
+      showToast('error', 'Finance', res.error || 'Could not create this liability account.');
+    }
   };
 
   const submitLiabilityPayment = async () => {
@@ -2077,129 +2104,193 @@ const submitBudgetCharge = async () => {
         title={liabilityPaymentForm.direction === 'borrow' ? 'Record New Liability' : 'New Liability Payment'}
         size="md"
       >
-        <div className="space-y-4 text-slate-900 dark:text-slate-100">
-          <div className="grid grid-cols-2 gap-2 rounded-lg border border-slate-300 p-1 dark:border-slate-600">
+        <div className="space-y-5 text-slate-900 dark:text-slate-100">
+          <div className="grid grid-cols-2 gap-1.5 rounded-xl bg-slate-100 p-1.5 dark:bg-slate-800">
             <button
               type="button"
               onClick={() => void switchLiabilityPaymentDirection('payment')}
-              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+              className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold transition-all ${
                 liabilityPaymentForm.direction === 'payment'
-                  ? 'bg-primary-600 text-white'
-                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
+                  ? 'bg-white text-primary-700 shadow-sm dark:bg-slate-900 dark:text-primary-300'
+                  : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
               }`}
             >
-              Pay Down
+              <ArrowDownCircle className="h-4 w-4" aria-hidden="true" /> Pay Down
             </button>
             <button
               type="button"
               onClick={() => void switchLiabilityPaymentDirection('borrow')}
-              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+              className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold transition-all ${
                 liabilityPaymentForm.direction === 'borrow'
-                  ? 'bg-primary-600 text-white'
-                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
+                  ? 'bg-white text-amber-700 shadow-sm dark:bg-slate-900 dark:text-amber-300'
+                  : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
               }`}
             >
-              Borrow (New Liability)
+              <ArrowUpCircle className="h-4 w-4" aria-hidden="true" /> Borrow (New Liability)
             </button>
           </div>
-          <label htmlFor="liability-account" className="text-sm block">
-            <span className="mb-1 block font-medium">Liability Account</span>
-            <select
+
+          <div>
+            <label htmlFor="liability-account" className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-200">
+              <span className="inline-flex items-center gap-1.5">
+                <Landmark className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" /> Liability Account
+              </span>
+            </label>
+            <SearchableCombobox<number>
               id="liability-account"
-              className={fieldClass}
               value={liabilityPaymentForm.liability_acc_id ?? ''}
-              onChange={(e) =>
-                setLiabilityPaymentForm({ ...liabilityPaymentForm, liability_acc_id: Number(e.target.value) })
+              options={liabilityAccounts.map((a) => ({
+                value: a.acc_id,
+                label:
+                  liabilityPaymentForm.direction === 'payment'
+                    ? `${a.name} — $${Number(a.outstanding_balance || 0).toFixed(2)} owed`
+                    : a.name,
+              }))}
+              placeholder={creatingLiabilityAccount ? 'Adding…' : 'Select or type a new liability name'}
+              disabled={creatingLiabilityAccount}
+              hasError={!!liabilityPaymentErrors.liability}
+              allowCustom
+              onCustomCommit={(text) => void handleAutoCreateLiabilityAccount(text)}
+              onChange={(nextValue) =>
+                setLiabilityPaymentForm({
+                  ...liabilityPaymentForm,
+                  liability_acc_id: nextValue === '' ? undefined : Number(nextValue),
+                })
               }
-            >
-              <option value="">Select</option>
-              {liabilityAccounts.map((a) => (
-                <option key={a.acc_id} value={a.acc_id}>
-                  {a.name} - ${Number(a.outstanding_balance || 0).toFixed(2)} owed
-                </option>
-              ))}
-            </select>
+            />
+            <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+              Type a name not in the list to create a new liability account, e.g. a specific loan.
+            </p>
             {liabilityPaymentErrors.liability && (
               <p className="mt-1 text-xs text-red-500">{liabilityPaymentErrors.liability}</p>
             )}
-          </label>
-          <label htmlFor="liability-pay-from" className="text-sm block">
-            <span className="mb-1 block font-medium">
-              {liabilityPaymentForm.direction === 'borrow' ? 'Receive Into Account' : 'Pay From Account'}
-            </span>
-            <select
+          </div>
+
+          <div>
+            <label htmlFor="liability-pay-from" className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-200">
+              <span className="inline-flex items-center gap-1.5">
+                <Wallet className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
+                {liabilityPaymentForm.direction === 'borrow' ? 'Receive Into Account' : 'Pay From Account'}
+              </span>
+            </label>
+            <SearchableCombobox<number>
               id="liability-pay-from"
-              className={fieldClass}
               value={liabilityPaymentForm.pay_from_acc_id ?? ''}
-              onChange={(e) =>
-                setLiabilityPaymentForm({ ...liabilityPaymentForm, pay_from_acc_id: Number(e.target.value) })
+              options={accounts.map((a) => ({ value: a.acc_id, label: `${a.name} ($${Number(a.balance || 0).toFixed(2)})` }))}
+              placeholder="Select account"
+              hasError={!!liabilityPaymentErrors.payFrom}
+              onChange={(nextValue) =>
+                setLiabilityPaymentForm({
+                  ...liabilityPaymentForm,
+                  pay_from_acc_id: nextValue === '' ? undefined : Number(nextValue),
+                })
               }
-            >
-              <option value="">Select</option>
-              {accounts.map((a) => (
-                <option key={a.acc_id} value={a.acc_id}>
-                  {a.name} (${Number(a.balance || 0).toFixed(2)})
-                </option>
-              ))}
-            </select>
+            />
             {liabilityPaymentErrors.payFrom && (
               <p className="mt-1 text-xs text-red-500">{liabilityPaymentErrors.payFrom}</p>
             )}
-          </label>
-          <label htmlFor="liability-amount" className="text-sm block">
-            <span className="mb-1 block font-medium">Amount</span>
-            <input
-              id="liability-amount"
-              type="number"
-              step="0.01"
-              className={fieldClass}
-              value={liabilityPaymentForm.amount ?? ''}
-              onChange={(e) => setLiabilityPaymentForm({ ...liabilityPaymentForm, amount: Number(e.target.value) })}
-            />
-            {liabilityPaymentErrors.amount && (
-              <p className="mt-1 text-xs text-red-500">{liabilityPaymentErrors.amount}</p>
-            )}
-          </label>
-          <label htmlFor="liability-pay-date" className="text-sm block">
-            <span className="mb-1 block font-medium">Pay Date</span>
-            <input
-              id="liability-pay-date"
-              type="date"
-              className={fieldClass}
-              value={liabilityPaymentForm.pay_date ?? ''}
-              onChange={(e) => setLiabilityPaymentForm({ ...liabilityPaymentForm, pay_date: e.target.value })}
-            />
-          </label>
-          <label className="text-sm">
-            <span className="mb-1 block font-medium">Reference</span>
-            <input
-              className={fieldClass}
-              value={liabilityPaymentForm.reference_no || ''}
-              onChange={(e) => setLiabilityPaymentForm({ ...liabilityPaymentForm, reference_no: e.target.value })}
-            />
-          </label>
-          <label className="text-sm">
-            <span className="mb-1 block font-medium">Note</span>
-            <textarea
-              className={fieldClass}
-              value={liabilityPaymentForm.note || ''}
-              onChange={(e) => setLiabilityPaymentForm({ ...liabilityPaymentForm, note: e.target.value })}
-            />
-          </label>
-          <div className="flex justify-end gap-2">
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label htmlFor="liability-amount" className="text-sm block">
+              <span className="mb-1.5 block font-semibold text-slate-700 dark:text-slate-200">Amount</span>
+              <input
+                id="liability-amount"
+                type="number"
+                step="0.01"
+                className={fieldClass}
+                value={liabilityPaymentForm.amount ?? ''}
+                onChange={(e) => setLiabilityPaymentForm({ ...liabilityPaymentForm, amount: Number(e.target.value) })}
+              />
+              {liabilityPaymentErrors.amount && (
+                <p className="mt-1 text-xs text-red-500">{liabilityPaymentErrors.amount}</p>
+              )}
+            </label>
+            <label htmlFor="liability-pay-date" className="text-sm block">
+              <span className="mb-1.5 block font-semibold text-slate-700 dark:text-slate-200">Date</span>
+              <input
+                id="liability-pay-date"
+                type="date"
+                className={fieldClass}
+                value={liabilityPaymentForm.pay_date ?? ''}
+                onChange={(e) => setLiabilityPaymentForm({ ...liabilityPaymentForm, pay_date: e.target.value })}
+              />
+            </label>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label className="text-sm block">
+              <span className="mb-1.5 block font-semibold text-slate-700 dark:text-slate-200">Reference</span>
+              <input
+                className={fieldClass}
+                value={liabilityPaymentForm.reference_no || ''}
+                onChange={(e) => setLiabilityPaymentForm({ ...liabilityPaymentForm, reference_no: e.target.value })}
+              />
+            </label>
+            <label className="text-sm block">
+              <span className="mb-1.5 block font-semibold text-slate-700 dark:text-slate-200">Note</span>
+              <input
+                className={fieldClass}
+                value={liabilityPaymentForm.note || ''}
+                onChange={(e) => setLiabilityPaymentForm({ ...liabilityPaymentForm, note: e.target.value })}
+              />
+            </label>
+          </div>
+
+          {(() => {
+            const liabName = liabilityAccounts.find((a) => a.acc_id === liabilityPaymentForm.liability_acc_id)?.name;
+            const cashName = accounts.find((a) => a.acc_id === liabilityPaymentForm.pay_from_acc_id)?.name;
+            const amt = Number(liabilityPaymentForm.amount || 0);
+            if (!liabName || !cashName || amt <= 0) return null;
+            const isBorrow = liabilityPaymentForm.direction === 'borrow';
+            return (
+              <div
+                className={`flex items-start gap-2 rounded-lg border px-3 py-2.5 text-xs ${
+                  isBorrow
+                    ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200'
+                    : 'border-primary-200 bg-primary-50 text-primary-800 dark:border-primary-900/40 dark:bg-primary-900/20 dark:text-primary-200'
+                }`}
+              >
+                {isBorrow ? (
+                  <ArrowUpCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                ) : (
+                  <ArrowDownCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                )}
+                <span>
+                  {isBorrow ? (
+                    <>
+                      ${amt.toFixed(2)} will be added to <strong>{cashName}</strong>, and{' '}
+                      <strong>{liabName}</strong> will increase by the same amount.
+                    </>
+                  ) : (
+                    <>
+                      ${amt.toFixed(2)} will be paid from <strong>{cashName}</strong>, and{' '}
+                      <strong>{liabName}</strong> will decrease by the same amount.
+                    </>
+                  )}
+                </span>
+              </div>
+            );
+          })()}
+
+          <div className="flex justify-end gap-2 border-t border-slate-200 pt-4 dark:border-slate-700">
             <button
               type="button"
               onClick={() => setIsLiabilityPaymentModalOpen(false)}
-              className="rounded border px-4 py-2"
+              className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
             >
               Cancel
             </button>
             <button
               type="button"
               onClick={submitLiabilityPayment}
-              className="rounded bg-primary-600 px-4 py-2 text-white"
+              className={`rounded-lg px-4 py-2 text-sm font-semibold text-white ${
+                liabilityPaymentForm.direction === 'borrow'
+                  ? 'bg-amber-600 hover:bg-amber-700'
+                  : 'bg-primary-600 hover:bg-primary-700'
+              }`}
             >
-              Save
+              {liabilityPaymentForm.direction === 'borrow' ? 'Record Liability' : 'Save Payment'}
             </button>
           </div>
         </div>

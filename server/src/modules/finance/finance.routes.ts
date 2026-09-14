@@ -6,6 +6,7 @@ import {
   createAccountTransfer,
   updateAccountTransfer,
   listLiabilityAccounts,
+  createLiabilityAccount,
   listLiabilityPayments,
   createLiabilityPayment,
   deleteLiabilityPayment,
@@ -73,6 +74,7 @@ router.put('/transfers/:id', updateAccountTransfer);
 
 // Liability payments
 router.get('/liability-accounts', listLiabilityAccounts);
+router.post('/liability-accounts', createLiabilityAccount);
 router.get('/liability-payments', listLiabilityPayments);
 router.post('/liability-payments', createLiabilityPayment);
 router.delete('/liability-payments/:id', deleteLiabilityPayment);

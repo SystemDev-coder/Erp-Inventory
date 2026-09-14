@@ -6,7 +6,7 @@ import { BranchScope, pickBranchForWrite, assertBranchAccess } from '../../utils
 import { softDeleteById } from '../../db/softDelete';
 import { adjustSystemAccountBalance } from '../../utils/systemAccounts';
 import { postGl } from '../../utils/glPosting';
-import { ensureCoaAccounts, ensureNamedAssetAccount } from '../../utils/coaDefaults';
+import { ensureCoaAccounts, ensureNamedAssetAccount, ensureNamedAccount } from '../../utils/coaDefaults';
 import { syncCustomerOutstandingFromLedger } from '../../utils/customerOutstanding';
 import {
   AccountTransferInput,
@@ -2442,6 +2442,23 @@ export const financeService = {
      buildBalanceSheetFromLedger already falls back to summing the ledger whenever the
      stored balance is 0. Writing a wrong non-zero value here would break that
      fallback for every liability account, not just this one. */
+  async createLiabilityAccount(name: string, scope: BranchScope, branchId?: number) {
+    const effectiveBranchId = pickBranchForWrite(scope, branchId);
+    const trimmed = String(name || '').trim();
+    if (!trimmed) throw ApiError.badRequest('Name is required');
+    const accId = await withTransaction(async (client) => {
+      const existing = await queryOne<{ acc_id: number; account_type: string }>(
+        `SELECT acc_id, account_type FROM ims.accounts WHERE branch_id = $1 AND LOWER(TRIM(name)) = LOWER($2)`,
+        [effectiveBranchId, trimmed]
+      );
+      if (existing && existing.account_type !== 'liability') {
+        throw ApiError.badRequest(`"${trimmed}" already exists as a different kind of account`);
+      }
+      return ensureNamedAccount(client, effectiveBranchId, trimmed, 'liability');
+    });
+    return { acc_id: accId, name: trimmed, institution: null, outstanding_balance: 0 };
+  },
+
   async listLiabilityAccounts(scope: BranchScope, branchId?: number, onlyOutstanding = true) {
     const effectiveBranchId = branchId ?? scope.branchIds[0];
     if (!effectiveBranchId) return [];
@@ -2453,7 +2470,7 @@ export const financeService = {
         await ensureCoaAccounts(client, effectiveBranchId, ['notesPayable']);
       });
     }
-    return queryMany<{
+    const rows = await queryMany<{
       acc_id: number;
       name: string;
       institution: string | null;
@@ -2487,6 +2504,10 @@ export const financeService = {
         ORDER BY name`,
       [effectiveBranchId, onlyOutstanding]
     );
+    // acc_id is a bigint - pg serializes it as a string. The frontend's own === lookups
+    // against this list (e.g. the amount-preview) need a real number, same as every
+    // other account-list endpoint (see accounts.service.ts's `acc_id: Number(row.acc_id)`).
+    return rows.map((row) => ({ ...row, acc_id: Number(row.acc_id) }));
   },
 
   async createLiabilityPayment(input: LiabilityPaymentInput, scope: BranchScope, userId: number) {
