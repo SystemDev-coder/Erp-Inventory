@@ -449,6 +449,26 @@ const [deletingBudget, setDeletingBudget] = useState(false);
         header: 'Amount',
         cell: ({ row }) => `$${Number(row.original.fixed_amount || row.original.amount_limit || 0).toFixed(2)}`,
       },
+      {
+        id: 'spent',
+        header: 'Spent (this month)',
+        cell: ({ row }) => `$${Number(row.original.spent_amount || 0).toFixed(2)}`,
+      },
+      {
+        id: 'remaining',
+        header: 'Remaining',
+        cell: ({ row }) => {
+          const limit = Number(row.original.fixed_amount || row.original.amount_limit || 0);
+          const spent = Number(row.original.spent_amount || 0);
+          const remaining = row.original.remaining_amount ?? Math.max(limit - spent, 0);
+          const overBudget = spent > limit;
+          return (
+            <span className={overBudget ? 'font-semibold text-red-600 dark:text-red-400' : undefined}>
+              {overBudget ? `-$${(spent - limit).toFixed(2)} over` : `$${Number(remaining).toFixed(2)}`}
+            </span>
+          );
+        },
+      },
       { accessorKey: 'note', header: 'Note', cell: ({ row }) => row.original.note || '-' },
       { accessorKey: 'created_by', header: 'By', cell: ({ row }) => row.original.created_by || '-' },
       {

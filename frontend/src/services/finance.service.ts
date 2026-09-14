@@ -131,6 +131,8 @@ export interface ExpenseBudget {
   expense_name?: string | null;
   amount_limit?: number; // alias for UI
   created_by?: string | null;
+  spent_amount?: number; // sum of this month's expense charges against exp_id
+  remaining_amount?: number; // fixed_amount - spent_amount, floored at 0
 }
 
 export interface PayrollRow {

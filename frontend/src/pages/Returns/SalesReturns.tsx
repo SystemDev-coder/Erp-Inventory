@@ -183,7 +183,8 @@ const SalesReturns = () => {
     if (!form.customerId) errs.customerId = 'Customer is required';
     const hasValidLine = lines.some((l) => l.itemId && Number(l.quantity) > 0);
     if (!hasValidLine) errs.items = 'Add at least one item with a quantity greater than 0';
-    if (form.refundViaAccount && !form.refundAccId) errs.refundAccId = 'Select a refund account';
+    const refundAccountNeeded = form.refundViaAccount || customerOutstanding + 0.005 < subtotal;
+    if (refundAccountNeeded && !form.refundAccId) errs.refundAccId = 'Select a refund account';
     return errs;
   };
 
@@ -316,11 +317,14 @@ const SalesReturns = () => {
       items: normalized,
       refundViaAccount: form.refundViaAccount,
     };
-    if (form.refundViaAccount) {
-      payload.refundAccId = form.refundAccId ? Number(form.refundAccId) : undefined;
-      payload.refundAmount = subtotal;
-    } else {
-      payload.refundAmount = 0;
+    // The server recomputes the actual refund/balance split itself (it never
+    // trusts a client-supplied refundAmount) - but it does need the chosen
+    // refund account whenever one is picked, not only when the "refund via
+    // account" toggle is checked (that toggle is hidden entirely once the
+    // return exceeds the customer's balance, since a refund account becomes
+    // mandatory for the leftover cash portion in that case too).
+    if (form.refundAccId) {
+      payload.refundAccId = Number(form.refundAccId);
     }
     setSaving(true);
     const res = editingId
@@ -513,9 +517,11 @@ const SalesReturns = () => {
             </div>
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-200">
               <p className="text-xs uppercase text-slate-500">Balance Reduction</p>
-              <p className="text-lg font-semibold">{fmtCurrency(balanceReduction)}</p>
+              <p className="text-lg font-semibold">
+                {fmtCurrency(canChooseRefundMethod ? balanceReduction : Math.min(customerOutstanding, subtotal))}
+              </p>
               {minRefund > 0 ? (
-                <p className="mt-1 text-[11px] text-amber-600">Min refund required: {fmtCurrency(minRefund)}</p>
+                <p className="mt-1 text-[11px] text-amber-600">Cash refund (after offsetting balance): {fmtCurrency(minRefund)}</p>
               ) : null}
             </div>
           </div>
@@ -563,7 +569,9 @@ const SalesReturns = () => {
                   )}
                   {!canChooseRefundMethod && (
                     <p className="mt-1 text-[11px] text-slate-500">
-                      Customer balance is less than return total — full refund from account is required.
+                      {customerOutstanding > 0
+                        ? `${fmtCurrency(customerOutstanding)} will reduce the customer's balance; the remaining ${fmtCurrency(minRefund)} will be refunded to this account.`
+                        : 'Customer has no outstanding balance — the full amount will be refunded to this account.'}
                     </p>
                   )}
                 </div>

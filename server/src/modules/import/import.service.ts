@@ -561,10 +561,16 @@ const parseCustomerRow = (raw: Record<string, unknown>): ParseResult<CustomerImp
 
 const parseSupplierRow = (raw: Record<string, unknown>): ParseResult<SupplierImportRow> => {
   const errors: string[] = [];
+  // A bare "Name" column is ambiguous between the business name and a contact's
+  // name - most uploads that have it alongside a "Company" column mean the
+  // latter, so "name" is a contact_person alias, not a supplier_name one.
+  // "Company"/"Company Name" still fall back to supplier_name (checked last)
+  // when there's no more specific business-name column, since that's the most
+  // common header for it in practice.
   const supplierName =
-    readString(raw, ['supplier_name', 'name', 'supplier']) || '';
-  const companyName = readString(raw, ['company_name']);
-  const contactPerson = readString(raw, ['contact_person']);
+    readString(raw, ['supplier_name', 'supplier', 'business_name', 'company', 'company_name']) || '';
+  const companyName = readString(raw, ['company_name', 'company']);
+  const contactPerson = readString(raw, ['contact_person', 'contact_name', 'contact', 'name']);
   const contactPhone = readString(raw, ['contact_phone']);
   const phone = readString(raw, ['phone', 'mobile']);
   const location = readString(raw, ['location', 'country']);
@@ -1382,7 +1388,7 @@ const customersDefinition: ImportDefinition<CustomerImportRow> = {
 const suppliersDefinition: ImportDefinition<SupplierImportRow> = {
   type: 'suppliers',
   requiredHeaders: [
-    { field: 'supplier_name', aliases: ['supplier_name', 'name'] },
+    { field: 'supplier_name', aliases: ['supplier_name', 'supplier', 'business_name', 'company', 'company_name'] },
     { field: 'remaining_balance', aliases: ['remaining_balance', 'open_balance', 'balance'] },
   ],
   parseRow: (raw, _row) => parseSupplierRow(raw),

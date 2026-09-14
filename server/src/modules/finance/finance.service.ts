@@ -2598,10 +2598,20 @@ export const financeService = {
       `SELECT b.*,
               e.name AS expense_name,
               b.fixed_amount AS amount_limit,
-              COALESCE(u.full_name, u.name) AS created_by
+              COALESCE(u.full_name, u.name) AS created_by,
+              COALESCE(spent.amount, 0) AS spent_amount,
+              GREATEST(b.fixed_amount - COALESCE(spent.amount, 0), 0) AS remaining_amount
          FROM ims.expense_budgets b
          JOIN ims.expenses e ON e.exp_id = b.exp_id
          JOIN ims.users u ON u.user_id = b.user_id
+         LEFT JOIN LATERAL (
+           SELECT SUM(c.amount) AS amount
+             FROM ims.expense_charges c
+            WHERE c.exp_id = b.exp_id
+              AND c.branch_id = e.branch_id
+              AND COALESCE(c.is_deleted, 0) = 0
+              AND date_trunc('month', c.charge_date) = date_trunc('month', CURRENT_DATE)
+         ) spent ON TRUE
         ${where}
         ORDER BY b.budget_id DESC
         LIMIT 200`,

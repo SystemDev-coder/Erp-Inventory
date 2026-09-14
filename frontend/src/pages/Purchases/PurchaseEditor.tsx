@@ -94,6 +94,9 @@ const PurchaseEditor = () => {
   const [productsLoading, setProductsLoading] = useState(false);
   const [confirmStep, setConfirmStep] = useState<'balance' | 'account' | null>(null);
   const [pendingPayload, setPendingPayload] = useState<Record<string, unknown> | null>(null);
+  const [newProductModalOpen, setNewProductModalOpen] = useState(false);
+  const [newProductSaving, setNewProductSaving] = useState(false);
+  const [newProductForm, setNewProductForm] = useState({ name: '', cost_price: 0, sell_price: 0 });
 
   const loadProducts = async (search?: string) => {
     const limit = 200; // server max for /api/products
@@ -362,6 +365,31 @@ const PurchaseEditor = () => {
       recalcTotals(next, effectiveHeaderDiscount);
     }
     setProductPickerOpen(false);
+  };
+
+  const handleCreateProduct = async () => {
+    const name = newProductForm.name.trim();
+    if (!name) {
+      showToast('error', 'New Product', 'Product name is required');
+      return;
+    }
+    setNewProductSaving(true);
+    const res = await productService.create({
+      name,
+      cost_price: newProductForm.cost_price,
+      sell_price: newProductForm.sell_price,
+    });
+    setNewProductSaving(false);
+    if (!res.success || !res.data?.product) {
+      showToast('error', 'New Product', res.error || 'Failed to create product');
+      return;
+    }
+    const created = res.data.product;
+    setProducts((prev) => [created, ...prev]);
+    setNewProductForm({ name: '', cost_price: 0, sell_price: 0 });
+    setNewProductModalOpen(false);
+    handleSelectProduct(created);
+    showToast('success', 'New Product', `"${created.name}" created and added to this purchase`);
   };
 
   const continueSaveAfterValidation = async (
@@ -890,13 +918,25 @@ const PurchaseEditor = () => {
           size="lg"
         >
           <div className="space-y-3">
-            <input
-              type="text"
-              className={`${fieldCls} h-12`}
-              placeholder="Search products..."
-              value={productSearch}
-              onChange={(e) => setProductSearch(e.target.value)}
-            />
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                className={`${fieldCls} h-12 flex-1`}
+                placeholder="Search products..."
+                value={productSearch}
+                onChange={(e) => setProductSearch(e.target.value)}
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setNewProductForm({ name: productSearch.trim(), cost_price: 0, sell_price: 0 });
+                  setNewProductModalOpen(true);
+                }}
+                className="h-12 inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md border border-primary-600 px-4 text-sm font-medium text-primary-700 hover:bg-primary-50 dark:border-primary-500/40 dark:text-primary-300 dark:hover:bg-primary-500/10"
+              >
+                <Plus size={16} /> New product
+              </button>
+            </div>
 	            <div className="max-h-80 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-lg">
 	              <table className="min-w-full text-sm">
                 <thead className="bg-slate-100 dark:bg-slate-800 sticky top-0">
@@ -943,6 +983,72 @@ const PurchaseEditor = () => {
 	            </div>
 	          </div>
 	        </Modal>
+
+        {/* Inline "create new product" - lets the purchase flow continue without
+            leaving the page to set the item up on the Items page first. */}
+        <Modal
+          isOpen={newProductModalOpen}
+          onClose={() => setNewProductModalOpen(false)}
+          title="Create new product"
+          size="sm"
+        >
+          <div className="space-y-3">
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="font-medium text-slate-700 dark:text-slate-300">Product name *</span>
+              <input
+                type="text"
+                className={fieldCls}
+                value={newProductForm.name}
+                onChange={(e) => setNewProductForm((prev) => ({ ...prev, name: e.target.value }))}
+                autoFocus
+              />
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="font-medium text-slate-700 dark:text-slate-300">Cost price</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  className={fieldCls}
+                  value={newProductForm.cost_price}
+                  onChange={(e) => setNewProductForm((prev) => ({ ...prev, cost_price: Number(e.target.value || 0) }))}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="font-medium text-slate-700 dark:text-slate-300">Sell price</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  className={fieldCls}
+                  value={newProductForm.sell_price}
+                  onChange={(e) => setNewProductForm((prev) => ({ ...prev, sell_price: Number(e.target.value || 0) }))}
+                />
+              </label>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Category, unit, and brand can be added later from the Items page - this just gets it into the purchase now.
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setNewProductModalOpen(false)}
+                className="h-10 rounded-md border border-slate-300 px-4 text-sm dark:border-slate-600"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateProduct}
+                disabled={newProductSaving}
+                className="h-10 rounded-md bg-primary-600 px-4 text-sm font-medium text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {newProductSaving ? 'Creating…' : 'Create & add to purchase'}
+              </button>
+            </div>
+          </div>
+        </Modal>
 
 	        <div className="overflow-x-auto">
 	          <div className="min-w-[980px] rounded-lg border border-slate-200 dark:border-slate-800 overflow-visible">
