@@ -97,6 +97,12 @@ const PurchaseEditor = () => {
   const [newProductModalOpen, setNewProductModalOpen] = useState(false);
   const [newProductSaving, setNewProductSaving] = useState(false);
   const [newProductForm, setNewProductForm] = useState({ name: '', cost_price: 0, sell_price: 0 });
+  // Tracks whatever text is currently being typed into a line's item search box,
+  // so that box can offer "+ Create '<text>'" inline when nothing matches -
+  // only one combobox can be focused/typed into at a time in practice, so a
+  // single shared slot is enough.
+  const [lineSearchQuery, setLineSearchQuery] = useState('');
+  const QUICK_CREATE_SENTINEL = -1;
 
   const loadProducts = async (search?: string) => {
     const limit = 200; // server max for /api/products
@@ -390,6 +396,35 @@ const PurchaseEditor = () => {
     setNewProductModalOpen(false);
     handleSelectProduct(created);
     showToast('success', 'New Product', `"${created.name}" created and added to this purchase`);
+  };
+
+  // Lets a line's own item-search box create a brand-new product straight from
+  // what was typed, without a modal - cost/sale price default to 0 and are
+  // filled in on the line itself, same as any other field on this form.
+  const handleQuickCreateProduct = async (idx: number, name: string) => {
+    if (!name.trim()) return;
+    const res = await productService.create({ name: name.trim(), cost_price: 0, sell_price: 0 });
+    if (!res.success || !res.data?.product) {
+      showToast('error', 'New Product', res.error || 'Failed to create product');
+      return;
+    }
+    const created = res.data.product;
+    setProducts((prev) => [created, ...prev]);
+    const next = lineItems.map((li, i) => {
+      if (i !== idx) return li;
+      return {
+        ...li,
+        product_id: created.product_id,
+        name: created.name,
+        description: li.description?.trim() ? li.description : created.name,
+        unit_cost: 0,
+        sale_price: 0,
+        line_total: 0,
+      } as LineItem;
+    });
+    setLineItems(next);
+    recalcTotals(next, effectiveHeaderDiscount);
+    showToast('success', 'New Product', `"${created.name}" created - set its cost/sale price on this line`);
   };
 
   const continueSaveAfterValidation = async (
@@ -1071,13 +1106,25 @@ const PurchaseEditor = () => {
 	                  <td className="px-2 py-2">
 	                    <SearchableCombobox<number>
 	                      value={item.product_id}
-	                      options={products.map((p) => ({
-	                        value: p.product_id,
-	                        label: p.name?.trim() ? p.name : `Product #${p.product_id}`,
-	                      }))}
+	                      options={(() => {
+	                        const base = products.map((p) => ({
+	                          value: p.product_id,
+	                          label: p.name?.trim() ? p.name : `Product #${p.product_id}`,
+	                        }));
+	                        const q = lineSearchQuery.trim();
+	                        if (!q) return base;
+	                        const exists = base.some((o) => o.label.toLowerCase() === q.toLowerCase());
+	                        if (exists) return base;
+	                        return [{ value: QUICK_CREATE_SENTINEL, label: `+ Create "${q}"` }, ...base];
+	                      })()}
 	                      placeholder={productsLoading ? 'Loading items…' : 'Search & select item'}
 	                      disabled={loading || productsLoading}
+	                      onSearch={(q) => setLineSearchQuery(q)}
 	                      onChange={(nextValue) => {
+	                        if (nextValue === QUICK_CREATE_SENTINEL) {
+	                          void handleQuickCreateProduct(idx, lineSearchQuery);
+	                          return;
+	                        }
 	                        const productId = nextValue === '' ? '' : Number(nextValue);
 	                        const p = products.find((x) => x.product_id === productId);
 	                        const next = lineItems.map((li, i) => {

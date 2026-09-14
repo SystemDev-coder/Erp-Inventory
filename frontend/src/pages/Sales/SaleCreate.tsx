@@ -6,6 +6,7 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { accountService, Account } from '../../services/account.service';
 import { customerService, Customer } from '../../services/customer.service';
 import { inventoryService, InventoryItem } from '../../services/inventory.service';
+import { productService } from '../../services/product.service';
 import { SaleDocType, SaleStatus, salesService } from '../../services/sales.service';
 import { formatAvailableQty, itemLabelWithAvailability } from '../../utils/itemAvailability';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
@@ -75,6 +76,13 @@ const SaleCreate = () => {
   const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [confirmStep, setConfirmStep] = useState<'balance' | 'account' | null>(null);
   const [pendingPayload, setPendingPayload] = useState<Record<string, unknown> | null>(null);
+  // Tracks whatever text is currently being typed into a line's item search box,
+  // so it can offer "+ Create '<text>'" inline when nothing matches - mirrors
+  // the same fix on the Purchases page. A new item starts with 0 available
+  // stock, so the existing quantity-vs-availability check still blocks
+  // actually selling it until it's been purchased/stocked first.
+  const [lineSearchQuery, setLineSearchQuery] = useState('');
+  const QUICK_CREATE_SENTINEL = -1;
 
   // ── CSS helpers ───────────────────────────────────────────────────────────
   const baseCls =
@@ -291,6 +299,42 @@ const SaleCreate = () => {
     } else {
       showToast('error', 'Customer', res.error || 'Could not auto-create this customer.');
     }
+  };
+
+  // Lets a line's own item-search box create a brand-new product straight from
+  // what was typed, mirroring handleAutoCreateCustomer above - no need to
+  // leave the page to add it via the Items page first. It starts with 0
+  // available stock, so the quantity-vs-availability check below still
+  // blocks actually selling it until it's been purchased/stocked.
+  const [creatingProduct, setCreatingProduct] = useState(false);
+  const handleQuickCreateProduct = async (idx: number, typedName: string) => {
+    const name = typedName.trim();
+    if (!name) return;
+    setCreatingProduct(true);
+    const res = await productService.create({ name, cost_price: 0, sell_price: 0 });
+    setCreatingProduct(false);
+    if (!res.success || !res.data?.product) {
+      showToast('error', 'New Item', res.error || 'Could not create this item.');
+      return;
+    }
+    const created = res.data.product;
+    const option: SaleItemOption = {
+      item_id: created.product_id,
+      item_name: created.name,
+      unit_price: 0,
+      available_qty: 0,
+    };
+    setItemOptions((prev) => [option, ...prev]);
+    const nextItems = [...saleForm.items];
+    nextItems[idx] = {
+      ...nextItems[idx],
+      item_id: option.item_id,
+      unit_price: 0,
+      available_qty: 0,
+    };
+    setSaleForm((prev) => ({ ...prev, items: nextItems }));
+    recalcTotals(nextItems, saleForm.discount);
+    showToast('success', 'New Item', `"${created.name}" was added - it has 0 stock until purchased/stocked.`);
   };
 
   const selectedCustomer = useMemo(
@@ -891,13 +935,25 @@ const SaleCreate = () => {
                   <div>
                     <SearchableCombobox<number>
                       value={line.item_id}
-                      options={itemOptions.map((item) => ({
-                        value: item.item_id,
-                        label: itemLabelWithAvailability(item.item_name, item.available_qty),
-                      }))}
+                      options={(() => {
+                        const base = itemOptions.map((item) => ({
+                          value: item.item_id,
+                          label: itemLabelWithAvailability(item.item_name, item.available_qty),
+                        }));
+                        const q = lineSearchQuery.trim();
+                        if (!q) return base;
+                        const exists = itemOptions.some((item) => item.item_name.trim().toLowerCase() === q.toLowerCase());
+                        if (exists) return base;
+                        return [{ value: QUICK_CREATE_SENTINEL, label: `+ Create "${q}"` }, ...base];
+                      })()}
                       placeholder="Select item"
                       disabled={loading}
+                      onSearch={(q) => setLineSearchQuery(q)}
                       onChange={(nextValue) => {
+                        if (nextValue === QUICK_CREATE_SENTINEL) {
+                          void handleQuickCreateProduct(idx, lineSearchQuery);
+                          return;
+                        }
                         clearError('items');
                         clearError('stock');
                         const itemId = nextValue === '' ? '' : Number(nextValue);
