@@ -177,6 +177,29 @@ const POSTab = () => {
         setAddProductId('');
     };
 
+    // Hardware barcode scanners act as a keyboard: they "type" the barcode
+    // into whatever's focused, then send Enter. This is what actually fires
+    // on that Enter - it must match the barcode EXACTLY (not the substring
+    // match the visible grid filter uses, which would add the wrong product
+    // if one barcode happens to contain another as a substring) and it must
+    // search every product regardless of which category tab is selected, so
+    // a scan always works no matter what's currently being browsed.
+    const handleSearchEnter = () => {
+        const raw = productSearch.trim();
+        if (!raw) return;
+        const exactBarcodeMatch = products.find((p) => String(p.barcode || '').toLowerCase() === raw.toLowerCase());
+        if (exactBarcodeMatch) {
+            addToCart(exactBarcodeMatch);
+            setProductSearch('');
+            return;
+        }
+        if (filteredProducts.length > 0) {
+            addToCart(filteredProducts[0]);
+            return;
+        }
+        showToast('error', 'Not found', `No product matches "${raw}".`);
+    };
+
     const TAX_RATE_PERCENT = 5;
     const subtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
     const taxAmount = (subtotal * TAX_RATE_PERCENT) / 100;
@@ -259,6 +282,13 @@ const POSTab = () => {
                             placeholder="Search product or scan barcode"
                             value={productSearch}
                             onChange={(e) => setProductSearch(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    handleSearchEnter();
+                                }
+                            }}
+                            autoFocus
                             className="w-full px-3 pe-8 py-2 h-9 text-sm border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
                         />
                     </div>
