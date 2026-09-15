@@ -928,7 +928,7 @@ const PurchaseEditor = () => {
 
         <div className="space-y-3 border-t border-slate-200 pt-6 dark:border-slate-800">
         <div className="flex items-center justify-between">
-          <span className="font-semibold text-slate-800 dark:text-slate-200">Items</span>
+          <span className="font-semibold text-slate-800 dark:text-slate-200">Products</span>
           <div className="flex flex-wrap items-end gap-2 justify-end">
             <select
               className="h-12 rounded-md border px-3 text-base transition-colors bg-white border-slate-300 text-slate-900 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 focus:outline-none"
@@ -937,8 +937,8 @@ const PurchaseEditor = () => {
               disabled={loading}
               title="Choose how discount is applied"
             >
-              <option value="all_items">All items discount</option>
-              <option value="per_item">Per item discount</option>
+              <option value="all_items">All products discount</option>
+              <option value="per_item">Per product discount</option>
             </select>
 
             <button
@@ -1171,7 +1171,7 @@ const PurchaseEditor = () => {
 	              </colgroup>
 	              <thead>
 	              <tr className="border-b-2 border-slate-200 dark:border-slate-700">
-	                <th className="py-2 pr-2 pl-5 text-left text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Item name</th>
+	                <th className="py-2 pr-2 pl-5 text-left text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Product name</th>
 	                <th className="py-2 pr-2 pl-5 text-left text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Description</th>
 	                <th className="px-2 py-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Qty</th>
 	                <th className="px-2 py-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Unit Cost</th>
@@ -1198,7 +1198,7 @@ const PurchaseEditor = () => {
 	                        if (exists) return base;
 	                        return [{ value: QUICK_CREATE_SENTINEL, label: `+ Create "${q}"` }, ...base];
 	                      })()}
-	                      placeholder={productsLoading ? 'Loading items…' : 'Search & select item'}
+	                      placeholder={productsLoading ? 'Loading products…' : 'Search & select product'}
 	                      disabled={loading || productsLoading}
 	                      onSearch={(q) => setLineSearchQuery(q)}
 	                      onChange={(nextValue) => {
@@ -1364,7 +1364,7 @@ const PurchaseEditor = () => {
               {lineItems.length === 0 && (
                 <tr>
                   <td colSpan={itemsTableColSpan} className="text-center text-slate-500 py-3">
-                    No items. Add a line to begin.
+                    No products. Add a line to begin.
                   </td>
                 </tr>
               )}

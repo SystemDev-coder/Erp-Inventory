@@ -21,8 +21,8 @@ type QuickCommand = {
 const QUICK_COMMANDS: QuickCommand[] = [
   { id: "dashboard", label: "Open Dashboard", to: "/", keywords: ["home", "kpi"], permissionAny: ["dashboard.view", "home.view"] },
   { id: "customers", label: "Open Customers", to: "/customers", keywords: ["customer", "ledger"], permissionAny: ["customers.view"] },
-  { id: "items", label: "Open Items", to: "/stock-management/items", keywords: ["stock", "products", "inventory"], permissionAny: ["items.view", "products.view", "stock.view", "inventory.view"] },
-  { id: "adjust", label: "Open Adjust Items", to: "/stock-management/adjust-items", keywords: ["stock adjust", "adjustment"], permissionAny: ["items.view", "products.view", "stock.view", "inventory.view"] },
+  { id: "items", label: "Open Products", to: "/stock-management/items", keywords: ["stock", "items", "inventory"], permissionAny: ["items.view", "products.view", "stock.view", "inventory.view"] },
+  { id: "adjust", label: "Open Adjust Products", to: "/stock-management/adjust-items", keywords: ["stock adjust", "adjustment"], permissionAny: ["items.view", "products.view", "stock.view", "inventory.view"] },
   { id: "sales", label: "Open Sales", to: "/sales", keywords: ["sell", "invoice", "pos"], permissionAny: ["sales.view"] },
   { id: "purchases", label: "Open Purchases", to: "/purchases", keywords: ["buy", "supplier"], permissionAny: ["purchases.view", "suppliers.view"] },
   { id: "returns", label: "Open Returns", to: "/returns", keywords: ["sales return", "purchase return", "supplier return"], permissionAny: ["returns.view", "sales_returns.view", "purchase_returns.view"] },

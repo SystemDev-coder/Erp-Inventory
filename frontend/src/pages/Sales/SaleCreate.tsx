@@ -391,7 +391,7 @@ const SaleCreate = () => {
   const handleCreateProduct = async () => {
     const name = newProductForm.name.trim();
     if (!name) {
-      showToast('error', 'New Item', 'Item name is required');
+      showToast('error', 'New Product', 'Product name is required');
       return;
     }
     setNewProductSaving(true);
@@ -405,14 +405,14 @@ const SaleCreate = () => {
     });
     if (!res.success || !res.data?.product) {
       setNewProductSaving(false);
-      showToast('error', 'New Item', res.error || 'Could not create this item.');
+      showToast('error', 'New Product', res.error || 'Could not create this product.');
       return;
     }
     const created = res.data.product;
     if (newProductImageFile) {
       const imgRes = await imageService.uploadProductImage(created.product_id, newProductImageFile);
       if (!imgRes.success) {
-        showToast('error', 'New Item', imgRes.error || 'Item saved, but the image could not be uploaded.');
+        showToast('error', 'New Product', imgRes.error || 'Product saved, but the image could not be uploaded.');
       }
     }
     setNewProductSaving(false);
@@ -439,7 +439,7 @@ const SaleCreate = () => {
     setNewProductTargetIdx('');
     setNewProductImageFile(null);
     setNewProductImagePreview(null);
-    showToast('success', 'New Item', `"${created.name}" was added - it has 0 stock until purchased/stocked.`);
+    showToast('success', 'New Product', `"${created.name}" was added - it has 0 stock until purchased/stocked.`);
   };
 
   const selectedCustomer = useMemo(
@@ -590,7 +590,7 @@ const SaleCreate = () => {
 
     const validItems = saleForm.items.filter((line) => line.item_id && line.quantity > 0);
     if (!validItems.length) {
-      errors.items = 'Add at least one item with a quantity greater than 0.';
+      errors.items = 'Add at least one product with a quantity greater than 0.';
     }
 
     const requiresCustomer =
@@ -608,7 +608,7 @@ const SaleCreate = () => {
     if (firstInsufficientLine && effectiveDocType !== 'quotation') {
       const label =
         itemOptions.find((o) => o.item_id === Number(firstInsufficientLine.item_id))?.item_name ||
-        `Item ${firstInsufficientLine.item_id}`;
+        `Product ${firstInsufficientLine.item_id}`;
       errors.stock = `${label}: requested ${Number(firstInsufficientLine.quantity)}, only ${formatAvailableQty(firstInsufficientAvailableQty)} available.`;
     }
 
@@ -1040,7 +1040,7 @@ const SaleCreate = () => {
         <div className="space-y-3 border-t border-slate-200 pt-6 dark:border-slate-800">
           <div className="flex items-center justify-between">
             <div>
-              <span className="font-semibold text-slate-800 dark:text-slate-200">Items</span>
+              <span className="font-semibold text-slate-800 dark:text-slate-200">Products</span>
               <span className="text-red-500 ml-0.5 text-sm">*</span>
             </div>
             <button
@@ -1078,7 +1078,7 @@ const SaleCreate = () => {
               </colgroup>
               <thead>
                 <tr className="border-b-2 border-slate-200 dark:border-slate-700">
-                  <th className="px-2 py-2 text-left text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Item</th>
+                  <th className="px-2 py-2 text-left text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Product</th>
                   <th className="px-2 py-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Qty</th>
                   <th className="px-2 py-2 text-right text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Unit Price</th>
                   <th className="px-2 py-2 text-right text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Line Total</th>
@@ -1105,7 +1105,7 @@ const SaleCreate = () => {
                             if (exists) return base;
                             return [{ value: QUICK_CREATE_SENTINEL, label: `+ Create "${q}"` }, ...base];
                           })()}
-                          placeholder="Select item"
+                          placeholder="Select product"
                           disabled={loading}
                           onSearch={(q) => setLineSearchQuery(q)}
                           onChange={(nextValue) => {
@@ -1216,7 +1216,7 @@ const SaleCreate = () => {
                             className={`${controlReadonlyCls} pl-6 text-right`}
                             value={line.unit_price}
                             readOnly
-                            title="Unit price is set automatically from item price"
+                            title="Unit price is set automatically from product price"
                             disabled={loading}
                           />
                         </div>
@@ -1380,12 +1380,12 @@ const SaleCreate = () => {
           setNewProductImageFile(null);
           setNewProductImagePreview(null);
         }}
-        title="Create new item"
+        title="Create new product"
         size="md"
       >
         <div className="space-y-3">
           <label className="flex flex-col gap-1 text-sm">
-            <span className="font-medium text-slate-700 dark:text-slate-300">Item name *</span>
+            <span className="font-medium text-slate-700 dark:text-slate-300">Product name *</span>
             <input
               type="text"
               className={controlCls}
@@ -1398,7 +1398,7 @@ const SaleCreate = () => {
           <div className="flex items-center gap-4">
             <div className="relative flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-dashed border-slate-300 bg-slate-50 dark:border-slate-600 dark:bg-slate-800">
               {newProductImagePreview ? (
-                <img src={newProductImagePreview} alt="Item preview" className="h-full w-full object-cover" />
+                <img src={newProductImagePreview} alt="Product preview" className="h-full w-full object-cover" />
               ) : (
                 <ImageIcon className="h-7 w-7 text-slate-400" aria-hidden="true" />
               )}
@@ -1513,7 +1513,7 @@ const SaleCreate = () => {
             </label>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            This item starts with 0 stock - it can't actually be sold until it's been purchased/stocked.
+            This product starts with 0 stock - it can't actually be sold until it's been purchased/stocked.
           </p>
           <div className="flex justify-end gap-2 pt-2">
             <button

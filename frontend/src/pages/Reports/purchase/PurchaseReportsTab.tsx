@@ -102,7 +102,7 @@ const bestSuppliersColumns: ReportColumn<Record<string, unknown>>[] = [
 
 
 const priceVarianceColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'item_name', header: 'Item' },
+  { key: 'item_name', header: 'Product' },
   { key: 'min_unit_cost', header: 'Min Cost', align: 'right', render: (row) => formatCurrency(row.min_unit_cost) },
   { key: 'max_unit_cost', header: 'Max Cost', align: 'right', render: (row) => formatCurrency(row.max_unit_cost) },
   { key: 'avg_unit_cost', header: 'Avg Cost', align: 'right', render: (row) => formatCurrency(row.avg_unit_cost) },

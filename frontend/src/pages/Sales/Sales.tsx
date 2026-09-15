@@ -633,7 +633,7 @@ const Sales = () => {
               <table className="min-w-full text-sm">
                 <thead className="bg-slate-100 text-left text-slate-600 dark:bg-slate-800 dark:text-slate-200">
                   <tr>
-                    <th className="px-3 py-2">Item</th>
+                    <th className="px-3 py-2">Product</th>
                     <th className="px-3 py-2 text-right">Qty</th>
                     <th className="px-3 py-2 text-right">Unit Price</th>
                     <th className="px-3 py-2 text-right">Line Total</th>
@@ -643,13 +643,13 @@ const Sales = () => {
                   {viewItems.length === 0 ? (
                     <tr>
                       <td colSpan={4} className="px-3 py-6 text-center text-slate-500 dark:text-slate-400">
-                        No items found.
+                        No products found.
                       </td>
                     </tr>
                   ) : (
                     viewItems.map((item, index) => (
                       <tr key={`${item.sale_item_id || item.item_id || index}`} className="border-t border-slate-200 dark:border-slate-700">
-                        <td className="px-3 py-2 text-slate-900 dark:text-slate-100">{item.item_name || `Item #${item.item_id}`}</td>
+                        <td className="px-3 py-2 text-slate-900 dark:text-slate-100">{item.item_name || `Product #${item.item_id}`}</td>
                         <td className="px-3 py-2 text-right text-slate-900 dark:text-slate-100">{Number(item.quantity || 0)}</td>
                         <td className="px-3 py-2 text-right text-slate-900 dark:text-slate-100">{formatMoney(Number(item.unit_price || 0))}</td>
                         <td className="px-3 py-2 text-right font-medium text-slate-900 dark:text-slate-100">

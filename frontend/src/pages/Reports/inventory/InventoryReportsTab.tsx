@@ -34,7 +34,7 @@ const inventoryCards: Array<{ id: InventoryCardId; title: string; hint: string }
   { id: 'store-stock', title: 'Store Stock Report', hint: 'Show selected store or all' },
   { id: 'store-wise', title: 'Store-wise Stock', hint: 'Detailed by store' },
   { id: 'store-movement', title: 'Store Movement Summary', hint: 'Between two dates + begin/purchase/sales qty' },
-  { id: 'store-movement-detail', title: 'Store Movement Detail', hint: 'Item-wise movement between two dates' },
+  { id: 'store-movement-detail', title: 'Store Movement Detail', hint: 'Product-wise movement between two dates' },
 ];
 
 const INVENTORY_CARD_TITLE_KEYS: Record<InventoryCardId, TranslationKey> = {
@@ -68,7 +68,7 @@ const INVENTORY_CARD_HINT_KEYS: Record<InventoryCardId, TranslationKey> = {
 };
 
 const currentStockColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'item_name', header: 'Item' },
+  { key: 'item_name', header: 'Product' },
   { key: 'total_qty', header: 'Qty', align: 'right', render: (row) => formatQuantity(row.total_qty) },
   { key: 'min_stock_threshold', header: 'Min Qty', align: 'right', render: (row) => formatQuantity(row.min_stock_threshold) },
   { key: 'low_stock', header: 'Low Stock', render: (row) => (row.low_stock ? 'Yes' : 'No') },
@@ -78,14 +78,14 @@ const currentStockColumns: ReportColumn<Record<string, unknown>>[] = [
 ];
 
 const lowStockColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'item_name', header: 'Item' },
+  { key: 'item_name', header: 'Product' },
   { key: 'total_qty', header: 'Qty', align: 'right', render: (row) => formatQuantity(row.total_qty) },
   { key: 'min_stock_threshold', header: 'Min Qty', align: 'right', render: (row) => formatQuantity(row.min_stock_threshold) },
   { key: 'stock_value', header: 'Value', align: 'right', render: (row) => formatCurrency(row.stock_value) },
 ];
 
 const valuationColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'item_name', header: 'Item' },
+  { key: 'item_name', header: 'Product' },
   { key: 'total_qty', header: 'Qty', align: 'right', render: (row) => formatQuantity(row.total_qty) },
   { key: 'unit_cost_used', header: 'Unit Cost', align: 'right', render: (row) => formatCurrency(row.unit_cost_used ?? row.cost_price) },
   { key: 'cost_value', header: 'Cost Value', align: 'right', render: (row) => formatCurrency(row.cost_value) },
@@ -95,7 +95,7 @@ const valuationColumns: ReportColumn<Record<string, unknown>>[] = [
 const adjustmentColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'adjustment_id', header: 'Adjustment #' },
   { key: 'adjustment_date', header: 'Date', render: (row) => formatDateTime(row.adjustment_date) },
-  { key: 'item_name', header: 'Item' },
+  { key: 'item_name', header: 'Product' },
   { key: 'adjustment_type', header: 'Type' },
   { key: 'quantity', header: 'Qty', align: 'right', render: (row) => formatQuantity(row.quantity) },
   { key: 'reason', header: 'Reason' },
@@ -106,7 +106,7 @@ const adjustmentColumns: ReportColumn<Record<string, unknown>>[] = [
 const lossColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'loss_id', header: 'Loss #' },
   { key: 'loss_date', header: 'Date', render: (row) => formatDateTime(row.loss_date) },
-  { key: 'item_name', header: 'Item' },
+  { key: 'item_name', header: 'Product' },
   { key: 'quantity', header: 'Qty Lost', align: 'right', render: (row) => formatQuantity(row.quantity) },
   { key: 'unit_cost', header: 'Unit Cost', align: 'right', render: (row) => formatCurrency(row.unit_cost) },
   { key: 'total_loss', header: 'Total Loss', align: 'right', render: (row) => formatCurrency(row.total_loss) },
@@ -118,7 +118,7 @@ const lossColumns: ReportColumn<Record<string, unknown>>[] = [
 const foundColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'found_id', header: 'Found #' },
   { key: 'found_date', header: 'Date', render: (row) => formatDateTime(row.found_date) },
-  { key: 'item_name', header: 'Item' },
+  { key: 'item_name', header: 'Product' },
   { key: 'quantity', header: 'Qty Found', align: 'right', render: (row) => formatQuantity(row.quantity) },
   { key: 'unit_cost', header: 'Unit Cost', align: 'right', render: (row) => formatCurrency(row.unit_cost) },
   { key: 'total_found', header: 'Total Found', align: 'right', render: (row) => formatCurrency(row.total_found) },
@@ -129,14 +129,14 @@ const foundColumns: ReportColumn<Record<string, unknown>>[] = [
 
 const storeStockColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'store_name', header: 'Store' },
-  { key: 'item_count', header: 'Items', align: 'right' },
+  { key: 'item_count', header: 'Products', align: 'right' },
   { key: 'total_qty', header: 'Qty', align: 'right', render: (row) => formatQuantity(row.total_qty) },
   { key: 'stock_value', header: 'Value', align: 'right', render: (row) => formatCurrency(row.stock_value) },
 ];
 
 const storeWiseColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'store_name', header: 'Store' },
-  { key: 'item_name', header: 'Item' },
+  { key: 'item_name', header: 'Product' },
   { key: 'barcode', header: 'Barcode' },
   { key: 'quantity', header: 'Qty', align: 'right', render: (row) => formatQuantity(row.quantity) },
   { key: 'cost_price', header: 'Cost', align: 'right', render: (row) => formatCurrency(row.cost_price) },
@@ -146,7 +146,7 @@ const storeWiseColumns: ReportColumn<Record<string, unknown>>[] = [
 
 const storeMovementColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'store_name', header: 'Store' },
-  { key: 'item_count', header: 'Items', align: 'right' },
+  { key: 'item_count', header: 'Products', align: 'right' },
   { key: 'begin_qty', header: 'Begin Qty', align: 'right', render: (row) => formatQuantity(row.begin_qty) },
   { key: 'purchase_qty', header: 'Purchase Qty', align: 'right', render: (row) => formatQuantity(row.purchase_qty) },
   { key: 'sales_qty', header: 'Sales Qty', align: 'right', render: (row) => formatQuantity(row.sales_qty) },
@@ -160,7 +160,7 @@ const storeMovementColumns: ReportColumn<Record<string, unknown>>[] = [
 
 const storeMovementDetailColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'store_name', header: 'Store' },
-  { key: 'item_name', header: 'Item' },
+  { key: 'item_name', header: 'Product' },
   { key: 'type_display', header: 'Type' },
   { key: 'txn_date', header: 'Date', render: (row) => formatDateTime(row.txn_date) },
   { key: 'num', header: 'Num' },
@@ -248,7 +248,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
       .then((response) => {
         if (!alive) return;
         if (!response.success || !response.data) {
-          setOptionsError(response.error || response.message || 'Failed to load store/item options');
+          setOptionsError(response.error || response.message || 'Failed to load store/product options');
           return;
         }
         setStores(response.data.stores || []);
@@ -256,7 +256,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
       })
       .catch((error: unknown) => {
         if (!alive) return;
-        setOptionsError(error instanceof Error ? error.message : 'Failed to load store/item options');
+        setOptionsError(error instanceof Error ? error.message : 'Failed to load store/product options');
       })
       .finally(() => {
         if (alive) setOptionsLoading(false);
@@ -319,7 +319,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
       const lowStockCount = rows.reduce((count, row) => count + (row.low_stock ? 1 : 0), 0);
       openReport({
         title: 'Current Stock Levels',
-        subtitle: 'All Active Items',
+        subtitle: 'All Active Products',
         fileName: 'current-stock-levels',
         data: rows,
         columns: currentStockColumns,
@@ -333,11 +333,11 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
           },
         },
         totals: [
-          countTotal('Items', rows.length),
+          countTotal('Products', rows.length),
           quantityTotal('Total Qty', totalQty),
           moneyTotal('Total Cost Value', totalCostValue),
           moneyTotal('Total Sale Value', totalSaleValue),
-          countTotal('Low Stock Items', lowStockCount),
+          countTotal('Low Stock Products', lowStockCount),
         ],
       }, response.data.meta);
     });
@@ -349,7 +349,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
       const rows = toRecordRows(response.data.rows || []);
       openReport({
         title: 'Low Stock Alert',
-        subtitle: 'Below threshold items',
+        subtitle: 'Below threshold products',
         fileName: 'low-stock-alert',
         data: rows,
         columns: lowStockColumns,
@@ -363,7 +363,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
           },
         },
         totals: [
-          countTotal('Items', rows.length),
+          countTotal('Products', rows.length),
           quantityTotal('Current Qty', sumByKey(rows, 'total_qty')),
           quantityTotal('Min Qty', sumByKey(rows, 'min_stock_threshold')),
           moneyTotal('Total Value', sumByKey(rows, 'stock_value')),
@@ -392,7 +392,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
           },
         },
         totals: [
-          countTotal('Items', rows.length),
+          countTotal('Products', rows.length),
           quantityTotal('Total Qty', sumByKey(rows, 'total_qty')),
           moneyTotal('Cost Value', sumByKey(rows, 'cost_value')),
           moneyTotal('Retail Value', sumByKey(rows, 'retail_value')),
@@ -544,7 +544,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
         },
         totals: [
           countTotal('Stores', rows.length),
-          countTotal('Items', sumByKey(rows, 'item_count')),
+          countTotal('Products', sumByKey(rows, 'item_count')),
           quantityTotal('Total Qty', sumByKey(rows, 'total_qty')),
           moneyTotal('Total Value', sumByKey(rows, 'stock_value')),
         ],
@@ -579,7 +579,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
         },
         totals: [
           countTotal('Rows', rows.length),
-          countTotal('Unique Items', uniqueItems),
+          countTotal('Unique Products', uniqueItems),
           quantityTotal('Total Qty', sumByKey(rows, 'quantity')),
           moneyTotal('Total Value', sumByKey(rows, 'stock_value')),
         ],
@@ -629,7 +629,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
         },
         totals: [
           countTotal('Stores', rows.length),
-          countTotal('Items', sumByKey(rows, 'item_count')),
+          countTotal('Products', sumByKey(rows, 'item_count')),
           quantityTotal('Begin Qty', sumByKey(rows, 'begin_qty')),
           quantityTotal('Purchase Qty', sumByKey(rows, 'purchase_qty')),
           quantityTotal('Sales Qty', sumByKey(rows, 'sales_qty')),
@@ -685,7 +685,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
           'To Date': movementDetailRange.toDate,
           Mode: mode === 'show' ? 'Show' : 'All',
           Store: mode === 'show' ? selectedStoreMovementDetailLabel || 'Selected Store' : 'All Stores',
-          Item: selectedMovementItemLabel || 'All Items',
+          Product: selectedMovementItemLabel || 'All Products',
         },
         tableTotals: {
           label: 'Total',
@@ -697,7 +697,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
         },
         totals: [
           countTotal('Rows', rows.length),
-          countTotal('Items', new Set(rows.map((row) => String(row.item_id || ''))).size),
+          countTotal('Products', new Set(rows.map((row) => String(row.item_id || ''))).size),
           moneyTotal('Total Debit', totalDebit),
           moneyTotal('Total Credit', totalCredit),
           moneyTotal('Closing Balance', closingBalance),
@@ -768,7 +768,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
             {stores.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
           <select value={selectedMovementItemId} onChange={(event) => setSelectedMovementItemId(event.target.value)} className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none">
-            <option value="">All Items</option>
+            <option value="">All Products</option>
             {products.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -826,7 +826,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
   return (
     <div className="space-y-3">
       {optionsError && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{optionsError}</div>}
-      {optionsLoading && <div className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600"><Loader2 className="h-4 w-4 animate-spin" />Loading store/item options...</div>}
+      {optionsLoading && <div className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600"><Loader2 className="h-4 w-4 animate-spin" />Loading store/product options...</div>}
       <div className="space-y-3 lg:hidden">
         {inventoryCards.map(renderCard)}
       </div>

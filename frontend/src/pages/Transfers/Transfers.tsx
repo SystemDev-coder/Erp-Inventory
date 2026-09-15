@@ -109,7 +109,7 @@ const Transfers = () => {
     () => [
       { accessorKey: 'move_date', header: 'Date', cell: ({ row }) => new Date(row.original.move_date).toLocaleString() },
       { accessorKey: 'move_type', header: 'Type' },
-      { accessorKey: 'product_name', header: 'Item' },
+      { accessorKey: 'product_name', header: 'Product' },
       { accessorKey: 'branch_name', header: 'Branch' },
       { accessorKey: 'wh_name', header: 'Warehouse', cell: ({ row }) => row.original.wh_name || '-' },
       { accessorKey: 'qty_in', header: 'In', cell: ({ row }) => Number(row.original.qty_in || 0).toFixed(0) },
@@ -154,7 +154,7 @@ const Transfers = () => {
     if (itemRes.success && itemRes.data?.items) {
       setItems(itemRes.data.items);
     } else {
-      showToast('error', 'Transfers', itemRes.error || 'Failed to load items');
+      showToast('error', 'Transfers', itemRes.error || 'Failed to load products');
     }
     if (stockRes.success && stockRes.data?.rows) {
       const nextMap: Record<number, number> = {};
@@ -189,7 +189,7 @@ const Transfers = () => {
 
   const submitTransfer = async () => {
     if (!form.itemId || Number(form.qty) <= 0) {
-      showToast('error', 'Transfers', 'Item and quantity are required');
+      showToast('error', 'Transfers', 'Product and quantity are required');
       return;
     }
     if (form.fromType === 'warehouse' && !form.fromWhId) {
@@ -409,9 +409,9 @@ const Transfers = () => {
           )}
 
           <div>
-            <label className={labelClass}>Item *</label>
+            <label className={labelClass}>Product *</label>
             <select className={inputClass} value={form.itemId} onChange={(e) => onItemChange(e.target.value)}>
-              <option value="">Select item</option>
+              <option value="">Select product</option>
               {availableItems.map((row) => (
                 <option key={row.item_id} value={row.item_id}>
                   {itemLabelWithAvailability(row.item_name, itemAvailableQty[row.item_id])}

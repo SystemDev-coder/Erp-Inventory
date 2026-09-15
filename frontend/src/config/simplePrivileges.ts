@@ -27,7 +27,7 @@ export type SimplePrivilegeModule = {
 
 export const SIMPLE_PRIVILEGE_MODULES: SimplePrivilegeModule[] = [
   { id: 'customers', label: 'Customers', prefixes: ['customers'] },
-  { id: 'items', label: 'Items / Stock', prefixes: ['items'] },
+  { id: 'items', label: 'Products / Stock', prefixes: ['items'] },
   { id: 'sales', label: 'Sales & Invoices', prefixes: ['sales'] },
   { id: 'returns', label: 'Returns', prefixes: ['sales_returns', 'purchase_returns'] },
   { id: 'purchases', label: 'Purchases', prefixes: ['purchases'] },

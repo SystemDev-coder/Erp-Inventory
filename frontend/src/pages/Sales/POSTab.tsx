@@ -221,7 +221,7 @@ const POSTab = () => {
 
     const handlePayment = async () => {
         if (cart.length === 0) {
-            showToast('error', 'Cart is empty', 'Add some items before taking payment.');
+            showToast('error', 'Cart is empty', 'Add some products before taking payment.');
             return;
         }
         if (!selectedAccId) {

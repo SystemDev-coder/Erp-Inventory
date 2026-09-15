@@ -30,7 +30,7 @@ const salesCards: Array<{ id: SalesCardId; title: string; hint: string }> = [
   { id: 'sales-by-customer', title: 'Sales by Customer', hint: 'Dropdown + Show / All' },
   { id: 'sales-by-product', title: 'Sales by Product', hint: 'Dropdown + Show / All' },
   { id: 'sales-by-store', title: 'Sales by Store', hint: 'Between two dates + Store dropdown + Show / All' },
-  { id: 'top-selling-items', title: 'Most Sold Items', hint: 'Between two dates' },
+  { id: 'top-selling-items', title: 'Most Sold Products', hint: 'Between two dates' },
   { id: 'top-customers', title: 'Top Customers', hint: 'Between two dates' },
   { id: 'sales-returns', title: 'Sales Returns Report', hint: 'Between two dates' },
   { id: 'payments-by-account', title: 'Sales Payments by Account', hint: 'Between two dates' },
@@ -762,15 +762,15 @@ export function SalesReportsTab({ onOpenModal }: Props) {
 
   const handleTopSellingItems = () =>
     runCardAction('top-selling-items', async () => {
-      ensureRangeValid(topSellingRange, 'Top Selling Items');
+      ensureRangeValid(topSellingRange, 'Top Selling Products');
       const response = await salesReportsService.getTopSellingItems({
         ...topSellingRange,
         branchId: activeBranchId ?? undefined,
       });
-      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load top selling items');
+      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load top selling products');
       const rows = toRecordRows(response.data.rows || []);
       openReport({
-        title: 'Most Sold Items',
+        title: 'Most Sold Products',
         subtitle: `${formatDateOnly(topSellingRange.fromDate)} - ${formatDateOnly(topSellingRange.toDate)}`,
         fileName: 'top-selling-items',
         data: rows,

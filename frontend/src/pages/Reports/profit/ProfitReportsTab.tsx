@@ -65,7 +65,7 @@ const profitCustomerColumns: ReportColumn<Record<string, unknown>>[] = [
 ];
 
 const profitByItemColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'item_name', header: 'Item' },
+  { key: 'item_name', header: 'Product' },
   { key: 'quantity_sold', header: 'Qty Sold', align: 'right', render: (row) => formatQuantity(row.quantity_sold) },
   { key: 'sales_amount', header: 'Sales', align: 'right', render: (row) => formatCurrency(row.sales_amount) },
   { key: 'cost_amount', header: 'Cost', align: 'right', render: (row) => formatCurrency(row.cost_amount) },
@@ -136,7 +136,7 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
           }
         }
         if (!inventory.success || !inventory.data) {
-          setOptionsError((prev) => prev || inventory.error || inventory.message || 'Failed to load item options');
+          setOptionsError((prev) => prev || inventory.error || inventory.message || 'Failed to load product options');
         } else {
           setProducts(inventory.data.products || []);
           setStores(inventory.data.stores || []);
@@ -319,7 +319,7 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
         filters = {
           ...filters,
           'Group By': 'Customer',
-          Item: resolveLabel(products, analysisItemId),
+          Product: resolveLabel(products, analysisItemId),
           ...(storeFiltersEnabled ? { Store: resolveLabel(stores, analysisStoreId) } : {}),
         };
       } else if (analysisGroupBy === 'item') {
@@ -330,12 +330,12 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
           customerId: selectedCustomerId,
           storeId: selectedStoreId,
         });
-        title = 'Profit by Item';
+        title = 'Profit by Product';
         fileName = 'profit-by-item';
         columns = profitByItemColumns;
         filters = {
           ...filters,
-          'Group By': 'Item',
+          'Group By': 'Product',
           Customer: resolveLabel(customers, analysisCustomerId),
           ...(storeFiltersEnabled ? { Store: resolveLabel(stores, analysisStoreId) } : {}),
         };
@@ -357,7 +357,7 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
           ...filters,
           'Group By': 'Store',
           Customer: resolveLabel(customers, analysisCustomerId),
-          Item: resolveLabel(products, analysisItemId),
+          Product: resolveLabel(products, analysisItemId),
         };
       }
 
@@ -439,7 +439,7 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
             {renderFilterButtons(
               [
                 { mode: 'customer', label: 'By Customer' },
-                { mode: 'item', label: 'By Item' },
+                { mode: 'item', label: 'By Product' },
                 ...(storeFiltersEnabled ? [{ mode: 'store' as const, label: 'By Store' }] : []),
               ],
               analysisGroupBy,
@@ -453,13 +453,13 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
               }`}
             >
               <label className="space-y-1 text-xs font-semibold text-slate-600">
-                <span>Item</span>
+                <span>Product</span>
                 <select
                   value={analysisItemId}
                   onChange={(event) => setAnalysisItemId(event.target.value)}
                   className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"
                 >
-                  <option value="">All Items</option>
+                  <option value="">All Products</option>
                   {products.map((option) => (
                     <option key={`analysis-item-${option.id}`} value={option.id}>
                       {option.label}
@@ -546,13 +546,13 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
                 </select>
               </label>
               <label className="space-y-1 text-xs font-semibold text-slate-600">
-                <span>Item</span>
+                <span>Product</span>
                 <select
                   value={analysisItemId}
                   onChange={(event) => setAnalysisItemId(event.target.value)}
                   className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"
                 >
-                  <option value="">All Items</option>
+                  <option value="">All Products</option>
                   {products.map((option) => (
                     <option key={`analysis-item-${option.id}`} value={option.id}>
                       {option.label}

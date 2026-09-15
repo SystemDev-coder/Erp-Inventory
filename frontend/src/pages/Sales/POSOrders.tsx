@@ -153,7 +153,7 @@ const POSOrders = () => {
             setReturnLines(
                 res.data.items.map((item) => ({
                     item_id: item.item_id,
-                    name: item.item_name || `Item #${item.item_id}`,
+                    name: item.item_name || `Product #${item.item_id}`,
                     sold_qty: Number(item.quantity || 0),
                     return_qty: 0,
                     unit_price: Number(item.unit_price || 0),
@@ -166,7 +166,7 @@ const POSOrders = () => {
         const sale = returnableSales.find((s) => s.sale_id === Number(selectedReturnSaleId));
         const linesToReturn = returnLines.filter((l) => l.return_qty > 0);
         if (!sale || !sale.customer_id || linesToReturn.length === 0) {
-            showToast('error', 'Return', 'Select a sale and at least one item to return.');
+            showToast('error', 'Return', 'Select a sale and at least one product to return.');
             return;
         }
         setSubmittingReturn(true);
@@ -274,7 +274,7 @@ const POSOrders = () => {
     const itemColumns: ColumnDef<PosOrderItemRow>[] = useMemo(
         () => [
             { accessorKey: 'sale_id', header: 'Order', cell: ({ row }) => `#S-${row.original.sale_id}` },
-            { accessorKey: 'item_name', header: 'Item', cell: ({ row }) => row.original.item_name || `Item #${row.original.item_id}` },
+            { accessorKey: 'item_name', header: 'Product', cell: ({ row }) => row.original.item_name || `Product #${row.original.item_id}` },
             { accessorKey: 'quantity', header: 'Qty', cell: ({ row }) => Number(row.original.quantity) },
             { accessorKey: 'unit_price', header: 'Unit Price', cell: ({ row }) => formatMoney(Number(row.original.unit_price)) },
             { accessorKey: 'line_total', header: 'Line Total', cell: ({ row }) => formatMoney(Number(row.original.line_total)) },
@@ -362,11 +362,11 @@ const POSOrders = () => {
                     },
                     {
                         id: 'items',
-                        label: 'Order Items',
+                        label: 'Order Products',
                         icon: Package,
                         content: (
                             <div className="space-y-2">
-                                <DataTable data={orderItems} columns={itemColumns} isLoading={loading} searchPlaceholder="Search items..." />
+                                <DataTable data={orderItems} columns={itemColumns} isLoading={loading} searchPlaceholder="Search products..." />
                             </div>
                         ),
                     },
@@ -521,7 +521,7 @@ const POSOrders = () => {
                             <table className="min-w-full text-sm">
                                 <thead className="bg-slate-100 text-left text-slate-600 dark:bg-slate-800 dark:text-slate-200">
                                     <tr>
-                                        <th className="px-3 py-2">Item</th>
+                                        <th className="px-3 py-2">Product</th>
                                         <th className="px-3 py-2 text-right">Qty</th>
                                         <th className="px-3 py-2 text-right">Unit Price</th>
                                         <th className="px-3 py-2 text-right">Line Total</th>
@@ -530,7 +530,7 @@ const POSOrders = () => {
                                 <tbody>
                                     {viewItems.map((item, index) => (
                                         <tr key={`${item.sale_item_id || item.item_id || index}`} className="border-t border-slate-200 dark:border-slate-700">
-                                            <td className="px-3 py-2 text-slate-900 dark:text-slate-100">{item.item_name || `Item #${item.item_id}`}</td>
+                                            <td className="px-3 py-2 text-slate-900 dark:text-slate-100">{item.item_name || `Product #${item.item_id}`}</td>
                                             <td className="px-3 py-2 text-right text-slate-900 dark:text-slate-100">{Number(item.quantity || 0)}</td>
                                             <td className="px-3 py-2 text-right text-slate-900 dark:text-slate-100">{formatMoney(Number(item.unit_price || 0))}</td>
                                             <td className="px-3 py-2 text-right font-medium text-slate-900 dark:text-slate-100">{formatMoney(Number(item.line_total || 0))}</td>

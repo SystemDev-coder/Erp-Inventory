@@ -67,7 +67,7 @@ const txLabel: Record<TxCategory, string> = {
   adjustment: 'Adjustment',
   paid: 'Paid',
   sales: 'Sales',
-  cancelled: 'Canceled Items',
+  cancelled: 'Canceled Products',
 };
 
 const Products = () => {
@@ -297,7 +297,7 @@ const Products = () => {
       setItemsTotalPages(res.data.pagination?.totalPages ?? 0);
       setItemsTotalRows(res.data.pagination?.total ?? res.data.products.length);
     } else {
-      showToast('error', 'Items', res.error || 'Failed to load items');
+      showToast('error', 'Products', res.error || 'Failed to load products');
     }
     setLoading(false);
   };
@@ -347,7 +347,7 @@ const Products = () => {
       const onlyInactive = res.data.products.filter((item) => !item.is_active || String(item.status).toLowerCase() === 'inactive');
       setStateProducts(onlyInactive);
     } else {
-      showToast('error', 'Items State', res.error || 'Failed to load inactive items');
+      showToast('error', 'Products State', res.error || 'Failed to load inactive products');
     }
     setLoading(false);
   };
@@ -384,7 +384,7 @@ const Products = () => {
         header: 'Code',
         cell: ({ row }) => `#PRD${String(row.original.product_id).padStart(4, '0')}`,
       },
-      { accessorKey: 'name', header: 'Item' },
+      { accessorKey: 'name', header: 'Product' },
       { accessorKey: 'category_name', header: 'Category', cell: ({ row }) => row.original.category_name || '-' },
       { accessorKey: 'brand', header: 'Brand', cell: ({ row }) => row.original.brand || '-' },
       {
@@ -454,7 +454,7 @@ const Products = () => {
 
   const stateColumns: ColumnDef<Product>[] = useMemo(
     () => [
-      { accessorKey: 'name', header: 'Item' },
+      { accessorKey: 'name', header: 'Product' },
       { accessorKey: 'status', header: 'State' },
       { accessorKey: 'stock', header: 'Stock' },
     ],
@@ -483,7 +483,7 @@ const Products = () => {
     () => [
       { accessorKey: 'transaction_date', header: 'Date', cell: ({ row }) => new Date(row.original.transaction_date).toLocaleString() },
       { accessorKey: 'transaction_type', header: 'Type' },
-      { accessorKey: 'item_name', header: 'Item', cell: ({ row }) => row.original.item_name || '-' },
+      { accessorKey: 'item_name', header: 'Product', cell: ({ row }) => row.original.item_name || '-' },
       { accessorKey: 'direction', header: 'Dir' },
       { accessorKey: 'quantity', header: 'Qty', cell: ({ row }) => Number(row.original.quantity || 0).toFixed(0) },
       { accessorKey: 'store_name', header: 'Store', cell: ({ row }) => row.original.store_name || '-' },
@@ -523,11 +523,11 @@ const Products = () => {
     // and Unit are the exception: SearchableCombobox has no native "required"
     // hook, so they're checked explicitly.
     if (!itemForm.category_id) {
-      showToast('error', 'Items', 'Category is required');
+      showToast('error', 'Products', 'Category is required');
       return;
     }
     if (!itemForm.unit_id) {
-      showToast('error', 'Items', 'Unit is required');
+      showToast('error', 'Products', 'Unit is required');
       return;
     }
     setLoading(true);
@@ -542,7 +542,7 @@ const Products = () => {
       : await productService.create(payload);
     if (!res.success || !res.data?.product) {
       setLoading(false);
-      showToast('error', 'Items', res.error || 'Failed to save item');
+      showToast('error', 'Products', res.error || 'Failed to save product');
       return;
     }
 
@@ -552,14 +552,14 @@ const Products = () => {
       const imgRes = await imageService.uploadProductImage(savedId, itemImageFile);
       setSavingItemImage(false);
       if (!imgRes.success) {
-        showToast('error', 'Items', imgRes.error || 'Item saved, but the image could not be uploaded.');
+        showToast('error', 'Products', imgRes.error || 'Product saved, but the image could not be uploaded.');
       }
     } else if (itemImageRemoved && itemForm.product_id) {
-      await imageService.deleteProductImage(savedId, 'Removed via item edit');
+      await imageService.deleteProductImage(savedId, 'Removed via product edit');
     }
 
     setLoading(false);
-    showToast('success', 'Items', itemForm.product_id ? 'Item updated' : 'Item created');
+    showToast('success', 'Products', itemForm.product_id ? 'Product updated' : 'Product created');
     closeItemModal();
     setItemForm(defaultProductForm);
     setItemStoreId('');
@@ -575,12 +575,12 @@ const Products = () => {
     });
     setLoading(false);
     if (res.success) {
-      showToast('success', 'Item State', 'Item state updated');
+      showToast('success', 'Product State', 'Product state updated');
       setStateModalOpen(false);
       await loadInactiveStateItems();
       await loadProducts();
     } else {
-      showToast('error', 'Item State', res.error || 'Failed to update item state');
+      showToast('error', 'Product State', res.error || 'Failed to update product state');
     }
   };
 
@@ -588,18 +588,18 @@ const Products = () => {
     if (!itemToDelete) return;
     const res = await productService.remove(itemToDelete.product_id, reason);
     if (res.success) {
-      showToast('success', 'Items', 'Item deleted');
+      showToast('success', 'Products', 'Product deleted');
       setItemToDelete(null);
       if (itemsDisplayed) await loadProducts();
     } else {
-      showToast('error', 'Items', res.error || 'Failed to delete item');
+      showToast('error', 'Products', res.error || 'Failed to delete product');
     }
   };
 
   const storeTabs = [
     {
       id: 'items',
-      label: 'Items',
+      label: 'Products',
       icon: Boxes,
       content: (
         <div className="space-y-2">
@@ -661,7 +661,7 @@ const Products = () => {
                 }}
                 className="rounded-lg bg-primary-600 px-3 py-2 text-sm text-white"
               >
-                New Item
+                New Product
               </button>
             )}
           </div>
@@ -679,7 +679,7 @@ const Products = () => {
             data={itemsDisplayed ? products : []}
             columns={itemColumns}
             isLoading={loading}
-            searchPlaceholder="Search items..."
+            searchPlaceholder="Search products..."
             serverPagination={{
               pageIndex: itemsPageIndex,
               pageSize: ITEMS_PAGE_SIZE,
@@ -788,7 +788,7 @@ const Products = () => {
     },
     {
       id: 'state',
-      label: 'Items State',
+      label: 'Products State',
       icon: BadgeAlert,
       content: (
         <div className="space-y-2">
@@ -830,7 +830,7 @@ const Products = () => {
             data={inactiveDisplayed ? stateProducts : []}
             columns={stateColumns}
             isLoading={loading}
-            searchPlaceholder="Search inactive item..."
+            searchPlaceholder="Search inactive product..."
           />
         </div>
       ),
@@ -951,21 +951,21 @@ const Products = () => {
 
   return (
     <div>
-      <PageHeader title="Stock Management" description="Manage items, categories, units, stores, inventory transactions, and item states." />
+      <PageHeader title="Stock Management" description="Manage products, categories, units, stores, inventory transactions, and product states." />
       <Tabs tabs={storeTabs} defaultTab="items" />
 
-      <Modal isOpen={itemModalOpen} onClose={closeItemModal} title={itemForm.product_id ? 'Edit Item' : 'New Item'} size="lg">
+      <Modal isOpen={itemModalOpen} onClose={closeItemModal} title={itemForm.product_id ? 'Edit Product' : 'New Product'} size="lg">
         <form
           onSubmit={(e) => { e.preventDefault(); void saveItem(); }}
           className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-4 p-2"
         >
-          {/* Item Name — full width, required */}
+          {/* Product Name — full width, required */}
           <div className="md:col-span-2">
-            <ItemField label="Item Name" required>
+            <ItemField label="Product Name" required>
               <input
                 required
                 minLength={2}
-                placeholder="Enter item name"
+                placeholder="Enter product name"
                 value={itemForm.name || ''}
                 onChange={(e) => setItemField('name', e.target.value)}
               />
@@ -973,11 +973,11 @@ const Products = () => {
           </div>
 
           <div className="md:col-span-2">
-            <ItemField label="Item Image">
+            <ItemField label="Product Image">
               <div className="flex items-center gap-4">
                 <div className="relative flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-dashed border-slate-300 bg-slate-50 dark:border-slate-600 dark:bg-slate-800">
                   {itemImagePreview ? (
-                    <img src={itemImagePreview} alt="Item preview" className="h-full w-full object-cover" />
+                    <img src={itemImagePreview} alt="Product preview" className="h-full w-full object-cover" />
                   ) : (
                     <ImageIcon className="h-8 w-8 text-slate-400" aria-hidden="true" />
                   )}
@@ -1154,21 +1154,21 @@ const Products = () => {
               type="submit"
               className="px-4 py-1.5 text-sm rounded-lg bg-primary-600 text-white hover:bg-primary-700"
             >
-              {itemForm.product_id ? 'Update Item' : 'Save Item'}
+              {itemForm.product_id ? 'Update Product' : 'Save Product'}
             </button>
           </div>
         </form>
       </Modal>
 
-      <Modal isOpen={stateModalOpen} onClose={() => setStateModalOpen(false)} title="Set Item State" size="sm">
+      <Modal isOpen={stateModalOpen} onClose={() => setStateModalOpen(false)} title="Set Product State" size="sm">
         <div className="space-y-3">
-          <label className="text-sm font-medium">Select Item<select className={fieldCls} value={stateForm.product_id ?? ''} onChange={(e) => setStateForm({ ...stateForm, product_id: e.target.value ? Number(e.target.value) : undefined })}><option value="">Select item</option>{products.map((item) => <option key={item.product_id} value={item.product_id}>{item.name}</option>)}</select></label>
+          <label className="text-sm font-medium">Select Product<select className={fieldCls} value={stateForm.product_id ?? ''} onChange={(e) => setStateForm({ ...stateForm, product_id: e.target.value ? Number(e.target.value) : undefined })}><option value="">Select product</option>{products.map((item) => <option key={item.product_id} value={item.product_id}>{item.name}</option>)}</select></label>
           <label className="text-sm font-medium">Select State<select className={fieldCls} value={stateForm.status} onChange={(e) => setStateForm({ ...stateForm, status: e.target.value as 'active' | 'inactive' })}><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
           <div className="flex justify-end gap-2"><button type="button" onClick={() => setStateModalOpen(false)} className="rounded-lg border px-4 py-2">Cancel</button><button type="button" onClick={() => void saveState()} className="rounded-lg bg-primary-600 px-4 py-2 text-white">Save</button></div>
         </div>
       </Modal>
 
-      <ConfirmDialog isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={(reason) => void removeItem(reason || '')} requireReason title="Delete Item" message={`Delete "${itemToDelete?.name || ''}"?`} confirmText="Delete" variant="danger" isLoading={loading} />
+      <ConfirmDialog isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={(reason) => void removeItem(reason || '')} requireReason title="Delete Product" message={`Delete "${itemToDelete?.name || ''}"?`} confirmText="Delete" variant="danger" isLoading={loading} />
 
       <Modal isOpen={categoryModalOpen} onClose={() => setCategoryModalOpen(false)} title={categoryForm.category_id ? 'Edit Category' : 'New Category'} size="sm">
         <form onSubmit={(e) => { e.preventDefault(); void saveCategory(); }} className="space-y-3">
@@ -1228,7 +1228,7 @@ const Products = () => {
         isOpen={itemImportOpen}
         onClose={() => setItemImportOpen(false)}
         importType="items"
-        title="Upload Items"
+        title="Upload Products"
         columns={['item', 'quantity', 'cost_price', 'amount', 'sell_price', 'category', 'unit']}
         templateHeaders={['item', 'quantity', 'cost_price', 'sell_price', 'store_id', 'barcode', 'stock_alert', 'is_active', 'category', 'unit']}
         hint="store_id, category, and unit are all optional. If left blank, the system assigns Main Store / the default category / the default unit - and creates a new category or unit automatically if you type a name that doesn't exist yet."

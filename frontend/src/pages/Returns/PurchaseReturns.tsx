@@ -133,7 +133,7 @@ const PurchaseReturns = () => {
       return mapped;
     }
     setItems([]);
-    showToast('error', 'Purchase Return', res.error || 'Failed to load supplier items');
+    showToast('error', 'Purchase Return', res.error || 'Failed to load supplier products');
     return [];
   };
 
@@ -157,7 +157,7 @@ const PurchaseReturns = () => {
     const errs: Record<string, string> = {};
     if (!form.supplierId) errs.supplierId = 'Supplier is required';
     const hasValidLine = lines.some((l) => l.itemId && Number(l.quantity) > 0);
-    if (!hasValidLine) errs.items = 'Add at least one item with a quantity greater than 0';
+    if (!hasValidLine) errs.items = 'Add at least one product with a quantity greater than 0';
     const refundAccountNeeded = form.refundViaAccount || supplierOutstanding + 0.005 < subtotal;
     if (refundAccountNeeded && !form.refundAccId) errs.refundAccId = 'Select a refund account';
     return errs;
@@ -281,8 +281,8 @@ const PurchaseReturns = () => {
     if (unavailable) {
       const selected = items.find((it) => Number(it.item_id) === Number(unavailable.itemId));
       const maxQty = selected ? getMaxReturnQty(selected, unavailable.itemId) : 0;
-      showToast('error', 'Purchase Return', `Return qty exceeds available stock (${maxQty}) for ${selected?.name || `item ${unavailable.itemId}`}`);
-      setFormError(`Return quantity exceeds available stock for ${selected?.name || `item ${unavailable.itemId}`}.`);
+      showToast('error', 'Purchase Return', `Return qty exceeds available stock (${maxQty}) for ${selected?.name || `product ${unavailable.itemId}`}`);
+      setFormError(`Return quantity exceeds available stock for ${selected?.name || `product ${unavailable.itemId}`}.`);
       return;
     }
     const payload: any = {
@@ -334,7 +334,7 @@ const PurchaseReturns = () => {
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
           <div>
             <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">Return Details</p>
-            <p className="text-xs text-slate-500">Add items using the table like purchases.</p>
+            <p className="text-xs text-slate-500">Add products using the table like purchases.</p>
           </div>
           <button
             type="button"
@@ -378,7 +378,7 @@ const PurchaseReturns = () => {
 
           <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
             <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-200">
-              <span>Items</span>
+              <span>Products</span>
               <button type="button" onClick={addLine} className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-1 text-xs font-medium text-white hover:bg-primary-700">
                 <Plus className="h-3.5 w-3.5" /> Add line
               </button>
@@ -386,7 +386,7 @@ const PurchaseReturns = () => {
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 dark:bg-slate-800">
                 <tr>
-                  <th className={tableHeadCls}>Item</th>
+                  <th className={tableHeadCls}>Product</th>
                   <th className={`${tableHeadCls} text-right`}>Qty</th>
                   <th className={`${tableHeadCls} text-right`}>Unit Cost</th>
                   <th className={`${tableHeadCls} text-right`}>Line Total</th>
@@ -404,7 +404,7 @@ const PurchaseReturns = () => {
 	                            value: Number(item.item_id),
 	                            label: `${item.name} (Available: ${getMaxReturnQty(item, item.item_id)})`,
 	                          }))}
-	                          placeholder={form.supplierId ? 'Select item' : 'Select supplier first'}
+	                          placeholder={form.supplierId ? 'Select product' : 'Select supplier first'}
 	                          disabled={!form.supplierId}
 	                          onChange={(nextValue) => handleSelectItem(idx, nextValue === '' ? '' : String(nextValue))}
 	                        />
