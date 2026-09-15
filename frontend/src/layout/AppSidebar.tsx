@@ -124,7 +124,18 @@ const AppSidebar: React.FC = () => {
           },
           { id: 'returns', label: t('nav_returns'), icon: FileText, to: '/returns', exact: true, permissionAny: ['returns.view', 'sales_returns.view', 'purchase_returns.view'] },
           { id: 'purchases', label: t('nav_purchases'), icon: ShoppingBag, to: '/purchases', permissionAny: ['purchases.view', 'suppliers.view'] },
-          { id: 'sales', label: t('nav_sales'), icon: ReceiptText, to: '/sales', exact: true, permissionAny: ['sales.view'] },
+          {
+            id: 'sales',
+            label: t('nav_sales'),
+            icon: ReceiptText,
+            permissionAny: ['sales.view', 'sales.pos.access'],
+            expandable: true,
+            subItems: [
+              { id: 'sales-list', label: t('nav_sales'), to: '/sales', exact: true, permissionAny: ['sales.view'] },
+              { id: 'sales-pos', label: t('nav_pos'), to: '/sales/pos', exact: true, permissionAny: ['sales.pos.access'] },
+              { id: 'sales-pos-orders', label: t('nav_pos_orders'), to: '/sales/pos/orders', exact: true, permissionAny: ['sales.pos.access'] },
+            ],
+          },
         ],
       },
       {

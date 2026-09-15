@@ -43,6 +43,8 @@ export const translations = {
   nav_returns: { en: 'Returns', so: 'Soo Celinta' },
   nav_purchases: { en: 'Purchases', so: 'Iibsiga' },
   nav_sales: { en: 'Sales', so: 'Iibka' },
+  nav_pos: { en: 'POS', so: 'POS' },
+  nav_pos_orders: { en: 'POS Orders', so: 'Dalabyada POS' },
   nav_finance: { en: 'Finance', so: 'Maaliyadda' },
   nav_accounts: { en: 'Accounts', so: 'Xisaabaadka' },
   nav_receipts: { en: 'Receipts', so: 'Rasiidhada' },
