@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     Search, ShoppingCart, Trash2, Plus, Minus, CreditCard, Wallet, User, Package,
-    Zap, LockOpen, Lock, Printer,
+    Zap, Printer,
 } from 'lucide-react';
 import { useToast } from '../../components/ui/toast/Toast';
 import { Modal } from '../../components/ui/modal/Modal';
@@ -10,9 +10,7 @@ import { productService, Product, Category } from '../../services/product.servic
 import { customerService, Customer } from '../../services/customer.service';
 import { accountService, Account } from '../../services/account.service';
 import { salesService } from '../../services/sales.service';
-import { shiftService, Shift } from '../../services/shift.service';
 import { useBranch } from '../../context/BranchContext';
-import { useAuth } from '../../context/AuthContext';
 
 interface CartItem {
     item_id: number;
@@ -54,7 +52,6 @@ const printHtmlInIframe = (html: string) => {
 const POSTab = () => {
     const { showToast } = useToast();
     const { activeBranchId } = useBranch();
-    const { user } = useAuth();
     const searchInputRef = useRef<HTMLInputElement>(null);
 
     const [loading, setLoading] = useState(true);
@@ -69,15 +66,6 @@ const POSTab = () => {
     const [cart, setCart] = useState<CartItem[]>([]);
     const [customerType, setCustomerType] = useState<'walking' | 'registered'>('walking');
     const [selectedCustomerId, setSelectedCustomerId] = useState<number | ''>('');
-
-    const [checkingShift, setCheckingShift] = useState(true);
-    const [openShift, setOpenShift] = useState<Shift | null>(null);
-    const [openRegisterModalOpen, setOpenRegisterModalOpen] = useState(false);
-    const [openingCash, setOpeningCash] = useState(0);
-    const [openingNote, setOpeningNote] = useState('');
-    const [registerBusy, setRegisterBusy] = useState(false);
-    const [closeRegisterModalOpen, setCloseRegisterModalOpen] = useState(false);
-    const [closingCash, setClosingCash] = useState(0);
 
     const [isPaymentOpen, setIsPaymentOpen] = useState(false);
     const [selectedAccId, setSelectedAccId] = useState<number | ''>('');
@@ -105,64 +93,6 @@ const POSTab = () => {
         };
         void load();
     }, [activeBranchId]);
-
-    const refreshOpenShift = async () => {
-        if (!user?.user_id) return;
-        setCheckingShift(true);
-        const res = await shiftService.list({ status: 'open', userId: user.user_id, branchId: activeBranchId ?? undefined });
-        if (res.success && res.data?.shifts?.length) {
-            setOpenShift(res.data.shifts[0]);
-        } else {
-            setOpenShift(null);
-        }
-        setCheckingShift(false);
-    };
-
-    useEffect(() => {
-        void refreshOpenShift();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [user?.user_id, activeBranchId]);
-
-    const handleOpenRegister = async () => {
-        setRegisterBusy(true);
-        const res = await shiftService.open({
-            branchId: activeBranchId ?? undefined,
-            openingCash: Number(openingCash || 0),
-            note: openingNote || undefined,
-        });
-        setRegisterBusy(false);
-        if (res.success && res.data?.shift) {
-            setOpenShift(res.data.shift);
-            setOpenRegisterModalOpen(false);
-            setOpeningCash(0);
-            setOpeningNote('');
-            showToast('success', 'Register', 'Register opened.');
-        } else {
-            showToast('error', 'Register', res.error || 'Could not open the register.');
-        }
-    };
-
-    const handleCloseRegister = async () => {
-        if (!openShift) return;
-        setRegisterBusy(true);
-        const res = await shiftService.close(openShift.shift_id, { closingCash: Number(closingCash || 0) });
-        setRegisterBusy(false);
-        if (res.success && res.data?.shift) {
-            const overShort = res.data.shift.over_short;
-            showToast(
-                Math.abs(overShort) < 0.005 ? 'success' : 'error',
-                'Register Closed',
-                Math.abs(overShort) < 0.005
-                    ? 'Drawer matched exactly.'
-                    : `${overShort > 0 ? 'Over' : 'Short'} by $${Math.abs(overShort).toFixed(2)}.`
-            );
-            setOpenShift(null);
-            setCloseRegisterModalOpen(false);
-            setClosingCash(0);
-        } else {
-            showToast('error', 'Register', res.error || 'Could not close the register.');
-        }
-    };
 
     const filteredProducts = useMemo(() => {
         let list = products;
@@ -233,10 +163,6 @@ const POSTab = () => {
     const otherAccounts = useMemo(() => accounts.filter((a) => !isCashAccount(a)), [accounts]);
 
     const handleCheckout = () => {
-        if (!openShift) {
-            showToast('error', 'Register closed', 'Open a register before taking a sale.');
-            return;
-        }
         if (cart.length === 0) {
             showToast('error', 'Cart is empty', 'Add some items before checking out.');
             return;
@@ -247,7 +173,7 @@ const POSTab = () => {
     };
 
     const completeSale = async () => {
-        if (!openShift || !selectedAccId) {
+        if (!selectedAccId) {
             showToast('error', 'Payment', 'Choose a payment account first.');
             return;
         }
@@ -265,7 +191,6 @@ const POSTab = () => {
             items: cart.map((item) => ({ itemId: item.item_id, quantity: item.qty, unitPrice: item.price })),
             payFromAccId: Number(selectedAccId),
             paidAmount: total,
-            posShiftId: openShift.shift_id,
         });
         setSubmitting(false);
         if (!res.success || !res.data?.sale) {
@@ -286,84 +211,10 @@ const POSTab = () => {
         searchInputRef.current?.focus();
     };
 
-    if (!checkingShift && !openShift) {
-        return (
-            <div className="flex h-[calc(100vh-250px)] min-h-[420px] items-center justify-center">
-                <div className="max-w-md w-full bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm p-8 text-center">
-                    <LockOpen className="w-12 h-12 text-primary-500 mx-auto mb-4" />
-                    <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100 mb-2">Register is closed</h3>
-                    <p className="text-sm text-slate-500 mb-6">
-                        Open a register with a starting cash float before ringing up sales.
-                    </p>
-                    <button
-                        type="button"
-                        onClick={() => setOpenRegisterModalOpen(true)}
-                        className="w-full py-3 bg-primary-600 hover:bg-primary-700 text-white font-bold rounded-xl transition-all"
-                    >
-                        Open Register
-                    </button>
-                </div>
-
-                <Modal isOpen={openRegisterModalOpen} onClose={() => setOpenRegisterModalOpen(false)} title="Open Register" size="sm">
-                    <div className="space-y-4">
-                        <label className="flex flex-col gap-1 text-sm">
-                            <span className="font-medium text-slate-700 dark:text-slate-300">Opening Cash Float</span>
-                            <input
-                                type="number"
-                                min={0}
-                                step="0.01"
-                                value={openingCash}
-                                onChange={(e) => setOpeningCash(Number(e.target.value || 0))}
-                                className="h-11 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm"
-                            />
-                        </label>
-                        <label className="flex flex-col gap-1 text-sm">
-                            <span className="font-medium text-slate-700 dark:text-slate-300">Note (optional)</span>
-                            <input
-                                type="text"
-                                value={openingNote}
-                                onChange={(e) => setOpeningNote(e.target.value)}
-                                className="h-11 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm"
-                            />
-                        </label>
-                        <button
-                            type="button"
-                            disabled={registerBusy}
-                            onClick={handleOpenRegister}
-                            className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl disabled:opacity-60"
-                        >
-                            {registerBusy ? 'Opening…' : 'Open Register'}
-                        </button>
-                    </div>
-                </Modal>
-            </div>
-        );
-    }
-
     return (
         <div className="flex flex-col lg:flex-row gap-6 lg:h-[calc(100vh-250px)] min-h-0">
             {/* Left & Center: Categories, Products & Cart */}
             <div className="flex-grow flex flex-col gap-6 overflow-hidden">
-                {/* Register banner */}
-                {openShift && (
-                    <div className="flex items-center justify-between bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800 rounded-xl px-4 py-2 shrink-0">
-                        <div className="flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-300">
-                            <Lock className="w-4 h-4" />
-                            <span className="font-bold">Register #{openShift.shift_id} open</span>
-                            <span className="text-emerald-600/70 dark:text-emerald-400/70">
-                                · Float ${openShift.opening_cash.toFixed(2)} · Expected ${openShift.expected_cash.toFixed(2)}
-                            </span>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={() => { setClosingCash(openShift.expected_cash); setCloseRegisterModalOpen(true); }}
-                            className="text-xs font-bold text-emerald-700 dark:text-emerald-300 hover:underline"
-                        >
-                            Close Register
-                        </button>
-                    </div>
-                )}
-
                 {/* Category pills */}
                 <div className="flex items-center gap-2 overflow-x-auto pb-1 shrink-0">
                     <button
@@ -679,40 +530,6 @@ const POSTab = () => {
                         </button>
                     </div>
                 </div>
-            </Modal>
-
-            {/* Close Register Modal */}
-            <Modal isOpen={closeRegisterModalOpen} onClose={() => setCloseRegisterModalOpen(false)} title="Close Register" size="sm">
-                {openShift && (
-                    <div className="space-y-4">
-                        <div className="rounded-xl bg-slate-50 dark:bg-slate-800 p-4 text-sm space-y-1">
-                            <div className="flex justify-between"><span className="text-slate-500">Opening Float</span><span className="font-bold">${openShift.opening_cash.toFixed(2)}</span></div>
-                            <div className="flex justify-between"><span className="text-slate-500">Expected Cash</span><span className="font-bold">${openShift.expected_cash.toFixed(2)}</span></div>
-                        </div>
-                        <label className="flex flex-col gap-1 text-sm">
-                            <span className="font-medium text-slate-700 dark:text-slate-300">Counted Cash</span>
-                            <input
-                                type="number"
-                                min={0}
-                                step="0.01"
-                                value={closingCash}
-                                onChange={(e) => setClosingCash(Number(e.target.value || 0))}
-                                className="h-11 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm"
-                            />
-                        </label>
-                        <p className={`text-sm font-bold ${Math.abs(closingCash - openShift.expected_cash) < 0.005 ? 'text-emerald-600' : 'text-red-500'}`}>
-                            {closingCash - openShift.expected_cash >= 0 ? 'Over' : 'Short'} by ${Math.abs(closingCash - openShift.expected_cash).toFixed(2)}
-                        </p>
-                        <button
-                            type="button"
-                            disabled={registerBusy}
-                            onClick={handleCloseRegister}
-                            className="w-full py-3 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl disabled:opacity-60"
-                        >
-                            {registerBusy ? 'Closing…' : 'Close Register'}
-                        </button>
-                    </div>
-                )}
             </Modal>
         </div>
     );

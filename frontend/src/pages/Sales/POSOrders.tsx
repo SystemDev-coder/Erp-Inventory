@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
-import {
-    Ban, Eye, Printer, ReceiptText, Package, Wallet, RotateCcw, Lock, LockOpen,
-    BarChart3, Trash2,
-} from 'lucide-react';
+import { Ban, Eye, Printer, ReceiptText, Package, Wallet, RotateCcw, BarChart3 } from 'lucide-react';
 import { PageHeader, TabActionToolbar } from '../../components/ui/layout';
 import { Tabs } from '../../components/ui/tabs/Tabs';
 import { DataTable } from '../../components/ui/table/DataTable';
@@ -15,7 +12,6 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { useBranch } from '../../context/BranchContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import { salesService, Sale, SaleItem, PosOrderItemRow, PosPaymentRow } from '../../services/sales.service';
-import { shiftService, Shift } from '../../services/shift.service';
 import { accountService, Account } from '../../services/account.service';
 import { returnsService } from '../../services/returns.service';
 import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
@@ -73,16 +69,6 @@ const POSOrders = () => {
 
     const [voidOpen, setVoidOpen] = useState(false);
     const [saleToVoid, setSaleToVoid] = useState<Sale | null>(null);
-
-    // Registers tab
-    const [shifts, setShifts] = useState<Shift[]>([]);
-    const [shiftsLoading, setShiftsLoading] = useState(false);
-    const [openingCash, setOpeningCash] = useState(0);
-    const [openingNote, setOpeningNote] = useState('');
-    const [registerBusy, setRegisterBusy] = useState(false);
-    const [closeTarget, setCloseTarget] = useState<Shift | null>(null);
-    const [closingCash, setClosingCash] = useState(0);
-    const [voidShiftTarget, setVoidShiftTarget] = useState<Shift | null>(null);
 
     // Returns tab
     const [accounts, setAccounts] = useState<Account[]>([]);
@@ -146,33 +132,17 @@ const POSOrders = () => {
         void loadOrders(next);
     };
 
-    const loadShifts = useCallback(async () => {
-        setShiftsLoading(true);
-        const res = await shiftService.list({ limit: 100, branchId: activeBranchId ?? undefined });
-        if (res.success && res.data?.shifts) setShifts(res.data.shifts);
-        setShiftsLoading(false);
-    }, [activeBranchId]);
-
-    useEffect(() => {
-        void loadShifts();
-    }, [loadShifts]);
-
     useEffect(() => {
         void accountService.list({ branchId: activeBranchId ?? undefined }).then((res) => {
             if (res.success && res.data?.accounts) setAccounts(res.data.accounts.filter((a) => a.is_active));
         });
+        void (async () => {
+            const res = await salesService.list({ posOnly: true, limit: 100, branchId: activeBranchId ?? undefined });
+            if (res.success && res.data?.sales) {
+                setReturnableSales(res.data.sales.filter((s) => s.customer_id && s.status !== 'void'));
+            }
+        })();
     }, [activeBranchId]);
-
-    const loadReturnableSales = useCallback(async () => {
-        const res = await salesService.list({ posOnly: true, limit: 100, branchId: activeBranchId ?? undefined });
-        if (res.success && res.data?.sales) {
-            setReturnableSales(res.data.sales.filter((s) => s.customer_id && s.status !== 'void'));
-        }
-    }, [activeBranchId]);
-
-    useEffect(() => {
-        void loadReturnableSales();
-    }, [loadReturnableSales]);
 
     const handleSelectReturnSale = async (saleId: number | '') => {
         setSelectedReturnSaleId(saleId);
@@ -259,59 +229,12 @@ const POSOrders = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [saleToVoid, showToast]);
 
-    const handleOpenRegister = async () => {
-        setRegisterBusy(true);
-        const res = await shiftService.open({ branchId: activeBranchId ?? undefined, openingCash: Number(openingCash || 0), note: openingNote || undefined });
-        setRegisterBusy(false);
-        if (res.success) {
-            showToast('success', 'Register', 'Register opened.');
-            setOpeningCash(0);
-            setOpeningNote('');
-            void loadShifts();
-        } else {
-            showToast('error', 'Register', res.error || 'Could not open register');
-        }
-    };
-
-    const handleCloseRegister = async () => {
-        if (!closeTarget) return;
-        setRegisterBusy(true);
-        const res = await shiftService.close(closeTarget.shift_id, { closingCash: Number(closingCash || 0) });
-        setRegisterBusy(false);
-        if (res.success && res.data?.shift) {
-            const overShort = res.data.shift.over_short;
-            showToast(
-                Math.abs(overShort) < 0.005 ? 'success' : 'error',
-                'Register Closed',
-                Math.abs(overShort) < 0.005 ? 'Drawer matched exactly.' : `${overShort > 0 ? 'Over' : 'Short'} by $${Math.abs(overShort).toFixed(2)}.`
-            );
-            setCloseTarget(null);
-            setClosingCash(0);
-            void loadShifts();
-        } else {
-            showToast('error', 'Register', res.error || 'Could not close register');
-        }
-    };
-
-    const confirmVoidShift = async () => {
-        if (!voidShiftTarget) return;
-        const res = await shiftService.void(voidShiftTarget.shift_id);
-        if (res.success) {
-            showToast('success', 'Register', 'Register voided');
-            void loadShifts();
-        } else {
-            showToast('error', 'Register', res.error || 'Could not void register');
-        }
-        setVoidShiftTarget(null);
-    };
-
     const orderColumns: ColumnDef<Sale>[] = useMemo(
         () => [
             { accessorKey: 'sale_id', header: 'Order ID', cell: ({ row }) => `#S-${row.original.sale_id}` },
             { accessorKey: 'customer_name', header: 'Customer', cell: ({ row }) => row.original.customer_name || 'Walk-in' },
             { accessorKey: 'sale_date', header: 'Date', cell: ({ row }) => new Date(row.original.sale_date).toLocaleString() },
             { accessorKey: 'cashier_name', header: 'Cashier', cell: ({ row }) => row.original.cashier_name || '-' },
-            { accessorKey: 'pos_shift_id', header: 'Register', cell: ({ row }) => row.original.pos_shift_id ? `#${row.original.pos_shift_id}` : '-' },
             { accessorKey: 'total', header: 'Total', cell: ({ row }) => formatMoney(row.original.total) },
             {
                 accessorKey: 'status',
@@ -394,11 +317,9 @@ const POSOrders = () => {
         };
     }, [orders, payments]);
 
-    const openShifts = useMemo(() => shifts.filter((s) => s.status === 'open'), [shifts]);
-
     return (
         <div>
-            <PageHeader title="POS Orders" description="Sales rung up through the POS screen, and the registers that took them." />
+            <PageHeader title="POS Orders" description="Sales rung up through the POS screen." />
 
             <Tabs
                 defaultTab="orders"
@@ -526,72 +447,6 @@ const POSOrders = () => {
                         ),
                     },
                     {
-                        id: 'registers',
-                        label: 'POS Registers',
-                        icon: Lock,
-                        badge: openShifts.length || undefined,
-                        content: (
-                            <div className="space-y-4">
-                                <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4">
-                                    <div className="text-sm font-semibold text-slate-800 dark:text-slate-100 mb-3">Open New Register</div>
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                        <div>
-                                            <label className="text-xs text-slate-600 dark:text-slate-400">Opening Cash</label>
-                                            <input type="number" min={0} step="0.01" value={openingCash} onChange={(e) => setOpeningCash(Number(e.target.value || 0))} className="mt-1 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm" />
-                                        </div>
-                                        <div className="md:col-span-2">
-                                            <label className="text-xs text-slate-600 dark:text-slate-400">Note</label>
-                                            <input type="text" value={openingNote} onChange={(e) => setOpeningNote(e.target.value)} placeholder="Optional note" className="mt-1 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm" />
-                                        </div>
-                                    </div>
-                                    <div className="flex justify-end mt-3">
-                                        <button type="button" disabled={registerBusy} onClick={handleOpenRegister} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60">
-                                            <LockOpen className="w-4 h-4" /> Open Register
-                                        </button>
-                                    </div>
-                                </div>
-
-                                {shiftsLoading ? (
-                                    <div className="py-10 text-center text-slate-500">Loading registers...</div>
-                                ) : shifts.length === 0 ? (
-                                    <div className="py-10 text-center text-slate-500">No registers found</div>
-                                ) : (
-                                    <div className="space-y-3">
-                                        {shifts.map((shift) => (
-                                            <div key={shift.shift_id} className="rounded-xl border border-slate-200 dark:border-slate-700 p-4 flex items-start justify-between gap-3">
-                                                <div>
-                                                    <div className="flex items-center gap-2">
-                                                        <span className="font-semibold text-slate-900 dark:text-white">Register #{shift.shift_id}</span>
-                                                        <Badge color={shift.status === 'open' ? 'success' : shift.status === 'closed' ? 'info' : 'error'} variant="light">{shift.status}</Badge>
-                                                    </div>
-                                                    <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">
-                                                        Cashier: {shift.username || `#${shift.user_id}`} · Opened: {new Date(shift.opened_at).toLocaleString()}
-                                                        {shift.closed_at ? ` · Closed: ${new Date(shift.closed_at).toLocaleString()}` : ''}
-                                                    </div>
-                                                    <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">
-                                                        Float: {formatMoney(shift.opening_cash)} · Expected: {formatMoney(shift.expected_cash)}
-                                                        {shift.status === 'closed' && ` · Counted: ${formatMoney(shift.closing_cash)} · ${shift.over_short >= 0 ? 'Over' : 'Short'} ${formatMoney(Math.abs(shift.over_short))}`}
-                                                    </div>
-                                                </div>
-                                                <div className="flex flex-col gap-2 min-w-[140px]">
-                                                    {shift.status === 'open' ? (
-                                                        <button type="button" onClick={() => { setCloseTarget(shift); setClosingCash(shift.expected_cash); }} className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-sm">
-                                                            <Lock className="w-4 h-4" /> Close
-                                                        </button>
-                                                    ) : shift.status === 'closed' ? (
-                                                        <button type="button" onClick={() => setVoidShiftTarget(shift)} className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-rose-600 text-white hover:bg-rose-700 text-sm">
-                                                            <Trash2 className="w-4 h-4" /> Void
-                                                        </button>
-                                                    ) : null}
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        ),
-                    },
-                    {
                         id: 'reports',
                         label: 'POS Reports',
                         icon: BarChart3,
@@ -659,7 +514,6 @@ const POSOrders = () => {
                             <div><p className="text-xs text-slate-500 dark:text-slate-400">Date & Time</p><p className="font-semibold text-slate-900 dark:text-slate-100">{new Date(viewSale.sale_date).toLocaleString()}</p></div>
                             <div><p className="text-xs text-slate-500 dark:text-slate-400">Customer</p><p className="font-semibold text-slate-900 dark:text-slate-100">{viewSale.customer_name || 'Walk-in'}</p></div>
                             <div><p className="text-xs text-slate-500 dark:text-slate-400">Cashier</p><p className="font-semibold text-slate-900 dark:text-slate-100">{viewSale.cashier_name || '-'}</p></div>
-                            <div><p className="text-xs text-slate-500 dark:text-slate-400">Register</p><p className="font-semibold text-slate-900 dark:text-slate-100">{viewSale.pos_shift_id ? `#${viewSale.pos_shift_id}` : '-'}</p></div>
                             <div><p className="text-xs text-slate-500 dark:text-slate-400">Status</p><p className="font-semibold text-slate-900 dark:text-slate-100 capitalize">{viewSale.status}</p></div>
                             <div><p className="text-xs text-slate-500 dark:text-slate-400">Total</p><p className="font-semibold text-slate-900 dark:text-slate-100">{formatMoney(viewSale.total)}</p></div>
                         </div>
@@ -699,38 +553,6 @@ const POSOrders = () => {
                 cancelText="Cancel"
                 variant="danger"
                 requireReason
-            />
-
-            <Modal isOpen={!!closeTarget} onClose={() => setCloseTarget(null)} title="Close Register" size="sm">
-                {closeTarget && (
-                    <div className="space-y-4">
-                        <div className="rounded-xl bg-slate-50 dark:bg-slate-800 p-4 text-sm space-y-1">
-                            <div className="flex justify-between"><span className="text-slate-500">Opening Float</span><span className="font-bold">{formatMoney(closeTarget.opening_cash)}</span></div>
-                            <div className="flex justify-between"><span className="text-slate-500">Expected Cash</span><span className="font-bold">{formatMoney(closeTarget.expected_cash)}</span></div>
-                        </div>
-                        <label className="flex flex-col gap-1 text-sm">
-                            <span className="font-medium text-slate-700 dark:text-slate-300">Counted Cash</span>
-                            <input type="number" min={0} step="0.01" value={closingCash} onChange={(e) => setClosingCash(Number(e.target.value || 0))} className="h-11 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm" />
-                        </label>
-                        <p className={`text-sm font-bold ${Math.abs(closingCash - closeTarget.expected_cash) < 0.005 ? 'text-emerald-600' : 'text-red-500'}`}>
-                            {closingCash - closeTarget.expected_cash >= 0 ? 'Over' : 'Short'} by {formatMoney(Math.abs(closingCash - closeTarget.expected_cash))}
-                        </p>
-                        <button type="button" disabled={registerBusy} onClick={handleCloseRegister} className="w-full py-3 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl disabled:opacity-60">
-                            {registerBusy ? 'Closing…' : 'Close Register'}
-                        </button>
-                    </div>
-                )}
-            </Modal>
-
-            <ConfirmDialog
-                isOpen={!!voidShiftTarget}
-                onClose={() => setVoidShiftTarget(null)}
-                onConfirm={() => { void confirmVoidShift(); }}
-                title="Void Register?"
-                message={voidShiftTarget ? `Void register #${voidShiftTarget.shift_id}? This cannot be undone.` : 'Void this register?'}
-                confirmText="Void Register"
-                cancelText="Cancel"
-                variant="danger"
             />
         </div>
     );
