@@ -76,7 +76,6 @@ function AppRoutes() {
           <Route path="/stock/adjustments/new" element={<ProtectedRoute><Lazy><StockAdjustmentCreatePage /></Lazy></ProtectedRoute>} />
           <Route path="/sales" element={<ProtectedRoute permission="sales.view"><Sales /></ProtectedRoute>} />
           <Route path="/sales/transactions" element={<ProtectedRoute permission="sales.view"><Sales /></ProtectedRoute>} />
-          <Route path="/sales/pos" element={<ProtectedRoute permission="sales.pos.access"><Lazy><POSTab /></Lazy></ProtectedRoute>} />
           <Route path="/sales/pos/orders" element={<ProtectedRoute permission="sales.pos.access"><Lazy><POSOrders /></Lazy></ProtectedRoute>} />
           <Route path="/sales/new" element={<ProtectedRoute permission="sales.create"><SaleCreate /></ProtectedRoute>} />
           <Route path="/sales/:id/edit" element={<ProtectedRoute permission="sales.update"><SaleCreate /></ProtectedRoute>} />
@@ -201,6 +200,10 @@ function AppRoutes() {
         <Route path="/signin" element={<SignIn />} />
         <Route path="/signup" element={<SignUp />} />
         <Route path="/lock" element={<Lazy><Lock /></Lazy>} />
+
+        {/* POS: a dedicated full-screen checkout terminal, deliberately outside
+            AppLayout - no sidebar, its own minimal header, like a real till screen. */}
+        <Route path="/sales/pos" element={<ProtectedRoute permission="sales.pos.access"><Lazy><POSTab /></Lazy></ProtectedRoute>} />
 
         {/* Fallback Route */}
         <Route path="*" element={<NotFound />} />
