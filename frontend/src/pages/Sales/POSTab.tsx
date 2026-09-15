@@ -14,6 +14,7 @@ import { productService, Product, Category } from '../../services/product.servic
 import { customerService, Customer } from '../../services/customer.service';
 import { accountService, Account } from '../../services/account.service';
 import { salesService } from '../../services/sales.service';
+import { settingsService } from '../../services/settings.service';
 import { useBranch } from '../../context/BranchContext';
 
 interface CartItem {
@@ -89,6 +90,15 @@ const POSTab = () => {
 
     const [selectedAccId, setSelectedAccId] = useState<number | ''>('');
     const [submitting, setSubmitting] = useState(false);
+    const [companyName, setCompanyName] = useState('');
+
+    useEffect(() => {
+        settingsService.getCompany().then((res) => {
+            if (res.success && res.data?.company?.company_name) {
+                setCompanyName(res.data.company.company_name);
+            }
+        });
+    }, []);
 
     useEffect(() => {
         const load = async () => {
@@ -607,7 +617,22 @@ const POSTab = () => {
                 </div>
             </main>
 
-            <div className="text-center text-sm text-slate-500 dark:text-slate-400 my-4">© 2026 Dubia. All rights reserved.</div>
+            <div className="text-center my-4">
+                <div className="text-sm text-slate-500 dark:text-slate-400">
+                    © 2026 {companyName || 'KeydMaal ERP'}. All rights reserved.
+                </div>
+                <div className="text-[11px] text-slate-400 dark:text-slate-500">
+                    Prepared by{' '}
+                    <a
+                        href="https://madalict.com"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="hover:text-primary-600 dark:hover:text-primary-400"
+                    >
+                        Madal ICT — madalict.com
+                    </a>
+                </div>
+            </div>
         </div>
     );
 };

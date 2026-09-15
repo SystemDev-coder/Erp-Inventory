@@ -52,27 +52,9 @@ export default function UserDropdown() {
             <User className="h-5 w-5" />
           )}
         </span>
-        <span className="mr-1 block max-w-[120px] truncate text-theme-sm font-medium text-slate-900 dark:text-white">
+        <span className="block max-w-[120px] truncate text-theme-sm font-medium text-slate-900 dark:text-white">
           {displayName.split(" ")[0] || "User"}
         </span>
-        <svg
-          className={`shrink-0 text-slate-600 transition-transform duration-200 dark:text-white/80 ${
-            isOpen ? "rotate-180" : ""
-          }`}
-          width="18"
-          height="20"
-          viewBox="0 0 18 20"
-          fill="none"
-          xmlns="http://www.w3.org/2000/svg"
-        >
-          <path
-            d="M4.3125 8.65625L9 13.3437L13.6875 8.65625"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
       </button>
 
       <Dropdown

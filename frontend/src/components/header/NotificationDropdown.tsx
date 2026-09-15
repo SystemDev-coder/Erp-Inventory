@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
+import { Bell, Package, ShoppingCart, Wallet, X } from 'lucide-react';
 import { Dropdown } from '../ui/dropdown/Dropdown';
 import { useToast } from '../ui/toast/Toast';
 import {
@@ -14,13 +15,13 @@ const formatTimeAgo = (value: string) => {
   const diffMs = Date.now() - date.getTime();
   const diffMin = Math.floor(diffMs / 60000);
   if (diffMin < 1) return 'just now';
-  if (diffMin < 60) return `${diffMin} min ago`;
+  if (diffMin < 60) return `${diffMin} min`;
 
   const diffHours = Math.floor(diffMin / 60);
-  if (diffHours < 24) return `${diffHours} hr ago`;
+  if (diffHours < 24) return `${diffHours} hr`;
 
   const diffDays = Math.floor(diffHours / 24);
-  if (diffDays < 7) return `${diffDays} day ago`;
+  if (diffDays < 7) return `${diffDays} day`;
 
   return date.toLocaleDateString();
 };
@@ -33,19 +34,63 @@ const initialsFromText = (value: string) =>
     .map((word) => word.charAt(0).toUpperCase())
     .join('') || 'N';
 
-const categoryDotClass = (category: string, isRead: boolean) => {
-  if (isRead) return 'bg-slate-400';
+const categoryIconConfig: Record<string, { icon: typeof Bell; bg: string; iconColor: string }> = {
+  inventory: {
+    icon: Package,
+    bg: 'bg-amber-100 dark:bg-amber-500/15',
+    iconColor: 'text-amber-600 dark:text-amber-400',
+  },
+  finance: {
+    icon: Wallet,
+    bg: 'bg-emerald-100 dark:bg-emerald-500/15',
+    iconColor: 'text-emerald-600 dark:text-emerald-400',
+  },
+  purchase: {
+    icon: ShoppingCart,
+    bg: 'bg-blue-100 dark:bg-blue-500/15',
+    iconColor: 'text-blue-600 dark:text-blue-400',
+  },
+  default: {
+    icon: Bell,
+    bg: 'bg-primary-100 dark:bg-primary-500/15',
+    iconColor: 'text-primary-600 dark:text-primary-400',
+  },
+};
 
-  switch (category) {
-    case 'inventory':
-      return 'bg-emerald-500';
-    case 'purchase':
-      return 'bg-blue-500';
-    case 'finance':
-      return 'bg-amber-500';
-    default:
-      return 'bg-brand-500';
-  }
+const avatarPalette = [
+  'bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300',
+  'bg-purple-100 text-purple-700 dark:bg-purple-500/15 dark:text-purple-300',
+  'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
+  'bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300',
+  'bg-pink-100 text-pink-700 dark:bg-pink-500/15 dark:text-pink-300',
+];
+
+const avatarColorFor = (value: string) => {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  return avatarPalette[hash % avatarPalette.length];
+};
+
+// Highlights quoted phrases ('...'), reference tokens (#SO-2345), and
+// dollar amounts inside a notification message, mirroring the reference
+// design's colored call-outs, without needing extra fields from the backend.
+const HIGHLIGHT_PATTERN = /('[^']+'|"[^"]+"|#[\w-]+|\$[\d,]+(?:\.\d+)?)/g;
+
+const renderHighlightedMessage = (message: string) => {
+  // message.split() with a single capturing group puts matches at odd
+  // indices and plain text at even indices - no need to re-test the regex
+  // (which would be unsafe here anyway since it carries the `g` flag and
+  // .test() mutates its shared lastIndex across calls).
+  const parts = message.split(HIGHLIGHT_PATTERN);
+  return parts.map((part, index) =>
+    index % 2 === 1 ? (
+      <span key={index} className="font-medium text-primary-600 dark:text-primary-400">
+        {part}
+      </span>
+    ) : (
+      <span key={index}>{part}</span>
+    )
+  );
 };
 
 const normalizeNotificationLink = (rawLink: string | null) => {
@@ -66,6 +111,7 @@ export default function NotificationDropdown() {
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [onlyUnread, setOnlyUnread] = useState(false);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
@@ -73,9 +119,9 @@ export default function NotificationDropdown() {
   const navigate = useNavigate();
 
   const loadNotifications = useCallback(
-    async (withLoader: boolean) => {
+    async (withLoader: boolean, unreadOnly: boolean) => {
       if (withLoader) setLoading(true);
-      const res = await notificationService.list({ limit: 12, offset: 0 });
+      const res = await notificationService.list({ limit: 12, offset: 0, unreadOnly });
       if (res.success && res.data) {
         setNotifications(res.data.notifications ?? []);
         setUnreadCount(res.data.unreadCount ?? 0);
@@ -89,24 +135,31 @@ export default function NotificationDropdown() {
   );
 
   useEffect(() => {
-    void loadNotifications(false);
+    void loadNotifications(false, false);
     const timer = setInterval(() => {
-      void loadNotifications(false);
+      void loadNotifications(false, onlyUnread);
     }, 60000);
 
     return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadNotifications]);
 
   const toggleDropdown = () => {
     const next = !isOpen;
     setIsOpen(next);
     if (next) {
-      void loadNotifications(true);
+      void loadNotifications(true, onlyUnread);
     }
   };
 
   const closeDropdown = () => {
     setIsOpen(false);
+  };
+
+  const handleToggleOnlyUnread = () => {
+    const next = !onlyUnread;
+    setOnlyUnread(next);
+    void loadNotifications(true, next);
   };
 
   const handleMarkAllRead = async () => {
@@ -117,11 +170,13 @@ export default function NotificationDropdown() {
     if (res.success) {
       const now = new Date().toISOString();
       setNotifications((prev) =>
-        prev.map((row) => ({
-          ...row,
-          is_read: true,
-          read_at: row.read_at ?? now,
-        }))
+        prev
+          .map((row) => ({
+            ...row,
+            is_read: true,
+            read_at: row.read_at ?? now,
+          }))
+          .filter((row) => !onlyUnread || !row.is_read)
       );
       setUnreadCount(0);
     } else {
@@ -191,107 +246,120 @@ export default function NotificationDropdown() {
         onClose={closeDropdown}
         className="absolute -right-[240px] mt-[17px] flex h-[480px] w-[350px] flex-col rounded-2xl border border-slate-200 bg-white p-3 shadow-theme-lg dark:border-slate-700 dark:bg-slate-900 sm:w-[361px] lg:right-0"
       >
-        <div className="mb-3 flex items-center justify-between border-b border-slate-200 pb-3 dark:border-slate-700">
-          <div>
-            <h5 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-              Notification
-            </h5>
-            <p className="text-xs text-slate-500 dark:text-slate-300">
-              {unreadCount} unread
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            {unreadCount > 0 && (
+        <div className="mb-2 flex items-center justify-between border-b border-slate-200 pb-3 dark:border-slate-700">
+          <h5 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+            Notifications
+          </h5>
+          <div className="flex items-center gap-3">
+            <label className="flex cursor-pointer select-none items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400">
+              Only Unread
               <button
                 type="button"
-                onClick={() => void handleMarkAllRead()}
-                disabled={busy}
-                className="text-xs font-medium text-primary-700 hover:text-primary-800 disabled:opacity-60 dark:text-slate-200"
+                role="switch"
+                aria-checked={onlyUnread}
+                onClick={handleToggleOnlyUnread}
+                className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+                  onlyUnread ? 'bg-primary-600' : 'bg-slate-200 dark:bg-slate-700'
+                }`}
               >
-                Mark all read
-              </button>
-            )}
-            <button
-              onClick={toggleDropdown}
-              className="text-slate-500 transition hover:text-slate-900 dark:text-slate-300 dark:hover:text-slate-100"
-            >
-              <svg
-                className="fill-current"
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                <path
-                  fillRule="evenodd"
-                  clipRule="evenodd"
-                  d="M6.21967 7.28131C5.92678 6.98841 5.92678 6.51354 6.21967 6.22065C6.51256 5.92775 6.98744 5.92775 7.28033 6.22065L11.999 10.9393L16.7176 6.22078C17.0105 5.92789 17.4854 5.92788 17.7782 6.22078C18.0711 6.51367 18.0711 6.98855 17.7782 7.28144L13.0597 12L17.7782 16.7186C18.0711 17.0115 18.0711 17.4863 17.7782 17.7792C17.4854 18.0721 17.0105 18.0721 16.7176 17.7792L11.999 13.0607L7.28033 17.7794C6.98744 18.0722 6.51256 18.0722 6.21967 17.7794C5.92678 17.4865 5.92678 17.0116 6.21967 16.7187L10.9384 12L6.21967 7.28131Z"
-                  fill="currentColor"
+                <span
+                  className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                    onlyUnread ? 'translate-x-4' : 'translate-x-0.5'
+                  }`}
                 />
-              </svg>
+              </button>
+            </label>
+            <button
+              onClick={closeDropdown}
+              aria-label="Close"
+              className="text-slate-400 transition hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-100"
+            >
+              <X className="h-5 w-5" />
             </button>
           </div>
         </div>
 
-        <ul className="flex flex-col h-auto overflow-y-auto custom-scrollbar">
+        <ul className="flex h-auto flex-col overflow-y-auto custom-scrollbar">
           {loading ? (
             <li className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-300">
               Loading notifications...
             </li>
           ) : notifications.length === 0 ? (
             <li className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-300">
-              No notifications yet.
+              {onlyUnread ? 'No unread notifications.' : 'No notifications yet.'}
             </li>
           ) : (
-            notifications.map((notification) => (
-              <li key={notification.notification_id}>
-                <button
-                  type="button"
-                  onClick={() => void handleNotificationClick(notification)}
-                  className={`flex w-full gap-3 rounded-lg border-b border-slate-200 px-4 py-3 text-left hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800/60 ${
-                    notification.is_read ? '' : 'bg-slate-50 dark:bg-slate-800/50'
-                  }`}
-                >
-                  <span className="relative block h-10 w-10 shrink-0 rounded-full bg-slate-100 dark:bg-slate-800/60">
-                    <span className="flex h-10 w-10 items-center justify-center text-xs font-semibold text-slate-900 dark:text-slate-100">
-                      {initialsFromText(notification.created_by_name || notification.title)}
-                    </span>
-                    <span
-                      className={`absolute bottom-0 right-0 z-10 h-2.5 w-2.5 rounded-full border-[1.5px] border-white dark:border-slate-900 ${categoryDotClass(
-                        notification.category,
-                        notification.is_read
-                      )}`}
-                    ></span>
-                  </span>
+            notifications.map((notification) => {
+              const config = categoryIconConfig[notification.category] ?? categoryIconConfig.default;
+              const Icon = config.icon;
+              const hasActor = !!notification.created_by_name;
+              const avatarLabel = notification.created_by_name || notification.title;
 
-                  <span className="block">
-                    <span className="mb-1 block text-theme-sm text-slate-700 dark:text-slate-200">
-                      <span className="font-semibold text-slate-900 dark:text-slate-100">
-                        {notification.title}
+              return (
+                <li key={notification.notification_id}>
+                  <button
+                    type="button"
+                    onClick={() => void handleNotificationClick(notification)}
+                    className={`flex w-full gap-3 rounded-xl border-b border-slate-100 px-2 py-3 text-left hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/60 ${
+                      notification.is_read ? '' : 'bg-slate-50/70 dark:bg-slate-800/40'
+                    }`}
+                  >
+                    {hasActor ? (
+                      <span
+                        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${avatarColorFor(
+                          avatarLabel
+                        )}`}
+                      >
+                        {initialsFromText(avatarLabel)}
+                      </span>
+                    ) : (
+                      <span
+                        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${config.bg}`}
+                      >
+                        <Icon className={`h-5 w-5 ${config.iconColor}`} />
+                      </span>
+                    )}
+
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-start justify-between gap-2">
+                        <span className="flex items-center gap-1.5 text-theme-sm font-semibold text-slate-900 dark:text-slate-100">
+                          {notification.title}
+                          {!notification.is_read && (
+                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" />
+                          )}
+                        </span>
+                        <span className="shrink-0 whitespace-nowrap text-[11px] text-slate-400 dark:text-slate-500">
+                          {formatTimeAgo(notification.created_at)}
+                        </span>
+                      </span>
+                      <span className="mt-0.5 block text-xs leading-snug text-slate-500 dark:text-slate-300">
+                        {renderHighlightedMessage(notification.message)}
                       </span>
                     </span>
-                    <span className="mb-1 block text-xs text-slate-500 dark:text-slate-300">
-                      {notification.message}
-                    </span>
-                    <span className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-300">
-                      <span className="capitalize">{notification.category}</span>
-                      <span className="h-1 w-1 rounded-full bg-slate-400"></span>
-                      <span>{formatTimeAgo(notification.created_at)}</span>
-                    </span>
-                  </span>
-                </button>
-              </li>
-            ))
+                  </button>
+                </li>
+              );
+            })
           )}
         </ul>
 
-        <Link
-          to="/settings"
-          onClick={closeDropdown}
-          className="mt-3 block rounded-lg border border-slate-200 bg-white px-4 py-2 text-center text-sm font-medium text-slate-800 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-100 dark:hover:bg-slate-800/60"
-        >
-          View All Notifications
-        </Link>
+        <div className="mt-2 flex items-center justify-between border-t border-slate-200 pt-3 text-sm dark:border-slate-700">
+          <button
+            type="button"
+            onClick={() => void handleMarkAllRead()}
+            disabled={!unreadCount || busy}
+            className="font-medium text-slate-600 transition hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-300 dark:hover:text-slate-100"
+          >
+            Mark all as read
+          </button>
+          <Link
+            to="/settings"
+            onClick={closeDropdown}
+            className="font-medium text-primary-600 transition hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
+          >
+            View all Notifications
+          </Link>
+        </div>
       </Dropdown>
     </div>
   );
