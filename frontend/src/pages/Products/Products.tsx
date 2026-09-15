@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
-import { BadgeAlert, Boxes, Edit3, MoreVertical, PackageCheck, PackageSearch, PackageX, RefreshCw, Ruler, Store, Tags, Trash2 } from 'lucide-react';
+import { BadgeAlert, Boxes, Edit3, Image as ImageIcon, MoreVertical, PackageCheck, PackageSearch, PackageX, RefreshCw, Ruler, Store, Tags, Trash2, X } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
 import { DataTable } from '../../components/ui/table/DataTable';
 import { ActionDropdown } from '../../components/ui/dropdown/ActionDropdown';
@@ -8,7 +8,9 @@ import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { Modal } from '../../components/ui/modal/Modal';
 import { PageHeader } from '../../components/ui/layout';
 import { useToast } from '../../components/ui/toast/Toast';
+import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
 import { Category, Product, Unit, productService } from '../../services/product.service';
+import { imageService } from '../../services/image.service';
 import { InventoryTransactionRow, inventoryService } from '../../services/inventory.service';
 import { storeService, Store as StoreType } from '../../services/store.service';
 import StoresPage from '../Stock/StoresPage';
@@ -102,6 +104,14 @@ const Products = () => {
   const [itemForm, setItemForm] = useState<ProductForm>(defaultProductForm);
   const [itemStoreId, setItemStoreId] = useState<number | ''>('');
   const [stores, setStores] = useState<StoreType[]>([]);
+  const [itemImageFile, setItemImageFile] = useState<File | null>(null);
+  const [itemImagePreview, setItemImagePreview] = useState<string | null>(null);
+  const [itemImageRemoved, setItemImageRemoved] = useState(false);
+  const [savingItemImage, setSavingItemImage] = useState(false);
+  const [itemCategoryQuery, setItemCategoryQuery] = useState('');
+  const [itemUnitQuery, setItemUnitQuery] = useState('');
+  const [creatingItemCategory, setCreatingItemCategory] = useState(false);
+  const [creatingItemUnit, setCreatingItemUnit] = useState(false);
   const [stateForm, setStateForm] = useState<{ product_id?: number; status: 'active' | 'inactive' }>({
     product_id: undefined,
     status: 'inactive',
@@ -120,6 +130,49 @@ const Products = () => {
   const [unitToDelete, setUnitToDelete] = useState<Unit | null>(null);
 
   const [itemToDelete, setItemToDelete] = useState<Product | null>(null);
+
+  const QUICK_CREATE_CATEGORY_SENTINEL = -1;
+  const QUICK_CREATE_UNIT_SENTINEL = -1;
+
+  const handleCreateItemCategory = async (typedName: string) => {
+    const name = typedName.trim();
+    if (!name) return;
+    const existing = categories.find((c) => c.name.trim().toLowerCase() === name.toLowerCase());
+    if (existing) {
+      setItemField('category_id', existing.category_id);
+      return;
+    }
+    setCreatingItemCategory(true);
+    const res = await productService.createCategory({ name, is_active: true, branchId: activeBranchId ?? undefined } as Partial<Category> & { branchId?: number });
+    setCreatingItemCategory(false);
+    if (res.success && res.data?.category) {
+      setCategories((prev) => [...prev, res.data!.category]);
+      setItemField('category_id', res.data.category.category_id);
+      showToast('success', 'Categories', `"${res.data.category.name}" was added as a new category.`);
+    } else {
+      showToast('error', 'Categories', res.error || 'Could not create this category.');
+    }
+  };
+
+  const handleCreateItemUnit = async (typedName: string) => {
+    const name = typedName.trim();
+    if (!name) return;
+    const existing = units.find((u) => u.unit_name.trim().toLowerCase() === name.toLowerCase());
+    if (existing) {
+      setItemField('unit_id', existing.unit_id);
+      return;
+    }
+    setCreatingItemUnit(true);
+    const res = await productService.createUnit({ unit_name: name, is_active: true, branchId: activeBranchId ?? undefined } as Partial<Unit> & { branchId?: number });
+    setCreatingItemUnit(false);
+    if (res.success && res.data?.unit) {
+      setUnits((prev) => [...prev, res.data!.unit]);
+      setItemField('unit_id', res.data.unit.unit_id);
+      showToast('success', 'Units', `"${res.data.unit.unit_name}" was added as a new unit.`);
+    } else {
+      showToast('error', 'Units', res.error || 'Could not create this unit.');
+    }
+  };
 
   const resolveStores = async () => {
     const storeRes = await storeService.list({ branchId: activeBranchId ?? undefined });
@@ -316,6 +369,9 @@ const Products = () => {
 
   const openEditItem = async (row: Product) => {
     setItemForm({ ...row, quantity: Number(row.quantity ?? row.stock ?? 0) });
+    setItemImageFile(null);
+    setItemImagePreview(row.image_url || null);
+    setItemImageRemoved(false);
     const [loaded] = await Promise.all([resolveStores(), resolveCategories(), resolveUnits()]);
     setItemStoreId(row.store_id || loaded[0]?.store_id || '');
     setItemModalOpen(true);
@@ -443,12 +499,37 @@ const Products = () => {
 
   const closeItemModal = () => {
     setItemModalOpen(false);
+    setItemImageFile(null);
+    setItemImagePreview(null);
+    setItemImageRemoved(false);
+  };
+
+  const handleItemImageChange = (file: File | null) => {
+    setItemImageFile(file);
+    setItemImageRemoved(false);
+    setItemImagePreview(file ? URL.createObjectURL(file) : null);
+  };
+
+  const handleRemoveItemImage = () => {
+    setItemImageFile(null);
+    setItemImagePreview(null);
+    setItemImageRemoved(true);
   };
 
   const saveItem = async () => {
     // Required/minLength/min are enforced natively on the inputs (see the form's
     // required attributes below), so the browser blocks submission before this
-    // ever runs when a field is invalid - no manual check needed here.
+    // ever runs when a field is invalid - no manual check needed here. Category
+    // and Unit are the exception: SearchableCombobox has no native "required"
+    // hook, so they're checked explicitly.
+    if (!itemForm.category_id) {
+      showToast('error', 'Items', 'Category is required');
+      return;
+    }
+    if (!itemForm.unit_id) {
+      showToast('error', 'Items', 'Unit is required');
+      return;
+    }
     setLoading(true);
     const payload = {
       ...itemForm,
@@ -459,16 +540,30 @@ const Products = () => {
     const res = itemForm.product_id
       ? await productService.update(itemForm.product_id, payload)
       : await productService.create(payload);
-    setLoading(false);
-    if (res.success) {
-      showToast('success', 'Items', itemForm.product_id ? 'Item updated' : 'Item created');
-      closeItemModal();
-      setItemForm(defaultProductForm);
-      setItemStoreId('');
-      await loadProducts();
-    } else {
+    if (!res.success || !res.data?.product) {
+      setLoading(false);
       showToast('error', 'Items', res.error || 'Failed to save item');
+      return;
     }
+
+    const savedId = res.data.product.product_id;
+    if (itemImageFile) {
+      setSavingItemImage(true);
+      const imgRes = await imageService.uploadProductImage(savedId, itemImageFile);
+      setSavingItemImage(false);
+      if (!imgRes.success) {
+        showToast('error', 'Items', imgRes.error || 'Item saved, but the image could not be uploaded.');
+      }
+    } else if (itemImageRemoved && itemForm.product_id) {
+      await imageService.deleteProductImage(savedId, 'Removed via item edit');
+    }
+
+    setLoading(false);
+    showToast('success', 'Items', itemForm.product_id ? 'Item updated' : 'Item created');
+    closeItemModal();
+    setItemForm(defaultProductForm);
+    setItemStoreId('');
+    await loadProducts();
   };
 
   const saveState = async () => {
@@ -558,6 +653,9 @@ const Products = () => {
                 onClick={async () => {
                   setItemForm(defaultProductForm);
                   setItemStoreId('');
+                  setItemImageFile(null);
+                  setItemImagePreview(null);
+                  setItemImageRemoved(false);
                   await Promise.all([resolveStores(), resolveCategories(), resolveUnits()]);
                   setItemModalOpen(true);
                 }}
@@ -874,6 +972,44 @@ const Products = () => {
             </ItemField>
           </div>
 
+          <div className="md:col-span-2">
+            <ItemField label="Item Image">
+              <div className="flex items-center gap-4">
+                <div className="relative flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-dashed border-slate-300 bg-slate-50 dark:border-slate-600 dark:bg-slate-800">
+                  {itemImagePreview ? (
+                    <img src={itemImagePreview} alt="Item preview" className="h-full w-full object-cover" />
+                  ) : (
+                    <ImageIcon className="h-8 w-8 text-slate-400" aria-hidden="true" />
+                  )}
+                </div>
+                <div className="flex flex-col items-start gap-2">
+                  <label className="inline-flex w-fit cursor-pointer items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">
+                    <span className="inline-flex items-center gap-2">
+                      <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                      {itemImagePreview ? 'Change image' : 'Upload image'}
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/jpg,image/gif,image/webp"
+                      className="hidden"
+                      onChange={(e) => handleItemImageChange(e.target.files?.[0] || null)}
+                    />
+                  </label>
+                  {itemImagePreview && (
+                    <button
+                      type="button"
+                      onClick={handleRemoveItemImage}
+                      className="inline-flex w-fit items-center gap-1 text-xs font-medium text-red-500 hover:text-red-600"
+                    >
+                      <X className="h-3.5 w-3.5" aria-hidden="true" /> Remove image
+                    </button>
+                  )}
+                  <p className="text-xs text-slate-500 dark:text-slate-400">JPG, PNG, GIF or WEBP. Up to 10MB.</p>
+                </div>
+              </div>
+            </ItemField>
+          </div>
+
           <ItemField label="Cost Price" required>
             <input
               type="number"
@@ -907,25 +1043,51 @@ const Products = () => {
           </ItemField>
 
           <ItemField label="Category" required>
-            <select
-              required
+            <SearchableCombobox<number>
               value={itemForm.category_id ?? ''}
-              onChange={(e) => setItemField('category_id', e.target.value ? Number(e.target.value) : undefined)}
-            >
-              <option value="" disabled>Select category</option>
-              {categories.map((c) => <option key={c.category_id} value={c.category_id}>{c.name}</option>)}
-            </select>
+              options={(() => {
+                const base = categories.map((c) => ({ value: c.category_id, label: c.name }));
+                const q = itemCategoryQuery.trim();
+                if (!q) return base;
+                const exists = categories.some((c) => c.name.trim().toLowerCase() === q.toLowerCase());
+                if (exists) return base;
+                return [{ value: QUICK_CREATE_CATEGORY_SENTINEL, label: `+ Create "${q}"` }, ...base];
+              })()}
+              placeholder="Select or type to create"
+              disabled={creatingItemCategory}
+              onSearch={(q) => setItemCategoryQuery(q)}
+              onChange={(nextValue) => {
+                if (nextValue === QUICK_CREATE_CATEGORY_SENTINEL) {
+                  void handleCreateItemCategory(itemCategoryQuery.trim());
+                  return;
+                }
+                setItemField('category_id', nextValue === '' ? undefined : Number(nextValue));
+              }}
+            />
           </ItemField>
 
           <ItemField label="Unit" required>
-            <select
-              required
+            <SearchableCombobox<number>
               value={itemForm.unit_id ?? ''}
-              onChange={(e) => setItemField('unit_id', e.target.value ? Number(e.target.value) : undefined)}
-            >
-              <option value="" disabled>Select unit</option>
-              {units.map((u) => <option key={u.unit_id} value={u.unit_id}>{u.unit_name}{u.symbol ? ` (${u.symbol})` : ''}</option>)}
-            </select>
+              options={(() => {
+                const base = units.map((u) => ({ value: u.unit_id, label: `${u.unit_name}${u.symbol ? ` (${u.symbol})` : ''}` }));
+                const q = itemUnitQuery.trim();
+                if (!q) return base;
+                const exists = units.some((u) => u.unit_name.trim().toLowerCase() === q.toLowerCase());
+                if (exists) return base;
+                return [{ value: QUICK_CREATE_UNIT_SENTINEL, label: `+ Create "${q}"` }, ...base];
+              })()}
+              placeholder="Select or type to create"
+              disabled={creatingItemUnit}
+              onSearch={(q) => setItemUnitQuery(q)}
+              onChange={(nextValue) => {
+                if (nextValue === QUICK_CREATE_UNIT_SENTINEL) {
+                  void handleCreateItemUnit(itemUnitQuery.trim());
+                  return;
+                }
+                setItemField('unit_id', nextValue === '' ? undefined : Number(nextValue));
+              }}
+            />
           </ItemField>
 
           <ItemField label="Brand">

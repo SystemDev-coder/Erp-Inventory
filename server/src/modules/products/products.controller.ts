@@ -4,6 +4,7 @@ import { ApiResponse } from '../../utils/ApiResponse';
 import { ApiError } from '../../utils/ApiError';
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { resolveBranchScope } from '../../utils/branchScope';
+import { deleteCloudinaryImage, getUploadedImageUrl } from '../../config/cloudinary';
 import { productsService } from './products.service';
 import {
   categoryCreateSchema,
@@ -223,10 +224,33 @@ export const deleteTax = asyncHandler(async (req: AuthRequest, res: Response) =>
   return ApiResponse.success(res, null, 'Tax deleted');
 });
 
-export const uploadProductImage = asyncHandler(async (_req: AuthRequest, _res: Response) => {
-  throw ApiError.badRequest('Product image upload is not available for this schema');
+export const uploadProductImage = asyncHandler(async (req: AuthRequest, res: Response) => {
+  if (!req.file) {
+    throw ApiError.badRequest('No file uploaded');
+  }
+  const scope = await resolveBranchScope(req);
+  const id = Number(req.params.id);
+  const existing = await productsService.getProduct(id, scope);
+  if (!existing) throw ApiError.notFound('Product not found');
+
+  const imageUrl = getUploadedImageUrl(req.file.path);
+  if (existing.image_url) {
+    await deleteCloudinaryImage(existing.image_url);
+  }
+
+  const product = await productsService.setProductImageUrl(id, imageUrl, scope);
+  return ApiResponse.success(res, { product, imageUrl }, 'Image uploaded successfully');
 });
 
-export const deleteProductImage = asyncHandler(async (_req: AuthRequest, _res: Response) => {
-  throw ApiError.badRequest('Product image delete is not available for this schema');
+export const deleteProductImage = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const id = Number(req.params.id);
+  const existing = await productsService.getProduct(id, scope);
+  if (!existing) throw ApiError.notFound('Product not found');
+
+  if (existing.image_url) {
+    await deleteCloudinaryImage(existing.image_url);
+  }
+  const product = await productsService.setProductImageUrl(id, null, scope);
+  return ApiResponse.success(res, { product }, 'Image deleted successfully');
 });

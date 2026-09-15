@@ -93,6 +93,7 @@ export interface Product {
   is_active: boolean;
   status: string;
   description?: string | null;
+  image_url?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -265,6 +266,7 @@ const getProductSql = (stockAlertExpr: string, storeIdExpr = 'NULL::bigint') => 
     i.is_active,
     CASE WHEN i.is_active THEN 'active' ELSE 'inactive' END AS status,
     NULL::text AS description,
+    i.image_url,
     i.created_at::text AS created_at,
     i.created_at::text AS updated_at
   FROM ims.items i
@@ -891,5 +893,25 @@ export const productsService = {
   async deleteProduct(id: number, scope: BranchScope): Promise<void> {
     if (scope.isAdmin) await queryOne(`DELETE FROM ims.items WHERE item_id = $1`, [id]);
     else await queryOne(`DELETE FROM ims.items WHERE item_id = $1 AND branch_id = ANY($2::bigint[])`, [id, scope.branchIds]);
+  },
+
+  async setProductImageUrl(id: number, imageUrl: string | null, scope: BranchScope): Promise<Product | null> {
+    const current = scope.isAdmin
+      ? await queryOne<{ item_id: number }>(`SELECT item_id FROM ims.items WHERE item_id = $1`, [id])
+      : await queryOne<{ item_id: number }>(
+          `SELECT item_id FROM ims.items WHERE item_id = $1 AND branch_id = ANY($2::bigint[])`,
+          [id, scope.branchIds]
+        );
+    if (!current) return null;
+
+    if (scope.isAdmin) {
+      await queryOne(`UPDATE ims.items SET image_url = $2 WHERE item_id = $1`, [id, imageUrl]);
+    } else {
+      await queryOne(
+        `UPDATE ims.items SET image_url = $2 WHERE item_id = $1 AND branch_id = ANY($3::bigint[])`,
+        [id, imageUrl, scope.branchIds]
+      );
+    }
+    return this.getProduct(id, scope);
   },
 };

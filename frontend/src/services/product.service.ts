@@ -62,6 +62,7 @@ export interface Product {
   is_active: boolean;
   status: string;
   description?: string | null;
+  image_url?: string | null;
 }
 
 type ListOptions = {

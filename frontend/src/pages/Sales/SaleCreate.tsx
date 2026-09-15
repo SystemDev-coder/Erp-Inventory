@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router';
-import { ArrowLeft, Plus, Trash2, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, AlertCircle, Image as ImageIcon, X } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
 import { useToast } from '../../components/ui/toast/Toast';
 import { accountService, Account } from '../../services/account.service';
 import { customerService, Customer } from '../../services/customer.service';
 import { inventoryService, InventoryItem } from '../../services/inventory.service';
 import { productService, Category, Unit } from '../../services/product.service';
+import { imageService } from '../../services/image.service';
 import { SaleDocType, SaleStatus, salesService } from '../../services/sales.service';
 import { formatAvailableQty, itemLabelWithAvailability } from '../../utils/itemAvailability';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
@@ -97,6 +98,14 @@ const SaleCreate = () => {
     unit_id: '' as number | '',
     barcode: '',
   });
+  const [newProductImageFile, setNewProductImageFile] = useState<File | null>(null);
+  const [newProductImagePreview, setNewProductImagePreview] = useState<string | null>(null);
+  const [newProductCategoryQuery, setNewProductCategoryQuery] = useState('');
+  const [newProductUnitQuery, setNewProductUnitQuery] = useState('');
+  const [creatingNewProductCategory, setCreatingNewProductCategory] = useState(false);
+  const [creatingNewProductUnit, setCreatingNewProductUnit] = useState(false);
+  const QUICK_CREATE_CATEGORY_SENTINEL = -1;
+  const QUICK_CREATE_UNIT_SENTINEL = -1;
 
   // ── CSS helpers ───────────────────────────────────────────────────────────
   const baseCls =
@@ -328,8 +337,55 @@ const SaleCreate = () => {
   // be set too, not just a bare name.
   const openNewProductModal = (prefillName: string, targetIdx: number) => {
     setNewProductForm({ name: prefillName, cost_price: 0, sell_price: 0, category_id: '', unit_id: '', barcode: '' });
+    setNewProductImageFile(null);
+    setNewProductImagePreview(null);
     setNewProductTargetIdx(targetIdx);
     setNewProductModalOpen(true);
+  };
+
+  const handleNewProductImageChange = (file: File | null) => {
+    setNewProductImageFile(file);
+    setNewProductImagePreview(file ? URL.createObjectURL(file) : null);
+  };
+
+  const handleCreateSaleCategory = async (typedName: string) => {
+    const name = typedName.trim();
+    if (!name) return;
+    const existing = categories.find((c) => c.name.trim().toLowerCase() === name.toLowerCase());
+    if (existing) {
+      setNewProductForm((prev) => ({ ...prev, category_id: existing.category_id }));
+      return;
+    }
+    setCreatingNewProductCategory(true);
+    const res = await productService.createCategory({ name, is_active: true, branchId: activeBranchId ?? undefined } as Partial<Category> & { branchId?: number });
+    setCreatingNewProductCategory(false);
+    if (res.success && res.data?.category) {
+      setCategories((prev) => [...prev, res.data!.category]);
+      setNewProductForm((prev) => ({ ...prev, category_id: res.data!.category.category_id }));
+      showToast('success', 'Categories', `"${res.data.category.name}" was added as a new category.`);
+    } else {
+      showToast('error', 'Categories', res.error || 'Could not create this category.');
+    }
+  };
+
+  const handleCreateSaleUnit = async (typedName: string) => {
+    const name = typedName.trim();
+    if (!name) return;
+    const existing = units.find((u) => u.unit_name.trim().toLowerCase() === name.toLowerCase());
+    if (existing) {
+      setNewProductForm((prev) => ({ ...prev, unit_id: existing.unit_id }));
+      return;
+    }
+    setCreatingNewProductUnit(true);
+    const res = await productService.createUnit({ unit_name: name, is_active: true, branchId: activeBranchId ?? undefined } as Partial<Unit> & { branchId?: number });
+    setCreatingNewProductUnit(false);
+    if (res.success && res.data?.unit) {
+      setUnits((prev) => [...prev, res.data!.unit]);
+      setNewProductForm((prev) => ({ ...prev, unit_id: res.data!.unit.unit_id }));
+      showToast('success', 'Units', `"${res.data.unit.unit_name}" was added as a new unit.`);
+    } else {
+      showToast('error', 'Units', res.error || 'Could not create this unit.');
+    }
   };
 
   const handleCreateProduct = async () => {
@@ -347,12 +403,19 @@ const SaleCreate = () => {
       unit_id: newProductForm.unit_id || undefined,
       barcode: newProductForm.barcode.trim() || undefined,
     });
-    setNewProductSaving(false);
     if (!res.success || !res.data?.product) {
+      setNewProductSaving(false);
       showToast('error', 'New Item', res.error || 'Could not create this item.');
       return;
     }
     const created = res.data.product;
+    if (newProductImageFile) {
+      const imgRes = await imageService.uploadProductImage(created.product_id, newProductImageFile);
+      if (!imgRes.success) {
+        showToast('error', 'New Item', imgRes.error || 'Item saved, but the image could not be uploaded.');
+      }
+    }
+    setNewProductSaving(false);
     const option: SaleItemOption = {
       item_id: Number(created.product_id),
       item_name: created.name,
@@ -374,6 +437,8 @@ const SaleCreate = () => {
     }
     setNewProductModalOpen(false);
     setNewProductTargetIdx('');
+    setNewProductImageFile(null);
+    setNewProductImagePreview(null);
     showToast('success', 'New Item', `"${created.name}" was added - it has 0 stock until purchased/stocked.`);
   };
 
@@ -1312,9 +1377,11 @@ const SaleCreate = () => {
         onClose={() => {
           setNewProductModalOpen(false);
           setNewProductTargetIdx('');
+          setNewProductImageFile(null);
+          setNewProductImagePreview(null);
         }}
         title="Create new item"
-        size="sm"
+        size="md"
       >
         <div className="space-y-3">
           <label className="flex flex-col gap-1 text-sm">
@@ -1327,32 +1394,88 @@ const SaleCreate = () => {
               autoFocus
             />
           </label>
+
+          <div className="flex items-center gap-4">
+            <div className="relative flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-dashed border-slate-300 bg-slate-50 dark:border-slate-600 dark:bg-slate-800">
+              {newProductImagePreview ? (
+                <img src={newProductImagePreview} alt="Item preview" className="h-full w-full object-cover" />
+              ) : (
+                <ImageIcon className="h-7 w-7 text-slate-400" aria-hidden="true" />
+              )}
+            </div>
+            <div className="flex flex-col items-start gap-2">
+              <label className="inline-flex w-fit cursor-pointer items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">
+                <span className="inline-flex items-center gap-2">
+                  <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                  {newProductImagePreview ? 'Change image' : 'Upload image'}
+                </span>
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/gif,image/webp"
+                  className="hidden"
+                  onChange={(e) => handleNewProductImageChange(e.target.files?.[0] || null)}
+                />
+              </label>
+              {newProductImagePreview && (
+                <button
+                  type="button"
+                  onClick={() => handleNewProductImageChange(null)}
+                  className="inline-flex w-fit items-center gap-1 text-xs font-medium text-red-500 hover:text-red-600"
+                >
+                  <X className="h-3.5 w-3.5" aria-hidden="true" /> Remove image
+                </button>
+              )}
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             <label className="flex flex-col gap-1 text-sm">
               <span className="font-medium text-slate-700 dark:text-slate-300">Category</span>
-              <select
-                className={controlCls}
+              <SearchableCombobox<number>
                 value={newProductForm.category_id}
-                onChange={(e) => setNewProductForm((prev) => ({ ...prev, category_id: e.target.value ? Number(e.target.value) : '' }))}
-              >
-                <option value="">Auto (default category)</option>
-                {categories.map((c) => (
-                  <option key={c.category_id} value={c.category_id}>{c.name}</option>
-                ))}
-              </select>
+                options={(() => {
+                  const base = categories.map((c) => ({ value: c.category_id, label: c.name }));
+                  const q = newProductCategoryQuery.trim();
+                  if (!q) return base;
+                  const exists = categories.some((c) => c.name.trim().toLowerCase() === q.toLowerCase());
+                  if (exists) return base;
+                  return [{ value: QUICK_CREATE_CATEGORY_SENTINEL, label: `+ Create "${q}"` }, ...base];
+                })()}
+                placeholder="Auto (default category)"
+                disabled={creatingNewProductCategory}
+                onSearch={(q) => setNewProductCategoryQuery(q)}
+                onChange={(nextValue) => {
+                  if (nextValue === QUICK_CREATE_CATEGORY_SENTINEL) {
+                    void handleCreateSaleCategory(newProductCategoryQuery.trim());
+                    return;
+                  }
+                  setNewProductForm((prev) => ({ ...prev, category_id: nextValue === '' ? '' : Number(nextValue) }));
+                }}
+              />
             </label>
             <label className="flex flex-col gap-1 text-sm">
               <span className="font-medium text-slate-700 dark:text-slate-300">Unit</span>
-              <select
-                className={controlCls}
+              <SearchableCombobox<number>
                 value={newProductForm.unit_id}
-                onChange={(e) => setNewProductForm((prev) => ({ ...prev, unit_id: e.target.value ? Number(e.target.value) : '' }))}
-              >
-                <option value="">Auto (default unit)</option>
-                {units.map((u) => (
-                  <option key={u.unit_id} value={u.unit_id}>{u.unit_name}</option>
-                ))}
-              </select>
+                options={(() => {
+                  const base = units.map((u) => ({ value: u.unit_id, label: u.unit_name }));
+                  const q = newProductUnitQuery.trim();
+                  if (!q) return base;
+                  const exists = units.some((u) => u.unit_name.trim().toLowerCase() === q.toLowerCase());
+                  if (exists) return base;
+                  return [{ value: QUICK_CREATE_UNIT_SENTINEL, label: `+ Create "${q}"` }, ...base];
+                })()}
+                placeholder="Auto (default unit)"
+                disabled={creatingNewProductUnit}
+                onSearch={(q) => setNewProductUnitQuery(q)}
+                onChange={(nextValue) => {
+                  if (nextValue === QUICK_CREATE_UNIT_SENTINEL) {
+                    void handleCreateSaleUnit(newProductUnitQuery.trim());
+                    return;
+                  }
+                  setNewProductForm((prev) => ({ ...prev, unit_id: nextValue === '' ? '' : Number(nextValue) }));
+                }}
+              />
             </label>
           </div>
           <label className="flex flex-col gap-1 text-sm">
