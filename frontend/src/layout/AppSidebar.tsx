@@ -341,6 +341,17 @@ const AppSidebar: React.FC = () => {
           <p className="text-xs text-slate-500 text-center dark:text-white/50">
             © 2026 {brandName}. All rights reserved.
           </p>
+          <p className="text-[11px] text-slate-400 text-center dark:text-white/40">
+            Prepared by{' '}
+            <a
+              href="https://madalict.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-primary-600 dark:hover:text-primary-400"
+            >
+              Madal ICT — madalict.com
+            </a>
+          </p>
         </div>
       )}
     </aside>
