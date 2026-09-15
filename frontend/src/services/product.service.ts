@@ -45,6 +45,12 @@ export interface Product {
   sku?: string | null;
   store_id?: number | null;
   store_name?: string | null;
+  category_id?: number | null;
+  category_name?: string | null;
+  unit_id?: number | null;
+  unit_name?: string | null;
+  unit_symbol?: string | null;
+  brand?: string | null;
   stock_alert?: number;
   cost_price: number;
   sell_price: number;
@@ -56,6 +62,7 @@ export interface Product {
   is_active: boolean;
   status: string;
   description?: string | null;
+  image_url?: string | null;
 }
 
 type ListOptions = {
@@ -115,6 +122,13 @@ export const productService = {
 
   async get(id: number) {
     return apiClient.get<{ product: Product }>(API.PRODUCTS.ITEM(id));
+  },
+
+  async getSummary(branchId?: number) {
+    const qs = buildQuery({ branchId });
+    return apiClient.get<{ summary: { total: number; inStock: number; lowStock: number; noStock: number } }>(
+      `${API.PRODUCTS.SUMMARY}${qs}`
+    );
   },
 
   async create(data: Partial<Product>) {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { ColumnDef } from '@tanstack/react-table';
-import { CheckCircle2, ClipboardList, RefreshCw, ShoppingBag, Users } from 'lucide-react';
+import { ClipboardList, RefreshCw, ShoppingBag, Users } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
 import { PageHeader, TabActionToolbar } from '../../components/ui/layout';
 import { DataTable } from '../../components/ui/table/DataTable';
@@ -14,34 +14,27 @@ import { supplierService, Supplier } from '../../services/supplier.service';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
 import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
+import { usePermissions } from '../../hooks/usePermissions';
 
-type SupplierFieldErrors = Partial<Record<string, string>>;
-
+// Deliberately has no error/touched/success state: the form relies on native HTML5
+// validation (required/minLength on the inputs themselves) instead of custom
+// red-border flashing, matching the Employee modal's behavior. The browser blocks
+// submission and shows its own message for invalid fields.
 function SupplierField({
   label,
-  error,
-  touched,
-  success,
+  required,
   children,
 }: {
   label: string;
-  error?: string;
-  touched?: boolean;
-  success?: boolean;
+  required?: boolean;
   children: React.ReactNode;
 }) {
-  const showError = touched && error;
-  const showSuccess = touched && !error && success;
   return (
     <div className="flex flex-col gap-1">
-      <div className="flex items-center gap-2">
-        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">{label}</label>
-        {showSuccess && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />}
-      </div>
+      <label>
+        <span>{label}{required ? ' *' : ''}</span>
+      </label>
       {children}
-      {showError && (
-        <p className="text-xs font-medium text-red-500 dark:text-red-400">{error}</p>
-      )}
     </div>
   );
 }
@@ -63,6 +56,7 @@ const Purchases = () => {
   const navigate = useNavigate();
   const { showToast } = useToast();
   const { activeBranchId } = useBranch();
+  const { can } = usePermissions();
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [items, setItems] = useState<PurchaseItemView[]>([]);
@@ -108,8 +102,6 @@ const Purchases = () => {
     remaining_balance: 0,
     is_active: true,
   } as Supplier);
-  const [supplierErrors, setSupplierErrors] = useState<SupplierFieldErrors>({});
-  const [supplierTouched, setSupplierTouched] = useState<Partial<Record<string, boolean>>>({});
 
   const loadPurchases = async (term?: string, status?: string) => {
     setLoading(true);
@@ -154,7 +146,7 @@ const Purchases = () => {
     if (res.success && res.data?.items) {
       setItems(res.data.items);
     } else {
-      showToast('error', 'Load failed', res.error || 'Could not load items');
+      showToast('error', 'Load failed', res.error || 'Could not load products');
     }
     setLoading(false);
   };
@@ -269,38 +261,9 @@ const Purchases = () => {
     window.URL.revokeObjectURL(url);
   };
 
-  const validateSupplier = (f: Supplier): SupplierFieldErrors => {
-    const errs: SupplierFieldErrors = {};
-    const digitCount = (val: string) => (val.match(/\d/g) || []).length;
-    if (!f.supplier_name.trim()) errs.supplier_name = 'Supplier name is required';
-    else if (f.supplier_name.trim().length < 2) errs.supplier_name = 'Name must be at least 2 characters';
-    if (!f.company_name?.trim()) errs.company_name = 'Company name is required';
-    if (!f.contact_person?.trim()) errs.contact_person = 'Contact person is required';
-    if (!f.contact_phone?.trim()) errs.contact_phone = 'Contact phone is required';
-    else if (digitCount(f.contact_phone) < 2) errs.contact_phone = 'Please add at least 2 numbers';
-    if (!f.phone?.trim()) errs.phone = 'Phone is required';
-    else if (digitCount(f.phone) < 2) errs.phone = 'Please add at least 2 numbers';
-    if (!f.location?.trim()) errs.location = 'Location is required';
-    if ((f.remaining_balance ?? 0) < 0) errs.remaining_balance = 'Balance cannot be negative';
-    return errs;
-  };
-
-  const getSupplierInputCls = (field: string) => {
-    const base = 'rounded-lg border px-3 py-2 w-full text-sm outline-none transition-all focus:ring-2';
-    if (!supplierTouched[field]) return `${base} border-slate-300 dark:border-slate-600 focus:border-primary-500 focus:ring-primary-500/20`;
-    if (supplierErrors[field]) return `${base} border-red-400 bg-red-50/40 dark:border-red-500 dark:bg-red-900/10 focus:border-red-500 focus:ring-red-500/20`;
-    return `${base} border-emerald-500 focus:border-emerald-500 focus:ring-emerald-500/20`;
-  };
-
-  const touchSupplier = (field: string) => {
-    setSupplierTouched(t => ({ ...t, [field]: true }));
-    setSupplierErrors(validateSupplier(supplierForm));
-  };
-
   const setSupplierField = (field: string, value: unknown) => {
     const next = { ...supplierForm, [field]: value } as Supplier;
     setSupplierForm(next);
-    if (supplierTouched[field]) setSupplierErrors(validateSupplier(next));
   };
 
   const openSupplierModal = (preset?: Supplier) => {
@@ -315,24 +278,17 @@ const Purchases = () => {
       remaining_balance: 0,
       is_active: true,
     } as Supplier);
-    setSupplierErrors({});
-    setSupplierTouched({});
     setSupplierModalOpen(true);
   };
 
   const closeSupplierModal = () => {
     setSupplierModalOpen(false);
-    setSupplierErrors({});
-    setSupplierTouched({});
   };
 
   const saveSupplier = async () => {
-    const errs = validateSupplier(supplierForm);
-    if (Object.keys(errs).length > 0) {
-      setSupplierErrors(errs);
-      setSupplierTouched({ supplier_name: true, company_name: true, contact_person: true, contact_phone: true, phone: true, location: true, remaining_balance: true });
-      return;
-    }
+    // Required/minLength/pattern are enforced natively on the inputs (see the form's
+    // required attributes below), so the browser blocks submission before this ever
+    // runs when a field is invalid - no manual check needed here.
     setLoading(true);
     const res = supplierForm.supplier_id
       ? await supplierService.update(supplierForm.supplier_id, supplierForm)
@@ -475,24 +431,30 @@ const Purchases = () => {
       header: 'Actions',
       cell: ({ row }) => (
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => openReceiveDialog(row.original)}
-            className="inline-flex items-center gap-1 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 transition-colors"
-          >
-            ✓ Mark Received
-          </button>
-          <button
-            onClick={() => navigate(`/purchases/${row.original.purchase_id}`)}
-            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors"
-          >
-            Edit
-          </button>
-          <button
-            onClick={() => { setOrderToDelete(row.original); setOrderDeleteOpen(true); }}
-            className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950 transition-colors"
-          >
-            Delete
-          </button>
+          {can('purchases.receive') && (
+            <button
+              onClick={() => openReceiveDialog(row.original)}
+              className="inline-flex items-center gap-1 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 transition-colors"
+            >
+              ✓ Mark Received
+            </button>
+          )}
+          {can('purchases.update') && (
+            <button
+              onClick={() => navigate(`/purchases/${row.original.purchase_id}`)}
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors"
+            >
+              Edit
+            </button>
+          )}
+          {can('purchases.delete') && (
+            <button
+              onClick={() => { setOrderToDelete(row.original); setOrderDeleteOpen(true); }}
+              className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950 transition-colors"
+            >
+              Delete
+            </button>
+          )}
         </div>
       ),
     },
@@ -534,7 +496,7 @@ const Purchases = () => {
     },
     { accessorKey: 'purchase_id', header: 'PO #', cell: ({ row }) => `PO-${row.original.purchase_id}` },
     { accessorKey: 'supplier_name', header: 'Supplier', cell: ({ row }) => row.original.supplier_name || '-' },
-    { accessorKey: 'description', header: 'Item', cell: ({ row }) => row.original.description || row.original.product_name || '-' },
+    { accessorKey: 'description', header: 'Product', cell: ({ row }) => row.original.description || row.original.product_name || '-' },
     { accessorKey: 'quantity', header: 'Qty', cell: ({ row }) => Number(row.original.quantity || 0).toFixed(0) },
     { accessorKey: 'unit_cost', header: 'Unit Cost', cell: ({ row }) => `$${Number(row.original.unit_cost || 0).toFixed(2)}` },
     { accessorKey: 'cost_price', header: 'Cost Price', cell: ({ row }) => `$${Number(row.original.cost_price || row.original.unit_cost || 0).toFixed(2)}` },
@@ -553,11 +515,11 @@ const Purchases = () => {
         <div className="space-y-2">
           <TabActionToolbar
             title="Suppliers"
-            primaryAction={{
+            primaryAction={can('suppliers.create') ? {
               label: 'New Supplier',
               onClick: () => openSupplierModal(),
-            }}
-            secondaryAction={{ label: 'Upload Data', onClick: () => setSupplierImportOpen(true) }}
+            } : undefined}
+            secondaryAction={can('suppliers.create') ? { label: 'Upload Data', onClick: () => setSupplierImportOpen(true) } : undefined}
             onDisplay={() => {
               setSuppliersDisplayed(true);
               void loadSuppliers();
@@ -579,15 +541,15 @@ const Purchases = () => {
             columns={supplierColumns}
             isLoading={loading}
             searchPlaceholder="Find supplier..."
-            onEdit={(row) => openSupplierModal(row as Supplier)}
-            onDelete={deleteSupplier}
+            onEdit={can('suppliers.update') ? (row) => openSupplierModal(row as Supplier) : undefined}
+            onDelete={can('suppliers.delete') ? deleteSupplier : undefined}
           />
         </div>
       ),
     },
     {
       id: 'items',
-      label: 'Items',
+      label: 'Products',
       icon: ShoppingBag,
       content: (
         <div className="space-y-2">
@@ -619,7 +581,7 @@ const Purchases = () => {
             data={itemsDisplayed ? items : []}
             columns={itemColumns}
             isLoading={loading}
-            searchPlaceholder="Search purchased items..."
+            searchPlaceholder="Search purchased products..."
           />
         </div>
       ),
@@ -633,7 +595,7 @@ const Purchases = () => {
           <TabActionToolbar
             title="Purchase Orders"
             // UPDATED: Support Purchase Orders (planned) separate from Purchases (received).
-            primaryAction={{ label: 'New Purchase', onClick: () => navigate('/purchases/new') }}
+            primaryAction={can('purchases.create') ? { label: 'New Purchase', onClick: () => navigate('/purchases/new') } : undefined}
             onDisplay={() => {
               setPurchasesDisplayed(true);
               void loadPurchases(search, statusFilter);
@@ -657,7 +619,7 @@ const Purchases = () => {
                 className={`px-3 py-1 rounded-full text-sm border ${
                   statusFilter === s
                     ? 'bg-primary-600 text-white border-primary-600'
-                    : 'border-slate-200 text-slate-600 hover:bg-slate-100'
+                    : 'border-slate-200 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white'
                 }`}
               >
                 {s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
@@ -670,8 +632,8 @@ const Purchases = () => {
             isLoading={loading}
             searchPlaceholder="Find by supplier or note..."
             onView={onView}
-            onEdit={onEdit}
-            onDelete={onDelete}
+            onEdit={can('purchases.update') ? onEdit : undefined}
+            onDelete={can('purchases.delete') ? onDelete : undefined}
           />
           {!purchasesDisplayed && !loading && (
             <div className="text-sm text-slate-500 px-1">Click Display to load data.</div>
@@ -714,13 +676,15 @@ const Purchases = () => {
                 {ordersLoading ? 'Loading...' : 'Display'}
               </button>
             </div>
-            <button
-              type="button"
-              onClick={() => navigate('/purchases/new?docType=order')}
-              className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-orange-600 transition-colors"
-            >
-              + New Order
-            </button>
+            {can('purchases.create') && (
+              <button
+                type="button"
+                onClick={() => navigate('/purchases/new?docType=order')}
+                className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-orange-600 transition-colors"
+              >
+                + New Order
+              </button>
+            )}
           </div>
 
           {!ordersDisplayed && !ordersLoading && (
@@ -898,48 +862,48 @@ const Purchases = () => {
           <div className="py-10 text-center text-sm text-slate-500">No details to display.</div>
         ) : (
           <div className="space-y-4 text-sm">
-            <div className="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/60 sm:grid-cols-2 lg:grid-cols-4">
               <div>
-                <p className="text-xs text-slate-500">PO #</p>
-                <p className="font-semibold text-slate-900">{`PO-${viewPurchase.purchase_id}`}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">PO #</p>
+                <p className="font-semibold text-slate-900 dark:text-slate-100">{`PO-${viewPurchase.purchase_id}`}</p>
               </div>
               <div>
-                <p className="text-xs text-slate-500">Date & Time</p>
-                <p className="font-semibold text-slate-900">{new Date(viewPurchase.purchase_date).toLocaleString()}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Date & Time</p>
+                <p className="font-semibold text-slate-900 dark:text-slate-100">{new Date(viewPurchase.purchase_date).toLocaleString()}</p>
               </div>
               <div>
-                <p className="text-xs text-slate-500">Supplier</p>
-                <p className="font-semibold text-slate-900">{viewPurchase.supplier_name || 'Walk-in'}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Supplier</p>
+                <p className="font-semibold text-slate-900 dark:text-slate-100">{viewPurchase.supplier_name || 'Walk-in'}</p>
               </div>
               <div>
-                <p className="text-xs text-slate-500">Type</p>
-                <p className="font-semibold text-slate-900 capitalize">{viewPurchase.purchase_type}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Type</p>
+                <p className="font-semibold text-slate-900 capitalize dark:text-slate-100">{viewPurchase.purchase_type}</p>
               </div>
               <div>
-                <p className="text-xs text-slate-500">Status</p>
-                <p className="font-semibold text-slate-900 capitalize">{viewPurchase.status}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Status</p>
+                <p className="font-semibold text-slate-900 capitalize dark:text-slate-100">{viewPurchase.status}</p>
               </div>
               <div>
-                <p className="text-xs text-slate-500">Paid</p>
-                <p className="font-semibold text-slate-900">${Number(viewPurchase.paid_amount || 0).toFixed(2)}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Paid</p>
+                <p className="font-semibold text-slate-900 dark:text-slate-100">${Number(viewPurchase.paid_amount || 0).toFixed(2)}</p>
               </div>
               <div>
-                <p className="text-xs text-slate-500">Balance</p>
-                <p className="font-semibold text-slate-900">
+                <p className="text-xs text-slate-500 dark:text-slate-400">Balance</p>
+                <p className="font-semibold text-slate-900 dark:text-slate-100">
                   ${Math.max(Number(viewPurchase.total || 0) - Number(viewPurchase.paid_amount || 0), 0).toFixed(2)}
                 </p>
               </div>
               <div>
-                <p className="text-xs text-slate-500">Note</p>
-                <p className="font-semibold text-slate-900">{viewPurchase.note || '-'}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Note</p>
+                <p className="font-semibold text-slate-900 dark:text-slate-100">{viewPurchase.note || '-'}</p>
               </div>
             </div>
 
-            <div className="overflow-x-auto rounded-lg border border-slate-200">
+            <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
               <table className="min-w-full text-sm">
-                <thead className="bg-slate-100 text-left text-slate-600">
+                <thead className="bg-slate-100 text-left text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                   <tr>
-                    <th className="px-3 py-2">Item</th>
+                    <th className="px-3 py-2">Product</th>
                     <th className="px-3 py-2 text-right">Qty</th>
                     <th className="px-3 py-2 text-right">Unit Cost</th>
                     <th className="px-3 py-2 text-right">Discount</th>
@@ -949,18 +913,18 @@ const Purchases = () => {
                 <tbody>
                   {viewItems.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
-                        No items found.
+                      <td colSpan={5} className="px-3 py-6 text-center text-slate-500 dark:text-slate-400">
+                        No products found.
                       </td>
                     </tr>
                   ) : (
                     viewItems.map((item, index) => (
-                      <tr key={`${item.purchase_item_id || item.product_id || index}`} className="border-t border-slate-200">
-                        <td className="px-3 py-2 text-slate-900">{item.product_name || `Item #${item.product_id || '-'}`}</td>
-                        <td className="px-3 py-2 text-right text-slate-900">{Number(item.quantity || 0)}</td>
-                        <td className="px-3 py-2 text-right text-slate-900">${Number(item.unit_cost || 0).toFixed(2)}</td>
-                        <td className="px-3 py-2 text-right text-slate-900">${Number(item.discount || 0).toFixed(2)}</td>
-                        <td className="px-3 py-2 text-right font-medium text-slate-900">
+                      <tr key={`${item.purchase_item_id || item.product_id || index}`} className="border-t border-slate-200 dark:border-slate-700">
+                        <td className="px-3 py-2 text-slate-900 dark:text-slate-100">{item.product_name || `Product #${item.product_id || '-'}`}</td>
+                        <td className="px-3 py-2 text-right text-slate-900 dark:text-slate-100">{Number(item.quantity || 0)}</td>
+                        <td className="px-3 py-2 text-right text-slate-900 dark:text-slate-100">${Number(item.unit_cost || 0).toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right text-slate-900 dark:text-slate-100">${Number(item.discount || 0).toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right font-medium text-slate-900 dark:text-slate-100">
                           ${Number(item.line_total ?? Number(item.quantity || 0) * Number(item.unit_cost || 0) - Number(item.discount || 0)).toFixed(2)}
                         </td>
                       </tr>
@@ -972,16 +936,16 @@ const Purchases = () => {
 
             <div className="ml-auto grid w-full max-w-xs gap-2 text-sm">
               <div className="flex items-center justify-between">
-                <span className="text-slate-600">Subtotal</span>
-                <span className="font-semibold text-slate-900">${Number(viewPurchase.subtotal || 0).toFixed(2)}</span>
+                <span className="text-slate-600 dark:text-slate-400">Subtotal</span>
+                <span className="font-semibold text-slate-900 dark:text-slate-100">${Number(viewPurchase.subtotal || 0).toFixed(2)}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-slate-600">Discount</span>
-                <span className="font-semibold text-slate-900">${Number(viewPurchase.discount || 0).toFixed(2)}</span>
+                <span className="text-slate-600 dark:text-slate-400">Discount</span>
+                <span className="font-semibold text-slate-900 dark:text-slate-100">${Number(viewPurchase.discount || 0).toFixed(2)}</span>
               </div>
-              <div className="flex items-center justify-between border-t border-slate-300 pt-2">
-                <span className="text-slate-700">Total</span>
-                <span className="font-bold text-slate-900">${Number(viewPurchase.total || 0).toFixed(2)}</span>
+              <div className="flex items-center justify-between border-t border-slate-300 pt-2 dark:border-slate-700">
+                <span className="text-slate-700 dark:text-slate-300">Total</span>
+                <span className="font-bold text-slate-900 dark:text-slate-100">${Number(viewPurchase.total || 0).toFixed(2)}</span>
               </div>
             </div>
           </div>
@@ -995,115 +959,79 @@ const Purchases = () => {
         size="xl"
       >
         <form
-          noValidate
           onSubmit={(e) => { e.preventDefault(); saveSupplier(); }}
           className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-4 p-2"
         >
           {/* Supplier Name — spans full width */}
           <div className="md:col-span-2">
-            <SupplierField
-              label="Supplier Name"
-              error={supplierErrors.supplier_name}
-              touched={supplierTouched.supplier_name}
-              success={supplierForm.supplier_name.trim().length >= 2}
-            >
+            <SupplierField label="Supplier Name" required>
               <input
-                className={getSupplierInputCls('supplier_name')}
+                required
+                minLength={2}
                 placeholder="Enter supplier name"
                 value={supplierForm.supplier_name}
-                onBlur={() => touchSupplier('supplier_name')}
                 onChange={(e) => setSupplierField('supplier_name', e.target.value)}
               />
             </SupplierField>
           </div>
 
-          <SupplierField
-            label="Company"
-            error={supplierErrors.company_name}
-            touched={supplierTouched.company_name}
-            success={!!(supplierForm.company_name?.trim())}
-          >
+          <SupplierField label="Company" required>
             <input
-              className={getSupplierInputCls('company_name')}
+              required
               placeholder="Company name"
               value={supplierForm.company_name || ''}
-              onBlur={() => touchSupplier('company_name')}
               onChange={(e) => setSupplierField('company_name', e.target.value)}
             />
           </SupplierField>
 
-          <SupplierField
-            label="Contact Person"
-            error={supplierErrors.contact_person}
-            touched={supplierTouched.contact_person}
-            success={!!(supplierForm.contact_person?.trim())}
-          >
+          <SupplierField label="Contact Person" required>
             <input
-              className={getSupplierInputCls('contact_person')}
+              required
               placeholder="Contact person name"
               value={supplierForm.contact_person || ''}
-              onBlur={() => touchSupplier('contact_person')}
               onChange={(e) => setSupplierField('contact_person', e.target.value)}
             />
           </SupplierField>
 
-          <SupplierField
-            label="Contact Phone"
-            error={supplierErrors.contact_phone}
-            touched={supplierTouched.contact_phone}
-            success={!!(supplierForm.contact_phone?.trim()) && (supplierForm.contact_phone.match(/\d/g) || []).length >= 2}
-          >
+          <SupplierField label="Contact Phone" required>
             <input
-              className={getSupplierInputCls('contact_phone')}
+              type="tel"
+              required
+              pattern=".*\d.*\d.*"
+              title="Please add at least 2 numbers"
               placeholder="+1 555 000 1234"
               value={supplierForm.contact_phone || ''}
-              onBlur={() => touchSupplier('contact_phone')}
               onChange={(e) => setSupplierField('contact_phone', e.target.value)}
             />
           </SupplierField>
 
-          <SupplierField
-            label="Phone"
-            error={supplierErrors.phone}
-            touched={supplierTouched.phone}
-            success={!!(supplierForm.phone?.trim()) && (supplierForm.phone.match(/\d/g) || []).length >= 2}
-          >
+          <SupplierField label="Phone" required>
             <input
-              className={getSupplierInputCls('phone')}
+              type="tel"
+              required
+              pattern=".*\d.*\d.*"
+              title="Please add at least 2 numbers"
               placeholder="+1 555 123 4567"
               value={supplierForm.phone || ''}
-              onBlur={() => touchSupplier('phone')}
               onChange={(e) => setSupplierField('phone', e.target.value)}
             />
           </SupplierField>
 
-          <SupplierField
-            label="Location"
-            error={supplierErrors.location}
-            touched={supplierTouched.location}
-            success={!!(supplierForm.location?.trim())}
-          >
+          <SupplierField label="Location" required>
             <input
-              className={getSupplierInputCls('location')}
+              required
               placeholder="City / area"
               value={supplierForm.location || ''}
-              onBlur={() => touchSupplier('location')}
               onChange={(e) => setSupplierField('location', e.target.value)}
             />
           </SupplierField>
 
-          <SupplierField
-            label="Remaining Balance"
-            error={supplierErrors.remaining_balance}
-            touched={supplierTouched.remaining_balance}
-            success={(supplierForm.remaining_balance ?? 0) >= 0}
-          >
+          <SupplierField label="Remaining Balance">
             <input
               type="number"
-              className={getSupplierInputCls('remaining_balance')}
+              min={0}
               placeholder="0.00"
               value={supplierForm.remaining_balance ?? 0}
-              onBlur={() => touchSupplier('remaining_balance')}
               onChange={(e) => setSupplierField('remaining_balance', Number(e.target.value || 0))}
             />
           </SupplierField>

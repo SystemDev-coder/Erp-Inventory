@@ -49,6 +49,8 @@ export interface Sale {
   is_stock_applied?: boolean;
   voided_at?: string | null;
   void_reason?: string | null;
+  pos_shift_id?: number | null;
+  cashier_name?: string | null;
 }
 
 export interface SaleItem {
@@ -74,6 +76,8 @@ interface SalesListFilters {
   toDate?: string;
   page?: number;
   limit?: number;
+  posOnly?: boolean;
+  posShiftId?: number;
 }
 
 interface UpdateSaleContext {
@@ -819,7 +823,7 @@ const listScopeCondition = (scope: BranchScope, branchId?: number) => {
 export const salesService = {
   async listSales(scope: BranchScope, filters: SalesListFilters): Promise<Paged<Sale>> {
     const schema = await getSalesSchemaMeta();
-    const { search, status, branchId, docType, includeVoided, fromDate, toDate } = filters;
+    const { search, status, branchId, docType, includeVoided, fromDate, toDate, posOnly, posShiftId } = filters;
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 100;
     const scoped = listScopeCondition(scope, branchId);
@@ -850,6 +854,12 @@ export const salesService = {
       params.push(toDate);
       clauses.push(`s.sale_date::date <= $${params.length}::date`);
     }
+    if (schema.salesColumns.has('pos_shift_id') && posShiftId) {
+      params.push(posShiftId);
+      clauses.push(`s.pos_shift_id = $${params.length}`);
+    } else if (schema.salesColumns.has('pos_shift_id') && posOnly) {
+      clauses.push(`s.pos_shift_id IS NOT NULL`);
+    }
 
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 
@@ -862,9 +872,10 @@ export const salesService = {
     );
 
     const rows = await queryMany<Sale>(
-      `SELECT s.*, c.full_name AS customer_name
+      `SELECT s.*, c.full_name AS customer_name, u.username AS cashier_name
          FROM ims.sales s
          LEFT JOIN ims.customers c ON c.customer_id = s.customer_id
+         LEFT JOIN ims.users u ON u.user_id = s.user_id
          ${where}
         ORDER BY s.sale_date DESC, s.sale_id DESC
         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
@@ -877,6 +888,116 @@ export const salesService = {
       page,
       limit,
     };
+  },
+
+  // Read-only listings for the POS Orders "Order Items" / "Payments" tabs - every POS
+  // sale already exists as a normal ims.sales row (see createSale's posShiftId), so
+  // these just flatten sale_items/sale_payments across POS-originated sales rather than
+  // introducing a separate POS-specific write path.
+  async listPosOrderItems(
+    scope: BranchScope,
+    filters: { branchId?: number; fromDate?: string; toDate?: string; posShiftId?: number; page?: number; limit?: number }
+  ): Promise<Paged<SaleItem & { sale_date: string; cashier_name: string | null }>> {
+    const schema = await getSalesSchemaMeta();
+    const page = filters.page ?? 1;
+    const limit = filters.limit ?? 100;
+    const scoped = listScopeCondition(scope, filters.branchId);
+    const params = scoped.params;
+    const clauses = [...scoped.clauses, `s.pos_shift_id IS NOT NULL`];
+
+    if (filters.posShiftId) {
+      params.push(filters.posShiftId);
+      clauses.push(`s.pos_shift_id = $${params.length}`);
+    }
+    if (filters.fromDate) {
+      params.push(filters.fromDate);
+      clauses.push(`s.sale_date::date >= $${params.length}::date`);
+    }
+    if (filters.toDate) {
+      params.push(filters.toDate);
+      clauses.push(`s.sale_date::date <= $${params.length}::date`);
+    }
+    const where = `WHERE ${clauses.join(' AND ')}`;
+
+    const countRow = await queryOne<{ total: string }>(
+      `SELECT COUNT(*)::text AS total
+         FROM ims.sale_items si
+         JOIN ims.sales s ON s.sale_id = si.sale_id
+         ${where}`,
+      params
+    );
+
+    const rows = await queryMany<SaleItem & { sale_date: string; cashier_name: string | null }>(
+      `SELECT
+          si.sale_item_id, si.sale_id, si.${schema.saleItemIdColumn} AS item_id,
+          si.quantity, si.unit_price, si.line_total,
+          p.name AS item_name, s.sale_date, u.username AS cashier_name
+         FROM ims.sale_items si
+         JOIN ims.sales s ON s.sale_id = si.sale_id
+         JOIN ims.items p ON p.item_id = si.${schema.saleItemIdColumn}
+         LEFT JOIN ims.users u ON u.user_id = s.user_id
+         ${where}
+        ORDER BY s.sale_date DESC, si.sale_item_id DESC
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offsetOf(page, limit)]
+    );
+
+    return { rows, total: Number(countRow?.total || 0), page, limit };
+  },
+
+  async listPosPayments(
+    scope: BranchScope,
+    filters: { branchId?: number; fromDate?: string; toDate?: string; posShiftId?: number; page?: number; limit?: number }
+  ): Promise<Paged<{
+    sale_payment_id: number; sale_id: number; acc_id: number; account_name: string | null;
+    pay_date: string; amount_paid: number; reference_no: string | null; cashier_name: string | null;
+  }>> {
+    const page = filters.page ?? 1;
+    const limit = filters.limit ?? 100;
+    const scoped = listScopeCondition(scope, filters.branchId);
+    const params = scoped.params;
+    const clauses = [...scoped.clauses, `s.pos_shift_id IS NOT NULL`];
+
+    if (filters.posShiftId) {
+      params.push(filters.posShiftId);
+      clauses.push(`s.pos_shift_id = $${params.length}`);
+    }
+    if (filters.fromDate) {
+      params.push(filters.fromDate);
+      clauses.push(`sp.pay_date::date >= $${params.length}::date`);
+    }
+    if (filters.toDate) {
+      params.push(filters.toDate);
+      clauses.push(`sp.pay_date::date <= $${params.length}::date`);
+    }
+    const where = `WHERE ${clauses.join(' AND ')}`;
+
+    const countRow = await queryOne<{ total: string }>(
+      `SELECT COUNT(*)::text AS total
+         FROM ims.sale_payments sp
+         JOIN ims.sales s ON s.sale_id = sp.sale_id
+         ${where}`,
+      params
+    );
+
+    const rows = await queryMany<{
+      sale_payment_id: number; sale_id: number; acc_id: number; account_name: string | null;
+      pay_date: string; amount_paid: number; reference_no: string | null; cashier_name: string | null;
+    }>(
+      `SELECT
+          sp.sale_payment_id, sp.sale_id, sp.acc_id, a.name AS account_name,
+          sp.pay_date::text, sp.amount_paid, sp.reference_no, u.username AS cashier_name
+         FROM ims.sale_payments sp
+         JOIN ims.sales s ON s.sale_id = sp.sale_id
+         LEFT JOIN ims.accounts a ON a.acc_id = sp.acc_id
+         LEFT JOIN ims.users u ON u.user_id = sp.user_id
+         ${where}
+        ORDER BY sp.pay_date DESC, sp.sale_payment_id DESC
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offsetOf(page, limit)]
+    );
+
+    return { rows, total: Number(countRow?.total || 0), page, limit };
   },
 
   async getSale(id: number, scope: BranchScope): Promise<Sale | null> {
@@ -1039,6 +1160,7 @@ export const salesService = {
         dueDateInput: input.dueDate ?? null,
       });
       pushColumn('due_date', dueDate);
+      pushColumn('pos_shift_id', input.posShiftId ?? null);
 
       const placeholders = insertValues.map((_, idx) => `$${idx + 1}`).join(', ');
 

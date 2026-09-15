@@ -9,7 +9,7 @@ export const errorHandler = (
   res: Response,
   _next: NextFunction
 ) => {
-  console.error('Error:', err);
+  console.error('Error:', err?.message, err?.stack);
 
   // Zod validation errors
   if (err instanceof ZodError) {

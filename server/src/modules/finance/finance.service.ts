@@ -6,7 +6,7 @@ import { BranchScope, pickBranchForWrite, assertBranchAccess } from '../../utils
 import { softDeleteById } from '../../db/softDelete';
 import { adjustSystemAccountBalance } from '../../utils/systemAccounts';
 import { postGl } from '../../utils/glPosting';
-import { ensureCoaAccounts, ensureNamedAssetAccount } from '../../utils/coaDefaults';
+import { ensureCoaAccounts, ensureNamedAssetAccount, ensureNamedAccount } from '../../utils/coaDefaults';
 import { syncCustomerOutstandingFromLedger } from '../../utils/customerOutstanding';
 import {
   AccountTransferInput,
@@ -19,6 +19,7 @@ import {
   ExpenseInput,
   ExpenseBudgetChargeInput,
   ExpensePaymentInput,
+  LiabilityPaymentInput,
   PayrollChargeInput,
   PayrollPayInput,
   PayrollDeleteInput,
@@ -2430,6 +2431,235 @@ export const financeService = {
     });
   },
 
+  /* Liability payments - a generic way to pay down any liability account (Sales Tax
+     Payable, Expense Payable, Payroll Payable, Customer Advances, etc). Modeled on
+     createExpensePayment above: debit the chosen cash account (existing debitAccount
+     helper, enforces sufficient funds), post the GL entry, and - deliberately -
+     never write to the liability account's own accounts.balance column. That column
+     is never touched by any other code path for these accounts either (postGl only
+     writes account_transactions; the periodic syncSystemAccountBalances in server.ts
+     only covers Receivable/Payable), so it sits at 0 forever, which is exactly why
+     buildBalanceSheetFromLedger already falls back to summing the ledger whenever the
+     stored balance is 0. Writing a wrong non-zero value here would break that
+     fallback for every liability account, not just this one. */
+  async createLiabilityAccount(name: string, scope: BranchScope, branchId?: number) {
+    const effectiveBranchId = pickBranchForWrite(scope, branchId);
+    const trimmed = String(name || '').trim();
+    if (!trimmed) throw ApiError.badRequest('Name is required');
+    const accId = await withTransaction(async (client) => {
+      const existing = await queryOne<{ acc_id: number; account_type: string }>(
+        `SELECT acc_id, account_type FROM ims.accounts WHERE branch_id = $1 AND LOWER(TRIM(name)) = LOWER($2)`,
+        [effectiveBranchId, trimmed]
+      );
+      if (existing && existing.account_type !== 'liability') {
+        throw ApiError.badRequest(`"${trimmed}" already exists as a different kind of account`);
+      }
+      return ensureNamedAccount(client, effectiveBranchId, trimmed, 'liability');
+    });
+    return { acc_id: accId, name: trimmed, institution: null, outstanding_balance: 0 };
+  },
+
+  async listLiabilityAccounts(scope: BranchScope, branchId?: number, onlyOutstanding = true) {
+    const effectiveBranchId = branchId ?? scope.branchIds[0];
+    if (!effectiveBranchId) return [];
+    assertBranchAccess(scope, effectiveBranchId);
+    if (!onlyOutstanding) {
+      // Borrowing against a brand-new liability (e.g. Note Payable) needs the account to
+      // exist and be selectable before it has any balance - ensure it's there.
+      await withTransaction(async (client) => {
+        await ensureCoaAccounts(client, effectiveBranchId, ['notesPayable']);
+      });
+    }
+    const rows = await queryMany<{
+      acc_id: number;
+      name: string;
+      institution: string | null;
+      outstanding_balance: string;
+    }>(
+      `WITH liability_accounts AS (
+         SELECT
+            a.acc_id,
+            a.name,
+            a.institution,
+            COALESCE((
+              SELECT SUM(t.credit) - SUM(t.debit)
+                FROM ims.account_transactions t
+               WHERE t.acc_id = a.acc_id
+                 AND t.branch_id = a.branch_id
+                 AND t.is_deleted = 0
+            ), 0) AS outstanding_balance
+           FROM ims.accounts a
+          WHERE a.branch_id = $1
+            AND a.account_type = 'liability'
+            AND a.is_active = TRUE
+            -- Accounts Payable is an aggregate across every supplier - paying it down as
+            -- one lump sum here would not touch any specific supplier's ledger. Supplier
+            -- Receipts is the correct, already-existing way to settle a supplier balance.
+            AND LOWER(a.name) NOT LIKE 'accounts payable%'
+            AND LOWER(a.name) NOT LIKE 'account payable%'
+       )
+       SELECT acc_id, name, institution, outstanding_balance::text AS outstanding_balance
+         FROM liability_accounts
+        WHERE ($2 = FALSE) OR (outstanding_balance > 0.004)
+        ORDER BY name`,
+      [effectiveBranchId, onlyOutstanding]
+    );
+    // acc_id is a bigint - pg serializes it as a string. The frontend's own === lookups
+    // against this list (e.g. the amount-preview) need a real number, same as every
+    // other account-list endpoint (see accounts.service.ts's `acc_id: Number(row.acc_id)`).
+    return rows.map((row) => ({ ...row, acc_id: Number(row.acc_id) }));
+  },
+
+  async createLiabilityPayment(input: LiabilityPaymentInput, scope: BranchScope, userId: number) {
+    const branchId = pickBranchForWrite(scope, input.branchId);
+    if (input.liabilityAccId === input.payFromAccId) {
+      throw ApiError.badRequest('Liability account and pay-from account must differ');
+    }
+    const amount = roundMoney(Number(input.amount));
+    if (amount <= 0) throw ApiError.badRequest('Amount must be greater than zero');
+
+    const liabilityAccount = await queryOne<{ acc_id: number; account_type: string; name: string }>(
+      `SELECT acc_id, account_type, name FROM ims.accounts WHERE acc_id = $1 AND branch_id = $2`,
+      [input.liabilityAccId, branchId]
+    );
+    if (!liabilityAccount) throw ApiError.notFound('Liability account not found');
+    if (liabilityAccount.account_type !== 'liability') {
+      throw ApiError.badRequest('Selected account is not a liability account');
+    }
+
+    const payDate = input.payDate || null;
+    const direction = input.direction || 'payment';
+
+    return withTransaction(async (client) => {
+      // 'payment' pays a liability down: money leaves the chosen account, so it must
+      // actually have the funds. 'borrow' records new debt (e.g. a Note Payable): money
+      // comes IN, so there's nothing to check - creditAccount just adds to the balance.
+      if (direction === 'borrow') {
+        await creditAccount(client, branchId, input.payFromAccId, amount);
+      } else {
+        await debitAccount(client, branchId, input.payFromAccId, amount);
+      }
+
+      const row = (
+        await client.query<{ liability_payment_id: number; pay_date: string }>(
+          `INSERT INTO ims.liability_payments
+             (branch_id, liability_acc_id, pay_from_acc_id, amount, pay_date, reference_no, note, user_id, direction)
+           VALUES ($1,$2,$3,$4,COALESCE($5, NOW()),$6,$7,$8,$9)
+           RETURNING liability_payment_id, pay_date::text AS pay_date`,
+          [
+            branchId,
+            input.liabilityAccId,
+            input.payFromAccId,
+            amount,
+            payDate,
+            input.referenceNo || null,
+            input.note || null,
+            userId,
+            direction,
+          ]
+        )
+      ).rows[0];
+      if (!row?.liability_payment_id) throw ApiError.internal('Failed to record liability payment');
+
+      const glLines =
+        direction === 'borrow'
+          ? [
+              { accId: input.payFromAccId, debit: amount, credit: 0, note: 'Cash/bank received' },
+              { accId: input.liabilityAccId, debit: 0, credit: amount, note: 'New liability incurred' },
+            ]
+          : [
+              { accId: input.liabilityAccId, debit: amount, credit: 0, note: 'Pay down liability' },
+              { accId: input.payFromAccId, debit: 0, credit: amount, note: 'Cash/bank paid' },
+            ];
+      await postGl(client, {
+        branchId,
+        txnDate: row.pay_date || payDate,
+        txnType: 'other',
+        refTable: 'liability_payments',
+        refId: Number(row.liability_payment_id),
+        note: `${direction === 'borrow' ? 'New liability' : 'Liability payment'} #${row.liability_payment_id} - ${liabilityAccount.name}`,
+        lines: glLines,
+      });
+
+      return (
+        await client.query(
+          `SELECT * FROM ims.liability_payments WHERE liability_payment_id = $1`,
+          [row.liability_payment_id]
+        )
+      ).rows[0];
+    });
+  },
+
+  async listLiabilityPayments(scope: BranchScope, branchId?: number, range: DateRange = {}) {
+    const effectiveBranchId = branchId ?? scope.branchIds[0];
+    if (!effectiveBranchId) return [];
+    assertBranchAccess(scope, effectiveBranchId);
+    const params: any[] = [effectiveBranchId];
+    let dateFilter = '';
+    if (range.fromDate) {
+      params.push(range.fromDate);
+      dateFilter += ` AND p.pay_date >= $${params.length}`;
+    }
+    if (range.toDate) {
+      params.push(range.toDate);
+      dateFilter += ` AND p.pay_date <= $${params.length}::date + interval '1 day'`;
+    }
+    return queryMany(
+      `SELECT p.*, la.name AS liability_account_name, pa.name AS pay_from_account_name
+         FROM ims.liability_payments p
+         JOIN ims.accounts la ON la.acc_id = p.liability_acc_id
+         JOIN ims.accounts pa ON pa.acc_id = p.pay_from_acc_id
+        WHERE p.branch_id = $1
+          ${dateFilter}
+        ORDER BY p.pay_date DESC, p.liability_payment_id DESC`,
+      params
+    );
+  },
+
+  async deleteLiabilityPayment(id: number, scope: BranchScope) {
+    return withTransaction(async (client) => {
+      const payment = (
+        await client.query<{
+          liability_payment_id: number;
+          branch_id: number;
+          pay_from_acc_id: number;
+          amount: string;
+          direction: string;
+        }>(
+          `SELECT liability_payment_id, branch_id, pay_from_acc_id, amount::text AS amount, direction
+             FROM ims.liability_payments
+            WHERE liability_payment_id = $1
+            FOR UPDATE`,
+          [id]
+        )
+      ).rows[0];
+      if (!payment) throw ApiError.notFound('Liability payment not found');
+      assertBranchAccess(scope, payment.branch_id);
+
+      const amount = roundMoney(Number(payment.amount || 0));
+      // Reverse whichever side the original posting touched: a 'payment' credited the
+      // cash account back out of nothing, so undoing it credits it again; a 'borrow'
+      // added received cash, so undoing it must debit it back out (and can fail with
+      // insufficient funds if that money has since been spent - same as any reversal).
+      if (payment.direction === 'borrow') {
+        await debitAccount(client, payment.branch_id, payment.pay_from_acc_id, amount);
+      } else {
+        await creditAccount(client, payment.branch_id, payment.pay_from_acc_id, amount);
+      }
+
+      await client.query(
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'liability_payments'
+            AND ref_id = $2`,
+        [payment.branch_id, id]
+      );
+
+      await client.query(`DELETE FROM ims.liability_payments WHERE liability_payment_id = $1`, [id]);
+      return { deleted: true };
+    });
+  },
+
   async createExpensePayment(input: ExpensePaymentInput, scope: BranchScope, userId: number) {
     return withTransaction(async (client) => {
       const charge = (
@@ -2571,7 +2801,11 @@ export const financeService = {
   },
 
   /* Expense budgets */
-  async listExpenseBudgets(scope: BranchScope, branchId?: number, range: DateRange = {}) {
+  // Budgets are a standing monthly limit, not a dated transaction - unlike
+  // charges/receipts/transfers, they should never be filtered by the page's
+  // From/To Date picker, or a budget created outside that window silently
+  // disappears from "Display" even though it's still active.
+  async listExpenseBudgets(scope: BranchScope, branchId?: number, _range: DateRange = {}) {
     const params: any[] = [];
     let where = 'WHERE 1=1';
     if (branchId) {
@@ -2582,26 +2816,25 @@ export const financeService = {
       params.push(scope.branchIds);
       where += ` AND e.branch_id = ANY($${params.length})`;
     }
-    if (range.fromDate) {
-      const hasCreatedAt = await hasColumn('expense_budgets', 'created_at');
-      if (hasCreatedAt) {
-      params.push(range.fromDate);
-      where += ` AND b.created_at::date >= $${params.length}::date`;
-    }
-    if (range.toDate) {
-      params.push(range.toDate);
-      where += ` AND b.created_at::date <= $${params.length}::date`;
-      }
-    }
 
     return queryMany(
       `SELECT b.*,
               e.name AS expense_name,
               b.fixed_amount AS amount_limit,
-              COALESCE(u.full_name, u.name) AS created_by
+              COALESCE(u.full_name, u.name) AS created_by,
+              COALESCE(spent.amount, 0) AS spent_amount,
+              GREATEST(b.fixed_amount - COALESCE(spent.amount, 0), 0) AS remaining_amount
          FROM ims.expense_budgets b
          JOIN ims.expenses e ON e.exp_id = b.exp_id
          JOIN ims.users u ON u.user_id = b.user_id
+         LEFT JOIN LATERAL (
+           SELECT SUM(c.amount) AS amount
+             FROM ims.expense_charges c
+            WHERE c.exp_id = b.exp_id
+              AND c.branch_id = e.branch_id
+              AND COALESCE(c.is_deleted, 0) = 0
+              AND date_trunc('month', c.charge_date) = date_trunc('month', CURRENT_DATE)
+         ) spent ON TRUE
         ${where}
         ORDER BY b.budget_id DESC
         LIMIT 200`,

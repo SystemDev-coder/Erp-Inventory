@@ -159,7 +159,7 @@ const Returns = () => {
         throw new Error(headerRes.error || 'Failed to load sales return');
       }
       if (!itemsRes.success || !itemsRes.data?.items) {
-        throw new Error(itemsRes.error || 'Failed to load return items');
+        throw new Error(itemsRes.error || 'Failed to load return products');
       }
       setViewHeader(headerRes.data.return);
       setViewItems(itemsRes.data.items);
@@ -184,7 +184,7 @@ const Returns = () => {
         throw new Error(headerRes.error || 'Failed to load purchase return');
       }
       if (!itemsRes.success || !itemsRes.data?.items) {
-        throw new Error(itemsRes.error || 'Failed to load return items');
+        throw new Error(itemsRes.error || 'Failed to load return products');
       }
       setViewHeader(headerRes.data.return);
       setViewItems(itemsRes.data.items);
@@ -515,12 +515,12 @@ const Returns = () => {
 
             <div className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
               {viewItems.length === 0 ? (
-                <div className="py-10 text-center text-slate-500 text-sm">No items found.</div>
+                <div className="py-10 text-center text-slate-500 text-sm">No products found.</div>
               ) : (
                 <table className="min-w-full">
                   <thead className="bg-slate-50 dark:bg-slate-800">
                     <tr>
-                      <th className={tableHeadCls}>Item</th>
+                      <th className={tableHeadCls}>Product</th>
                       <th className={tableHeadCls}>Qty</th>
                       <th className={tableHeadCls}>{viewKind === 'purchase' ? 'Unit Cost' : 'Unit Price'}</th>
                       <th className={tableHeadCls}>Line Total</th>
@@ -529,7 +529,7 @@ const Returns = () => {
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                     {viewItems.map((item) => (
                       <tr key={'sr_item_id' in item ? item.sr_item_id : item.pr_item_id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
-                        <td className={tableCellCls}>{item.item_name || `Item #${item.item_id}`}</td>
+                        <td className={tableCellCls}>{item.item_name || `Product #${item.item_id}`}</td>
                         <td className={tableCellCls}>{Number(item.quantity || 0)}</td>
                         <td className={tableCellCls}>
                           {'unit_price' in item ? fmtCurrency(item.unit_price) : fmtCurrency((item as PurchaseReturnItem).unit_cost)}

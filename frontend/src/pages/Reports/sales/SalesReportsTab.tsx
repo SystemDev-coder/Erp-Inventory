@@ -6,6 +6,8 @@ import { salesService, type Sale } from '../../../services/sales.service';
 import type { DateRange, ModalReportState } from '../types';
 import { formatCurrency, formatDateOnly, formatDateTime, formatQuantity, toRecordRows, defaultReportRange, withReportTruncation, type ReportTruncationMeta } from '../reportUtils';
 import { useBranch } from '../../../context/BranchContext';
+import { useLanguage } from '../../../context/LanguageContext';
+import type { TranslationKey } from '../../../translations';
 
 type SalesCardId =
   | 'sales-summary'
@@ -28,13 +30,43 @@ const salesCards: Array<{ id: SalesCardId; title: string; hint: string }> = [
   { id: 'sales-by-customer', title: 'Sales by Customer', hint: 'Dropdown + Show / All' },
   { id: 'sales-by-product', title: 'Sales by Product', hint: 'Dropdown + Show / All' },
   { id: 'sales-by-store', title: 'Sales by Store', hint: 'Between two dates + Store dropdown + Show / All' },
-  { id: 'top-selling-items', title: 'Most Sold Items', hint: 'Between two dates' },
+  { id: 'top-selling-items', title: 'Most Sold Products', hint: 'Between two dates' },
   { id: 'top-customers', title: 'Top Customers', hint: 'Between two dates' },
   { id: 'sales-returns', title: 'Sales Returns Report', hint: 'Between two dates' },
   { id: 'payments-by-account', title: 'Sales Payments by Account', hint: 'Between two dates' },
   { id: 'quotations', title: 'Quotations', hint: 'Between two dates' },
   { id: 'cashier-performance', title: 'Cashier Performance', hint: 'Between two dates' },
 ];
+
+const SALES_CARD_TITLE_KEYS: Record<SalesCardId, TranslationKey> = {
+  'sales-summary': 'rcard_sales_summary_title',
+  'invoice-status': 'rcard_invoice_status_title',
+  'daily-sales': 'rcard_daily_sales_title',
+  'sales-by-customer': 'rcard_sales_by_customer_title',
+  'sales-by-product': 'rcard_sales_by_product_title',
+  'sales-by-store': 'rcard_sales_by_store_title',
+  'top-selling-items': 'rcard_top_selling_items_title',
+  'top-customers': 'rcard_top_customers_title',
+  'sales-returns': 'rcard_sales_returns_title',
+  'payments-by-account': 'rcard_payments_by_account_title',
+  quotations: 'rcard_quotations_title',
+  'cashier-performance': 'rcard_cashier_performance_title',
+};
+
+const SALES_CARD_HINT_KEYS: Record<SalesCardId, TranslationKey> = {
+  'sales-summary': 'hint_between_two_dates',
+  'invoice-status': 'hint_between_dates_status',
+  'daily-sales': 'hint_single_action',
+  'sales-by-customer': 'hint_dropdown_show_all',
+  'sales-by-product': 'hint_dropdown_show_all',
+  'sales-by-store': 'hint_between_dates_store',
+  'top-selling-items': 'hint_between_two_dates',
+  'top-customers': 'hint_between_two_dates',
+  'sales-returns': 'hint_between_two_dates',
+  'payments-by-account': 'hint_between_two_dates',
+  quotations: 'hint_between_two_dates',
+  'cashier-performance': 'hint_between_two_dates',
+};
 
 const salesSummaryColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'metric', header: 'Metric' },
@@ -182,6 +214,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
     onOpenModal(withReportTruncation(report, meta, legacy));
 
   const { activeBranchId } = useBranch();
+  const { t } = useLanguage();
   const [expandedCardId, setExpandedCardId] = useState<SalesCardId | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<SalesCardId | null>(null);
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
@@ -729,15 +762,15 @@ export function SalesReportsTab({ onOpenModal }: Props) {
 
   const handleTopSellingItems = () =>
     runCardAction('top-selling-items', async () => {
-      ensureRangeValid(topSellingRange, 'Top Selling Items');
+      ensureRangeValid(topSellingRange, 'Top Selling Products');
       const response = await salesReportsService.getTopSellingItems({
         ...topSellingRange,
         branchId: activeBranchId ?? undefined,
       });
-      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load top selling items');
+      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load top selling products');
       const rows = toRecordRows(response.data.rows || []);
       openReport({
-        title: 'Most Sold Items',
+        title: 'Most Sold Products',
         subtitle: `${formatDateOnly(topSellingRange.fromDate)} - ${formatDateOnly(topSellingRange.toDate)}`,
         fileName: 'top-selling-items',
         data: rows,
@@ -1017,8 +1050,8 @@ export function SalesReportsTab({ onOpenModal }: Props) {
           className="flex w-full min-h-11 items-center justify-between border-b border-slate-200 bg-gradient-to-r from-primary-900 to-primary-700 px-5 py-4 text-left text-white"
         >
           <div>
-            <p className="text-xl font-semibold leading-tight">{card.title}</p>
-            <p className="mt-1 text-xs font-medium text-white/85">{card.hint}</p>
+            <p className="text-xl font-semibold leading-tight">{t(SALES_CARD_TITLE_KEYS[card.id])}</p>
+            <p className="mt-1 text-xs font-medium text-white/85">{t(SALES_CARD_HINT_KEYS[card.id])}</p>
           </div>
           <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
         </button>

@@ -58,7 +58,7 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
         return next;
       });
     } else {
-      showToast('error', 'Store Items', res.error || 'Could not load store items');
+      showToast('error', 'Store Products', res.error || 'Could not load store products');
     }
   };
 
@@ -125,7 +125,7 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!itemModalStore || !addProductId) {
-      showToast('error', 'Select item', 'Choose an item and quantity');
+      showToast('error', 'Select product', 'Choose a product and quantity');
       return;
     }
     setLoading(true);
@@ -136,12 +136,12 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
     setLoading(false);
 
     if (res.success) {
-      showToast('success', 'Item added');
+      showToast('success', 'Product added');
       setAddProductId('');
       setAddQty(1);
       loadStoreItems(itemModalStore.store_id);
     } else {
-      showToast('error', 'Add failed', res.error || 'Could not add item');
+      showToast('error', 'Add failed', res.error || 'Could not add product');
     }
   };
 
@@ -150,10 +150,10 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
     const res = await storeService.removeItem(storeId, itemId);
     setLoading(false);
     if (res.success) {
-      showToast('success', 'Item removed');
+      showToast('success', 'Product removed');
       loadStoreItems(storeId);
     } else {
-      showToast('error', 'Remove failed', res.error || 'Could not remove item');
+      showToast('error', 'Remove failed', res.error || 'Could not remove product');
     }
   };
 
@@ -167,10 +167,10 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
     const res = await storeService.updateItem(storeId, itemId, qty);
     setLoading(false);
     if (res.success) {
-      showToast('success', 'Store Items', 'Quantity updated');
+      showToast('success', 'Store Products', 'Quantity updated');
       await loadStoreItems(storeId);
     } else {
-      showToast('error', 'Store Items', res.error || 'Could not update quantity');
+      showToast('error', 'Store Products', res.error || 'Could not update quantity');
     }
   };
 
@@ -189,7 +189,7 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
       {!embedded && (
         <PageHeader
           title="Store"
-          description="Manage stores and store item allocations."
+          description="Manage stores and store product allocations."
           actions={
             <div className="flex items-center gap-2">
               <button
@@ -263,19 +263,19 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
                 {expandedId === store.store_id && (
                   <div className="px-4 pb-4 pt-0 bg-slate-50/50 dark:bg-slate-800/30">
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-slate-600 dark:text-slate-400">Items in this store</span>
+                      <span className="text-sm font-medium text-slate-600 dark:text-slate-400">Products in this store</span>
                       <button
                         onClick={() => openAddItemModal(store)}
                         className="inline-flex items-center gap-1 text-sm px-2 py-1 rounded-lg bg-primary-600 text-white hover:bg-primary-700"
                       >
-                        <Package className="w-4 h-4" /> Add item
+                        <Package className="w-4 h-4" /> Add product
                       </button>
                     </div>
                     <div className="rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
                       <table className="min-w-full text-sm">
                         <thead className="bg-slate-100 dark:bg-slate-800">
                           <tr>
-                            <th className="px-3 py-2 text-left">Item</th>
+                            <th className="px-3 py-2 text-left">Product</th>
                             <th className="px-3 py-2 text-right">Quantity</th>
                             <th className="px-3 py-2 w-48">Action</th>
                           </tr>
@@ -283,7 +283,7 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
                         <tbody>
                           {(storeItems[store.store_id] || []).map((item) => (
                             <tr key={item.store_item_id} className="border-t border-slate-200 dark:border-slate-700">
-                              <td className="px-3 py-2">{item.product_name || `Item #${item.product_id}`}</td>
+                              <td className="px-3 py-2">{item.product_name || `Product #${item.product_id}`}</td>
                               <td className="px-3 py-2 text-right">
                                 <input
                                   type="number"
@@ -318,7 +318,7 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
                         </tbody>
                       </table>
                       {(!storeItems[store.store_id] || storeItems[store.store_id].length === 0) && (
-                        <div className="px-3 py-4 text-center text-slate-500 text-sm">No items yet.</div>
+                        <div className="px-3 py-4 text-center text-slate-500 text-sm">No products yet.</div>
                       )}
                     </div>
                   </div>
@@ -346,12 +346,12 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
         </form>
       </Modal>
 
-      <Modal isOpen={!!itemModalStore} onClose={() => setItemModalStore(null)} title={itemModalStore ? `Add item to ${itemModalStore.store_name}` : 'Add item'} size="sm">
+      <Modal isOpen={!!itemModalStore} onClose={() => setItemModalStore(null)} title={itemModalStore ? `Add product to ${itemModalStore.store_name}` : 'Add product'} size="sm">
         {itemModalStore && (
           <form onSubmit={handleAddItem} className="space-y-3">
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Item</label>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Product</label>
             <select className={fieldCls} value={addProductId} onChange={(e) => setAddProductId(e.target.value ? Number(e.target.value) : '')}>
-              <option value="">Select item</option>
+              <option value="">Select product</option>
               {products.map((p) => (
                 <option key={p.product_id} value={p.product_id}>
                   {itemLabelWithAvailability(p.name, p.stock ?? p.quantity ?? p.opening_balance)}

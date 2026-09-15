@@ -26,7 +26,7 @@ export type DashboardAccessRow = {
 export type DashboardChart = {
   id: string;
   name: string;
-  type: 'bar' | 'line';
+  type: 'bar' | 'line' | 'donut';
   labels: string[];
   series: Array<{
     name: string;

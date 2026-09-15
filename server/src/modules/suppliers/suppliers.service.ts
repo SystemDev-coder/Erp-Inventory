@@ -4,6 +4,8 @@ import { withTransaction } from '../../db/withTx';
 import { ApiError } from '../../utils/ApiError';
 import { BranchScope } from '../../utils/branchScope';
 import { offsetOf, type Paged } from '../../utils/pagination';
+import { deleteGlByRef, ensureCoreCoa, postGl } from '../../utils/glPosting';
+import { syncSystemAccountBalancesWithClient } from '../../utils/systemAccounts';
 
 export interface Supplier {
   supplier_id: number;
@@ -136,15 +138,41 @@ const upsertSupplierOpeningLedger = async (
     [branchId, supplierId]
   );
 
-  if (!amount) return;
+  // Keep the real GL in sync with the subsidiary ledger: replace any prior
+  // opening-balance journal entry for this supplier, then re-post it if the
+  // new amount is non-zero, so Accounts Payable never drifts from what the
+  // supplier's balance edit form shows.
+  await deleteGlByRef(client, { branchId, refTable: 'opening_balance', refId: supplierId });
 
-  await client.query(
-    `INSERT INTO ims.supplier_ledger
-      (branch_id, supplier_id, entry_type, ref_table, ref_id, acc_id, debit, credit, entry_date, note)
-     VALUES
-      ($1, $2, 'opening', 'opening_balance', $2, NULL, 0, $3, NOW() - INTERVAL '1 second', $4)`,
-    [branchId, supplierId, amount, '[OPENING BALANCE] Set from supplier form']
-  );
+  if (amount) {
+    await client.query(
+      `INSERT INTO ims.supplier_ledger
+        (branch_id, supplier_id, entry_type, ref_table, ref_id, acc_id, debit, credit, entry_date, note)
+       VALUES
+        ($1, $2, 'opening', 'opening_balance', $2, NULL, 0, $3, NOW() - INTERVAL '1 second', $4)`,
+      [branchId, supplierId, amount, '[OPENING BALANCE] Set from supplier form']
+    );
+
+    const coa = await ensureCoreCoa(client, branchId, ['accountsPayable', 'openingBalanceEquity']);
+    await postGl(client, {
+      branchId,
+      refTable: 'opening_balance',
+      refId: supplierId,
+      note: 'Supplier opening/adjusted balance',
+      lines: [
+        { accId: coa.openingBalanceEquity, debit: amount, credit: 0, note: 'Opening balance equity' },
+        { accId: coa.accountsPayable, debit: 0, credit: amount, note: 'Supplier payable (opening/adjusted)' },
+      ],
+    });
+  }
+
+  // The Balance Sheet reads the "Accounts Payable" system account's stored
+  // balance directly (it doesn't re-derive it from account_transactions), and
+  // that balance is otherwise only kept current by a periodic background
+  // sync. Resync it synchronously, in this same transaction, so the Balance
+  // Sheet never shows a stale figure between the ledger edit and the next
+  // scheduled sync.
+  await syncSystemAccountBalancesWithClient(client, branchId);
 };
 
 const mapSupplier = (row: {

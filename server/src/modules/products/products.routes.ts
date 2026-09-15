@@ -4,6 +4,7 @@ import { requirePerm } from '../../middlewares/requirePerm';
 import { uploadProductImage as uploadProductImageMiddleware } from '../../config/cloudinary';
 import {
   listProducts,
+  getProductsSummary,
   getProduct,
   createProduct,
   updateProduct,
@@ -48,6 +49,7 @@ router.delete('/taxes/:id', requirePerm('items.delete'), deleteTax);
 
 // Products
 router.get('/', requirePerm('items.view'), listProducts);
+router.get('/summary', requirePerm('items.view'), getProductsSummary);
 router.get('/:id', requirePerm('items.view'), getProduct);
 router.post('/', requirePerm('items.create'), createProduct);
 router.put('/:id', requirePerm('items.update'), updateProduct);

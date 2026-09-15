@@ -3,6 +3,8 @@ import { queryMany, queryOne } from '../../db/query';
 import { withTransaction } from '../../db/withTx';
 import { ApiError } from '../../utils/ApiError';
 import { BranchScope } from '../../utils/branchScope';
+import { deleteGlByRef, ensureCoreCoa, postGl } from '../../utils/glPosting';
+import { syncSystemAccountBalancesWithClient } from '../../utils/systemAccounts';
 
 export interface Customer {
   customer_id: number;
@@ -248,15 +250,41 @@ const upsertCustomerOpeningLedger = async (
     [branchId, customerId]
   );
 
-  if (!amount) return;
+  // Keep the real GL in sync with the subsidiary ledger: replace any prior
+  // opening-balance journal entry for this customer, then re-post it if the
+  // new amount is non-zero, so Accounts Receivable never drifts from what
+  // the customer's balance edit form shows.
+  await deleteGlByRef(client, { branchId, refTable: 'opening_balance', refId: customerId });
 
-  await client.query(
-    `INSERT INTO ims.customer_ledger
-      (branch_id, customer_id, entry_type, ref_table, ref_id, acc_id, debit, credit, entry_date, note)
-     VALUES
-      ($1, $2, 'opening', 'opening_balance', $2, NULL, $3, 0, NOW() - INTERVAL '1 second', $4)`,
-    [branchId, customerId, amount, '[OPENING BALANCE] Set from customer form']
-  );
+  if (amount) {
+    await client.query(
+      `INSERT INTO ims.customer_ledger
+        (branch_id, customer_id, entry_type, ref_table, ref_id, acc_id, debit, credit, entry_date, note)
+       VALUES
+        ($1, $2, 'opening', 'opening_balance', $2, NULL, $3, 0, NOW() - INTERVAL '1 second', $4)`,
+      [branchId, customerId, amount, '[OPENING BALANCE] Set from customer form']
+    );
+
+    const coa = await ensureCoreCoa(client, branchId, ['accountsReceivable', 'openingBalanceEquity']);
+    await postGl(client, {
+      branchId,
+      refTable: 'opening_balance',
+      refId: customerId,
+      note: 'Customer opening/adjusted balance',
+      lines: [
+        { accId: coa.accountsReceivable, debit: amount, credit: 0, note: 'Customer receivable (opening/adjusted)' },
+        { accId: coa.openingBalanceEquity, debit: 0, credit: amount, note: 'Opening balance equity' },
+      ],
+    });
+  }
+
+  // The Balance Sheet reads the "Accounts Receivable" system account's stored
+  // balance directly (it doesn't re-derive it from account_transactions), and
+  // that balance is otherwise only kept current by a periodic background
+  // sync. Resync it synchronously, in this same transaction, so the Balance
+  // Sheet never shows a stale figure between the ledger edit and the next
+  // scheduled sync.
+  await syncSystemAccountBalancesWithClient(client, branchId);
 };
 
 export const customersService = {
@@ -264,7 +292,8 @@ export const customersService = {
     branchIds: number[],
     search?: string,
     dateRange?: { fromDate?: string; toDate?: string },
-    pagination?: { page: number; limit: number }
+    pagination?: { page: number; limit: number },
+    customerType?: 'regular' | 'one-time'
   ): Promise<{ rows: Customer[]; total: number; page: number; limit: number }> {
     const meta = await detectCustomerColumns();
     const balanceColumn = meta.balanceColumn;
@@ -295,6 +324,11 @@ export const customersService = {
     if (dateRange?.toDate) {
       params.push(dateRange.toDate);
       where.push(`registered_date <= $${params.length}::date`);
+    }
+
+    if (customerType && meta.hasType) {
+      params.push(customerType);
+      where.push(`customer_type = $${params.length}`);
     }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';

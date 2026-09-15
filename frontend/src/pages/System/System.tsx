@@ -6,7 +6,7 @@ import { Modal } from '../../components/ui/modal/Modal';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { useToast } from '../../components/ui/toast/Toast';
 import { useAuth } from '../../context/AuthContext';
-import { SIDEBAR_PERMISSION_KEY_SET } from '../../config/sidebarPermissionKeys';
+import { useLanguage } from '../../context/LanguageContext';
 import {
   systemService,
   SystemBranch,
@@ -50,6 +50,7 @@ type ConfirmTarget =
 const System = () => {
   const { showToast } = useToast();
   const { permissions: currentPermissions } = useAuth();
+  const { t } = useLanguage();
   const allowRemoteImageUpload = true;
   const logoStorageKey = 'erp.company.logo_img';
   const bannerStorageKey = 'erp.company.banner_img';
@@ -465,16 +466,12 @@ const System = () => {
   };
 
   const saveUser = async () => {
-    if (!userForm.name.trim() || !userForm.username.trim()) {
-      showToast('error', 'Users', 'Name and username are required');
-      return;
-    }
-    if (!editingUser && !userForm.password.trim()) {
-      showToast('error', 'Users', 'Password is required');
-      return;
-    }
-    if (!userForm.roleId || !userForm.branchIds.length) {
-      showToast('error', 'Users', 'Role and at least one branch are required');
+    // Name/username/password/role are enforced natively via `required` on the inputs
+    // below (the browser blocks submission before this runs), so only the branch
+    // checkbox group needs a manual check - there's no native "pick at least one"
+    // constraint for a set of checkboxes.
+    if (!userForm.branchIds.length) {
+      showToast('error', 'Users', 'At least one branch is required');
       return;
     }
 
@@ -852,14 +849,14 @@ const System = () => {
   const tabs = [
     {
       id: 'company',
-      label: 'Company Info',
+      label: t('tab_company_info'),
       icon: Home,
       badge: 0,
       content: companyContent,
     },
     {
       id: 'users',
-      label: 'Users',
+      label: t('tab_users'),
       icon: Users,
       badge: users.length,
       content: (
@@ -968,7 +965,7 @@ const System = () => {
     },
 	    {
 	      id: 'roles',
-	      label: 'Roles',
+	      label: t('tab_roles'),
 	      icon: Shield,
 	      badge: roles.length,
 	      content: (
@@ -1045,7 +1042,7 @@ const System = () => {
 	      ? [
 	          {
 	            id: 'privileges',
-	            label: 'Privileges',
+	            label: t('tab_privileges'),
 	            icon: CheckSquare,
 	            badge: 0,
 	            content: (
@@ -1062,8 +1059,6 @@ const System = () => {
 	                  loadUsers={loadUsers}
 	                  initialUserId={privilegesPrefillUserId}
 	                  onUserSelected={(id) => setPrivilegesPrefillUserId(id)}
-	                  // UPDATED: Show only permissions currently used in the sidebar (v1.0)
-	                  allowedPermissionKeys={SIDEBAR_PERMISSION_KEY_SET}
 	                />
 	              </Suspense>
 	            ),
@@ -1075,7 +1070,7 @@ const System = () => {
 	      ? [
 	          {
 	            id: 'role-privileges',
-	            label: 'Role Privileges',
+	            label: t('tab_role_privileges'),
 	            icon: CheckSquare,
 	            badge: 0,
 	            content: (
@@ -1104,7 +1099,7 @@ const System = () => {
 	      ? [
 	          {
 	            id: 'permissions',
-            label: 'Permissions',
+            label: t('tab_permissions'),
             icon: Lock,
             badge: permissions.length,
             content: (
@@ -1145,10 +1140,17 @@ const System = () => {
         title={editingUser ? 'Edit User' : 'Add User'}
         size="lg"
       >
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Relies on native HTML5 validation (required on the inputs themselves) instead
+            of custom red-border flashing, matching the Employee modal's behavior. */}
+        <form
+          id="user-form"
+          onSubmit={(e) => { e.preventDefault(); void saveUser(); }}
+          className="grid grid-cols-1 md:grid-cols-2 gap-4"
+        >
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
-            Name
+            Name *
             <input
+              required
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
               value={userForm.name}
               onChange={(e) => setUserForm({ ...userForm, name: e.target.value })}
@@ -1156,8 +1158,9 @@ const System = () => {
             />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
-            Username
+            Username *
             <input
+              required
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
               value={userForm.username}
               onChange={(e) => setUserForm({ ...userForm, username: e.target.value })}
@@ -1165,9 +1168,10 @@ const System = () => {
             />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
-            Password {editingUser ? '(Optional)' : ''}
+            Password {editingUser ? '(Optional)' : '*'}
             <input
               type="password"
+              required={!editingUser}
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
               value={userForm.password}
               onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
@@ -1175,13 +1179,14 @@ const System = () => {
             />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
-            Role
+            Role *
             <select
+              required
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
               value={userForm.roleId}
               onChange={(e) => setUserForm({ ...userForm, roleId: e.target.value })}
             >
-              <option value="">Select role</option>
+              <option value="" disabled>Select role</option>
               {roles.map((role) => (
                 <option key={role.role_id} value={role.role_id}>
                   {role.role_name}
@@ -1208,7 +1213,11 @@ const System = () => {
             </div>
             <div className="grid max-h-40 grid-cols-2 gap-1 overflow-y-auto rounded-lg border border-slate-300 bg-white p-2 text-sm dark:border-slate-700 dark:bg-slate-800 sm:grid-cols-3">
               {branches.map((branch) => (
-                <label key={branch.branch_id} className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-slate-50 dark:hover:bg-slate-700">
+                <label
+                  key={branch.branch_id}
+                  className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-slate-50 dark:hover:bg-slate-700"
+                  style={{ flexDirection: 'row' }}
+                >
                   <input
                     type="checkbox"
                     checked={userForm.branchIds.includes(branch.branch_id)}
@@ -1242,17 +1251,19 @@ const System = () => {
               </select>
             </label>
           )}
-        </div>
+        </form>
         <div className="flex justify-end gap-3 pt-4">
           <button
+            type="button"
             className="px-4 py-2 rounded-lg border border-slate-200 text-slate-700 dark:border-slate-700 dark:text-slate-300"
             onClick={() => setUserModalOpen(false)}
           >
             Cancel
           </button>
           <button
+            type="submit"
+            form="user-form"
             className="px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700"
-            onClick={saveUser}
             disabled={savingUser}
           >
             {savingUser ? 'Saving...' : editingUser ? 'Update' : 'Create'}
