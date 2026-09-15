@@ -85,7 +85,6 @@ const POSTab = () => {
 
     const [cart, setCart] = useState<CartItem[]>([]);
     const [selectedCustomerId, setSelectedCustomerId] = useState<number | ''>('');
-    const [addProductId, setAddProductId] = useState<number | ''>('');
     const [discount, setDiscount] = useState(0);
 
     const [selectedAccId, setSelectedAccId] = useState<number | ''>('');
@@ -178,14 +177,6 @@ const POSTab = () => {
 
     const removeFromCart = (id: number) => setCart((prev) => prev.filter((item) => item.item_id !== id));
     const clearCart = () => setCart([]);
-
-    const handleAddProductFromSelect = (productId: number | '') => {
-        setAddProductId(productId);
-        if (!productId) return;
-        const product = products.find((p) => p.product_id === Number(productId));
-        if (product) addToCart(product);
-        setAddProductId('');
-    };
 
     // Hardware barcode scanners act as a keyboard: they "type" the barcode
     // into whatever's focused, then send Enter. This is what actually fires
@@ -441,9 +432,9 @@ const POSTab = () => {
 
                     {/* Right Side */}
                     <div className="col-span-12 lg:col-span-4">
-                        <div className="ml-0 lg:ml-3 lg:pl-5 pl-0 border-0 lg:border-l border-slate-200 dark:border-slate-800 overflow-y-auto h-full lg:max-h-[calc(100vh-170px)]">
+                        <div className="ml-0 lg:ml-3 lg:pl-6 lg:pr-4 pl-0 pr-0 border-0 lg:border-l border-slate-200 dark:border-slate-800 overflow-y-auto h-full lg:max-h-[calc(100vh-170px)]">
                             {/* Order List */}
-                            <div className="flex items-center justify-between p-4 rounded-lg bg-slate-50 dark:bg-slate-800 mb-6">
+                            <div className="flex items-center justify-between p-4 rounded-lg bg-slate-50 dark:bg-slate-800 mb-7">
                                 <div>
                                     <p className="text-base font-bold text-slate-900 dark:text-slate-100 mb-1">Order List</p>
                                     <p className="text-sm text-slate-500 dark:text-slate-400 mb-0">New sale</p>
@@ -459,10 +450,10 @@ const POSTab = () => {
                             </div>
 
                             {/* Customer Information */}
-                            <div className="mb-5 pb-5 border-b border-slate-200 dark:border-slate-800">
+                            <div className="mb-6 pb-6 border-b border-slate-200 dark:border-slate-800">
                                 <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100 mb-4">Customer Information</h2>
-                                <div className="mb-3">
-                                    <label className="text-sm text-slate-800 dark:text-slate-200 font-semibold mb-1 block">Customer</label>
+                                <div className="mb-4">
+                                    <label className="text-sm text-slate-800 dark:text-slate-200 font-semibold mb-1.5 block">Customer</label>
                                     <SearchableCombobox<number>
                                         value={selectedCustomerId}
                                         options={customers.map((c) => ({ value: c.customer_id, label: c.full_name }))}
@@ -470,19 +461,10 @@ const POSTab = () => {
                                         onChange={(v) => setSelectedCustomerId(v === '' ? '' : Number(v))}
                                     />
                                 </div>
-                                <div className="mb-0">
-                                    <label className="text-sm text-slate-800 dark:text-slate-200 font-semibold mb-1 block">Add Product</label>
-                                    <SearchableCombobox<number>
-                                        value={addProductId}
-                                        options={filteredProducts.map((p) => ({ value: p.product_id, label: p.name }))}
-                                        placeholder="Search and select..."
-                                        onChange={(v) => handleAddProductFromSelect(v === '' ? '' : Number(v))}
-                                    />
-                                </div>
                             </div>
 
                             {/* Product Added */}
-                            <div className="mb-5 pb-5 border-b border-slate-200 dark:border-slate-800">
+                            <div className="mb-6 pb-6 border-b border-slate-200 dark:border-slate-800">
                                 <div className="flex items-center justify-between gap-3 mb-4">
                                     <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100 inline-flex items-center gap-1 mb-0">
                                         Product Added
@@ -557,7 +539,7 @@ const POSTab = () => {
                             </div>
 
                             {/* Sub Total */}
-                            <div className="bg-slate-50 dark:bg-slate-800 rounded-lg p-5 mb-5">
+                            <div className="bg-slate-50 dark:bg-slate-800 rounded-lg p-5 mb-6">
                                 <p className="flex items-center justify-between text-slate-500 dark:text-slate-400 text-sm mb-2">Sub Total <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">${subtotal.toFixed(2)}</span></p>
                                 <p className="flex items-center justify-between text-slate-500 dark:text-slate-400 text-sm mb-2">Tax ({TAX_RATE_PERCENT}%) <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">${taxAmount.toFixed(2)}</span></p>
                                 <p className="flex items-center justify-between text-red-500 text-sm mb-4">Discount <span className="text-sm font-semibold">-${Number(discount || 0).toFixed(2)}</span></p>
