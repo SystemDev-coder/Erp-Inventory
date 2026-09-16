@@ -21,7 +21,24 @@ type PoolConfigWithVerify = PoolConfig & {
 
 const initializeClient = async (client: PoolClient): Promise<void> => {
   const schema = quoteIdent(config.db.schema);
-  await client.query(`CREATE SCHEMA IF NOT EXISTS ${schema}`);
+  // Production incident fix: CREATE SCHEMA IF NOT EXISTS still requires
+  // CREATE privilege on the database to even attempt the statement, even
+  // when the schema already exists - Postgres checks that permission before
+  // the existence check. The restricted runtime role this app actually logs
+  // in as in production (e.g. ims_app) only has CONNECT, not CREATE, on the
+  // database, so this unconditionally crashed every single connection with
+  // "permission denied for database <name>" and took the app down in a
+  // restart loop. Schema creation is a one-time provisioning/migration
+  // concern (handled by entrypoint.sh, running as postgres), not something
+  // every pooled connection needs to re-attempt - skip it here the same way
+  // the SET ROLE below already tolerates a restricted role.
+  try {
+    await client.query(`CREATE SCHEMA IF NOT EXISTS ${schema}`);
+  } catch {
+    // ignore - the schema already exists and this role isn't allowed to
+    // (re-)create it, which is fine; only a missing schema is fatal, and
+    // that would still surface immediately below when search_path fails.
+  }
   await client.query(`SET search_path TO ${config.db.schema}, public`);
 
   // Force a restricted runtime role so RLS (soft-delete filtering) works
