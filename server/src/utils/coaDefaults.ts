@@ -108,8 +108,7 @@ export const ensureCoaAccount = async (
     // Ensure account_type is correct for reporting.
     await client.query(
       `UPDATE ims.accounts
-          SET account_type = $3,
-              is_active = TRUE
+          SET account_type = $3
         WHERE branch_id = $1
           AND acc_id = $2`,
       [branchId, existing, spec.accountType]

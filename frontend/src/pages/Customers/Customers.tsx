@@ -25,6 +25,10 @@ type CustomerForm = {
     is_active: boolean;
     credit_allowed: boolean;
     credit_days: number;
+    // Kept as a string, same reasoning as remaining_balance below: an empty
+    // string means "no limit" (persisted as NULL), and coercing on every
+    // keystroke would turn that into "0" and fight the caret.
+    credit_limit: string;
     // Kept as a string so the input never rewrites what is being typed. Coercing on
     // every keystroke turns "" into "0" and drops a trailing ".", which moves the
     // caret and makes the field (and the reason field below it) flicker.
@@ -41,6 +45,7 @@ const emptyForm: CustomerForm = {
     is_active: true,
     credit_allowed: true,
     credit_days: 30,
+    credit_limit: '',
     remaining_balance: '',
     edit_reason: '',
 };
@@ -185,6 +190,10 @@ const Customers = () => {
             is_active: form.is_active,
             credit_allowed: form.customer_type === 'regular' ? form.credit_allowed : false,
             credit_days: form.customer_type === 'regular' && form.credit_allowed ? form.credit_days : 0,
+            credit_limit:
+                form.customer_type === 'regular' && form.credit_allowed && form.credit_limit.trim() !== ''
+                    ? parseBalance(form.credit_limit)
+                    : null,
             remaining_balance: parseBalance(form.remaining_balance),
             edit_reason: balanceChanged ? form.edit_reason.trim() : undefined,
         };
@@ -213,6 +222,7 @@ const Customers = () => {
             is_active: row.is_active,
             credit_allowed: row.credit_allowed !== false,
             credit_days: Number(row.credit_days ?? 30),
+            credit_limit: row.credit_limit == null ? '' : String(row.credit_limit),
             remaining_balance: String(openingBalance),
             edit_reason: '',
         }, openingBalance);
@@ -468,6 +478,20 @@ const Customers = () => {
                                     step={1}
                                     value={form.credit_days}
                                     onChange={(ev) => set('credit_days', Number(ev.target.value || 0))}
+                                    disabled={loading}
+                                />
+                            </Field>
+                        )}
+
+                        {form.customer_type === 'regular' && form.credit_allowed && (
+                            <Field label="Credit Limit" hint="Maximum outstanding credit balance - leave blank for no limit">
+                                <input
+                                    type="number"
+                                    min={0}
+                                    step="0.01"
+                                    placeholder="No limit"
+                                    value={form.credit_limit}
+                                    onChange={(ev) => set('credit_limit', ev.target.value)}
                                     disabled={loading}
                                 />
                             </Field>

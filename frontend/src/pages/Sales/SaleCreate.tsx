@@ -85,6 +85,8 @@ const SaleCreate = () => {
   // actually selling it until it's been purchased/stocked first.
   const [lineSearchQuery, setLineSearchQuery] = useState('');
   const QUICK_CREATE_SENTINEL = -1;
+  const [barcodeInput, setBarcodeInput] = useState('');
+  const [barcodeLoading, setBarcodeLoading] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
   const [newProductModalOpen, setNewProductModalOpen] = useState(false);
@@ -533,6 +535,67 @@ const SaleCreate = () => {
     const fromOption = itemOptionsMap.get(Number(line.item_id))?.available_qty;
     if (fromOption !== undefined && fromOption !== null) return Number(fromOption);
     return Number(line.available_qty ?? 0);
+  };
+
+  // Phase 12: barcode entry for the normal Sales/Invoice line grid (same
+  // doc_type-driven form as both - see the docType select above). Reuses the
+  // shared exact-match backend lookup rather than the combobox's substring
+  // search, exactly like POS's own scan handling but through the network
+  // endpoint since, unlike POS, this screen's item list doesn't carry
+  // barcode data. Repeated scans of the same item increase that line's
+  // quantity instead of adding a duplicate line, matching POS's cart
+  // behavior for the scan action specifically - manual selection via "+ Add
+  // line" / the combobox is untouched and still always adds a fresh line.
+  const handleBarcodeScan = async () => {
+    const raw = barcodeInput.trim();
+    if (!raw || barcodeLoading) return;
+    setBarcodeLoading(true);
+    const res = await productService.getByBarcode(raw, activeBranchId ?? undefined);
+    setBarcodeLoading(false);
+    if (!res.success || !res.data?.product) {
+      showToast('error', 'Not found', res.error || `No product matches barcode "${raw}".`);
+      return;
+    }
+    const product = res.data.product;
+    const productId = Number(product.product_id);
+    clearError('items');
+    clearError('stock');
+
+    if (!itemOptionsMap.has(productId)) {
+      setItemOptions((prev) => [
+        {
+          item_id: productId,
+          item_name: product.name,
+          unit_price: Number(product.sell_price || product.price || 0),
+          available_qty: Number(product.stock ?? product.quantity ?? 0),
+        },
+        ...prev,
+      ]);
+    }
+
+    const existingIdx = saleForm.items.findIndex((line) => Number(line.item_id) === productId);
+    let nextItems: FormLine[];
+    if (existingIdx >= 0) {
+      nextItems = [...saleForm.items];
+      nextItems[existingIdx] = { ...nextItems[existingIdx], quantity: Number(nextItems[existingIdx].quantity || 0) + 1 };
+    } else {
+      const blankIdx = saleForm.items.findIndex((line) => !line.item_id);
+      const newLine: FormLine = {
+        item_id: productId,
+        quantity: 1,
+        unit_price: Number(product.sell_price || product.price || 0),
+        available_qty: Number(product.stock ?? product.quantity ?? 0),
+      };
+      if (blankIdx >= 0) {
+        nextItems = [...saleForm.items];
+        nextItems[blankIdx] = newLine;
+      } else {
+        nextItems = [...saleForm.items, newLine];
+      }
+    }
+    setSaleForm((prev) => ({ ...prev, items: nextItems }));
+    recalcTotals(nextItems, saleForm.discount);
+    setBarcodeInput('');
   };
 
   const firstInsufficientLine = saleForm.items.find((line) => {
@@ -1043,18 +1106,34 @@ const SaleCreate = () => {
               <span className="font-semibold text-slate-800 dark:text-slate-200">Products</span>
               <span className="text-red-500 ml-0.5 text-sm">*</span>
             </div>
-            <button
-              type="button"
-              onClick={() =>
-                setSaleForm((prev) => ({
-                  ...prev,
-                  items: [...prev.items, { item_id: '', quantity: 1, unit_price: 0 }],
-                }))
-              }
-              className="inline-flex items-center gap-1 text-sm px-3 py-1 rounded-lg bg-primary-600 text-white hover:bg-primary-700"
-            >
-              <Plus size={16} /> Add line
-            </button>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={barcodeInput}
+                onChange={(e) => setBarcodeInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void handleBarcodeScan();
+                  }
+                }}
+                placeholder="Scan or enter barcode"
+                disabled={loading || barcodeLoading}
+                className="w-48 px-3 py-1 text-sm border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+              />
+              <button
+                type="button"
+                onClick={() =>
+                  setSaleForm((prev) => ({
+                    ...prev,
+                    items: [...prev.items, { item_id: '', quantity: 1, unit_price: 0 }],
+                  }))
+                }
+                className="inline-flex items-center gap-1 text-sm px-3 py-1 rounded-lg bg-primary-600 text-white hover:bg-primary-700"
+              >
+                <Plus size={16} /> Add line
+              </button>
+            </div>
           </div>
 
           {(formErrors.items || formErrors.stock) && (

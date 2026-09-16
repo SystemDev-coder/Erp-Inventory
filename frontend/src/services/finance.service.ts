@@ -95,6 +95,9 @@ export interface SupplierOutstandingPurchase {
   total: number;
   paid: number;
   outstanding: number;
+  // H2 fix: the supplier's pooled/unlinked receipt total - not applied to
+  // this or any specific purchase, kept separate from `outstanding` above.
+  supplier_unallocated_payment: number;
   supplier_name: string;
   status: string;
 }

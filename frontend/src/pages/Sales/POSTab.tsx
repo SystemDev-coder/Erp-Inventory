@@ -203,8 +203,14 @@ const POSTab = () => {
 
     const TAX_RATE_PERCENT = 5;
     const subtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
-    const taxAmount = (subtotal * TAX_RATE_PERCENT) / 100;
-    const total = Math.max(0, subtotal + taxAmount - Number(discount || 0));
+    // C2 fix: match the backend's convention exactly (same as SaleCreate.tsx's
+    // recalcTotals) - discount reduces the taxable base before tax is applied,
+    // not after. Computing tax on the full subtotal and only then subtracting
+    // the discount (the old code here) produces a different total than the
+    // backend whenever both a discount and tax are present on the same sale.
+    const taxableAmount = Math.max(0, subtotal - Number(discount || 0));
+    const taxAmount = Number(((taxableAmount * TAX_RATE_PERCENT) / 100).toFixed(2));
+    const total = Number((taxableAmount + taxAmount).toFixed(2));
 
     const cashAccounts = useMemo(() => accounts.filter(isCashAccount), [accounts]);
     const otherAccounts = useMemo(() => accounts.filter((a) => !isCashAccount(a)), [accounts]);

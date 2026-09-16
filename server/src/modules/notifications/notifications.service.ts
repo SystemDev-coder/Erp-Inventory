@@ -19,7 +19,16 @@ export interface NotificationRow {
 
 interface NotificationListInput {
   userId: number;
+  /** Single branch to run low-stock/credit-due generation against, if applicable (unchanged behavior). */
   branchId?: number;
+  /**
+   * H11 fix: the caller's currently authorized branch(es) the returned list
+   * must be scoped to - always resolved/validated by the controller via the
+   * same resolveActiveBranchIds()/assertBranchAccess() mechanism every other
+   * branch-scoped endpoint uses (single branch for a normal user, every
+   * active branch for an Administrator with no explicit ?branchId=).
+   */
+  branchIds: number[];
   limit: number;
   offset: number;
   unreadOnly?: boolean;
@@ -125,12 +134,22 @@ export const notificationsService = {
       await ensureCreditDueNotifications(input.branchId);
     }
 
-    const whereClauses = ['n.user_id = $1', 'COALESCE(n.is_deleted, FALSE) = FALSE'];
+    // H11 fix: scope to the caller's authorized branch(es) as well as their
+    // own user_id - a notification row with a NULL branch_id (none exist
+    // today, but the column is nullable) is treated as branch-independent
+    // and stays visible to everyone it's addressed to, rather than being
+    // hidden by this filter.
+    const whereClauses = [
+      'n.user_id = $1',
+      'COALESCE(n.is_deleted, FALSE) = FALSE',
+      '(n.branch_id = ANY($2) OR n.branch_id IS NULL)',
+    ];
     if (input.unreadOnly) {
       whereClauses.push('n.is_read = FALSE');
     }
 
     const whereSql = whereClauses.join(' AND ');
+    const scopeParams: unknown[] = [input.userId, input.branchIds];
 
     const notifications = await queryMany<NotificationRow>(
       `SELECT
@@ -151,24 +170,25 @@ export const notificationsService = {
        LEFT JOIN ims.users cb ON cb.user_id = n.created_by
        WHERE ${whereSql}
        ORDER BY n.created_at DESC
-       LIMIT $2 OFFSET $3`,
-      [input.userId, input.limit, input.offset]
+       LIMIT $3 OFFSET $4`,
+      [...scopeParams, input.limit, input.offset]
     );
 
     const filteredCountRow = await queryOne<{ total: string }>(
       `SELECT COUNT(*)::text AS total
        FROM ims.notifications n
        WHERE ${whereSql}`,
-      [input.userId]
+      scopeParams
     );
 
     const unreadCountRow = await queryOne<{ unread_count: string }>(
       `SELECT COUNT(*)::text AS unread_count
        FROM ims.notifications n
        WHERE n.user_id = $1
+         AND (n.branch_id = ANY($2) OR n.branch_id IS NULL)
          AND COALESCE(n.is_deleted, FALSE) = FALSE
          AND n.is_read = FALSE`,
-      [input.userId]
+      scopeParams
     );
 
     return {

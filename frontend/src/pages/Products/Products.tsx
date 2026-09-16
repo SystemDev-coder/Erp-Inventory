@@ -1109,27 +1109,51 @@ const Products = () => {
             />
           </ItemField>
 
-          <ItemField label="Opening Balance">
-            <input
-              type="number"
-              min={0}
-              step="1"
-              placeholder="0"
-              value={itemForm.opening_balance ?? 0}
-              onChange={(e) => setItemField('opening_balance', Number(e.target.value || 0))}
-            />
-          </ItemField>
+          {itemForm.product_id ? (
+            <>
+              {/* Editing an existing product: Opening Balance (the original
+                  cost-basis figure, correctable after the fact) and Quantity
+                  (today's actual stock) are genuinely different numbers once
+                  the item has any sales/purchase history, so both stay editable. */}
+              <ItemField label="Opening Balance">
+                <input
+                  type="number"
+                  min={0}
+                  step="1"
+                  placeholder="0"
+                  value={itemForm.opening_balance ?? 0}
+                  onChange={(e) => setItemField('opening_balance', Number(e.target.value || 0))}
+                />
+              </ItemField>
 
-          <ItemField label="Quantity">
-            <input
-              type="number"
-              step="1"
-              min={0}
-              placeholder="0"
-              value={itemForm.quantity ?? 0}
-              onChange={(e) => setItemField('quantity', Number(e.target.value || 0))}
-            />
-          </ItemField>
+              <ItemField label="Quantity">
+                <input
+                  type="number"
+                  step="1"
+                  min={0}
+                  placeholder="0"
+                  value={itemForm.quantity ?? 0}
+                  onChange={(e) => setItemField('quantity', Number(e.target.value || 0))}
+                />
+              </ItemField>
+            </>
+          ) : (
+            // New product: there's no history yet, so "Opening Balance" and
+            // "Quantity" would be the same number - one field, driving both.
+            <ItemField label="Opening Stock">
+              <input
+                type="number"
+                min={0}
+                step="1"
+                placeholder="0"
+                value={itemForm.opening_balance ?? 0}
+                onChange={(e) => {
+                  const value = Number(e.target.value || 0);
+                  setItemForm({ ...itemForm, opening_balance: value, quantity: value });
+                }}
+              />
+            </ItemField>
+          )}
 
           <ItemField label="Store" required>
             <select

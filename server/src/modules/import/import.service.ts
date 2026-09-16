@@ -2,6 +2,8 @@ import { PoolClient } from 'pg';
 import { queryMany, queryOne } from '../../db/query';
 import { withTransaction } from '../../db/withTx';
 import { ApiError } from '../../utils/ApiError';
+import { deleteGlByRef, ensureCoreCoa, postGl } from '../../utils/glPosting';
+import { syncSystemAccountBalancesWithClient } from '../../utils/systemAccounts';
 import { parseSpreadsheet } from './import.parser';
 import {
   ImportMode,
@@ -938,6 +940,38 @@ const upsertCustomerOpeningLedger = async (
     [branchId, customerId]
   );
 
+  const coa = await ensureCoreCoa(client, branchId, ['accountsReceivable', 'openingBalanceEquity']);
+  // H4 fix: reverse this ref's previous Opening Balance Equity contribution
+  // to accounts.balance before the old GL rows are deleted below - it was
+  // never mirrored into accounts.balance at all (same gap fixed in
+  // customers.service.ts#upsertCustomerOpeningLedger). Accounts Receivable
+  // is deliberately left out here; it's resynced from the ledger below.
+  const priorObeRows = await client.query<{ debit: string; credit: string }>(
+    `SELECT debit, credit FROM ims.account_transactions
+      WHERE branch_id = $1 AND ref_table = 'opening_balance' AND ref_id = $2
+        AND acc_id = $3 AND COALESCE(is_deleted, 0) = 0`,
+    [branchId, customerId, coa.openingBalanceEquity]
+  );
+  for (const row of priorObeRows.rows) {
+    const delta = -(Number(row.credit) - Number(row.debit));
+    if (delta) {
+      await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+        delta,
+        coa.openingBalanceEquity,
+        branchId,
+      ]);
+    }
+  }
+
+  // Same GL sync the manual customer opening-balance edit uses (see
+  // customers.service.ts#upsertCustomerOpeningLedger): replace any prior
+  // opening-balance journal entry for this customer, then re-post it if the
+  // new amount is non-zero, so Accounts Receivable never drifts from what
+  // the imported subsidiary ledger shows. deleteGlByRef matches on
+  // (branchId, refTable, refId), which also makes this safe to re-run for
+  // the same customer without creating duplicate GL entries.
+  await deleteGlByRef(client, { branchId, refTable: 'opening_balance', refId: customerId });
+
   if (!amount) return;
 
   await client.query(
@@ -947,6 +981,29 @@ const upsertCustomerOpeningLedger = async (
       ($1, $2, 'opening', 'opening_balance', $2, NULL, $3, 0, NOW() - INTERVAL '1 second', $4)`,
     [branchId, customerId, amount, '[OPENING BALANCE] Imported from spreadsheet']
   );
+
+  await postGl(client, {
+    branchId,
+    refTable: 'opening_balance',
+    refId: customerId,
+    note: 'Customer opening balance (import)',
+    lines: [
+      { accId: coa.accountsReceivable, debit: amount, credit: 0, note: 'Customer receivable (imported opening balance)' },
+      { accId: coa.openingBalanceEquity, debit: 0, credit: amount, note: 'Opening balance equity' },
+    ],
+  });
+  // H4 fix: Opening Balance Equity credit above was never mirrored into
+  // accounts.balance. Equity - credit increases it.
+  await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+    amount,
+    coa.openingBalanceEquity,
+    branchId,
+  ]);
+
+  // Keep the cached Accounts Receivable system-account balance in sync in the
+  // same transaction, matching the manual flow - the Balance Sheet reads that
+  // stored balance directly rather than re-deriving it from account_transactions.
+  await syncSystemAccountBalancesWithClient(client, branchId);
 };
 
 const insertCustomer = async (
@@ -1129,6 +1186,38 @@ const upsertSupplierOpeningLedger = async (
     [branchId, supplierId]
   );
 
+  const coa = await ensureCoreCoa(client, branchId, ['accountsPayable', 'openingBalanceEquity']);
+  // H4 fix: reverse this ref's previous Opening Balance Equity contribution
+  // to accounts.balance before the old GL rows are deleted below - it was
+  // never mirrored into accounts.balance at all (same gap fixed in
+  // suppliers.service.ts#upsertSupplierOpeningLedger). Accounts Payable is
+  // deliberately left out here; it's resynced from the ledger below.
+  const priorObeRows = await client.query<{ debit: string; credit: string }>(
+    `SELECT debit, credit FROM ims.account_transactions
+      WHERE branch_id = $1 AND ref_table = 'opening_balance' AND ref_id = $2
+        AND acc_id = $3 AND COALESCE(is_deleted, 0) = 0`,
+    [branchId, supplierId, coa.openingBalanceEquity]
+  );
+  for (const row of priorObeRows.rows) {
+    const delta = -(Number(row.credit) - Number(row.debit));
+    if (delta) {
+      await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+        delta,
+        coa.openingBalanceEquity,
+        branchId,
+      ]);
+    }
+  }
+
+  // Same GL sync the manual supplier opening-balance edit uses (see
+  // suppliers.service.ts#upsertSupplierOpeningLedger): replace any prior
+  // opening-balance journal entry for this supplier, then re-post it if the
+  // new amount is non-zero, so Accounts Payable never drifts from what the
+  // imported subsidiary ledger shows. deleteGlByRef matches on (branchId,
+  // refTable, refId), which also makes this safe to re-run for the same
+  // supplier without creating duplicate GL entries.
+  await deleteGlByRef(client, { branchId, refTable: 'opening_balance', refId: supplierId });
+
   if (!amount) return;
 
   await client.query(
@@ -1138,6 +1227,28 @@ const upsertSupplierOpeningLedger = async (
       ($1, $2, 'opening', 'opening_balance', $2, NULL, 0, $3, NOW() - INTERVAL '1 second', $4)`,
     [branchId, supplierId, amount, '[OPENING BALANCE] Imported from spreadsheet']
   );
+
+  await postGl(client, {
+    branchId,
+    refTable: 'opening_balance',
+    refId: supplierId,
+    note: 'Supplier opening balance (import)',
+    lines: [
+      { accId: coa.openingBalanceEquity, debit: amount, credit: 0, note: 'Opening balance equity' },
+      { accId: coa.accountsPayable, debit: 0, credit: amount, note: 'Supplier payable (imported opening balance)' },
+    ],
+  });
+  // H4 fix: Opening Balance Equity debit above was never mirrored into
+  // accounts.balance. Equity - debit decreases it.
+  await client.query(`UPDATE ims.accounts SET balance = balance - $1 WHERE acc_id = $2 AND branch_id = $3`, [
+    amount,
+    coa.openingBalanceEquity,
+    branchId,
+  ]);
+
+  // Keep the cached Accounts Payable system-account balance in sync in the
+  // same transaction, matching the manual flow.
+  await syncSystemAccountBalancesWithClient(client, branchId);
 };
 
 const insertSupplier = async (
@@ -1259,6 +1370,53 @@ const insertSupplier = async (
   return 'inserted';
 };
 
+// Same opening-stock GL posting the manual product-creation flow already does
+// (see products.service.ts#rewriteItemOpeningStockGl) - opening stock
+// (opening_balance * cost_price) must be reflected in the GL as an Inventory
+// asset, or the Balance Sheet's Inventory figure silently omits whatever
+// stock an imported item started with. deleteGlByRef first makes this safe
+// to re-run for the same item without creating duplicate GL entries.
+const postItemOpeningStockGl = async (
+  client: PoolClient,
+  params: { branchId: number; itemId: number; itemName: string; openingBalance: number; costPrice: number }
+) => {
+  await deleteGlByRef(client, { branchId: params.branchId, refTable: 'items', refId: params.itemId });
+
+  const value = Math.round(
+    (Number(params.openingBalance || 0) * Number(params.costPrice || 0) + Number.EPSILON) * 100
+  ) / 100;
+  if (value <= 0) return;
+
+  const coa = await ensureCoreCoa(client, params.branchId, ['inventory', 'openingBalanceEquity']);
+  await postGl(client, {
+    branchId: params.branchId,
+    refTable: 'items',
+    refId: params.itemId,
+    note: `Opening stock: ${params.itemName}`,
+    lines: [
+      { accId: coa.inventory, debit: value, note: 'Opening stock' },
+      { accId: coa.openingBalanceEquity, credit: value, note: 'Opening stock' },
+    ],
+  });
+
+  // Keep the cached Inventory system-account balance in sync in the same
+  // transaction, matching rewriteItemOpeningStockGl's own approach.
+  await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+    value,
+    coa.inventory,
+    params.branchId,
+  ]);
+  // H4 fix: the Opening Balance Equity credit above was never mirrored into
+  // accounts.balance. Equity - credit increases it. No reversal-before-delete
+  // is needed here: this function is only ever called from insertItem's plain
+  // INSERT, so itemId is always a brand-new ref with no prior GL to reverse.
+  await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+    value,
+    coa.openingBalanceEquity,
+    params.branchId,
+  ]);
+};
+
 const insertItem = async (
   client: PoolClient,
   row: ItemImportRow,
@@ -1321,6 +1479,14 @@ const insertItem = async (
       [row.store_id, itemId, row.opening_balance]
     );
   }
+
+  await postItemOpeningStockGl(client, {
+    branchId,
+    itemId,
+    itemName: row.name,
+    openingBalance: row.opening_balance,
+    costPrice: row.cost_price,
+  });
 
   return 'inserted';
 };

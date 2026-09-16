@@ -38,6 +38,9 @@ type Paged<T> = {
   limit: number;
 };
 
+const STOCK_MUTATION_ROUTE_MESSAGE =
+  'Store item quantities cannot be changed here. Use a stock adjustment, purchase, sale, or transfer instead.';
+
 export const storesService = {
   async list(scope: BranchScope, filters: StoreListQueryInput): Promise<Paged<Store>> {
     const params: unknown[] = [];
@@ -218,13 +221,17 @@ export const storesService = {
     if (!product) {
       throw ApiError.badRequest('Item not found in this store branch');
     }
+    // Store-item CRUD only manages item-to-store associations. A non-zero
+    // quantity changes stock, so it must use the inventory service where
+    // movement history and accounting effects are recorded.
+    if (Number(input.quantity) !== 0) {
+      throw ApiError.badRequest(STOCK_MUTATION_ROUTE_MESSAGE);
+    }
     const existing = await queryOne<{ store_item_id: number; quantity: string }>(
       `SELECT store_item_id, quantity FROM ims.store_items WHERE store_id = $1 AND product_id = $2`,
       [storeId, input.productId]
     );
     if (existing) {
-      const newQty = Number(existing.quantity) + Number(input.quantity);
-      await queryOne(`UPDATE ims.store_items SET quantity = $1, updated_at = NOW() WHERE store_item_id = $2`, [newQty, existing.store_item_id]);
       const row = await queryOne<StoreItem>(`SELECT si.*, i.name AS product_name FROM ims.store_items si LEFT JOIN ims.items i ON i.item_id = si.product_id WHERE si.store_item_id = $1`, [existing.store_item_id]);
       if (!row) throw ApiError.internal('Failed to read store item');
       return row;
@@ -240,12 +247,31 @@ export const storesService = {
 
   async updateItemQuantity(storeId: number, storeItemId: number, quantity: number, scope: BranchScope): Promise<StoreItem | null> {
     await this.get(storeId, scope);
-    await queryOne(`UPDATE ims.store_items SET quantity = $1, updated_at = NOW() WHERE store_item_id = $2 AND store_id = $3`, [quantity, storeItemId, storeId]);
+    const existing = await queryOne<{ quantity: string }>(
+      `SELECT quantity::text AS quantity
+         FROM ims.store_items
+        WHERE store_item_id = $1 AND store_id = $2`,
+      [storeItemId, storeId]
+    );
+    if (!existing) return null;
+    if (Number(existing.quantity) !== quantity) {
+      throw ApiError.badRequest(STOCK_MUTATION_ROUTE_MESSAGE);
+    }
     return queryOne<StoreItem>(`SELECT si.*, i.name AS product_name FROM ims.store_items si LEFT JOIN ims.items i ON i.item_id = si.product_id WHERE si.store_item_id = $1`, [storeItemId]);
   },
 
   async removeItem(storeId: number, storeItemId: number, scope: BranchScope): Promise<void> {
     await this.get(storeId, scope);
+    const existing = await queryOne<{ quantity: string }>(
+      `SELECT quantity::text AS quantity
+         FROM ims.store_items
+        WHERE store_item_id = $1 AND store_id = $2`,
+      [storeItemId, storeId]
+    );
+    if (!existing) return;
+    if (Number(existing.quantity) !== 0) {
+      throw ApiError.badRequest(STOCK_MUTATION_ROUTE_MESSAGE);
+    }
     await queryOne(`DELETE FROM ims.store_items WHERE store_item_id = $1 AND store_id = $2`, [storeItemId, storeId]);
   },
 };

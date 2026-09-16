@@ -1,4 +1,5 @@
-import { queryMany, queryOne } from '../../db/query';
+import { PoolClient } from 'pg';
+import { query, queryMany, queryOne } from '../../db/query';
 import { withTransaction } from '../../db/withTx';
 import { ApiError } from '../../utils/ApiError';
 import {
@@ -26,7 +27,7 @@ import {
   UserWithPermissions,
 } from './auth.types';
 import { logAudit } from '../../utils/audit';
-import { isAdminRoleName } from '../../utils/branchScope';
+import { isAdminRoleRecord } from '../../utils/branchScope';
 
 type ResetEntry = {
   userId: number;
@@ -40,43 +41,31 @@ const normalizeIdentifier = (value: string) => value.trim().toLowerCase();
 
 const now = () => new Date();
 
-const ensureRole = async (requestedRoleId?: number): Promise<number> => {
-  if (requestedRoleId) {
-    const role = await queryOne<{ role_id: number }>(
-      `SELECT role_id
-         FROM ims.roles
-        WHERE role_id = $1`,
-      [requestedRoleId]
-    );
-    if (role) return Number(role.role_id);
-  }
-
-  const fallbackRole = await queryOne<{ role_id: number }>(
+// CRIT-01 fix: this used to accept a client-supplied role_id and trust it
+// outright, falling back to `ORDER BY role_id LIMIT 1` (which is the seeded
+// Administrator role) when none was given - meaning the public /register
+// endpoint's default outcome was a full admin account. This is no longer
+// parameterized at all: every self-registered account gets the same fixed,
+// intentionally low-privilege "Viewer" role (read-only access), looked up
+// by its stable role_code rather than a role_id that could differ across
+// deployments/seeds. Real privilege assignment happens exclusively through
+// the authenticated Employees/Users admin flow, never through registration.
+const ensureRole = async (): Promise<number> => {
+  const viewerRole = await queryOne<{ role_id: number }>(
     `SELECT role_id
        FROM ims.roles
-      ORDER BY role_id
+      WHERE role_code = 'VIEWER'
       LIMIT 1`
   );
 
-  if (!fallbackRole) {
-    throw ApiError.badRequest('No role is configured in the database');
+  if (!viewerRole) {
+    throw ApiError.internal('Default registration role is not configured');
   }
 
-  return Number(fallbackRole.role_id);
+  return Number(viewerRole.role_id);
 };
 
-const ensureBranch = async (requestedBranchId?: number): Promise<number> => {
-  if (requestedBranchId) {
-    const branch = await queryOne<{ branch_id: number }>(
-      `SELECT branch_id
-         FROM ims.branches
-        WHERE branch_id = $1
-          AND is_active = TRUE`,
-      [requestedBranchId]
-    );
-    if (branch) return Number(branch.branch_id);
-  }
-
+const ensureBranch = async (): Promise<number> => {
   const fallbackBranch = await queryOne<{ branch_id: number }>(
     `SELECT branch_id
        FROM ims.branches
@@ -106,7 +95,7 @@ const getPrimaryBranch = async (userId: number): Promise<number> => {
 
   if (row) return Number(row.branch_id);
 
-  return ensureBranch(undefined);
+  return ensureBranch();
 };
 
 const resolveIdentifierToUsername = (input: RegisterInput) => {
@@ -119,13 +108,24 @@ const resolveIdentifierToUsername = (input: RegisterInput) => {
   throw ApiError.badRequest('Username is required');
 };
 
-const mapProfile = async (userId: number): Promise<UserProfile | null> => {
-  const row = await queryOne<{
+// CRIT-01b fix: register() calls this from inside an open withTransaction()
+// while that transaction's INSERT hasn't committed yet. The default path
+// below (no client passed) runs via the shared pool - a different physical
+// connection - which under READ COMMITTED can never see the other,
+// still-open transaction's uncommitted row, so it always returned null and
+// registration always failed. Callers with an open transaction must pass
+// their `client` so this reads through the same connection/transaction
+// instead. login() (no open transaction) continues to omit it, unchanged.
+const mapProfile = async (userId: number, client?: PoolClient): Promise<UserProfile | null> => {
+  const exec = client ? client.query.bind(client) : query;
+  const result = await exec<{
     user_id: number;
     name: string;
     username: string;
     role_id: number;
     role_name: string | null;
+    role_code: string | null;
+    is_system: boolean | null;
     is_active: boolean;
     branch_id: number | null;
     branch_name: string | null;
@@ -136,6 +136,8 @@ const mapProfile = async (userId: number): Promise<UserProfile | null> => {
         u.username,
         u.role_id,
         r.role_name,
+        r.role_code,
+        r.is_system,
         u.is_active,
         b.branch_id,
         b.branch_name
@@ -152,10 +154,11 @@ const mapProfile = async (userId: number): Promise<UserProfile | null> => {
      WHERE u.user_id = $1`,
     [userId]
   );
+  const row = result.rows[0];
 
   if (!row) return null;
 
-  const branchId = Number(row.branch_id || (await ensureBranch(undefined)));
+  const branchId = Number(row.branch_id || (await ensureBranch()));
   const branchName = row.branch_name || 'Main Branch';
 
   return {
@@ -168,7 +171,7 @@ const mapProfile = async (userId: number): Promise<UserProfile | null> => {
     branch_id: branchId,
     branch_name: branchName,
     is_active: Boolean(row.is_active),
-    is_admin: isAdminRoleName(row.role_name),
+    is_admin: isAdminRoleRecord(row),
   };
 };
 
@@ -201,8 +204,10 @@ export class AuthService {
         throw ApiError.conflict('Username already exists');
       }
 
-      const roleId = await ensureRole(input.role_id);
-      const branchId = await ensureBranch(input.branch_id);
+      // CRIT-01 fix: role_id/branch_id are never accepted from this
+      // (unauthenticated) input - see ensureRole()/ensureBranch() for why.
+      const roleId = await ensureRole();
+      const branchId = await ensureBranch();
       const passwordHash = await hashPassword(input.password);
 
       const inserted = await client.query<User>(
@@ -221,13 +226,25 @@ export class AuthService {
         [createdUser.user_id, branchId]
       );
 
-      const payload = await buildTokenPayload(createdUser);
+      // CRIT-01b fix: build the token payload directly from what was just
+      // inserted in this same transaction, instead of buildTokenPayload()
+      // -> getPrimaryBranch(), which re-queries via the pool and can't see
+      // this transaction's still-uncommitted rows.
+      const payload: TokenPayload = {
+        userId: Number(createdUser.user_id),
+        username: createdUser.username,
+        roleId: Number(createdUser.role_id),
+        branchId,
+      };
       const tokens = {
         accessToken: signAccessToken(payload),
         refreshToken: signRefreshToken(payload),
       };
 
-      const profile = await mapProfile(Number(createdUser.user_id));
+      // CRIT-01b fix: pass this transaction's client through so mapProfile
+      // reads the just-inserted (still uncommitted) rows on the same
+      // connection, instead of via the pool.
+      const profile = await mapProfile(Number(createdUser.user_id), client);
       if (!profile) {
         throw ApiError.internal('Failed to load user profile');
       }

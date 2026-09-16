@@ -238,6 +238,17 @@ export const updateCompanyInfo = asyncHandler(async (req: AuthRequest, res: Resp
     console.error('Cloudinary upload skipped/failed:', err);
   }
 
+  // M12 fix: capture the previous logo/banner before overwriting them, so the
+  // old Cloudinary/local asset can be removed once the new one is safely
+  // persisted - never before, matching the same ordering used for product
+  // images (uploadProductImage in products.controller.ts). A failed upsert
+  // leaves the previous row untouched (it's a single UPDATE ... ON CONFLICT),
+  // so there is nothing to roll back on that side; this only ever deletes an
+  // old asset after its replacement has already been committed.
+  const previous = await settingsService.getCompanyInfo();
+  const previousLogo = previous?.logo_img || null;
+  const previousBanner = previous?.banner_img || null;
+
   const company = await settingsService.upsertCompanyInfo({
     companyName: input.companyName.trim(),
     phone: normalizeNullable(input.phone),
@@ -246,6 +257,23 @@ export const updateCompanyInfo = asyncHandler(async (req: AuthRequest, res: Resp
     bannerImg: normalizeNullable(bannerUrl),
     capitalAmount: input.capitalAmount ?? 0,
   });
+
+  const nextLogo = normalizeNullable(logoUrl);
+  const nextBanner = normalizeNullable(bannerUrl);
+  try {
+    const { deleteCloudinaryImage } = await import('../../config/cloudinary');
+    if (previousLogo && previousLogo !== nextLogo) {
+      await deleteCloudinaryImage(previousLogo);
+    }
+    if (previousBanner && previousBanner !== nextBanner) {
+      await deleteCloudinaryImage(previousBanner);
+    }
+  } catch (err) {
+    // Never let old-asset cleanup fail the request - the new logo/banner is
+    // already saved at this point, which is what matters.
+    console.error('Old company image cleanup skipped/failed:', err);
+  }
+
   await logAudit({
     userId: req.user?.userId ?? null,
     action: 'update',

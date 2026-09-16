@@ -109,6 +109,12 @@ const supplierOutstandingColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'total', header: 'Total', align: 'right', render: (row) => formatCurrency(row.total) },
   { key: 'paid', header: 'Paid', align: 'right', render: (row) => formatCurrency(row.paid) },
   { key: 'outstanding', header: 'Outstanding', align: 'right', render: (row) => formatCurrency(row.outstanding) },
+  // H2 fix: this purchase's own outstanding above only reflects payments
+  // explicitly linked to it. A pooled/unlinked receipt still reduces the
+  // supplier's overall balance but is never guessed onto a specific
+  // purchase - shown here as its own (supplier-level, not per-purchase)
+  // figure so it isn't silently missing from the picture.
+  { key: 'supplier_unallocated_payment', header: 'Supplier Unallocated', align: 'right', render: (row) => formatCurrency(row.supplier_unallocated_payment) },
   { key: 'status', header: 'Status' },
 ];
 
@@ -119,6 +125,8 @@ const creditOverdueColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'appointment_date', header: 'Appointment Date', render: (row) => formatDateOnly(row.appointment_date) },
   { key: 'days_overdue', header: 'Days Overdue', align: 'right' },
   { key: 'total', header: 'Balance Due', align: 'right', render: (row) => formatCurrency(row.total) },
+  // H2 fix: supplier-level pooled/unlinked receipt total - see note above.
+  { key: 'supplier_unallocated_payment', header: 'Supplier Unallocated', align: 'right', render: (row) => formatCurrency(row.supplier_unallocated_payment) },
 ];
 
 type Props = {

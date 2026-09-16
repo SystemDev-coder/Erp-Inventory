@@ -4,6 +4,7 @@ import { ApiError } from '../../utils/ApiError';
 import { ApiResponse } from '../../utils/ApiResponse';
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { logAudit } from '../../utils/audit';
+import { resolveActiveBranchIds } from '../../utils/branchScope';
 import { notificationIdParamSchema, notificationsQuerySchema } from './notifications.schemas';
 import { notificationsService } from './notifications.service';
 
@@ -13,9 +14,20 @@ export const listNotifications = asyncHandler(async (req: AuthRequest, res: Resp
   }
 
   const query = notificationsQuerySchema.parse(req.query);
+  // H11 fix: resolve against the caller's currently active/authorized
+  // branch(es) via the same mechanism every other branch-scoped list uses,
+  // instead of the static branch_id baked into the JWT at login - this is
+  // what makes switching the active branch actually change which
+  // notifications are returned. Non-admins get exactly their authorized
+  // branch(es); an Administrator with no explicit ?branchId= gets every
+  // active branch (their existing "All Branches" behavior), and an explicit
+  // ?branchId= for an unauthorized branch is rejected the same way it is
+  // everywhere else (assertBranchAccess, inside resolveActiveBranchIds).
+  const branchIds = await resolveActiveBranchIds(req);
   const data = await notificationsService.list({
     userId: req.user.userId,
-    branchId: req.user.branchId,
+    branchId: branchIds.length === 1 ? branchIds[0] : undefined,
+    branchIds,
     limit: query.limit,
     offset: query.offset,
     unreadOnly: query.unreadOnly,

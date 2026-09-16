@@ -357,14 +357,24 @@ const reverseAccountBalanceForRef = async (
   client: PoolClient,
   params: { branchId: number; refTable: string; refId: number }
 ) => {
-  const previous = await client.query<{ acc_id: number; debit: string; credit: string }>(
-    `SELECT acc_id, COALESCE(debit, 0)::text AS debit, COALESCE(credit, 0)::text AS credit
-       FROM ims.account_transactions
-      WHERE branch_id = $1 AND ref_table = $2 AND ref_id = $3 AND COALESCE(is_deleted, 0) = 0`,
+  // H4 fix: this previously assumed debit-increases (asset/expense/cost) for
+  // every account it reversed. For liability/equity/revenue accounts, credit
+  // is what increases balance, so reversing must flip that sign too - not
+  // doing so meant a re-post of an equity-side line (e.g. Opening Balance
+  // Equity) double-added instead of correcting itself.
+  const previous = await client.query<{ acc_id: number; debit: string; credit: string; account_type: string }>(
+    `SELECT t.acc_id, COALESCE(t.debit, 0)::text AS debit, COALESCE(t.credit, 0)::text AS credit, a.account_type
+       FROM ims.account_transactions t
+       JOIN ims.accounts a ON a.acc_id = t.acc_id
+      WHERE t.branch_id = $1 AND t.ref_table = $2 AND t.ref_id = $3 AND COALESCE(t.is_deleted, 0) = 0`,
     [params.branchId, params.refTable, params.refId]
   );
   for (const row of previous.rows) {
-    const delta = -(Number(row.debit) - Number(row.credit));
+    const debit = Number(row.debit);
+    const credit = Number(row.credit);
+    const creditIncreases = row.account_type === 'liability' || row.account_type === 'equity' || row.account_type === 'revenue';
+    const originalDelta = creditIncreases ? credit - debit : debit - credit;
+    const delta = -originalDelta;
     if (delta) {
       await client.query(
         `UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`,
@@ -398,6 +408,35 @@ const rewriteItemOpeningStockGl = async (
     coa.inventory,
     params.branchId,
   ]);
+  // H4 fix: the Opening Balance Equity credit above was never mirrored into
+  // accounts.balance (only reverseAccountBalanceForRef, called earlier in this
+  // function, ever reduced it back out on a re-run - nothing added the new
+  // value back in). Opening Balance Equity is an equity account (credit
+  // increases it), matching the amount just posted above.
+  await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+    value,
+    coa.openingBalanceEquity,
+    params.branchId,
+  ]);
+};
+
+const findProductDeleteBlockReason = async (client: PoolClient, itemId: number): Promise<string | null> => {
+  const result = await client.query<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM ims.warehouse_stock WHERE item_id = $1
+       UNION ALL SELECT 1 FROM ims.inventory_transaction WHERE item_id = $1 OR product_id = $1
+       UNION ALL SELECT 1 FROM ims.inventory_movements WHERE item_id = $1
+       UNION ALL SELECT 1 FROM ims.stock_adjustment WHERE item_id = $1
+       UNION ALL SELECT 1 FROM ims.sale_items WHERE item_id = $1
+       UNION ALL SELECT 1 FROM ims.purchase_items WHERE item_id = $1
+       UNION ALL SELECT 1 FROM ims.sales_return_items WHERE item_id = $1
+       UNION ALL SELECT 1 FROM ims.purchase_return_items WHERE item_id = $1
+       UNION ALL SELECT 1 FROM ims.transfer_items WHERE item_id = $1
+       UNION ALL SELECT 1 FROM ims.warehouse_transfer_items WHERE item_id = $1
+     ) AS exists`,
+    [itemId]
+  );
+  return result.rows[0]?.exists ? 'Cannot delete product with inventory or transaction history' : null;
 };
 
 export const productsService = {
@@ -732,6 +771,42 @@ export const productsService = {
     );
   },
 
+  // Phase 12 blocker fix: exact barcode lookup for scanner/POS use. Deliberately
+  // separate from listProducts' ILIKE search (which is a substring match meant
+  // for typing partial text) - a scan must never resolve to the wrong item just
+  // because the scanned code happens to be a substring of another item's
+  // barcode. Barcode uniqueness (uq_items_branch_barcode) is only enforced per
+  // branch, so unlike getProduct(id, ...) this cannot skip branch scoping for
+  // admins - the same barcode text can legitimately belong to two different
+  // items in two different branches.
+  async getProductByBarcode(barcode: string, scope: BranchScope, branchId?: number): Promise<Product | null> {
+    const trimmed = barcode.trim();
+    if (!trimmed) return null;
+    const stockAlertExpr = (await hasItemsStockAlertColumn()) ? 'i.stock_alert' : 'COALESCE(i.reorder_level, 5)';
+    const params: unknown[] = [trimmed];
+    const branchWhere = scopeClause(scope, params, 'i', branchId);
+    return queryOne<Product>(
+      `${getProductSql(stockAlertExpr)}
+        WHERE i.barcode = $1
+          AND i.is_active = TRUE
+          AND (${branchWhere})`,
+      params
+    );
+  },
+
+  // M11 fix: lets the controller decide whether it's safe to delete a
+  // product's Cloudinary/local image asset after the product row itself is
+  // gone. Deliberately not branch-scoped - the concern is whether ANY item
+  // record anywhere still points at this exact URL, since the underlying
+  // file is shared by URL, not by branch.
+  async hasOtherProductWithImage(imageUrl: string, excludeId: number): Promise<boolean> {
+    const row = await queryOne<{ item_id: number }>(
+      `SELECT item_id FROM ims.items WHERE image_url = $1 AND item_id <> $2 LIMIT 1`,
+      [imageUrl, excludeId]
+    );
+    return Boolean(row);
+  },
+
   async createProduct(input: ProductCreateInput, scope: BranchScope): Promise<Product> {
     const catIdRequired = await isItemsCatIdRequired();
     const stockAlertColumn = (await hasItemsStockAlertColumn()) ? 'stock_alert' : 'reorder_level';
@@ -891,8 +966,37 @@ export const productsService = {
   },
 
   async deleteProduct(id: number, scope: BranchScope): Promise<void> {
-    if (scope.isAdmin) await queryOne(`DELETE FROM ims.items WHERE item_id = $1`, [id]);
-    else await queryOne(`DELETE FROM ims.items WHERE item_id = $1 AND branch_id = ANY($2::bigint[])`, [id, scope.branchIds]);
+    await withTransaction(async (client) => {
+      // C7 fix: ims.account_transactions.ref_table/ref_id has no foreign key
+      // (it's a generic polymorphic reference used across the whole ledger),
+      // so a plain DELETE here left this item's opening-stock GL rows - and
+      // the accounts.balance they contributed to - orphaned forever, with no
+      // way to trace them back once the item was gone. Reverse that
+      // contribution and remove the GL rows first, in the same transaction as
+      // the item delete, so either both happen or neither does. Tables with a
+      // real FK to items (inventory_movements, sale_items, stock_adjustment,
+      // etc.) are unaffected by this fix - Postgres already protects those via
+      // RESTRICT, correctly blocking deletion of an item with real activity.
+      const found = scope.isAdmin
+        ? await client.query<{ item_id: number; branch_id: number }>(
+            `SELECT item_id, branch_id FROM ims.items WHERE item_id = $1`,
+            [id]
+          )
+        : await client.query<{ item_id: number; branch_id: number }>(
+            `SELECT item_id, branch_id FROM ims.items WHERE item_id = $1 AND branch_id = ANY($2::bigint[])`,
+            [id, scope.branchIds]
+          );
+      const row = found.rows[0];
+      if (!row) return;
+
+      const branchId = Number(row.branch_id);
+      const blockReason = await findProductDeleteBlockReason(client, id);
+      if (blockReason) throw ApiError.badRequest(blockReason);
+      await reverseAccountBalanceForRef(client, { branchId, refTable: 'items', refId: id });
+      await deleteGlByRef(client, { branchId, refTable: 'items', refId: id });
+
+      await client.query(`DELETE FROM ims.items WHERE item_id = $1`, [id]);
+    });
   },
 
   async setProductImageUrl(id: number, imageUrl: string | null, scope: BranchScope): Promise<Product | null> {

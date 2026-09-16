@@ -45,6 +45,87 @@ export interface CompanyInfo {
   updated_at: string;
 }
 
+export interface ProductConfig {
+  barcode: boolean;
+  variants: boolean;
+  size: boolean;
+  color: boolean;
+  brand: boolean;
+  batchTracking: boolean;
+  expiryTracking: boolean;
+  serialNumber: boolean;
+  multipleUnits: boolean;
+}
+
+export interface SalesConfig {
+  retail: boolean;
+  wholesale: boolean;
+  credit: boolean;
+  creditDays: number;
+  discount: boolean;
+  tax: boolean;
+  pos: boolean;
+  customerDisplay: boolean;
+}
+
+export interface PurchaseConfig {
+  supplierManagement: boolean;
+  purchaseOrders: boolean;
+  purchasePayments: boolean;
+  creditPurchases: boolean;
+  supplierCreditDays: number;
+}
+
+export interface AccountingConfig {
+  defaultCashAccId: number | null;
+  defaultBankAccId: number | null;
+  arAccId: number | null;
+  apAccId: number | null;
+  salesRevenueAccId: number | null;
+  inventoryAccId: number | null;
+  cogsAccId: number | null;
+  openingBalanceEquityAccId: number | null;
+}
+
+export interface BranchConfig {
+  multiBranch: boolean;
+  defaultBranchId: number | null;
+}
+
+export interface ReceiptConfig {
+  logo: boolean;
+  header: string;
+  footer: string;
+  showCustomer: boolean;
+  showBarcode: boolean;
+  showTax: boolean;
+  showDiscount: boolean;
+  paperSize: 'a4' | 'thermal';
+}
+
+export interface NotificationConfig {
+  lowStock: boolean;
+  expiry: boolean;
+  creditDue: boolean;
+  purchasePayment: boolean;
+}
+
+export interface BusinessProfile {
+  businessType: string | null;
+  email: string | null;
+  website: string | null;
+  currency: string | null;
+  country: string | null;
+  timezone: string | null;
+  productConfig: ProductConfig;
+  salesConfig: SalesConfig;
+  purchaseConfig: PurchaseConfig;
+  accountingConfig: AccountingConfig;
+  branchConfig: BranchConfig;
+  receiptConfig: ReceiptConfig;
+  notificationConfig: NotificationConfig;
+}
+
 export interface CapitalContribution {
   capital_id: number;
   branch_id: number;
@@ -1529,6 +1610,13 @@ export const settingsService = {
         `UPDATE ims.accounts SET balance = COALESCE(balance, 0) + $1 WHERE branch_id = $2 AND acc_id = $3`,
         [Number(input.amount || 0), branchId, depositAccountId]
       );
+      // H4 fix: Owner Capital's credit above was never mirrored into
+      // accounts.balance. Equity - credit increases it. No reversal needed:
+      // capital_id is a brand-new row from the INSERT above.
+      await client.query(
+        `UPDATE ims.accounts SET balance = COALESCE(balance, 0) + $1 WHERE branch_id = $2 AND acc_id = $3`,
+        [Number(input.amount || 0), branchId, ownerCapitalAccId]
+      );
 
       return capital_id;
     });
@@ -1737,6 +1825,21 @@ export const settingsService = {
             AND acc_id = $3`,
         [input.amount, branchId, payoutAccountId]
       );
+      // H4 fix: Owner Drawings' debit above was never mirrored into
+      // accounts.balance. Despite its 'equity' account_type, Owner Drawings
+      // is a contra-equity account where debit increases the balance (it
+      // accumulates draws to net against capital) - confirmed by
+      // resolveNaturalSide's explicit isDrawingAccount special-case in
+      // financialReports.service.ts, which returns 'debit' before the
+      // generic equity->credit rule. No reversal needed: draw_id is a
+      // brand-new row from the INSERT above.
+      await client.query(
+        `UPDATE ims.accounts
+            SET balance = COALESCE(balance, 0) + $1
+          WHERE branch_id = $2
+            AND acc_id = $3`,
+        [input.amount, branchId, coa.ownerDrawings]
+      );
 
       return draw_id;
     });
@@ -1876,6 +1979,21 @@ export const settingsService = {
             AND acc_id = $3`,
         [Number(next.amount), Number(existing.branch_id), nextAccountId]
       );
+      // H4 fix: Owner Drawings' debit was never mirrored into
+      // accounts.balance (same contra-equity, debit-increases account as
+      // createOwnerDrawing - see that function's H4 fix comment). The
+      // account itself never changes between edits, so this is a plain
+      // reverse-old/apply-new delta.
+      const ownerDrawingsDelta = Number(next.amount) - prevAmount;
+      if (ownerDrawingsDelta) {
+        await client.query(
+          `UPDATE ims.accounts
+              SET balance = COALESCE(balance, 0) + $1
+            WHERE branch_id = $2
+              AND acc_id = $3`,
+          [ownerDrawingsDelta, Number(existing.branch_id), coa.ownerDrawings]
+        );
+      }
 
       const reloaded = await this.getOwnerDrawingById(id, scope);
       if (!reloaded) throw ApiError.internal('Failed to load updated drawing entry');
@@ -1919,6 +2037,21 @@ export const settingsService = {
           WHERE branch_id = $2
             AND acc_id = $3`,
         [Number(existing.amount || 0), Number(existing.branch_id), Number(existing.acc_id)]
+      );
+      // H4 fix: reverse Owner Drawings' contra-equity (debit-increases)
+      // contribution too, now that create/update keep it in sync - otherwise
+      // every delete would leave a permanent orphaned balance behind. Note:
+      // this is NOT existing.equity_acc_id - that column stores the Owner
+      // *Capital* account id (see createOwnerDrawing), while the actual GL
+      // debit goes to the separate "Owner Drawings" COA account, looked up
+      // the same way create/update do.
+      const drawingsCoa = await ensureCoaAccounts(client, Number(existing.branch_id), ['ownerDrawings']);
+      await client.query(
+        `UPDATE ims.accounts
+            SET balance = COALESCE(balance, 0) - $1
+          WHERE branch_id = $2
+            AND acc_id = $3`,
+        [Number(existing.amount || 0), Number(existing.branch_id), drawingsCoa.ownerDrawings]
       );
 
       await client.query(
@@ -2004,6 +2137,14 @@ export const settingsService = {
         `UPDATE ims.accounts SET balance = COALESCE(balance, 0) - $1 WHERE branch_id = $2 AND acc_id = $3`,
         [Number(existing.amount || 0), Number(existing.branch_id), Number(existing.acc_id)]
       );
+      // H4 fix: Owner Capital's credit was never mirrored into
+      // accounts.balance. Equity - credit increases it. equity_acc_id is
+      // fixed across edits (unlike the deposit/cash account), so reverse the
+      // old amount here before applying the new one below.
+      await client.query(
+        `UPDATE ims.accounts SET balance = COALESCE(balance, 0) - $1 WHERE branch_id = $2 AND acc_id = $3`,
+        [Number(existing.amount || 0), Number(existing.branch_id), Number(existing.equity_acc_id)]
+      );
 
       await client.query(
         `UPDATE ims.capital_contributions
@@ -2037,6 +2178,10 @@ export const settingsService = {
       await client.query(
         `UPDATE ims.accounts SET balance = COALESCE(balance, 0) + $1 WHERE branch_id = $2 AND acc_id = $3`,
         [Number(next.amount || 0), Number(existing.branch_id), depositAccountId]
+      );
+      await client.query(
+        `UPDATE ims.accounts SET balance = COALESCE(balance, 0) + $1 WHERE branch_id = $2 AND acc_id = $3`,
+        [Number(next.amount || 0), Number(existing.branch_id), Number(existing.equity_acc_id)]
       );
 
       const reloaded = await this.getCapitalContributionById(id, scope);
@@ -2085,6 +2230,13 @@ export const settingsService = {
       await client.query(
         `UPDATE ims.accounts SET balance = COALESCE(balance, 0) - $1 WHERE branch_id = $2 AND acc_id = $3`,
         [Number(existing.amount || 0), Number(existing.branch_id), Number(existing.acc_id)]
+      );
+      // H4 fix: reverse Owner Capital's credit contribution too, now that
+      // create/update keep it in sync - otherwise every delete would leave a
+      // permanent orphaned balance behind.
+      await client.query(
+        `UPDATE ims.accounts SET balance = COALESCE(balance, 0) - $1 WHERE branch_id = $2 AND acc_id = $3`,
+        [Number(existing.amount || 0), Number(existing.branch_id), Number(existing.equity_acc_id)]
       );
 
       await client.query(`DELETE FROM ims.capital_contributions WHERE capital_id = $1`, [id]);

@@ -109,6 +109,16 @@ export const getProduct = asyncHandler(async (req: AuthRequest, res: Response) =
   return ApiResponse.success(res, { product });
 });
 
+export const getProductByBarcode = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const barcode = String(req.params.barcode || '').trim();
+  if (!barcode) throw ApiError.badRequest('Barcode is required');
+  const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
+  const product = await productsService.getProductByBarcode(barcode, scope, branchId);
+  if (!product) throw ApiError.notFound('No product found for this barcode');
+  return ApiResponse.success(res, { product });
+});
+
 export const createProduct = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const input = productCreateSchema.parse(normalizeProductBody(req.body));
@@ -127,7 +137,18 @@ export const updateProduct = asyncHandler(async (req: AuthRequest, res: Response
 export const deleteProduct = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
+  // M11 fix: capture the image URL before the row is gone, so it can be
+  // cleaned up after the DB delete succeeds - never before, since an
+  // external asset delete can't be rolled back if the transaction below
+  // then fails for an unrelated reason (e.g. a blocked-delete race).
+  const existing = await productsService.getProduct(id, scope);
   await productsService.deleteProduct(Number(req.params.id), scope);
+  if (existing?.image_url) {
+    const stillReferenced = await productsService.hasOtherProductWithImage(existing.image_url, id);
+    if (!stillReferenced) {
+      await deleteCloudinaryImage(existing.image_url);
+    }
+  }
   await logAudit({
     userId: req.user?.userId ?? null,
     action: 'delete',

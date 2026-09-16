@@ -12,6 +12,7 @@ export interface Customer {
   is_active: boolean;
   credit_allowed?: boolean;
   credit_days?: number;
+  credit_limit?: number | null;
   balance: number;
   open_balance?: number;
   remaining_balance?: number;
@@ -49,6 +50,7 @@ export const customerService = {
       isActive: data.is_active,
       creditAllowed: data.credit_allowed,
       creditDays: data.credit_days,
+      creditLimit: data.credit_limit,
       remainingBalance: data.remaining_balance,
     });
   },
@@ -64,6 +66,7 @@ export const customerService = {
       isActive: data.is_active,
       creditAllowed: data.credit_allowed,
       creditDays: data.credit_days,
+      creditLimit: data.credit_limit,
       remainingBalance: data.remaining_balance,
       editReason: data.edit_reason,
     });

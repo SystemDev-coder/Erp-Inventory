@@ -52,6 +52,7 @@ const ordersSummaryColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'total', header: 'Total', align: 'right', render: (row) => formatCurrency(row.total) },
   { key: 'paid_amount', header: 'Paid', align: 'right', render: (row) => formatCurrency(row.paid_amount) },
   { key: 'outstanding_amount', header: 'Outstanding', align: 'right', render: (row) => formatCurrency(row.outstanding_amount) },
+  { key: 'supplier_unallocated_payment', header: 'Supplier Unallocated', align: 'right', render: (row) => formatCurrency(row.supplier_unallocated_payment) },
   { key: 'payment_status', header: 'Payment Status' },
   { key: 'status', header: 'Status' },
 ];
@@ -75,6 +76,7 @@ const paymentStatusColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'total', header: 'Total', align: 'right', render: (row) => formatCurrency(row.total) },
   { key: 'paid_amount', header: 'Paid', align: 'right', render: (row) => formatCurrency(row.paid_amount) },
   { key: 'outstanding_amount', header: 'Outstanding', align: 'right', render: (row) => formatCurrency(row.outstanding_amount) },
+  { key: 'supplier_unallocated_payment', header: 'Supplier Unallocated', align: 'right', render: (row) => formatCurrency(row.supplier_unallocated_payment) },
   { key: 'payment_status', header: 'Payment Status' },
   { key: 'status', header: 'Status' },
 ];

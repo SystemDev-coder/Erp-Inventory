@@ -1,5 +1,6 @@
 import { PoolClient } from 'pg';
 import { ApiError } from './ApiError';
+import { computeCustomerOutstandingFromLedger } from './customerOutstanding';
 
 export type SaleDocType = 'sale' | 'invoice' | 'quotation';
 export type SaleStatus = 'paid' | 'partial' | 'unpaid' | 'void';
@@ -19,9 +20,11 @@ export const assertCustomerCreditAllowed = async (
   client: PoolClient,
   params: {
     customerId?: number | null;
+    branchId: number;
     docType: SaleDocType;
     saleType: 'cash' | 'credit';
     status: SaleStatus;
+    outstandingChange?: number;
   }
 ): Promise<void> => {
   if (!isCreditSale(params)) return;
@@ -32,32 +35,36 @@ export const assertCustomerCreditAllowed = async (
     );
   }
 
-  const colCheck = await client.query<{ exists: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'ims'
-          AND table_name = 'customers'
-          AND column_name = 'credit_allowed'
-     ) AS exists`
+  const colCheck = await client.query<{ column_name: string }>(
+    `SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'ims' AND table_name = 'customers'
+        AND column_name IN ('credit_allowed', 'credit_limit')`
   );
-  const hasCreditAllowed = Boolean(colCheck.rows[0]?.exists);
+  const availableColumns = new Set(colCheck.rows.map((row) => row.column_name));
+  const hasCreditAllowed = availableColumns.has('credit_allowed');
+  const hasCreditLimit = availableColumns.has('credit_limit');
 
   const result = await client.query<{
     customer_type: string;
     credit_allowed: boolean | null;
+    credit_limit: string | null;
   }>(
     hasCreditAllowed
       ? `SELECT COALESCE(customer_type, 'regular') AS customer_type,
-                COALESCE(credit_allowed, FALSE) AS credit_allowed
+                COALESCE(credit_allowed, FALSE) AS credit_allowed,
+                ${hasCreditLimit ? 'credit_limit::text' : 'NULL::text'} AS credit_limit
            FROM ims.customers
           WHERE customer_id = $1
+            AND branch_id = $2
           LIMIT 1`
       : `SELECT COALESCE(customer_type, 'regular') AS customer_type,
-                NULL::boolean AS credit_allowed
+                NULL::boolean AS credit_allowed,
+                ${hasCreditLimit ? 'credit_limit::text' : 'NULL::text'} AS credit_limit
            FROM ims.customers
           WHERE customer_id = $1
+            AND branch_id = $2
           LIMIT 1`,
-    [params.customerId]
+    [params.customerId, params.branchId]
   );
 
   const row = result.rows[0];
@@ -74,4 +81,18 @@ export const assertCustomerCreditAllowed = async (
       'Credit is not allowed for this customer. Enable "Credit Allowed" on their profile first.'
     );
   }
+  if (hasCreditLimit && row.credit_limit != null) {
+    const currentOutstanding = await computeCustomerOutstandingFromLedger(client, {
+      branchId: params.branchId,
+      customerId: params.customerId,
+    });
+    const projectedOutstanding = Math.max(0, currentOutstanding + Number(params.outstandingChange || 0));
+    const creditLimit = Number(row.credit_limit);
+    if (projectedOutstanding > creditLimit + 0.000001) {
+      throw ApiError.badRequest(
+        `Customer credit limit of ${creditLimit.toFixed(2)} would be exceeded (projected outstanding ${projectedOutstanding.toFixed(2)}).`
+      );
+    }
+  }
+
 };

@@ -21,6 +21,7 @@ const customerBaseSchema = z.object({
   gender: genderSchema.optional().nullable(),
   isActive: z.boolean().optional(),
   creditAllowed: z.boolean().optional(),
+  creditLimit: z.coerce.number().nonnegative().nullable().optional(),
   creditDays: z.coerce.number().int().nonnegative().optional(),
   remainingBalance: z.coerce.number().nonnegative().optional(),
   editReason: z.string().max(500).optional(),

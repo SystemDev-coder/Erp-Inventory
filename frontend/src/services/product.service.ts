@@ -124,6 +124,18 @@ export const productService = {
     return apiClient.get<{ product: Product }>(API.PRODUCTS.ITEM(id));
   },
 
+  // Exact-match lookup for scanner/barcode entry - never substring/ILIKE, see
+  // the backend route for why (a scan must never resolve to the wrong item
+  // just because it's a substring of another item's barcode). Shared by every
+  // screen that needs to resolve a scanned code to a product (POS already has
+  // its own client-side exact match against an already-loaded catalog; this
+  // is for screens, like Sales/Invoice, that don't preload the full catalog
+  // with barcode data attached).
+  async getByBarcode(barcode: string, branchId?: number) {
+    const qs = buildQuery({ branchId });
+    return apiClient.get<{ product: Product }>(`${API.PRODUCTS.BARCODE(barcode)}${qs}`);
+  },
+
   async getSummary(branchId?: number) {
     const qs = buildQuery({ branchId });
     return apiClient.get<{ summary: { total: number; inStock: number; lowStock: number; noStock: number } }>(

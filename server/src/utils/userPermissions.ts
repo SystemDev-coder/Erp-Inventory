@@ -1,5 +1,6 @@
 import { queryMany, queryOne } from '../db/query';
 import { sessionService } from '../modules/session/session.service';
+import { isAdminRoleRecord } from './branchScope';
 
 const expandPermissionKeys = (permKey: string): string[] => {
   if (permKey.startsWith('items.')) {
@@ -14,19 +15,27 @@ const expandPermissionKeys = (permKey: string): string[] => {
 const adminRoleCache = new Map<number, { isAdmin: boolean; expiresAt: number }>();
 const ADMIN_ROLE_TTL_MS = 10 * 60 * 1000;
 
+// H9 fix: `is_system` means "one of the roles this product ships with" (every
+// seeded role, including Viewer/Sales Associate/etc., has it) - it is never a
+// signal of trust on its own and must not be used alone to bypass permission
+// checks. The one existing, explicit signal for "this role has full access"
+// is the same one branchScope.ts uses to decide whether a user can see every
+// branch: role_code = 'ADMIN' combined with is_system = true (both only ever
+// true, together, for the originally-seeded Administrator role - see
+// isAdminRoleRecord's own comment in branchScope.ts for why). Reusing it here
+// keeps a single definition of "admin" across the authorization system
+// instead of two that can drift apart.
 export const isAdminRole = async (roleId: number): Promise<boolean> => {
   const cached = adminRoleCache.get(roleId);
   if (cached && Date.now() <= cached.expiresAt) {
     return cached.isAdmin;
   }
 
-  const row = await queryOne<{ role_name: string; is_system: boolean | null }>(
-    `SELECT role_name, is_system FROM ims.roles WHERE role_id = $1 LIMIT 1`,
+  const row = await queryOne<{ role_code: string; is_system: boolean }>(
+    `SELECT role_code, is_system FROM ims.roles WHERE role_id = $1 LIMIT 1`,
     [roleId]
   );
-  const isAdmin = row
-    ? (row.role_name || '').toLowerCase().includes('admin') || Boolean(row.is_system)
-    : false;
+  const isAdmin = isAdminRoleRecord(row);
 
   adminRoleCache.set(roleId, { isAdmin, expiresAt: Date.now() + ADMIN_ROLE_TTL_MS });
   return isAdmin;

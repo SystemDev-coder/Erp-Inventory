@@ -136,7 +136,7 @@ const tabPermissionAny: Record<TabId, string[]> = {
 
 export default function Reports() {
   const { user, permissions } = useAuth();
-  const { activeBranchId } = useBranch();
+  const { activeBranchId, branches } = useBranch();
   const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState<TabId>('sales');
   const [companyInfo, setCompanyInfo] = useState<{
@@ -150,6 +150,24 @@ export default function Reports() {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalStack, setModalStack] = useState<ModalReportState[]>([]);
   const modalReport = modalStack.length ? modalStack[modalStack.length - 1] : null;
+
+  // H12 fix: a displayed report's results belong to whichever branch was
+  // active when it was fetched (all 8 report tabs fetch on click, not
+  // reactively). If the active branch changes while a report is open, close
+  // it instead of leaving that stale data on screen looking like it belongs
+  // to the newly-selected branch - the tab's Display/Show/All controls are
+  // still right there to re-run it for the new branch. Also fires on mount,
+  // where it's a harmless no-op since nothing is open yet.
+  const activeBranchName = useMemo(() => {
+    if (activeBranchId == null) return 'All Branches';
+    return branches.find((b) => b.branch_id === activeBranchId)?.branch_name || null;
+  }, [activeBranchId, branches]);
+
+  useEffect(() => {
+    setModalOpen(false);
+    setModalStack([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBranchId]);
 
   const resolveImageUrl = (value?: string | null) => {
     const raw = (value || '').trim();
@@ -176,7 +194,13 @@ export default function Reports() {
   }, []);
 
   const handleOpenModal = (payload: ModalReportState) => {
-    setModalStack((prev) => [...prev, payload]);
+    // H12 fix: stamp the branch the report was actually run against onto its
+    // subtitle (rendered in the modal header) so it's always visible which
+    // branch a report represents, independent of the auto-close above.
+    const withBranch: ModalReportState = activeBranchName
+      ? { ...payload, subtitle: payload.subtitle ? `${payload.subtitle} · ${activeBranchName}` : activeBranchName }
+      : payload;
+    setModalStack((prev) => [...prev, withBranch]);
     setModalOpen(true);
   };
 

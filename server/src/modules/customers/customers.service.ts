@@ -17,6 +17,7 @@ export interface Customer {
   registered_date: string;
   is_active: boolean;
   credit_allowed: boolean;
+  credit_limit: number | null;
   credit_days: number;
   balance: number;
   open_balance: number;
@@ -33,6 +34,7 @@ export interface CustomerInput {
   isActive?: boolean;
   creditAllowed?: boolean;
   creditDays?: number;
+  creditLimit?: number | null;
   remainingBalance?: number;
   editReason?: string;
 }
@@ -45,6 +47,7 @@ type CustomerColumnMeta = {
   hasType: boolean;
   hasCreditAllowed: boolean;
   hasCreditDays: boolean;
+  hasCreditLimit: boolean;
 };
 
 let customerColumnMeta: CustomerColumnMeta | null = null;
@@ -68,6 +71,7 @@ const detectCustomerColumns = async (): Promise<CustomerColumnMeta> => {
     hasType: names.has('customer_type'),
     hasCreditAllowed: names.has('credit_allowed'),
     hasCreditDays: names.has('credit_days'),
+    hasCreditLimit: names.has('credit_limit'),
   };
   return customerColumnMeta;
 };
@@ -85,6 +89,7 @@ const mapCustomer = (row: {
   credit_allowed?: boolean | null;
   credit_days?: number | string | null;
   balance_value: string | number;
+  credit_limit?: number | string | null;
   open_balance_value?: string | number | null;
 }): Customer => ({
   customer_id: Number(row.customer_id),
@@ -99,6 +104,7 @@ const mapCustomer = (row: {
   credit_allowed: row.credit_allowed !== false,
   credit_days: Number(row.credit_days ?? 30),
   balance: Number(row.balance_value || 0),
+  credit_limit: row.credit_limit == null ? null : Number(row.credit_limit),
   open_balance: Number(row.open_balance_value ?? row.balance_value ?? 0),
   remaining_balance: Number(row.balance_value || 0),
 });
@@ -111,6 +117,8 @@ const getCreditAllowedSelect = (meta: CustomerColumnMeta) =>
   meta.hasCreditAllowed ? 'credit_allowed' : 'TRUE AS credit_allowed';
 const getCreditDaysSelect = (meta: CustomerColumnMeta) =>
   meta.hasCreditDays ? 'credit_days' : '30 AS credit_days';
+const getCreditLimitSelect = (meta: CustomerColumnMeta) =>
+  meta.hasCreditLimit ? 'credit_limit::text AS credit_limit' : 'NULL::text AS credit_limit';
 const getOpenBalanceSelect = (meta: CustomerColumnMeta) =>
   meta.hasOpenBalance ? 'open_balance::text AS open_balance_value' : 'NULL::text AS open_balance_value';
 
@@ -137,7 +145,7 @@ const scopedCustomer = async (
         balance_value: string;
         open_balance_value: string | null;
       }>(
-        `SELECT customer_id, full_name, phone, sex::text AS sex, address, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect(meta)}, ${getCreditAllowedSelect(meta)}, ${getCreditDaysSelect(meta)}, ${balanceColumn}::text AS balance_value, ${getOpenBalanceSelect(meta)}
+        `SELECT customer_id, full_name, phone, sex::text AS sex, address, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect(meta)}, ${getCreditAllowedSelect(meta)}, ${getCreditDaysSelect(meta)}, ${getCreditLimitSelect(meta)}, ${balanceColumn}::text AS balance_value, ${getOpenBalanceSelect(meta)}
            FROM ims.customers
           WHERE customer_id = $1
             AND COALESCE(is_deleted, 0)::int = 0`,
@@ -158,7 +166,7 @@ const scopedCustomer = async (
         balance_value: string;
         open_balance_value: string | null;
       }>(
-        `SELECT customer_id, full_name, phone, sex::text AS sex, address, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect(meta)}, ${getCreditAllowedSelect(meta)}, ${getCreditDaysSelect(meta)}, ${balanceColumn}::text AS balance_value, ${getOpenBalanceSelect(meta)}
+        `SELECT customer_id, full_name, phone, sex::text AS sex, address, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect(meta)}, ${getCreditAllowedSelect(meta)}, ${getCreditDaysSelect(meta)}, ${getCreditLimitSelect(meta)}, ${balanceColumn}::text AS balance_value, ${getOpenBalanceSelect(meta)}
            FROM ims.customers
           WHERE customer_id = $1
             AND branch_id = ANY($2)
@@ -250,6 +258,29 @@ const upsertCustomerOpeningLedger = async (
     [branchId, customerId]
   );
 
+  const coa = await ensureCoreCoa(client, branchId, ['accountsReceivable', 'openingBalanceEquity']);
+  // H4 fix: reverse this ref's previous Opening Balance Equity contribution
+  // to accounts.balance before the old GL rows are deleted below - it was
+  // never mirrored into accounts.balance at all, so re-edits accumulated
+  // stale GL-only value. Accounts Receivable is deliberately left out here;
+  // it's resynced from the ledger at the end of this function.
+  const priorObeRows = await client.query<{ debit: string; credit: string }>(
+    `SELECT debit, credit FROM ims.account_transactions
+      WHERE branch_id = $1 AND ref_table = 'opening_balance' AND ref_id = $2
+        AND acc_id = $3 AND COALESCE(is_deleted, 0) = 0`,
+    [branchId, customerId, coa.openingBalanceEquity]
+  );
+  for (const row of priorObeRows.rows) {
+    const delta = -(Number(row.credit) - Number(row.debit));
+    if (delta) {
+      await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+        delta,
+        coa.openingBalanceEquity,
+        branchId,
+      ]);
+    }
+  }
+
   // Keep the real GL in sync with the subsidiary ledger: replace any prior
   // opening-balance journal entry for this customer, then re-post it if the
   // new amount is non-zero, so Accounts Receivable never drifts from what
@@ -265,7 +296,6 @@ const upsertCustomerOpeningLedger = async (
       [branchId, customerId, amount, '[OPENING BALANCE] Set from customer form']
     );
 
-    const coa = await ensureCoreCoa(client, branchId, ['accountsReceivable', 'openingBalanceEquity']);
     await postGl(client, {
       branchId,
       refTable: 'opening_balance',
@@ -276,6 +306,13 @@ const upsertCustomerOpeningLedger = async (
         { accId: coa.openingBalanceEquity, debit: 0, credit: amount, note: 'Opening balance equity' },
       ],
     });
+    // H4 fix: Opening Balance Equity credit above was never mirrored into
+    // accounts.balance. Equity - credit increases it.
+    await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+      amount,
+      coa.openingBalanceEquity,
+      branchId,
+    ]);
   }
 
   // The Balance Sheet reads the "Accounts Receivable" system account's stored
@@ -365,6 +402,7 @@ export const customersService = {
           ${getCustomerTypeSelect(meta)},
           ${getCreditAllowedSelect(meta)},
           ${getCreditDaysSelect(meta)},
+          ${getCreditLimitSelect(meta)},
           ${balanceColumn}::text AS balance_value,
           ${getOpenBalanceSelect(meta)}
        FROM ims.customers
@@ -429,6 +467,7 @@ export const customersService = {
           ${getCustomerTypeSelect(meta)},
           ${getCreditAllowedSelect(meta)},
           ${getCreditDaysSelect(meta)},
+          ${getCreditLimitSelect(meta)},
           ${balanceColumn}::text AS balance_value,
           ${getOpenBalanceSelect(meta)}
        FROM ims.customers
@@ -490,6 +529,11 @@ export const customersService = {
         values.push(creditDays);
       }
 
+      if (meta.hasCreditLimit) {
+        insertColumns += `credit_limit, `;
+        insertValues += `$${p++}, `;
+        values.push(input.creditLimit ?? null);
+      }
       insertColumns += `address, `;
       insertValues += `$${p++}, `;
       values.push(input.address ?? null);
@@ -527,7 +571,7 @@ export const customersService = {
            ${insertColumns}
          VALUES
            ${insertValues}
-         RETURNING customer_id, full_name, phone, address, sex::text AS sex, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect(meta)}, ${getCreditAllowedSelect(meta)}, ${getCreditDaysSelect(meta)}, ${meta.balanceColumn}::text AS balance_value, ${getOpenBalanceSelect(meta)}`,
+         RETURNING customer_id, full_name, phone, address, sex::text AS sex, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect(meta)}, ${getCreditAllowedSelect(meta)}, ${getCreditDaysSelect(meta)}, ${getCreditLimitSelect(meta)}, ${meta.balanceColumn}::text AS balance_value, ${getOpenBalanceSelect(meta)}`,
         values
       );
 
@@ -594,6 +638,10 @@ export const customersService = {
       updates.push(`credit_days = $${parameter++}`);
       values.push(Math.max(0, Number(input.creditDays ?? 30)));
     }
+    if (input.creditLimit !== undefined && meta.hasCreditLimit) {
+      updates.push(`credit_limit = $${parameter++}`);
+      values.push(input.creditLimit == null ? null : Math.max(0, Number(input.creditLimit)));
+    }
     const wantsOpeningUpdate = input.remainingBalance !== undefined;
     const openingAmount = Math.max(0, Number(input.remainingBalance ?? 0));
     if (wantsOpeningUpdate) {
@@ -631,15 +679,20 @@ export const customersService = {
       const branchId = Number(branchRow.rows[0]?.branch_id || 0);
       if (!branchId) return null;
 
+      // HIGH-03 fix: this used to allow overwriting remaining_balance once
+      // transactions existed as long as any non-empty "reason" string was
+      // supplied - not a real guard, since remaining_balance is also raw-set
+      // by the dynamic UPDATE below (built from `updates` further up),
+      // bypassing upsertCustomerOpeningLedger's ledger-safe adjustment and
+      // discarding whatever sales/receipts/returns had since moved the
+      // customer's real balance away from the opening figure. Mirrors the
+      // supplier side exactly (suppliers.service.ts#updateSupplier), which
+      // already hard-rejects any opening-balance change once transactions
+      // exist rather than accepting a free-text bypass.
       if (wantsOpeningUpdate) {
         const hasTransactions = await hasCustomerNonOpeningLedger(client, branchId, id);
         if (hasTransactions) {
-          const reason = String(input.editReason || '').trim();
-          if (!reason) {
-            throw ApiError.badRequest(
-              'Customer has transactions; provide a reason to change opening balance'
-            );
-          }
+          throw ApiError.badRequest('Customer has transactions; cannot change opening balance');
         }
         await upsertCustomerOpeningLedger(client, branchId, id, openingAmount);
       }
@@ -662,7 +715,7 @@ export const customersService = {
         `UPDATE ims.customers
             SET ${updates.join(', ')}
           WHERE ${whereSql}
-          RETURNING customer_id, full_name, phone, address, sex::text AS sex, ${getGenderSelect(meta)}, registered_date::text, is_active, ${getCustomerTypeSelect(meta)}, ${getCreditAllowedSelect(meta)}, ${getCreditDaysSelect(meta)}, ${meta.balanceColumn}::text AS balance_value, ${getOpenBalanceSelect(meta)}`,
+          RETURNING customer_id, full_name, phone, address, sex::text AS sex, ${getGenderSelect(meta)}, registered_date::text, is_active, ${getCustomerTypeSelect(meta)}, ${getCreditAllowedSelect(meta)}, ${getCreditDaysSelect(meta)}, ${getCreditLimitSelect(meta)}, ${meta.balanceColumn}::text AS balance_value, ${getOpenBalanceSelect(meta)}`,
         values
       );
 

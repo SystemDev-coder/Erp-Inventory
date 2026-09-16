@@ -1,5 +1,5 @@
 import { queryMany } from '../../../db/query';
-import { supplierPaymentsCteSql } from '../reports.helpers';
+import { supplierPaymentsCteSql, supplierUnallocatedPaymentsCteSql } from '../reports.helpers';
 
 export interface PurchaseReportOption {
   id: number;
@@ -17,6 +17,12 @@ export interface PurchaseOrdersSummaryRow {
   total: number;
   paid_amount: number;
   outstanding_amount: number;
+  // H2 fix: paid_amount/outstanding_amount above only reflect payments
+  // explicitly linked to this purchase (purchase_id set) - they never guess
+  // that a pooled/unlinked supplier receipt belongs to this invoice. This is
+  // the supplier's total unlinked balance, surfaced separately so it isn't
+  // silently missing from the picture.
+  supplier_unallocated_payment: number;
   payment_status: string;
   status: string;
 }
@@ -52,6 +58,9 @@ export interface PurchasePaymentStatusRow {
   total: number;
   paid_amount: number;
   outstanding_amount: number;
+  // H2 fix: see PurchaseOrdersSummaryRow - linked payments only; the
+  // supplier's unlinked/pooled balance is surfaced separately here.
+  supplier_unallocated_payment: number;
   payment_status: string;
   status: string;
 }
@@ -113,6 +122,10 @@ export interface CreditOverduePurchaseRow {
   appointment_date: string;
   days_overdue: number;
   total: number;
+  // H2 fix: "total" (balance due) only reflects payments explicitly linked
+  // to this purchase; the supplier's unlinked/pooled balance is surfaced
+  // separately here rather than pretending it settled this invoice.
+  supplier_unallocated_payment: number;
 }
 
 export const purchaseReportsService = {
@@ -142,6 +155,7 @@ export const purchaseReportsService = {
   async getPurchaseOrdersSummary(branchId: number, fromDate: string, toDate: string): Promise<PurchaseOrdersSummaryRow[]> {
     return queryMany<PurchaseOrdersSummaryRow>(
       `WITH ${supplierPaymentsCteSql('$1')},
+       ${supplierUnallocatedPaymentsCteSql('$1')},
        returns AS (
          SELECT
            pr.purchase_id,
@@ -162,6 +176,7 @@ export const purchaseReportsService = {
          COALESCE(p.total, 0)::double precision AS total,
          COALESCE(pay.paid_amount, 0)::double precision AS paid_amount,
          GREATEST(COALESCE(p.total, 0) - COALESCE(ret.returned_amount, 0) - COALESCE(pay.paid_amount, 0), 0)::double precision AS outstanding_amount,
+         COALESCE(usp.unallocated_amount, 0)::double precision AS supplier_unallocated_payment,
          CASE
            WHEN COALESCE(pay.paid_amount, 0) >= COALESCE(p.total, 0) - COALESCE(ret.returned_amount, 0) THEN 'PAID'
            WHEN COALESCE(pay.paid_amount, 0) > 0 THEN 'PARTIAL'
@@ -174,6 +189,7 @@ export const purchaseReportsService = {
        LEFT JOIN ims.suppliers s ON s.supplier_id = p.supplier_id
        LEFT JOIN ims.users u ON u.user_id = p.user_id
        LEFT JOIN ims.stores st ON st.store_id = p.store_id
+       LEFT JOIN unallocated_supplier_payments usp ON usp.supplier_id = p.supplier_id
       WHERE p.branch_id = $1
         AND p.purchase_date::date BETWEEN $2::date AND $3::date
         AND LOWER(COALESCE(p.status::text, '')) <> 'void'
@@ -238,6 +254,7 @@ export const purchaseReportsService = {
   async getPurchasePaymentStatus(branchId: number, fromDate: string, toDate: string): Promise<PurchasePaymentStatusRow[]> {
     return queryMany<PurchasePaymentStatusRow>(
       `WITH ${supplierPaymentsCteSql('$1')},
+       ${supplierUnallocatedPaymentsCteSql('$1')},
        returns AS (
          SELECT
            pr.purchase_id,
@@ -254,6 +271,7 @@ export const purchaseReportsService = {
          COALESCE(p.total, 0)::double precision AS total,
          COALESCE(pay.paid_amount, 0)::double precision AS paid_amount,
          GREATEST(COALESCE(p.total, 0) - COALESCE(ret.returned_amount, 0) - COALESCE(pay.paid_amount, 0), 0)::double precision AS outstanding_amount,
+         COALESCE(usp.unallocated_amount, 0)::double precision AS supplier_unallocated_payment,
          CASE
            WHEN COALESCE(pay.paid_amount, 0) >= COALESCE(p.total, 0) - COALESCE(ret.returned_amount, 0) THEN 'PAID'
            WHEN COALESCE(pay.paid_amount, 0) > 0 THEN 'PARTIAL'
@@ -264,6 +282,7 @@ export const purchaseReportsService = {
        LEFT JOIN payments pay ON pay.purchase_id = p.purchase_id
        LEFT JOIN returns ret ON ret.purchase_id = p.purchase_id
        LEFT JOIN ims.suppliers s ON s.supplier_id = p.supplier_id
+       LEFT JOIN unallocated_supplier_payments usp ON usp.supplier_id = p.supplier_id
       WHERE p.branch_id = $1
         AND p.purchase_date::date BETWEEN $2::date AND $3::date
         AND LOWER(COALESCE(p.status::text, '')) <> 'void'
@@ -469,6 +488,7 @@ export const purchaseReportsService = {
 
     return queryMany<CreditOverduePurchaseRow>(
       `WITH ${supplierPaymentsCteSql('$1')},
+       ${supplierUnallocatedPaymentsCteSql('$1')},
        returns AS (
          SELECT pr.purchase_id, COALESCE(SUM(pr.total), 0)::double precision AS returned_amount
            FROM ims.purchase_returns pr
@@ -479,18 +499,20 @@ export const purchaseReportsService = {
          p.purchase_id,
          ('#' || p.purchase_id::text) AS invoice_number,
          p.supplier_id,
-         COALESCE(s.name, s.supplier_name, 'Supplier') AS supplier_name,
+         COALESCE(s.name, 'Supplier') AS supplier_name,
          p.purchase_date::date::text AS purchase_date,
          p.due_date::date::text AS appointment_date,
          GREATEST((CURRENT_DATE - p.due_date)::int, 0) AS days_overdue,
          GREATEST(
            COALESCE(p.total, 0) - COALESCE(ret.returned_amount, 0) - COALESCE(pay.paid_amount, 0),
            0
-         )::double precision AS total
+         )::double precision AS total,
+         COALESCE(usp.unallocated_amount, 0)::double precision AS supplier_unallocated_payment
        FROM ims.purchases p
        LEFT JOIN payments pay ON pay.purchase_id = p.purchase_id
        LEFT JOIN returns ret ON ret.purchase_id = p.purchase_id
        LEFT JOIN ims.suppliers s ON s.supplier_id = p.supplier_id
+       LEFT JOIN unallocated_supplier_payments usp ON usp.supplier_id = p.supplier_id
       WHERE p.branch_id = $1
         AND COALESCE(p.purchase_type::text, '') = 'credit'
         AND p.due_date IS NOT NULL

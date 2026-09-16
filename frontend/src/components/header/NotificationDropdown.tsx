@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router';
 import { Bell, Package, ShoppingCart, Wallet, X } from 'lucide-react';
 import { Dropdown } from '../ui/dropdown/Dropdown';
 import { useToast } from '../ui/toast/Toast';
+import { useBranch } from '../../context/BranchContext';
 import {
   notificationService,
   NotificationItem,
@@ -117,11 +118,17 @@ export default function NotificationDropdown() {
   const [totalCount, setTotalCount] = useState(0);
   const { showToast } = useToast();
   const navigate = useNavigate();
+  const { activeBranchId } = useBranch();
 
   const loadNotifications = useCallback(
     async (withLoader: boolean, unreadOnly: boolean) => {
       if (withLoader) setLoading(true);
-      const res = await notificationService.list({ limit: 12, offset: 0, unreadOnly });
+      const res = await notificationService.list({
+        limit: 12,
+        offset: 0,
+        unreadOnly,
+        branchId: activeBranchId ?? undefined,
+      });
       if (res.success && res.data) {
         setNotifications(res.data.notifications ?? []);
         setUnreadCount(res.data.unreadCount ?? 0);
@@ -131,9 +138,12 @@ export default function NotificationDropdown() {
       }
       if (withLoader) setLoading(false);
     },
-    [showToast]
+    [showToast, activeBranchId]
   );
 
+  // H11 fix: re-fetch whenever the active branch changes (not just on mount),
+  // so switching branches immediately shows that branch's notifications
+  // instead of leaving the previous branch's list on screen.
   useEffect(() => {
     void loadNotifications(false, false);
     const timer = setInterval(() => {

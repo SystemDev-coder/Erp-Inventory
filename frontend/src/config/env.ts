@@ -95,6 +95,7 @@ export const API = {
   PRODUCTS: {
     LIST: '/api/products',
     SUMMARY: '/api/products/summary',
+    BARCODE: (barcode: string) => `/api/products/barcode/${encodeURIComponent(barcode)}`,
     ITEM: (id: number) => `/api/products/${id}`,
     CATEGORIES: '/api/products/categories',
     CATEGORY: (id: number) => `/api/products/categories/${id}`,

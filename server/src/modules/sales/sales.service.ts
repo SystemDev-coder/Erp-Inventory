@@ -584,6 +584,38 @@ const listSalePaymentSummary = async (
 const sumSalePayments = (rows: Array<{ amount: number }>) =>
   roundMoney(rows.reduce((sum, row) => sum + Number(row.amount || 0), 0));
 
+// HIGH-04 fix: shared by rewriteSaleGl (create/update path) and voidSale
+// (void path) so both reverse this sale's Inventory/COGS accounts.balance
+// contribution the same way before their respective account_transactions
+// rows are deleted. Previously only rewriteSaleGl did this - voidSale called
+// clearSaleFinancialEntries directly, which deletes the GL rows without ever
+// reversing the cached balance, permanently understating Inventory and
+// overstating COGS by the voided sale's cost on every void.
+const reverseSaleInventoryCogsBalance = async (
+  client: PoolClient,
+  params: { branchId: number; saleId: number }
+) => {
+  const priorCoa = await ensureCoaAccounts(client, params.branchId, ['inventory', 'cogs']);
+  const priorLines = (
+    await client.query<{ acc_id: number; debit: string; credit: string }>(
+      `SELECT acc_id, debit, credit FROM ims.account_transactions
+        WHERE branch_id = $1 AND ref_table = 'sales' AND ref_id = $2
+          AND acc_id IN ($3, $4)`,
+      [params.branchId, params.saleId, priorCoa.inventory, priorCoa.cogs]
+    )
+  ).rows;
+  for (const row of priorLines) {
+    const delta = -(Number(row.debit) - Number(row.credit));
+    if (delta) {
+      await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+        delta,
+        Number(row.acc_id),
+        params.branchId,
+      ]);
+    }
+  }
+};
+
 const rewriteSaleGl = async (
   client: PoolClient,
   params: { branchId: number; saleId: number }
@@ -617,6 +649,16 @@ const rewriteSaleGl = async (
   );
   const sale = saleRes.rows[0];
   if (!sale) return;
+
+  // H4 fix: reverse this sale's previous Inventory/COGS contribution to
+  // accounts.balance before the old GL rows are deleted below. Only
+  // Inventory (asset) and COGS (cost) are tracked here - the other accounts
+  // this function posts to (AR, cash/bank, Sales Revenue, Sales Tax Payable,
+  // Customer Advances) are either already kept in sync elsewhere (AR via
+  // adjustCustomerBalance, cash/bank via adjustAccountBalance, both called by
+  // createSale/updateSale) or are revenue/liability accounts intentionally
+  // left at $0, matching the same rule applied throughout this fix.
+  await reverseSaleInventoryCogsBalance(client, params);
 
   // Remove legacy single-sided rows + any prior GL rewrite for this sale.
   await client.query(
@@ -712,6 +754,17 @@ const rewriteSaleGl = async (
         { accId: coa.inventory, debit: 0, credit: costTotal, note: 'Inventory issued' },
       ],
     });
+    // H4 fix: apply the new amounts (asset/cost accounts - debit increases).
+    await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+      costTotal,
+      coa.cogs,
+      params.branchId,
+    ]);
+    await client.query(`UPDATE ims.accounts SET balance = balance - $1 WHERE acc_id = $2 AND branch_id = $3`, [
+      costTotal,
+      coa.inventory,
+      params.branchId,
+    ]);
   }
 };
 
@@ -1115,8 +1168,10 @@ export const salesService = {
       await assertCustomerCreditAllowed(client, {
         customerId: input.customerId ?? null,
         docType,
+        branchId: context.branchId,
         saleType,
         status,
+        outstandingChange: Math.max(totalWithTax - Number(payment.paidAmount || 0), 0),
       });
 
       const shouldApplyStock = canApplyStock(docType, status);
@@ -1276,6 +1331,12 @@ export const salesService = {
           'Paid invoices cannot be edited. Use a sales return or void instead.'
         );
       }
+      if (current.status === 'void') {
+        throw ApiError.badRequest('Voided sales cannot be edited');
+      }
+      if (input.status === 'void') {
+        throw ApiError.badRequest('Use the void endpoint to void a sale');
+      }
 
       await financeClosingService.autoUnlockPeriodForDate(
         client,
@@ -1317,7 +1378,7 @@ export const salesService = {
       const previousApplyStock =
         current.is_stock_applied ?? canApplyStock(current.doc_type || 'sale', current.status);
       const previousFinancialApplied =
-        current.status !== 'void' && (current.doc_type || 'sale') !== 'quotation';
+        (current.doc_type || 'sale') !== 'quotation';
       // Reverse any prior payments recorded for this sale (table-based first; fallback to inline fields for legacy schemas).
       const previousPaymentRows = await listSalePaymentSummary(client, { branchId: current.branch_id, saleId: current.sale_id });
       const legacyInlinePayment =
@@ -1325,7 +1386,6 @@ export const salesService = {
         previousPaymentRows.length === 0 &&
         Number((current as any).paid_amount || 0) > 0 &&
         Number((current as any).pay_acc_id || 0) > 0 &&
-        current.status !== 'void' &&
         current.doc_type !== 'quotation'
           ? [{ accId: Number((current as any).pay_acc_id), amount: roundMoney((current as any).paid_amount) }]
           : [];
@@ -1353,8 +1413,14 @@ export const salesService = {
       await assertCustomerCreditAllowed(client, {
         customerId: input.customerId ?? current.customer_id ?? null,
         docType: nextDocType,
+        branchId: current.branch_id,
         saleType: nextSaleType,
         status: finalNextStatus,
+        outstandingChange:
+          (input.customerId ?? current.customer_id ?? null) === (current.customer_id ?? null)
+            ? Math.max(totalWithTax - Number(payment.paidAmount || 0), 0) -
+              (previousFinancialApplied ? Math.max(Number(current.total || 0) - Number(previousPaidAmount || 0), 0) : 0)
+            : Math.max(totalWithTax - Number(payment.paidAmount || 0), 0),
       });
 
       const nextApplyStock = canApplyStock(nextDocType, finalNextStatus);
@@ -1448,6 +1514,22 @@ export const salesService = {
           mode: 'add',
         });
       }
+
+      // HIGH-04 fix: reverse this sale's prior Inventory/COGS cache
+      // contribution before clearSaleFinancialEntries deletes the
+      // account_transactions rows below. rewriteSaleGl (called further down
+      // to post the new amounts) also contains this same reversal step, but
+      // by the time it runs here the rows it needs are already gone, so its
+      // reversal was silently a no-op - meaning every item/quantity edit to
+      // a sale was applying the new Inventory/COGS amounts on top of the old
+      // ones instead of replacing them. Doing it here first, while the prior
+      // rows still exist, fixes that without changing rewriteSaleGl's
+      // already-correct behavior on the create path (nothing to reverse
+      // there since no prior rows exist yet).
+      await reverseSaleInventoryCogsBalance(client, {
+        branchId: current.branch_id,
+        saleId: current.sale_id,
+      });
 
       await clearSaleFinancialEntries(client, {
         branchId: current.branch_id,
@@ -1581,6 +1663,13 @@ export const salesService = {
         return null;
       }
 
+      // A void is a one-way accounting transition. Reject a repeat request
+      // before any period, GL, balance, inventory, or notification work so it
+      // cannot be reported as a second successful void or change any state.
+      if (current.status === 'void') {
+        throw ApiError.badRequest('Sale is already voided');
+      }
+
       await financeClosingService.autoUnlockPeriodForDate(
         client,
         Number(current.branch_id),
@@ -1588,11 +1677,6 @@ export const salesService = {
         context.userId ?? null,
         `Auto reopen for sale void #${current.sale_id}`
       );
-      if (current.status === 'void') {
-        await client.query('COMMIT');
-        return current;
-      }
-
       const currentItems = await listSaleItemsTx(client, id);
       const previouslyApplied =
         current.is_stock_applied ?? canApplyStock(current.doc_type || 'sale', current.status);
@@ -1645,6 +1729,16 @@ export const salesService = {
           mode: 'subtract',
         });
       }
+
+      // HIGH-04 fix: reverse this sale's Inventory/COGS cache contribution
+      // before clearSaleFinancialEntries deletes the account_transactions
+      // rows it reads from - previously this step was missing entirely on
+      // the void path, leaving Inventory permanently understated and COGS
+      // permanently overstated by the voided sale's cost.
+      await reverseSaleInventoryCogsBalance(client, {
+        branchId: current.branch_id,
+        saleId: current.sale_id,
+      });
 
       await clearSaleFinancialEntries(client, {
         branchId: current.branch_id,

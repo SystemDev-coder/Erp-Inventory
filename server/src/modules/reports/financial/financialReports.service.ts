@@ -2633,7 +2633,6 @@ export const financialReportsService = {
   },
 
   async getAccountsPayable(branchId: number, fromDate: string, toDate: string): Promise<AccountsPayableRow[]> {
-    const supplierBalanceExpr = await resolveBalanceExpression('suppliers', 's');
     const params: Array<number | string> = [branchId, fromDate, toDate];
 
     const [purchaseRows, openingRows, unallocatedRows] = await Promise.all([
@@ -2690,15 +2689,28 @@ export const financialReportsService = {
           LIMIT 5000`,
         params
       ),
+      // H3 fix: this used to source "opening balance" from suppliers.remaining_balance,
+      // which is a LIVE running balance that already includes every purchase in
+      // purchases_scope above - double-counting the same payable in both places.
+      // Mirror the (correct) getAccountsReceivable pattern instead: only genuine
+      // entry_type='opening' ledger rows dated on/before the period start represent
+      // a true pre-period balance; normal purchase/payment/return activity is already
+      // covered by purchaseRows/unallocatedRows and must not be folded in here.
       queryMany<{ supplier_id: number; supplier_name: string; opening_balance: number }>(
         `SELECT
            s.supplier_id,
            COALESCE(s.name, 'Unknown Supplier') AS supplier_name,
-           GREATEST(${supplierBalanceExpr}, 0)::double precision AS opening_balance
-         FROM ims.suppliers s
-        WHERE s.branch_id = $1
-          AND GREATEST(${supplierBalanceExpr}, 0) > 0.000001`,
-        [branchId]
+           COALESCE(SUM(sl.credit - sl.debit), 0)::double precision AS opening_balance
+         FROM ims.supplier_ledger sl
+         JOIN ims.suppliers s ON s.supplier_id = sl.supplier_id
+        WHERE sl.branch_id = $1
+          AND sl.entry_type = 'opening'
+          AND sl.ref_table = 'opening_balance'
+          AND sl.entry_date::date <= $2::date
+          AND COALESCE(sl.is_deleted, 0) = 0
+        GROUP BY s.supplier_id, s.name
+       HAVING COALESCE(SUM(sl.credit - sl.debit), 0) > 0.000001`,
+        [branchId, fromDate]
       ),
       queryMany<{ supplier_id: number; supplier_name: string; unallocated_paid: number }>(
         `SELECT
