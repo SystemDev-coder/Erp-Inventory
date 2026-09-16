@@ -535,7 +535,11 @@ const Products = () => {
       ...itemForm,
       is_active: true,
       storeId: Number(itemStoreId),
-      quantity: Number(itemForm.quantity ?? 0),
+      // Quantity is read-only once a product exists (see the form fields
+      // above) - only send it when creating, where it's driven by Opening
+      // Stock. Omitting it on edit avoids resubmitting a stale disabled-input
+      // value through the direct, unaudited quantity-overwrite path.
+      quantity: itemForm.product_id ? undefined : Number(itemForm.quantity ?? 0),
     };
     const res = itemForm.product_id
       ? await productService.update(itemForm.product_id, payload)
@@ -1112,9 +1116,17 @@ const Products = () => {
           {itemForm.product_id ? (
             <>
               {/* Editing an existing product: Opening Balance (the original
-                  cost-basis figure, correctable after the fact) and Quantity
-                  (today's actual stock) are genuinely different numbers once
-                  the item has any sales/purchase history, so both stay editable. */}
+                  cost-basis figure) stays editable - it already has its own
+                  GL-reversal-and-repost path (rewriteItemOpeningStockGl), so
+                  correcting a data-entry mistake here is safe and audited.
+                  Quantity (today's actual live stock) is deliberately
+                  read-only here instead: editing it used to call
+                  upsertStoreItemQuantity directly, silently overwriting
+                  store_items.quantity with no inventory_movements row and no
+                  GL entry at all - the one place in the app where stock could
+                  change with zero audit trail, unlike every sale, purchase,
+                  transfer, or Stock Adjustment. Real stock changes belong in
+                  Stock Adjustment, which does this correctly. */}
               <ItemField label="Opening Balance">
                 <input
                   type="number"
@@ -1131,10 +1143,14 @@ const Products = () => {
                   type="number"
                   step="1"
                   min={0}
-                  placeholder="0"
                   value={itemForm.quantity ?? 0}
-                  onChange={(e) => setItemField('quantity', Number(e.target.value || 0))}
+                  disabled
+                  readOnly
+                  className="cursor-not-allowed opacity-70"
                 />
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  Current stock - use Stock Adjustment to change it
+                </p>
               </ItemField>
             </>
           ) : (
