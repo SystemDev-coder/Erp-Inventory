@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middlewares/requireAuth';
-import { requireAnyPerm, requirePerm } from '../../middlewares/requirePerm';
+import { requireAnyPerm, requirePerm, requireRoleName } from '../../middlewares/requirePerm';
 import {
   getCompanyInfo,
   updateCompanyInfo,
@@ -46,11 +46,19 @@ router.put('/company', requireAnyPerm(['company.update', 'company.create', 'syst
 router.delete('/company', requireAnyPerm(['company.delete', 'system.company.manage', 'system.settings']), deleteCompanyInfo);
 
 // Business Profile (Part 5/12): read is any authenticated user - every role's
-// UI needs these flags to render correctly, not just admins - write reuses
-// the exact same company-management gate as /company above, since changing
-// business type/features is the same class of client-identity change.
+// UI needs these flags to render correctly, not just admins - so GET stays
+// open. Write is restricted to the Developer role specifically (same
+// requireRoleName pattern already used for /trash) - choosing/changing a
+// client's business type is a one-time deployment-setup decision with a
+// wholesale-reset side effect on product config, not a day-to-day admin
+// task, so it's deliberately tighter than the plain company.update gate.
 router.get('/business-profile', getBusinessProfile);
-router.put('/business-profile', requireAnyPerm(['company.update', 'system.company.manage', 'system.settings']), updateBusinessProfile);
+router.put(
+  '/business-profile',
+  requireRoleName('developer'),
+  requireAnyPerm(['company.update', 'system.company.manage', 'system.settings']),
+  updateBusinessProfile
+);
 router.get('/assets/overview', requireAnyPerm(['system.settings', 'accounts.view', 'finance.reports']), getAssetOverview);
 router.post('/assets/prepare', requireAnyPerm(['system.settings', 'accounts.view']), prepareAssetAccounts);
 router.post('/customers/reconcile-balances', requireAnyPerm(['system.settings', 'customers.update', 'customers.view']), reconcileCustomerBalances);

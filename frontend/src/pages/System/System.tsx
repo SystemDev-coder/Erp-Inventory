@@ -1,5 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
-import { CheckSquare, Home, Lock, Pencil, Plus, Shield, Trash2, Users } from 'lucide-react';
+import { CheckSquare, Home, Lock, Pencil, Plus, Settings2, Shield, Trash2, Users } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
 import { Tabs } from '../../components/ui/tabs';
 import { Modal } from '../../components/ui/modal/Modal';
@@ -50,8 +50,13 @@ type ConfirmTarget =
 
 const System = () => {
   const { showToast } = useToast();
-  const { permissions: currentPermissions } = useAuth();
+  const { permissions: currentPermissions, user } = useAuth();
   const { t } = useLanguage();
+  // Business Profile is Developer-only: choosing/changing a client's
+  // business type is a one-time deployment-setup decision (it wholesale
+  // resets product config defaults), not a day-to-day admin task - same
+  // role-gate style already used for the Trash feature.
+  const isDeveloper = (user?.role_name || '').toLowerCase() === 'developer';
   const allowRemoteImageUpload = true;
   const logoStorageKey = 'erp.company.logo_img';
   const bannerStorageKey = 'erp.company.banner_img';
@@ -903,45 +908,51 @@ const System = () => {
         variant="danger"
         isLoading={companyDeleting}
       />
+    </div>
+  );
 
-      <div className="border-t border-black pt-4 mt-2 space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-base font-semibold">Business Profile</h3>
-          <button
-            onClick={openBusinessProfileEdit}
-            className="px-3 py-2 rounded border border-black bg-black text-white text-sm inline-flex items-center gap-2"
-          >
-            <Pencil className="w-3.5 h-3.5" /> Edit
-          </button>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
-          <div>
-            <div className="text-xs uppercase tracking-wide text-slate-500">Business Name</div>
-            <div>{company?.company_name || '-'}</div>
-          </div>
-          <div>
-            <div className="text-xs uppercase tracking-wide text-slate-500">Business Type</div>
-            <div>{BUSINESS_TYPE_LABELS[businessProfile.businessType || 'general']}</div>
-          </div>
-          <div>
-            <div className="text-xs uppercase tracking-wide text-slate-500">Currency / Country</div>
-            <div>{businessProfile.currency || '-'} / {businessProfile.country || '-'}</div>
-          </div>
+  // Business Profile lives in its own tab (Developer-only, see isDeveloper
+  // above) rather than nested inside Company Info - it's a distinct,
+  // higher-impact "which industry is this deployment" decision, not part of
+  // everyday company-identity editing.
+  const businessProfileContent = (
+    <div className="bg-white border border-black rounded-xl p-6 space-y-4 text-black">
+      <div className="flex items-center justify-between">
+        <h3 className="text-base font-semibold">Business Profile</h3>
+        <button
+          onClick={openBusinessProfileEdit}
+          className="px-3 py-2 rounded border border-black bg-black text-white text-sm inline-flex items-center gap-2"
+        >
+          <Pencil className="w-3.5 h-3.5" /> Edit
+        </button>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
+        <div>
+          <div className="text-xs uppercase tracking-wide text-slate-500">Business Name</div>
+          <div>{company?.company_name || '-'}</div>
         </div>
         <div>
-          <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">Enabled Features</div>
-          {enabledFeatureList.length ? (
-            <div className="flex flex-wrap gap-2">
-              {enabledFeatureList.map((feature) => (
-                <span key={feature} className="px-2 py-1 rounded border border-black text-xs">
-                  {feature}
-                </span>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-slate-500">No features enabled.</p>
-          )}
+          <div className="text-xs uppercase tracking-wide text-slate-500">Business Type</div>
+          <div>{BUSINESS_TYPE_LABELS[businessProfile.businessType || 'general']}</div>
         </div>
+        <div>
+          <div className="text-xs uppercase tracking-wide text-slate-500">Currency / Country</div>
+          <div>{businessProfile.currency || '-'} / {businessProfile.country || '-'}</div>
+        </div>
+      </div>
+      <div>
+        <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">Enabled Features</div>
+        {enabledFeatureList.length ? (
+          <div className="flex flex-wrap gap-2">
+            {enabledFeatureList.map((feature) => (
+              <span key={feature} className="px-2 py-1 rounded border border-black text-xs">
+                {feature}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-500">No features enabled.</p>
+        )}
       </div>
 
       <Modal
@@ -1012,6 +1023,19 @@ const System = () => {
       badge: 0,
       content: companyContent,
     },
+    // Business Profile: its own tab, visible only to the Developer role -
+    // see isDeveloper above for why this is tighter than plain company.update.
+    ...(isDeveloper
+      ? [
+          {
+            id: 'business-profile',
+            label: 'Business Profile',
+            icon: Settings2,
+            badge: 0,
+            content: businessProfileContent,
+          },
+        ]
+      : []),
     {
       id: 'users',
       label: t('tab_users'),
