@@ -203,6 +203,8 @@ export const businessProfileSchema = z.object({
       expiryTracking: z.boolean().optional(),
       serialNumber: z.boolean().optional(),
       multipleUnits: z.boolean().optional(),
+      genericName: z.boolean().optional(),
+      strength: z.boolean().optional(),
     })
     .partial()
     .optional(),

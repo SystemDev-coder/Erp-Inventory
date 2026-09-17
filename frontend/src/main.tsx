@@ -8,6 +8,7 @@ import { AppWrapper } from "./components/common/PageMeta.tsx";
 import { ThemeProvider } from "./context/ThemeContext.tsx";
 import { AuthProvider } from "./context/AuthContext.tsx";
 import { BranchProvider } from "./context/BranchContext.tsx";
+import { BusinessConfigProvider } from "./context/BusinessConfigContext.tsx";
 import { LanguageProvider } from "./context/LanguageContext.tsx";
 import { ToastProvider } from "./components/ui/toast/Toast.tsx";
 
@@ -28,11 +29,13 @@ createRoot(document.getElementById("root")!).render(
       <LanguageProvider>
         <AuthProvider>
           <BranchProvider>
-            <ToastProvider>
-              <AppWrapper>
-                <App />
-              </AppWrapper>
-            </ToastProvider>
+            <BusinessConfigProvider>
+              <ToastProvider>
+                <AppWrapper>
+                  <App />
+                </AppWrapper>
+              </ToastProvider>
+            </BusinessConfigProvider>
           </BranchProvider>
         </AuthProvider>
       </LanguageProvider>

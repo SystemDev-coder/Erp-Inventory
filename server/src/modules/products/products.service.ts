@@ -82,6 +82,10 @@ export interface Product {
   unit_name?: string | null;
   unit_symbol?: string | null;
   brand?: string | null;
+  size?: string | null;
+  color?: string | null;
+  generic_name?: string | null;
+  strength?: string | null;
   stock_alert: number;
   cost_price: number;
   sell_price: number;
@@ -249,6 +253,10 @@ const getProductSql = (stockAlertExpr: string, storeIdExpr = 'NULL::bigint') => 
     u.unit_name,
     u.symbol AS unit_symbol,
     i.brand,
+    i.size,
+    i.color,
+    i.generic_name,
+    i.strength,
     ${stockAlertExpr} AS stock_alert,
     i.cost_price,
     i.sell_price,
@@ -869,6 +877,29 @@ export const productsService = {
         throw ApiError.internal('Failed to create item');
       }
 
+      // Phase 11: set separately, deliberately outside the INSERT above.
+      // That INSERT's column/placeholder list already branches on
+      // catIdRequired via hand-counted $N positions - adding four more
+      // columns there risks an off-by-one in either branch. A follow-up
+      // UPDATE is just as correct here since nothing downstream in this
+      // transaction reads these columns before it runs.
+      if (
+        input.size !== undefined ||
+        input.color !== undefined ||
+        input.genericName !== undefined ||
+        input.strength !== undefined
+      ) {
+        await client.query(
+          `UPDATE ims.items
+              SET size = COALESCE(NULLIF($1, ''), size),
+                  color = COALESCE(NULLIF($2, ''), color),
+                  generic_name = COALESCE(NULLIF($3, ''), generic_name),
+                  strength = COALESCE(NULLIF($4, ''), strength)
+            WHERE item_id = $5`,
+          [input.size || null, input.color || null, input.genericName || null, input.strength || null, itemId]
+        );
+      }
+
       const quantity = Number(input.quantity ?? input.openingBalance ?? 0);
       await upsertStoreItemQuantity(client, branchId, resolvedStoreId, itemId, quantity);
 
@@ -912,6 +943,10 @@ export const productsService = {
     if (input.categoryId !== undefined) { updates.push(`category_id = $${p++}`); values.push(input.categoryId ?? null); }
     if (input.unitId !== undefined) { updates.push(`unit_id = $${p++}`); values.push(input.unitId ?? null); }
     if (input.brand !== undefined) { updates.push(`brand = NULLIF($${p++}, '')`); values.push(input.brand || ''); }
+    if (input.size !== undefined) { updates.push(`size = NULLIF($${p++}, '')`); values.push(input.size || ''); }
+    if (input.color !== undefined) { updates.push(`color = NULLIF($${p++}, '')`); values.push(input.color || ''); }
+    if (input.genericName !== undefined) { updates.push(`generic_name = NULLIF($${p++}, '')`); values.push(input.genericName || ''); }
+    if (input.strength !== undefined) { updates.push(`strength = NULLIF($${p++}, '')`); values.push(input.strength || ''); }
     if (input.stockAlert !== undefined) { updates.push(`${stockAlertColumn} = $${p++}`); values.push(input.stockAlert); }
     if (input.sellPrice !== undefined) { updates.push(`sell_price = $${p++}`); values.push(input.sellPrice); }
     if (input.costPrice !== undefined) { updates.push(`cost_price = $${p++}`); values.push(input.costPrice); }

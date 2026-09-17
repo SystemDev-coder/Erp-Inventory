@@ -10,6 +10,7 @@ import { postGl, deleteGlByRef } from '../../utils/glPosting';
 import { ensureCoaAccounts } from '../../utils/coaDefaults';
 import { resolvePurchaseDueDate } from '../../utils/creditDueHelpers';
 import { offsetOf, type Paged } from '../../utils/pagination';
+import { settingsService } from '../settings/settings.service';
 
 export interface Purchase {
   purchase_id: number;
@@ -1115,6 +1116,18 @@ export const purchasesService = {
           | 'credit';
       const status: PurchaseStatus =
         purchaseType === 'credit' && requestedStatus !== 'void' ? 'unpaid' : requestedStatus;
+      // Part 8: Business Profile enforcement for supplier/credit purchases,
+      // mirroring assertCustomerCreditAllowed's sales-side gate. Checked only
+      // at creation, not threaded through every status-transition branch in
+      // updatePurchase - a purchase already created as credit stays valid
+      // through its own lifecycle even if the flag is toggled off later,
+      // same as how disabling a feature never deletes existing data.
+      if (purchaseType === 'credit') {
+        const profile = await settingsService.getBusinessProfile();
+        if (!profile.purchaseConfig.creditPurchases) {
+          throw ApiError.badRequest('Credit purchases are disabled for this business. Enable them in Business Profile settings first.');
+        }
+      }
       const storeId = await resolvePurchaseStoreId(client, {
         branchId: context.branchId,
         storeId: input.storeId ?? null,

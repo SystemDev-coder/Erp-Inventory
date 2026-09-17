@@ -23,6 +23,7 @@ import {
   settingsProfitOwnerUpsertSchema,
   settingsAssetPrepareSchema,
   openingBalanceCleanupSchema,
+  businessProfileSchema,
 } from './settings.schemas';
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { logAudit } from '../../utils/audit';
@@ -302,6 +303,45 @@ export const deleteCompanyInfo = asyncHandler(async (req: AuthRequest, res: Resp
     userAgent: req.get('user-agent') || null,
   });
   return ApiResponse.success(res, null, 'Company info deleted');
+});
+
+// Part 5/12: read is available to any authenticated user (frontend
+// resolves UI behavior from this on every session), write is gated to the
+// same company-management permissions as company info elsewhere in this
+// file - Business Profile answers "what type of business is this," which
+// is exactly the kind of client-identity setting company.update already
+// protects, not a separate permission system (Part 12).
+export const getBusinessProfile = asyncHandler(async (_req: AuthRequest, res: Response) => {
+  const profile = await settingsService.getBusinessProfile();
+  return ApiResponse.success(res, { profile });
+});
+
+export const updateBusinessProfile = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const input = businessProfileSchema.parse(req.body);
+  const profile = await settingsService.updateBusinessProfile({
+    businessType: input.businessType,
+    email: input.email,
+    website: input.website,
+    currency: input.currency,
+    country: input.country,
+    timezone: input.timezone,
+    productConfig: input.productConfig,
+    salesConfig: input.salesConfig,
+    purchaseConfig: input.purchaseConfig,
+    accountingConfig: input.accountingConfig,
+    branchConfig: input.branchConfig,
+    receiptConfig: input.receiptConfig,
+    notificationConfig: input.notificationConfig,
+  });
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'update',
+    entity: 'business_profile',
+    entityId: 1,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
+  return ApiResponse.success(res, { profile }, 'Business profile updated');
 });
 
 export const getAssetOverview = asyncHandler(async (req: AuthRequest, res: Response) => {

@@ -51,6 +51,10 @@ export interface Product {
   unit_name?: string | null;
   unit_symbol?: string | null;
   brand?: string | null;
+  size?: string | null;
+  color?: string | null;
+  generic_name?: string | null;
+  strength?: string | null;
   stock_alert?: number;
   cost_price: number;
   sell_price: number;

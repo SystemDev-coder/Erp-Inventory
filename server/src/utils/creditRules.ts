@@ -1,6 +1,7 @@
 import { PoolClient } from 'pg';
 import { ApiError } from './ApiError';
 import { computeCustomerOutstandingFromLedger } from './customerOutstanding';
+import { settingsService } from '../modules/settings/settings.service';
 
 export type SaleDocType = 'sale' | 'invoice' | 'quotation';
 export type SaleStatus = 'paid' | 'partial' | 'unpaid' | 'void';
@@ -28,6 +29,15 @@ export const assertCustomerCreditAllowed = async (
   }
 ): Promise<void> => {
   if (!isCreditSale(params)) return;
+
+  // Part 8: Business Profile enforcement, not just frontend hiding - if this
+  // client's configuration has credit sales turned off, reject here
+  // regardless of what the request asked for, same as every other guard in
+  // this function.
+  const profile = await settingsService.getBusinessProfile();
+  if (!profile.salesConfig.credit) {
+    throw ApiError.badRequest('Credit sales are disabled for this business. Enable them in Business Profile settings first.');
+  }
 
   if (!params.customerId) {
     throw ApiError.badRequest(

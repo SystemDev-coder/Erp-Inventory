@@ -16,6 +16,7 @@ import { storeService, Store as StoreType } from '../../services/store.service';
 import StoresPage from '../Stock/StoresPage';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
 import { useBranch } from '../../context/BranchContext';
+import { useBusinessConfig } from '../../context/BusinessConfigContext';
 import { usePermissions } from '../../hooks/usePermissions';
 
 type ProductForm = Partial<Product>;
@@ -74,6 +75,13 @@ const Products = () => {
   const { showToast } = useToast();
   const { activeBranchId } = useBranch();
   const { can } = usePermissions();
+  const { profile: businessProfile } = useBusinessConfig();
+  const productConfig = businessProfile.productConfig;
+  // Part 7: relabel generic fields per business type instead of adding new
+  // ones - perfume's "volume" and cosmetics' "shade" are the same underlying
+  // size/color columns as clothing's, just meaningful under a different name.
+  const sizeLabel = businessProfile.businessType === 'perfume' ? 'Volume' : 'Size';
+  const colorLabel = businessProfile.businessType === 'cosmetics' ? 'Shade' : 'Color';
 
   const [loading, setLoading] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
@@ -1101,6 +1109,46 @@ const Products = () => {
               onChange={(e) => setItemField('brand', e.target.value)}
             />
           </ItemField>
+
+          {productConfig.size && (
+            <ItemField label={sizeLabel}>
+              <input
+                placeholder={sizeLabel === 'Volume' ? 'e.g. 50ml' : 'e.g. M, L, XL'}
+                value={itemForm.size || ''}
+                onChange={(e) => setItemField('size', e.target.value)}
+              />
+            </ItemField>
+          )}
+
+          {productConfig.color && (
+            <ItemField label={colorLabel}>
+              <input
+                placeholder={colorLabel === 'Shade' ? 'e.g. Ivory, Rose Gold' : 'e.g. Red, Navy Blue'}
+                value={itemForm.color || ''}
+                onChange={(e) => setItemField('color', e.target.value)}
+              />
+            </ItemField>
+          )}
+
+          {productConfig.genericName && (
+            <ItemField label="Generic Name">
+              <input
+                placeholder="e.g. Paracetamol"
+                value={itemForm.generic_name || ''}
+                onChange={(e) => setItemField('generic_name', e.target.value)}
+              />
+            </ItemField>
+          )}
+
+          {productConfig.strength && (
+            <ItemField label="Strength">
+              <input
+                placeholder="e.g. 500mg"
+                value={itemForm.strength || ''}
+                onChange={(e) => setItemField('strength', e.target.value)}
+              />
+            </ItemField>
+          )}
 
           <ItemField label="Stock Alert">
             <input

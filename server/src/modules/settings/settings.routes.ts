@@ -33,6 +33,8 @@ import {
   listSettingsProfitOwners,
   upsertSettingsProfitOwner,
   previewSettingsOwnerProfit,
+  getBusinessProfile,
+  updateBusinessProfile,
 } from './settings.controller';
 
 const router = Router();
@@ -42,6 +44,13 @@ router.use(requireAuth);
 router.get('/company', requireAnyPerm(['company.view', 'system.company.manage', 'system.settings']), getCompanyInfo);
 router.put('/company', requireAnyPerm(['company.update', 'company.create', 'system.company.manage', 'system.settings']), updateCompanyInfo);
 router.delete('/company', requireAnyPerm(['company.delete', 'system.company.manage', 'system.settings']), deleteCompanyInfo);
+
+// Business Profile (Part 5/12): read is any authenticated user - every role's
+// UI needs these flags to render correctly, not just admins - write reuses
+// the exact same company-management gate as /company above, since changing
+// business type/features is the same class of client-identity change.
+router.get('/business-profile', getBusinessProfile);
+router.put('/business-profile', requireAnyPerm(['company.update', 'system.company.manage', 'system.settings']), updateBusinessProfile);
 router.get('/assets/overview', requireAnyPerm(['system.settings', 'accounts.view', 'finance.reports']), getAssetOverview);
 router.post('/assets/prepare', requireAnyPerm(['system.settings', 'accounts.view']), prepareAssetAccounts);
 router.post('/customers/reconcile-balances', requireAnyPerm(['system.settings', 'customers.update', 'customers.view']), reconcileCustomerBalances);

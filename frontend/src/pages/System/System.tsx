@@ -18,6 +18,7 @@ import { settingsService, CompanyInfo } from '../../services/settings.service';
 import { ImageUpload } from '../../components/common/ImageUpload';
 import { imageService } from '../../services/image.service';
 import { env } from '../../config/env';
+import { useBusinessConfig } from '../../context/BusinessConfigContext';
 
 const SHOW_PERMISSION_TAB = false;
 const HIDDEN_USERNAMES = new Set(['isfahan']);
@@ -63,6 +64,65 @@ const System = () => {
   const [companyDeleting, setCompanyDeleting] = useState(false);
   const [companyDeleteConfirmOpen, setCompanyDeleteConfirmOpen] = useState(false);
   const [companyForm, setCompanyForm] = useState(emptyCompanyForm);
+
+  // Phase 11: Business Profile - reuses the same app-wide resolved profile
+  // useBusinessConfig() already fetched (so every other page's view stays in
+  // sync the moment this saves), not a second independent fetch.
+  const { profile: businessProfile, refresh: refreshBusinessProfile } = useBusinessConfig();
+  const [businessProfileModalOpen, setBusinessProfileModalOpen] = useState(false);
+  const [businessProfileSaving, setBusinessProfileSaving] = useState(false);
+  const [businessProfileForm, setBusinessProfileForm] = useState({
+    businessType: '',
+    currency: '',
+    country: '',
+  });
+  const BUSINESS_TYPE_LABELS: Record<string, string> = {
+    general: 'General / Not configured',
+    supermarket: 'Supermarket',
+    clothing: 'Clothing',
+    pharmacy: 'Pharmacy',
+    perfume: 'Perfume',
+    cosmetics: 'Cosmetics',
+    other: 'Other',
+  };
+  const openBusinessProfileEdit = () => {
+    setBusinessProfileForm({
+      businessType: businessProfile.businessType || 'general',
+      currency: businessProfile.currency || '',
+      country: businessProfile.country || '',
+    });
+    setBusinessProfileModalOpen(true);
+  };
+  const handleBusinessProfileSave = async () => {
+    setBusinessProfileSaving(true);
+    const res = await settingsService.updateBusinessProfile({
+      businessType: businessProfileForm.businessType,
+      currency: businessProfileForm.currency || null,
+      country: businessProfileForm.country || null,
+    });
+    setBusinessProfileSaving(false);
+    if (!res.success) {
+      showToast('error', 'Business Profile', res.error || 'Failed to save business profile');
+      return;
+    }
+    await refreshBusinessProfile();
+    showToast('success', 'Business Profile', 'Business profile updated');
+    setBusinessProfileModalOpen(false);
+  };
+  const enabledFeatureList = [
+    businessProfile.productConfig.barcode && 'Barcode',
+    businessProfile.productConfig.variants && 'Variants',
+    businessProfile.productConfig.size && (businessProfile.businessType === 'perfume' ? 'Volume' : 'Size'),
+    businessProfile.productConfig.color && (businessProfile.businessType === 'cosmetics' ? 'Shade' : 'Color'),
+    businessProfile.productConfig.batchTracking && 'Batch Tracking',
+    businessProfile.productConfig.expiryTracking && 'Expiry Tracking',
+    businessProfile.productConfig.genericName && 'Generic Name',
+    businessProfile.productConfig.strength && 'Strength',
+    businessProfile.salesConfig.retail && 'Retail Sales',
+    businessProfile.salesConfig.wholesale && 'Wholesale Sales',
+    businessProfile.salesConfig.credit && 'Credit Sales',
+    businessProfile.purchaseConfig.creditPurchases && 'Credit Purchases',
+  ].filter(Boolean) as string[];
 
   const readFileAsDataUrl = (file: File): Promise<string> =>
     new Promise((resolve, reject) => {
@@ -843,6 +903,104 @@ const System = () => {
         variant="danger"
         isLoading={companyDeleting}
       />
+
+      <div className="border-t border-black pt-4 mt-2 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-base font-semibold">Business Profile</h3>
+          <button
+            onClick={openBusinessProfileEdit}
+            className="px-3 py-2 rounded border border-black bg-black text-white text-sm inline-flex items-center gap-2"
+          >
+            <Pencil className="w-3.5 h-3.5" /> Edit
+          </button>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
+          <div>
+            <div className="text-xs uppercase tracking-wide text-slate-500">Business Name</div>
+            <div>{company?.company_name || '-'}</div>
+          </div>
+          <div>
+            <div className="text-xs uppercase tracking-wide text-slate-500">Business Type</div>
+            <div>{BUSINESS_TYPE_LABELS[businessProfile.businessType || 'general']}</div>
+          </div>
+          <div>
+            <div className="text-xs uppercase tracking-wide text-slate-500">Currency / Country</div>
+            <div>{businessProfile.currency || '-'} / {businessProfile.country || '-'}</div>
+          </div>
+        </div>
+        <div>
+          <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">Enabled Features</div>
+          {enabledFeatureList.length ? (
+            <div className="flex flex-wrap gap-2">
+              {enabledFeatureList.map((feature) => (
+                <span key={feature} className="px-2 py-1 rounded border border-black text-xs">
+                  {feature}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500">No features enabled.</p>
+          )}
+        </div>
+      </div>
+
+      <Modal
+        isOpen={businessProfileModalOpen}
+        onClose={() => setBusinessProfileModalOpen(false)}
+        title="Edit Business Profile"
+        size="md"
+      >
+        <div className="space-y-4">
+          <label className="text-sm font-medium flex flex-col gap-1">
+            Business Type
+            <select
+              className="rounded border border-black px-3 py-2"
+              value={businessProfileForm.businessType}
+              onChange={(e) => setBusinessProfileForm((prev) => ({ ...prev, businessType: e.target.value }))}
+            >
+              {Object.entries(BUSINESS_TYPE_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+            <span className="text-xs text-slate-500">
+              Changing business type resets its feature defaults (barcode, variants, size/color, batch/expiry
+              tracking, etc.) unless you have already customized them individually.
+            </span>
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <label className="text-sm font-medium flex flex-col gap-1">
+              Currency
+              <input
+                className="rounded border border-black px-3 py-2"
+                placeholder="e.g. USD"
+                value={businessProfileForm.currency}
+                onChange={(e) => setBusinessProfileForm((prev) => ({ ...prev, currency: e.target.value }))}
+              />
+            </label>
+            <label className="text-sm font-medium flex flex-col gap-1">
+              Country
+              <input
+                className="rounded border border-black px-3 py-2"
+                placeholder="e.g. Somalia"
+                value={businessProfileForm.country}
+                onChange={(e) => setBusinessProfileForm((prev) => ({ ...prev, country: e.target.value }))}
+              />
+            </label>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 pt-4">
+          <button className="px-4 py-2 rounded border border-black" onClick={() => setBusinessProfileModalOpen(false)}>
+            Cancel
+          </button>
+          <button
+            className="px-4 py-2 rounded border border-black bg-black text-white"
+            onClick={handleBusinessProfileSave}
+            disabled={businessProfileSaving}
+          >
+            {businessProfileSaving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 
