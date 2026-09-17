@@ -45,6 +45,92 @@ export interface CompanyInfo {
   updated_at: string;
 }
 
+export interface ProductConfig {
+  barcode: boolean;
+  variants: boolean;
+  size: boolean;
+  color: boolean;
+  brand: boolean;
+  batchTracking: boolean;
+  expiryTracking: boolean;
+  serialNumber: boolean;
+  multipleUnits: boolean;
+  // Phase 11 additions - the only two Part 7 product fields with no existing
+  // flag to reuse (unlike perfume "volume" -> size, cosmetics "shade" ->
+  // color, pharmacy "dosage form" -> the existing unit/unit_id system).
+  genericName: boolean;
+  strength: boolean;
+}
+
+export interface SalesConfig {
+  retail: boolean;
+  wholesale: boolean;
+  credit: boolean;
+  creditDays: number;
+  discount: boolean;
+  tax: boolean;
+  pos: boolean;
+  customerDisplay: boolean;
+}
+
+export interface PurchaseConfig {
+  supplierManagement: boolean;
+  purchaseOrders: boolean;
+  purchasePayments: boolean;
+  creditPurchases: boolean;
+  supplierCreditDays: number;
+}
+
+export interface AccountingConfig {
+  defaultCashAccId: number | null;
+  defaultBankAccId: number | null;
+  arAccId: number | null;
+  apAccId: number | null;
+  salesRevenueAccId: number | null;
+  inventoryAccId: number | null;
+  cogsAccId: number | null;
+  openingBalanceEquityAccId: number | null;
+}
+
+export interface BranchConfig {
+  multiBranch: boolean;
+  defaultBranchId: number | null;
+}
+
+export interface ReceiptConfig {
+  logo: boolean;
+  header: string;
+  footer: string;
+  showCustomer: boolean;
+  showBarcode: boolean;
+  showTax: boolean;
+  showDiscount: boolean;
+  paperSize: 'a4' | 'thermal';
+}
+
+export interface NotificationConfig {
+  lowStock: boolean;
+  expiry: boolean;
+  creditDue: boolean;
+  purchasePayment: boolean;
+}
+
+export interface BusinessProfile {
+  businessType: string | null;
+  email: string | null;
+  website: string | null;
+  currency: string | null;
+  country: string | null;
+  timezone: string | null;
+  productConfig: ProductConfig;
+  salesConfig: SalesConfig;
+  purchaseConfig: PurchaseConfig;
+  accountingConfig: AccountingConfig;
+  branchConfig: BranchConfig;
+  receiptConfig: ReceiptConfig;
+  notificationConfig: NotificationConfig;
+}
+
 export interface CapitalContribution {
   capital_id: number;
   branch_id: number;
@@ -730,6 +816,122 @@ const detectAuditLogColumns = async (): Promise<AuditLogColumns> => {
   return auditLogColumnsCache;
 };
 
+let businessProfileSchemaReady = false;
+// Phase 11: defensive, same pattern as ensureCompanySchema above - the
+// Phase 12 migration (20260916_business_profile.sql) already adds these
+// columns, but a client whose deploy hasn't picked that migration up yet
+// (or a brand-new client provisioned from an older schema snapshot) must
+// not 500 on first use of this feature.
+const ensureBusinessProfileSchema = async (): Promise<void> => {
+  if (businessProfileSchemaReady) return;
+  await adminQueryMany(`
+    ALTER TABLE ims.company ADD COLUMN IF NOT EXISTS business_type VARCHAR(30);
+    ALTER TABLE ims.company ADD COLUMN IF NOT EXISTS email VARCHAR(150);
+    ALTER TABLE ims.company ADD COLUMN IF NOT EXISTS website VARCHAR(255);
+    ALTER TABLE ims.company ADD COLUMN IF NOT EXISTS currency VARCHAR(10);
+    ALTER TABLE ims.company ADD COLUMN IF NOT EXISTS country VARCHAR(80);
+    ALTER TABLE ims.company ADD COLUMN IF NOT EXISTS timezone VARCHAR(60);
+    ALTER TABLE ims.company ADD COLUMN IF NOT EXISTS business_profile JSONB NOT NULL DEFAULT '{}'::jsonb;
+  `);
+  businessProfileSchemaReady = true;
+};
+
+// Part 4: sensible starting configuration per business type. These are
+// DEFAULTS ONLY - getBusinessProfile below layers whatever is actually
+// stored in ims.company.business_profile on top of them, so a client that
+// has already customized a flag never gets it silently reset by this table.
+const DEFAULT_SALES_CONFIG: SalesConfig = {
+  retail: true,
+  wholesale: true,
+  credit: true,
+  creditDays: 30,
+  discount: true,
+  tax: true,
+  pos: true,
+  customerDisplay: false,
+};
+const DEFAULT_PURCHASE_CONFIG: PurchaseConfig = {
+  supplierManagement: true,
+  purchaseOrders: true,
+  purchasePayments: true,
+  creditPurchases: true,
+  supplierCreditDays: 30,
+};
+const DEFAULT_BRANCH_CONFIG: BranchConfig = { multiBranch: true, defaultBranchId: null };
+const DEFAULT_RECEIPT_CONFIG: ReceiptConfig = {
+  logo: true,
+  header: '',
+  footer: '',
+  showCustomer: true,
+  showBarcode: true,
+  showTax: true,
+  showDiscount: true,
+  paperSize: 'a4',
+};
+const DEFAULT_NOTIFICATION_CONFIG: NotificationConfig = {
+  lowStock: true,
+  expiry: true,
+  creditDue: true,
+  purchasePayment: true,
+};
+const DEFAULT_ACCOUNTING_CONFIG: AccountingConfig = {
+  defaultCashAccId: null,
+  defaultBankAccId: null,
+  arAccId: null,
+  apAccId: null,
+  salesRevenueAccId: null,
+  inventoryAccId: null,
+  cogsAccId: null,
+  openingBalanceEquityAccId: null,
+};
+
+const PRODUCT_CONFIG_BY_TYPE: Record<string, ProductConfig> = {
+  general: {
+    barcode: true, variants: false, size: false, color: false, brand: true,
+    batchTracking: false, expiryTracking: false, serialNumber: false, multipleUnits: true,
+    genericName: false, strength: false,
+  },
+  supermarket: {
+    barcode: true, variants: false, size: false, color: false, brand: true,
+    batchTracking: false, expiryTracking: false, serialNumber: false, multipleUnits: true,
+    genericName: false, strength: false,
+  },
+  // "Volume" reuses size (e.g. size = "50ml") rather than a new flag.
+  clothing: {
+    barcode: true, variants: true, size: true, color: true, brand: true,
+    batchTracking: false, expiryTracking: false, serialNumber: false, multipleUnits: false,
+    genericName: false, strength: false,
+  },
+  // batchTracking/expiryTracking here govern the existing
+  // purchase_items.batch_no/expiry_date fields, not a new items column.
+  // "Dosage form" reuses the existing unit/unit_id system.
+  pharmacy: {
+    barcode: true, variants: false, size: false, color: false, brand: true,
+    batchTracking: true, expiryTracking: true, serialNumber: false, multipleUnits: true,
+    genericName: true, strength: true,
+  },
+  // "Volume" reuses size (e.g. size = "50ml").
+  perfume: {
+    barcode: true, variants: true, size: true, color: false, brand: true,
+    batchTracking: false, expiryTracking: false, serialNumber: false, multipleUnits: false,
+    genericName: false, strength: false,
+  },
+  // "Shade" reuses color.
+  cosmetics: {
+    barcode: true, variants: true, size: true, color: true, brand: true,
+    batchTracking: true, expiryTracking: true, serialNumber: false, multipleUnits: false,
+    genericName: false, strength: false,
+  },
+  other: {
+    barcode: true, variants: false, size: false, color: false, brand: true,
+    batchTracking: false, expiryTracking: false, serialNumber: false, multipleUnits: true,
+    genericName: false, strength: false,
+  },
+};
+
+const resolveBusinessType = (value: string | null | undefined): string =>
+  value && PRODUCT_CONFIG_BY_TYPE[value] ? value : 'general';
+
 const mapCompany = (row: {
   company_id: number;
   company_name: string;
@@ -829,6 +1031,145 @@ export const settingsService = {
 
   async deleteCompanyInfo(): Promise<void> {
     await queryOne(`DELETE FROM ims.company WHERE company_id = 1`);
+  },
+
+  // Part 5: the single configuration resolver. Loads the client's Business
+  // Profile (ims.company - the client's one existing "which business is
+  // this" table, per Part 2) and layers it over that business type's
+  // defaults, so every caller (backend enforcement, the frontend) gets one
+  // fully-populated, normalized object - never partial/undefined flags to
+  // guard against.
+  async getBusinessProfile(): Promise<BusinessProfile> {
+    await ensureBusinessProfileSchema();
+    const row = await queryOne<{
+      business_type: string | null;
+      email: string | null;
+      website: string | null;
+      currency: string | null;
+      country: string | null;
+      timezone: string | null;
+      business_profile: Record<string, unknown> | null;
+    }>(
+      `SELECT business_type, email, website, currency, country, timezone, business_profile
+         FROM ims.company
+        WHERE company_id = 1`
+    );
+
+    const businessType = resolveBusinessType(row?.business_type ?? null);
+    const stored = (row?.business_profile ?? {}) as Partial<BusinessProfile>;
+
+    return {
+      businessType: row?.business_type ?? null,
+      email: row?.email ?? null,
+      website: row?.website ?? null,
+      currency: row?.currency ?? null,
+      country: row?.country ?? null,
+      timezone: row?.timezone ?? null,
+      productConfig: { ...PRODUCT_CONFIG_BY_TYPE[businessType], ...(stored.productConfig || {}) },
+      salesConfig: { ...DEFAULT_SALES_CONFIG, ...(stored.salesConfig || {}) },
+      purchaseConfig: { ...DEFAULT_PURCHASE_CONFIG, ...(stored.purchaseConfig || {}) },
+      accountingConfig: { ...DEFAULT_ACCOUNTING_CONFIG, ...(stored.accountingConfig || {}) },
+      branchConfig: { ...DEFAULT_BRANCH_CONFIG, ...(stored.branchConfig || {}) },
+      receiptConfig: { ...DEFAULT_RECEIPT_CONFIG, ...(stored.receiptConfig || {}) },
+      notificationConfig: { ...DEFAULT_NOTIFICATION_CONFIG, ...(stored.notificationConfig || {}) },
+    };
+  },
+
+  async updateBusinessProfile(input: {
+    businessType?: string | null;
+    email?: string | null;
+    website?: string | null;
+    currency?: string | null;
+    country?: string | null;
+    timezone?: string | null;
+    productConfig?: Partial<ProductConfig>;
+    salesConfig?: Partial<SalesConfig>;
+    purchaseConfig?: Partial<PurchaseConfig>;
+    accountingConfig?: Partial<AccountingConfig>;
+    branchConfig?: Partial<BranchConfig>;
+    receiptConfig?: Partial<ReceiptConfig>;
+    notificationConfig?: Partial<NotificationConfig>;
+  }): Promise<BusinessProfile> {
+    await ensureBusinessProfileSchema();
+    const current = await this.getBusinessProfile();
+
+    const businessTypeChanged = input.businessType !== undefined && input.businessType !== current.businessType;
+    const nextBusinessType = input.businessType !== undefined ? input.businessType : current.businessType;
+
+    // If the caller is changing business type and didn't also hand-pick a
+    // productConfig in the same request, adopt the new type's defaults
+    // wholesale (Part 4's "pick a type, get sensible defaults" moment) -
+    // otherwise every flag customized under the old type would silently
+    // carry over with no way to reset it short of toggling each by hand.
+    // An explicit productConfig always wins, at any time.
+    const nextProductConfig = input.productConfig
+      ? { ...current.productConfig, ...input.productConfig }
+      : businessTypeChanged
+      ? PRODUCT_CONFIG_BY_TYPE[resolveBusinessType(nextBusinessType)]
+      : current.productConfig;
+
+    const merged: BusinessProfile = {
+      businessType: nextBusinessType,
+      email: input.email !== undefined ? input.email || null : current.email,
+      website: input.website !== undefined ? input.website || null : current.website,
+      currency: input.currency !== undefined ? input.currency || null : current.currency,
+      country: input.country !== undefined ? input.country || null : current.country,
+      timezone: input.timezone !== undefined ? input.timezone || null : current.timezone,
+      productConfig: nextProductConfig,
+      salesConfig: input.salesConfig ? { ...current.salesConfig, ...input.salesConfig } : current.salesConfig,
+      purchaseConfig: input.purchaseConfig
+        ? { ...current.purchaseConfig, ...input.purchaseConfig }
+        : current.purchaseConfig,
+      accountingConfig: input.accountingConfig
+        ? { ...current.accountingConfig, ...input.accountingConfig }
+        : current.accountingConfig,
+      branchConfig: input.branchConfig ? { ...current.branchConfig, ...input.branchConfig } : current.branchConfig,
+      receiptConfig: input.receiptConfig ? { ...current.receiptConfig, ...input.receiptConfig } : current.receiptConfig,
+      notificationConfig: input.notificationConfig
+        ? { ...current.notificationConfig, ...input.notificationConfig }
+        : current.notificationConfig,
+    };
+
+    const profileJson = JSON.stringify({
+      productConfig: merged.productConfig,
+      salesConfig: merged.salesConfig,
+      purchaseConfig: merged.purchaseConfig,
+      accountingConfig: merged.accountingConfig,
+      branchConfig: merged.branchConfig,
+      receiptConfig: merged.receiptConfig,
+      notificationConfig: merged.notificationConfig,
+    });
+
+    // company_name is deliberately not touched here - this endpoint only
+    // owns business-type/configuration, never the company's identity fields
+    // (name/logo/banner/phone), which stay exclusively under
+    // upsertCompanyInfo above. The INSERT branch only exists for the
+    // pathological case of no company row at all; ON CONFLICT is the real
+    // path for every actual deployment (bootstrap always creates row 1).
+    await queryOne(
+      `INSERT INTO ims.company (company_id, company_name, business_type, email, website, currency, country, timezone, business_profile, is_active)
+       VALUES (1, 'My Inventory ERP', $1, $2, $3, $4, $5, $6, $7::jsonb, TRUE)
+       ON CONFLICT (company_id) DO UPDATE SET
+         business_type = EXCLUDED.business_type,
+         email = EXCLUDED.email,
+         website = EXCLUDED.website,
+         currency = EXCLUDED.currency,
+         country = EXCLUDED.country,
+         timezone = EXCLUDED.timezone,
+         business_profile = EXCLUDED.business_profile,
+         updated_at = NOW()`,
+      [
+        merged.businessType,
+        merged.email,
+        merged.website,
+        merged.currency,
+        merged.country,
+        merged.timezone,
+        profileJson,
+      ]
+    );
+
+    return merged;
   },
 
   async prepareAssetAccounts(scope: BranchScope, branchId?: number): Promise<{ created: number }> {
@@ -1529,6 +1870,13 @@ export const settingsService = {
         `UPDATE ims.accounts SET balance = COALESCE(balance, 0) + $1 WHERE branch_id = $2 AND acc_id = $3`,
         [Number(input.amount || 0), branchId, depositAccountId]
       );
+      // H4 fix: Owner Capital's credit above was never mirrored into
+      // accounts.balance. Equity - credit increases it. No reversal needed:
+      // capital_id is a brand-new row from the INSERT above.
+      await client.query(
+        `UPDATE ims.accounts SET balance = COALESCE(balance, 0) + $1 WHERE branch_id = $2 AND acc_id = $3`,
+        [Number(input.amount || 0), branchId, ownerCapitalAccId]
+      );
 
       return capital_id;
     });
@@ -1737,6 +2085,21 @@ export const settingsService = {
             AND acc_id = $3`,
         [input.amount, branchId, payoutAccountId]
       );
+      // H4 fix: Owner Drawings' debit above was never mirrored into
+      // accounts.balance. Despite its 'equity' account_type, Owner Drawings
+      // is a contra-equity account where debit increases the balance (it
+      // accumulates draws to net against capital) - confirmed by
+      // resolveNaturalSide's explicit isDrawingAccount special-case in
+      // financialReports.service.ts, which returns 'debit' before the
+      // generic equity->credit rule. No reversal needed: draw_id is a
+      // brand-new row from the INSERT above.
+      await client.query(
+        `UPDATE ims.accounts
+            SET balance = COALESCE(balance, 0) + $1
+          WHERE branch_id = $2
+            AND acc_id = $3`,
+        [input.amount, branchId, coa.ownerDrawings]
+      );
 
       return draw_id;
     });
@@ -1876,6 +2239,21 @@ export const settingsService = {
             AND acc_id = $3`,
         [Number(next.amount), Number(existing.branch_id), nextAccountId]
       );
+      // H4 fix: Owner Drawings' debit was never mirrored into
+      // accounts.balance (same contra-equity, debit-increases account as
+      // createOwnerDrawing - see that function's H4 fix comment). The
+      // account itself never changes between edits, so this is a plain
+      // reverse-old/apply-new delta.
+      const ownerDrawingsDelta = Number(next.amount) - prevAmount;
+      if (ownerDrawingsDelta) {
+        await client.query(
+          `UPDATE ims.accounts
+              SET balance = COALESCE(balance, 0) + $1
+            WHERE branch_id = $2
+              AND acc_id = $3`,
+          [ownerDrawingsDelta, Number(existing.branch_id), coa.ownerDrawings]
+        );
+      }
 
       const reloaded = await this.getOwnerDrawingById(id, scope);
       if (!reloaded) throw ApiError.internal('Failed to load updated drawing entry');
@@ -1919,6 +2297,21 @@ export const settingsService = {
           WHERE branch_id = $2
             AND acc_id = $3`,
         [Number(existing.amount || 0), Number(existing.branch_id), Number(existing.acc_id)]
+      );
+      // H4 fix: reverse Owner Drawings' contra-equity (debit-increases)
+      // contribution too, now that create/update keep it in sync - otherwise
+      // every delete would leave a permanent orphaned balance behind. Note:
+      // this is NOT existing.equity_acc_id - that column stores the Owner
+      // *Capital* account id (see createOwnerDrawing), while the actual GL
+      // debit goes to the separate "Owner Drawings" COA account, looked up
+      // the same way create/update do.
+      const drawingsCoa = await ensureCoaAccounts(client, Number(existing.branch_id), ['ownerDrawings']);
+      await client.query(
+        `UPDATE ims.accounts
+            SET balance = COALESCE(balance, 0) - $1
+          WHERE branch_id = $2
+            AND acc_id = $3`,
+        [Number(existing.amount || 0), Number(existing.branch_id), drawingsCoa.ownerDrawings]
       );
 
       await client.query(
@@ -2004,6 +2397,14 @@ export const settingsService = {
         `UPDATE ims.accounts SET balance = COALESCE(balance, 0) - $1 WHERE branch_id = $2 AND acc_id = $3`,
         [Number(existing.amount || 0), Number(existing.branch_id), Number(existing.acc_id)]
       );
+      // H4 fix: Owner Capital's credit was never mirrored into
+      // accounts.balance. Equity - credit increases it. equity_acc_id is
+      // fixed across edits (unlike the deposit/cash account), so reverse the
+      // old amount here before applying the new one below.
+      await client.query(
+        `UPDATE ims.accounts SET balance = COALESCE(balance, 0) - $1 WHERE branch_id = $2 AND acc_id = $3`,
+        [Number(existing.amount || 0), Number(existing.branch_id), Number(existing.equity_acc_id)]
+      );
 
       await client.query(
         `UPDATE ims.capital_contributions
@@ -2037,6 +2438,10 @@ export const settingsService = {
       await client.query(
         `UPDATE ims.accounts SET balance = COALESCE(balance, 0) + $1 WHERE branch_id = $2 AND acc_id = $3`,
         [Number(next.amount || 0), Number(existing.branch_id), depositAccountId]
+      );
+      await client.query(
+        `UPDATE ims.accounts SET balance = COALESCE(balance, 0) + $1 WHERE branch_id = $2 AND acc_id = $3`,
+        [Number(next.amount || 0), Number(existing.branch_id), Number(existing.equity_acc_id)]
       );
 
       const reloaded = await this.getCapitalContributionById(id, scope);
@@ -2085,6 +2490,13 @@ export const settingsService = {
       await client.query(
         `UPDATE ims.accounts SET balance = COALESCE(balance, 0) - $1 WHERE branch_id = $2 AND acc_id = $3`,
         [Number(existing.amount || 0), Number(existing.branch_id), Number(existing.acc_id)]
+      );
+      // H4 fix: reverse Owner Capital's credit contribution too, now that
+      // create/update keep it in sync - otherwise every delete would leave a
+      // permanent orphaned balance behind.
+      await client.query(
+        `UPDATE ims.accounts SET balance = COALESCE(balance, 0) - $1 WHERE branch_id = $2 AND acc_id = $3`,
+        [Number(existing.amount || 0), Number(existing.branch_id), Number(existing.equity_acc_id)]
       );
 
       await client.query(`DELETE FROM ims.capital_contributions WHERE capital_id = $1`, [id]);

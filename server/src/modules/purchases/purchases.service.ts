@@ -6,10 +6,11 @@ import { syncLowStockNotifications } from '../../utils/stockAlerts';
 import { PurchaseInput, PurchaseItemInput } from './purchases.schemas';
 import { PoolClient } from 'pg';
 import { adjustSystemAccountBalance } from '../../utils/systemAccounts';
-import { postGl } from '../../utils/glPosting';
+import { postGl, deleteGlByRef } from '../../utils/glPosting';
 import { ensureCoaAccounts } from '../../utils/coaDefaults';
 import { resolvePurchaseDueDate } from '../../utils/creditDueHelpers';
 import { offsetOf, type Paged } from '../../utils/pagination';
+import { settingsService } from '../settings/settings.service';
 
 export interface Purchase {
   purchase_id: number;
@@ -711,6 +712,72 @@ const applyPurchasePayment = async (
   }
 };
 
+// HIGH-02 fix: voiding/cancelling a purchase (a status transition to a
+// non-applied status, handled below in updatePurchase) already reversed the
+// bill/AP side via adjustSupplierBalance, but left every ims.supplier_payments
+// row already recorded against it completely untouched - the cash/bank debit
+// was never credited back, the AP/SupplierAdvances GL those payments posted
+// was never reversed, and the pooled supplier balance / cached AP balance
+// never got the payment's reversal on top of the bill's. This undoes exactly
+// what applyPurchasePayment() above did, symmetrically, for every payment on
+// the purchase - mirroring the same reversal shape already used by
+// deleteCustomerReceipt/deleteSupplierReceipt elsewhere in this codebase
+// (restore cash, deleteGlByRef, adjustSupplierBalance) rather than inventing
+// a new pattern.
+const reversePurchasePayments = async (
+  client: PoolClient,
+  params: { branchId: number; purchaseId: number; supplierId?: number | null }
+) => {
+  const payments = await client.query<{ sup_payment_id: number; acc_id: number; amount_paid: string }>(
+    `SELECT sup_payment_id, acc_id, amount_paid::text AS amount_paid
+       FROM ims.supplier_payments
+      WHERE branch_id = $1
+        AND purchase_id = $2`,
+    [params.branchId, params.purchaseId]
+  );
+
+  for (const row of payments.rows) {
+    const amount = roundMoney(Number(row.amount_paid || 0));
+    if (amount <= 0) continue;
+
+    await client.query(
+      `UPDATE ims.accounts
+          SET balance = balance + $1
+        WHERE acc_id = $2
+          AND branch_id = $3`,
+      [amount, Number(row.acc_id), params.branchId]
+    );
+
+    await deleteGlByRef(client, {
+      branchId: params.branchId,
+      refTable: 'supplier_payments',
+      refId: Number(row.sup_payment_id),
+    });
+
+    await adjustSupplierBalance(client, {
+      branchId: params.branchId,
+      supplierId: params.supplierId,
+      delta: amount,
+    });
+  }
+
+  await client.query(
+    `DELETE FROM ims.supplier_ledger
+      WHERE branch_id = $1
+        AND ref_table = 'purchases'
+        AND ref_id = $2
+        AND entry_type = 'payment'`,
+    [params.branchId, params.purchaseId]
+  );
+
+  await client.query(
+    `DELETE FROM ims.supplier_payments
+      WHERE branch_id = $1
+        AND purchase_id = $2`,
+    [params.branchId, params.purchaseId]
+  );
+};
+
 export const purchasesService = {
   async listPurchases(
     scope: BranchScope,
@@ -1049,6 +1116,18 @@ export const purchasesService = {
           | 'credit';
       const status: PurchaseStatus =
         purchaseType === 'credit' && requestedStatus !== 'void' ? 'unpaid' : requestedStatus;
+      // Part 8: Business Profile enforcement for supplier/credit purchases,
+      // mirroring assertCustomerCreditAllowed's sales-side gate. Checked only
+      // at creation, not threaded through every status-transition branch in
+      // updatePurchase - a purchase already created as credit stays valid
+      // through its own lifecycle even if the flag is toggled off later,
+      // same as how disabling a feature never deletes existing data.
+      if (purchaseType === 'credit') {
+        const profile = await settingsService.getBusinessProfile();
+        if (!profile.purchaseConfig.creditPurchases) {
+          throw ApiError.badRequest('Credit purchases are disabled for this business. Enable them in Business Profile settings first.');
+        }
+      }
       const storeId = await resolvePurchaseStoreId(client, {
         branchId: context.branchId,
         storeId: input.storeId ?? null,
@@ -1206,6 +1285,9 @@ export const purchasesService = {
       if (!scope.isAdmin && !scope.branchIds.includes(currentBranchId)) {
         throw ApiError.forbidden('You can only update purchases in your branch');
       }
+      if (current.status === 'void') {
+        throw ApiError.badRequest('Voided purchases cannot be edited');
+      }
 
       const oldItemsResult = await client.query<{
         item_id: number;
@@ -1343,6 +1425,35 @@ export const purchasesService = {
       const previousBillAmount = !isNonAppliedPurchaseStatus(current.status) ? Number(current.total || 0) : 0;
       const nextBillAmount = !isNonAppliedPurchaseStatus(nextStatus) ? nextTotal : 0;
 
+      // HIGH-02 fix: transitioning into a non-applied status (void/ordered)
+      // from an applied one must also reverse any payments already recorded
+      // - previously only the bill/AP side below was reversed, leaving
+      // supplier_payments, their GL, and the cash they debited untouched.
+      // Only fires on that specific transition, so a purchase that's
+      // already void and stays void (or one with no payments at all) is
+      // unaffected - hasPayments was already computed above for the
+      // supplier-change guard.
+      //
+      // Must run BEFORE the bill-amount reversal below, not after: a
+      // payment can never exceed its purchase's total, so crediting it back
+      // to AP first only ever increases the cached balance, while removing
+      // the (larger-or-equal) bill amount second brings it back down to the
+      // correct final figure without ever dipping below zero along the way.
+      // Doing it in the other order can transiently try to subtract the
+      // full bill amount before the payment is credited back, tripping
+      // accounts_balance_check even though the net final result is valid.
+      if (
+        hasPayments &&
+        isNonAppliedPurchaseStatus(nextStatus) &&
+        !isNonAppliedPurchaseStatus(current.status)
+      ) {
+        await reversePurchasePayments(client, {
+          branchId: currentBranchId,
+          purchaseId: id,
+          supplierId: previousSupplierId,
+        });
+      }
+
       if (previousSupplierId && previousBillAmount > 0) {
         await adjustSupplierBalance(client, {
           branchId: currentBranchId,
@@ -1464,7 +1575,17 @@ export const purchasesService = {
         });
       }
 
-      if (newStockApplied) {
+      // HIGH-02 fix: this used to skip rewritePurchaseGl() entirely on a
+      // transition INTO a non-applied status (e.g. received -> void), so the
+      // original Inventory/AP GL rows from when the purchase was created
+      // were never deleted - leaving the AP GL total permanently out of
+      // sync with the cached AP balance the adjustSupplierBalance calls
+      // above correctly updated. rewritePurchaseGl already deletes any
+      // existing GL for this purchase before deciding whether to repost
+      // (and correctly skips reposting for void/ordered), so calling it
+      // whenever either the old or new status had/has GL applied - not just
+      // the new one - covers both directions symmetrically.
+      if (newStockApplied || oldStockApplied) {
         await rewritePurchaseGl(client, { branchId: currentBranchId, purchaseId: id });
       }
 

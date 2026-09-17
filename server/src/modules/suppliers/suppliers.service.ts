@@ -4,6 +4,8 @@ import { withTransaction } from '../../db/withTx';
 import { ApiError } from '../../utils/ApiError';
 import { BranchScope } from '../../utils/branchScope';
 import { offsetOf, type Paged } from '../../utils/pagination';
+import { deleteGlByRef, ensureCoreCoa, postGl } from '../../utils/glPosting';
+import { syncSystemAccountBalancesWithClient } from '../../utils/systemAccounts';
 
 export interface Supplier {
   supplier_id: number;
@@ -88,6 +90,28 @@ const findSupplierDeleteBlockReason = async (
   branchId: number,
   supplierId: number
 ): Promise<string | null> => {
+  // M14 fix: customers.service.ts's equivalent check blocks deletion on any
+  // non-zero outstanding balance before it ever reaches this DB write -
+  // suppliers never had that guard, so a supplier with an unpaid opening
+  // balance and no purchase/ledger history (i.e. nothing else here would
+  // catch it) could be deleted outright. deleteSupplier only removes
+  // supplier_ledger rows; it never reverses the opening-balance GL entry
+  // (upsertSupplierOpeningLedger posts it to account_transactions with
+  // ref_table='opening_balance') or the accounts.balance it contributed,
+  // so that delete would leave both permanently orphaned.
+  const shape = await detectSupplierShape();
+  const balanceRow = await client.query<{ balance: string }>(
+    `SELECT COALESCE(${shape.balanceColumn}, 0)::text AS balance
+       FROM ims.suppliers
+      WHERE supplier_id = $1
+        AND branch_id = $2`,
+    [supplierId, branchId]
+  );
+  const balance = Math.abs(Number(balanceRow.rows[0]?.balance || 0));
+  if (balance > 0.005) {
+    return `Cannot delete — outstanding balance of ${balance.toFixed(2)} exists. Settle to zero first.`;
+  }
+
   const purchaseLinked = await client.query<{ exists: boolean }>(
     `SELECT EXISTS (
        SELECT 1
@@ -136,15 +160,70 @@ const upsertSupplierOpeningLedger = async (
     [branchId, supplierId]
   );
 
-  if (!amount) return;
-
-  await client.query(
-    `INSERT INTO ims.supplier_ledger
-      (branch_id, supplier_id, entry_type, ref_table, ref_id, acc_id, debit, credit, entry_date, note)
-     VALUES
-      ($1, $2, 'opening', 'opening_balance', $2, NULL, 0, $3, NOW() - INTERVAL '1 second', $4)`,
-    [branchId, supplierId, amount, '[OPENING BALANCE] Set from supplier form']
+  const coa = await ensureCoreCoa(client, branchId, ['accountsPayable', 'openingBalanceEquity']);
+  // H4 fix: reverse this ref's previous Opening Balance Equity contribution
+  // to accounts.balance before the old GL rows are deleted below - it was
+  // never mirrored into accounts.balance at all, so re-edits accumulated
+  // stale GL-only value. Accounts Payable is deliberately left out here;
+  // it's resynced from the ledger at the end of this function.
+  const priorObeRows = await client.query<{ debit: string; credit: string }>(
+    `SELECT debit, credit FROM ims.account_transactions
+      WHERE branch_id = $1 AND ref_table = 'opening_balance' AND ref_id = $2
+        AND acc_id = $3 AND COALESCE(is_deleted, 0) = 0`,
+    [branchId, supplierId, coa.openingBalanceEquity]
   );
+  for (const row of priorObeRows.rows) {
+    const delta = -(Number(row.credit) - Number(row.debit));
+    if (delta) {
+      await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+        delta,
+        coa.openingBalanceEquity,
+        branchId,
+      ]);
+    }
+  }
+
+  // Keep the real GL in sync with the subsidiary ledger: replace any prior
+  // opening-balance journal entry for this supplier, then re-post it if the
+  // new amount is non-zero, so Accounts Payable never drifts from what the
+  // supplier's balance edit form shows.
+  await deleteGlByRef(client, { branchId, refTable: 'opening_balance', refId: supplierId });
+
+  if (amount) {
+    await client.query(
+      `INSERT INTO ims.supplier_ledger
+        (branch_id, supplier_id, entry_type, ref_table, ref_id, acc_id, debit, credit, entry_date, note)
+       VALUES
+        ($1, $2, 'opening', 'opening_balance', $2, NULL, 0, $3, NOW() - INTERVAL '1 second', $4)`,
+      [branchId, supplierId, amount, '[OPENING BALANCE] Set from supplier form']
+    );
+
+    await postGl(client, {
+      branchId,
+      refTable: 'opening_balance',
+      refId: supplierId,
+      note: 'Supplier opening/adjusted balance',
+      lines: [
+        { accId: coa.openingBalanceEquity, debit: amount, credit: 0, note: 'Opening balance equity' },
+        { accId: coa.accountsPayable, debit: 0, credit: amount, note: 'Supplier payable (opening/adjusted)' },
+      ],
+    });
+    // H4 fix: Opening Balance Equity debit above was never mirrored into
+    // accounts.balance. Equity - debit decreases it.
+    await client.query(`UPDATE ims.accounts SET balance = balance - $1 WHERE acc_id = $2 AND branch_id = $3`, [
+      amount,
+      coa.openingBalanceEquity,
+      branchId,
+    ]);
+  }
+
+  // The Balance Sheet reads the "Accounts Payable" system account's stored
+  // balance directly (it doesn't re-derive it from account_transactions), and
+  // that balance is otherwise only kept current by a periodic background
+  // sync. Resync it synchronously, in this same transaction, so the Balance
+  // Sheet never shows a stale figure between the ledger edit and the next
+  // scheduled sync.
+  await syncSystemAccountBalancesWithClient(client, branchId);
 };
 
 const mapSupplier = (row: {

@@ -122,6 +122,17 @@ export const productCreateSchema = z.object({
     .nullable()
     .optional(),
   storeId: nullablePositiveInt.optional(),
+  categoryId: nullablePositiveInt.optional(),
+  unitId: nullablePositiveInt.optional(),
+  brand: z.string().trim().max(120).or(z.literal('')).nullable().optional(),
+  // Phase 11: business-type-driven product attributes. All optional/nullable,
+  // same as barcode above - a business type that doesn't use a given field
+  // (e.g. size for a pharmacy) simply never sends it; nothing here requires
+  // any of them.
+  size: z.string().trim().max(40).or(z.literal('')).nullable().optional(),
+  color: z.string().trim().max(40).or(z.literal('')).nullable().optional(),
+  genericName: z.string().trim().max(160).or(z.literal('')).nullable().optional(),
+  strength: z.string().trim().max(40).or(z.literal('')).nullable().optional(),
   quantity: optionalNonnegativeRoundedInt,
   stockAlert: nonnegativeRoundedInt.default(5),
   openingBalance: optionalNonnegativeRoundedInt,

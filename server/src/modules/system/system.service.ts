@@ -478,31 +478,81 @@ export const systemService = {
           const openAp = Math.round(Math.max(supplierOpening, 0) * 100) / 100;
           if (openAr > 0 || openAp > 0) {
             const coa = await ensureCoaAccounts(client, bid, ['accountsReceivable', 'accountsPayable', 'openingBalanceEquity']);
+
+            // Bug fix: upsertCustomerOpeningLedger/upsertSupplierOpeningLedger
+            // (the normal create/update flow) already post an individual GL
+            // entry per customer/supplier, tagged ref_table='opening_balance'
+            // (singular). This consolidated migration used to post its own
+            // AR/AP total on top of those unconditionally, double-counting any
+            // branch where the per-record postings already exist. Skip
+            // whichever side is already covered that way - do not touch the
+            // side that still needs migrating.
+            const [hasIndividualAr, hasIndividualAp] = await Promise.all([
+              client
+                .query<{ exists: boolean }>(
+                  `SELECT EXISTS (
+                     SELECT 1 FROM ims.account_transactions
+                      WHERE branch_id = $1 AND ref_table = 'opening_balance' AND acc_id = $2
+                   ) AS exists`,
+                  [bid, coa.accountsReceivable]
+                )
+                .then((r) => Boolean(r.rows[0]?.exists)),
+              client
+                .query<{ exists: boolean }>(
+                  `SELECT EXISTS (
+                     SELECT 1 FROM ims.account_transactions
+                      WHERE branch_id = $1 AND ref_table = 'opening_balance' AND acc_id = $2
+                   ) AS exists`,
+                  [bid, coa.accountsPayable]
+                )
+                .then((r) => Boolean(r.rows[0]?.exists)),
+            ]);
+
+            const effectiveOpenAr = hasIndividualAr ? 0 : openAr;
+            const effectiveOpenAp = hasIndividualAp ? 0 : openAp;
+
             const lines = [
-              ...(openAr > 0
+              ...(effectiveOpenAr > 0
                 ? [
-                    { accId: coa.accountsReceivable, debit: openAr, credit: 0, note: 'Opening AR (customers)' },
-                    { accId: coa.openingBalanceEquity, debit: 0, credit: openAr, note: 'Offset (Opening Balance Equity)' },
+                    { accId: coa.accountsReceivable, debit: effectiveOpenAr, credit: 0, note: 'Opening AR (customers)' },
+                    { accId: coa.openingBalanceEquity, debit: 0, credit: effectiveOpenAr, note: 'Offset (Opening Balance Equity)' },
                   ]
                 : []),
-              ...(openAp > 0
+              ...(effectiveOpenAp > 0
                 ? [
-                    { accId: coa.openingBalanceEquity, debit: openAp, credit: 0, note: 'Offset (Opening Balance Equity)' },
-                    { accId: coa.accountsPayable, debit: 0, credit: openAp, note: 'Opening AP (suppliers)' },
+                    { accId: coa.openingBalanceEquity, debit: effectiveOpenAp, credit: 0, note: 'Offset (Opening Balance Equity)' },
+                    { accId: coa.accountsPayable, debit: 0, credit: effectiveOpenAp, note: 'Opening AP (suppliers)' },
                   ]
                 : []),
             ];
 
-            await postGl(client, {
-              branchId: bid,
-              txnType: 'opening',
-              refTable: 'opening_balances',
-              refId: bid,
-              note: 'Opening AR/AP migrated from customer/supplier opening balances',
-              lines,
-            });
+            if (lines.length) {
+              await postGl(client, {
+                branchId: bid,
+                txnType: 'opening',
+                refTable: 'opening_balances',
+                refId: bid,
+                note: 'Opening AR/AP migrated from customer/supplier opening balances',
+                lines,
+              });
 
-            updated.accountTransactions += lines.length;
+              // H4 fix: the Opening Balance Equity offset lines above were never
+              // mirrored into accounts.balance. Equity - credit increases it,
+              // debit decreases it; no reversal is needed since the
+              // alreadyOpeningArAp guard above ensures this block runs at most
+              // once per branch (account_transactions row for this ref makes it
+              // permanently skip on any future call).
+              const obeDelta = effectiveOpenAr - effectiveOpenAp;
+              if (obeDelta) {
+                await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+                  obeDelta,
+                  coa.openingBalanceEquity,
+                  bid,
+                ]);
+              }
+
+              updated.accountTransactions += lines.length;
+            }
           }
         }
 
@@ -566,6 +616,22 @@ export const systemService = {
               { accId: coa.openingBalanceEquity, debit: equityDebit, credit: equityCredit, note: 'Offset (Opening Balance Equity)' },
             ],
           });
+
+          // H4 fix: the acc.acc_id side is intentionally left untouched here -
+          // this loop back-fills GL rows to match an already-correct legacy
+          // balance, so that side needs no update. The Opening Balance Equity
+          // offset, however, was never mirrored into accounts.balance at all.
+          // Equity - credit increases it, debit decreases it; no reversal is
+          // needed since the NOT EXISTS guard in accountsToPost's query above
+          // ensures each account is migrated at most once, ever.
+          const obeDelta = equityCredit - equityDebit;
+          if (obeDelta) {
+            await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+              obeDelta,
+              coa.openingBalanceEquity,
+              bid,
+            ]);
+          }
 
           updated.accounts += 1;
           updated.accountTransactions += 2;
@@ -911,7 +977,7 @@ export const systemService = {
           UPDATE ims.roles
              SET ${updates.join(', ')}
            WHERE role_id = $${parameter}
-           RETURNING role_id, role_code, role_name, description, is_system
+           RETURNING role_id, role_code, role_name, description, monthly_salary, is_system
        )
        SELECT
           u.role_id,

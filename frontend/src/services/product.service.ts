@@ -45,6 +45,16 @@ export interface Product {
   sku?: string | null;
   store_id?: number | null;
   store_name?: string | null;
+  category_id?: number | null;
+  category_name?: string | null;
+  unit_id?: number | null;
+  unit_name?: string | null;
+  unit_symbol?: string | null;
+  brand?: string | null;
+  size?: string | null;
+  color?: string | null;
+  generic_name?: string | null;
+  strength?: string | null;
   stock_alert?: number;
   cost_price: number;
   sell_price: number;
@@ -56,6 +66,7 @@ export interface Product {
   is_active: boolean;
   status: string;
   description?: string | null;
+  image_url?: string | null;
 }
 
 type ListOptions = {
@@ -115,6 +126,25 @@ export const productService = {
 
   async get(id: number) {
     return apiClient.get<{ product: Product }>(API.PRODUCTS.ITEM(id));
+  },
+
+  // Exact-match lookup for scanner/barcode entry - never substring/ILIKE, see
+  // the backend route for why (a scan must never resolve to the wrong item
+  // just because it's a substring of another item's barcode). Shared by every
+  // screen that needs to resolve a scanned code to a product (POS already has
+  // its own client-side exact match against an already-loaded catalog; this
+  // is for screens, like Sales/Invoice, that don't preload the full catalog
+  // with barcode data attached).
+  async getByBarcode(barcode: string, branchId?: number) {
+    const qs = buildQuery({ branchId });
+    return apiClient.get<{ product: Product }>(`${API.PRODUCTS.BARCODE(barcode)}${qs}`);
+  },
+
+  async getSummary(branchId?: number) {
+    const qs = buildQuery({ branchId });
+    return apiClient.get<{ summary: { total: number; inStock: number; lowStock: number; noStock: number } }>(
+      `${API.PRODUCTS.SUMMARY}${qs}`
+    );
   },
 
   async create(data: Partial<Product>) {

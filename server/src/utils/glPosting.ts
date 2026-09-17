@@ -68,6 +68,19 @@ export const postGl = async (client: PoolClient, params: PostGlParams) => {
   }
 
   const txnDateSql = params.txnDate ? `$9::timestamptz` : `NOW()`;
+  const accountIds = Array.from(new Set(lines.map((line) => line.accId)));
+  const activeAccounts = await client.query<{ acc_id: number }>(
+    `SELECT acc_id
+       FROM ims.accounts
+      WHERE branch_id = $1
+        AND is_active = TRUE
+        AND acc_id = ANY($2::bigint[])`,
+    [params.branchId, accountIds]
+  );
+  if (activeAccounts.rows.length !== accountIds.length) {
+    throw ApiError.badRequest('GL account is inactive or unavailable in this branch');
+  }
+
   const txnType = (params.txnType || 'other').trim() || 'other';
   const baseNote = `[GL] ${params.note}`.trim();
 

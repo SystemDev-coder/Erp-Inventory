@@ -67,7 +67,7 @@ export default function StockAdjustmentCreatePage() {
         });
         setItemOptions(mapped);
       } catch (err: any) {
-        showToast('error', 'Stock Adjustment', err?.message || 'Failed to load items.');
+        showToast('error', 'Stock Adjustment', err?.message || 'Failed to load products.');
       } finally {
         setLoading(false);
       }
@@ -98,7 +98,7 @@ export default function StockAdjustmentCreatePage() {
   const handleSave = async () => {
     const lines = form.items.filter((l) => l.item_id !== '');
     if (lines.length === 0) {
-      showToast('error', 'Validation error', 'Please select at least one item.');
+      showToast('error', 'Validation error', 'Please select at least one product.');
       return;
     }
     for (const line of lines) {
@@ -178,7 +178,7 @@ export default function StockAdjustmentCreatePage() {
 
         <div className="mt-6">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">Items</h2>
+            <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">Products</h2>
             <button
               type="button"
               onClick={() =>
@@ -200,7 +200,7 @@ export default function StockAdjustmentCreatePage() {
               <thead className="bg-slate-50 dark:bg-slate-800/50">
                 <tr>
                   <th className="px-4 py-3 text-left text-xs font-extrabold uppercase tracking-wide text-slate-600 dark:text-slate-300">
-                    Item *
+                    Product *
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-extrabold uppercase tracking-wide text-slate-600 dark:text-slate-300">
                     Type *
@@ -231,7 +231,7 @@ export default function StockAdjustmentCreatePage() {
                         <SearchableCombobox<number>
                           value={line.item_id === '' ? '' : Number(line.item_id)}
                           options={itemComboboxOptions}
-                          placeholder="Search & select item"
+                          placeholder="Search & select product"
                           disabled={loading || submitting}
                           onChange={(val) => {
                             setForm((prev) => {
@@ -247,7 +247,7 @@ export default function StockAdjustmentCreatePage() {
                               Available Quantity: <span className="font-semibold">{available}</span> units
                             </>
                           ) : (
-                            <span className="opacity-60">Select an item to see availability.</span>
+                            <span className="opacity-60">Select a product to see availability.</span>
                           )}
                         </div>
                       </td>

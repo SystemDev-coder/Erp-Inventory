@@ -9,7 +9,7 @@ export const errorHandler = (
   res: Response,
   _next: NextFunction
 ) => {
-  console.error('Error:', err);
+  console.error('Error:', err?.message, err?.stack);
 
   // Zod validation errors
   if (err instanceof ZodError) {
@@ -37,6 +37,19 @@ export const errorHandler = (
     
     // Unique violation
     if (pgError.code === '23505') {
+      // Phase 12 blocker fix: uq_items_branch_barcode is a composite
+      // (branch_id, barcode) key, so the generic "Key (word)" regex below
+      // never matches it (the detail text is "Key (branch_id, barcode)=...",
+      // which isn't a single \w+ token) and falls through to the unhelpful
+      // "Field already exists". Naming the constraint explicitly gives POS/
+      // barcode entry a real, actionable message without touching how any
+      // other unique constraint in the app is reported.
+      if (pgError.constraint === 'uq_items_branch_barcode') {
+        return res.status(409).json({
+          success: false,
+          message: 'A product with this barcode already exists',
+        });
+      }
       const field = pgError.detail?.match(/Key \((\w+)\)/)?.[1] || 'field';
       return res.status(409).json({
         success: false,

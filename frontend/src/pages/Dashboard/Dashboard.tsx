@@ -2,14 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import Chart from 'react-apexcharts';
 import type { ApexOptions } from 'apexcharts';
 import {
-  AlertTriangle,
-  BriefcaseBusiness,
-  Boxes,
-  Eye,
-  EyeOff,
+  HandCoins,
+  HandHeart,
   Loader2,
-  Package,
   ReceiptText,
+  ShoppingBag,
   TrendingUp,
   Users,
   Wallet,
@@ -17,6 +14,8 @@ import {
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { useBranch } from '../../context/BranchContext';
+import { useLanguage } from '../../context/LanguageContext';
+import type { TranslationKey } from '../../translations';
 import { apiClient, type ApiResponse } from '../../services/api';
 import { API, env } from '../../config/env';
 import { ReportModal, type ReportColumn } from '../../components/reports/ReportModal';
@@ -35,34 +34,15 @@ type DashboardCard = {
 type DashboardChart = {
   id: string;
   name: string;
-  type: 'bar' | 'line';
+  type: 'bar' | 'line' | 'donut';
   labels: string[];
   series: Array<{ name: string; data: number[] }>;
-};
-
-type DashboardRecentRow = {
-  id: string;
-  type: string;
-  ref: string;
-  amount: number;
-  date: string;
-  status: string;
-};
-
-type DashboardLowStockItem = {
-  item_id: number;
-  item_name: string;
-  quantity: number;
-  stock_alert: number;
-  shortage: number;
 };
 
 type DashboardResponse = {
   widgets?: Array<{ id: string; name: string; permission: string; description?: string }>;
   cards: DashboardCard[];
-  charts: DashboardChart[];
-  low_stock_items: DashboardLowStockItem[];
-  recent: DashboardRecentRow[];
+  charts?: DashboardChart[];
   summary: {
     modules: number;
     sections: number;
@@ -82,14 +62,74 @@ type DashboardCardDrilldownResponse = {
   rows: Record<string, unknown>[];
 };
 
+// All cards the backend can produce (getDashboardCards), each one already permission-gated
+// server-side and with a matching drilldown query. A small set of trend charts sits below
+// them (see CHART_TITLE_KEYS); anything more detailed than a card+drilldown stays in Reports.
+const DASHBOARD_CARD_ORDER = [
+  'today-income',
+  'new-customers-today',
+  'today-expenses',
+  'today-purchases',
+  'week-sales',
+  'week-expenses',
+  'loans-given-today',
+  'debt-recovered-today',
+  'total-outstanding-debt',
+];
+
+// Chart id -> translation keys, same by-id lookup pattern as CARD_TITLE_KEYS above.
+const CHART_TITLE_KEYS: Record<string, TranslationKey> = {
+  'income-trend-12m': 'chart_income_trend_title',
+  'top-items-30d': 'chart_top_items_title',
+  'customer-debt-breakdown': 'chart_debt_breakdown_title',
+};
+
+const CHART_SUBTITLE_KEYS: Record<string, TranslationKey> = {
+  'income-trend-12m': 'chart_income_trend_subtitle',
+  'top-items-30d': 'chart_top_items_subtitle',
+  'customer-debt-breakdown': 'chart_debt_breakdown_subtitle',
+};
+
+// Kept at module scope (not component state) so it survives a route navigation away from
+// and back to the dashboard within the same browser session - returning to the page reuses
+// this instead of hitting the server again. Cleared automatically once stale.
+const DASHBOARD_CACHE_TTL_MS = 60_000;
+const dashboardCache = new Map<string, { payload: DashboardResponse; fetchedAt: number }>();
+const dashboardCacheKey = (branchId: number | null) => String(branchId ?? 'all');
+
+// Card title/subtitle text comes from the backend in English only; translate it here by
+// card id instead, so switching language doesn't require localizing the API response.
+const CARD_TITLE_KEYS: Record<string, TranslationKey> = {
+  'today-income': 'card_today_sales_title',
+  'new-customers-today': 'card_new_customers_today_title',
+  'today-expenses': 'card_today_expenses_title',
+  'today-purchases': 'card_today_purchases_title',
+  'week-sales': 'card_week_sales_title',
+  'week-expenses': 'card_week_expenses_title',
+  'loans-given-today': 'card_loans_given_title',
+  'debt-recovered-today': 'card_debt_recovered_title',
+  'total-outstanding-debt': 'card_total_outstanding_title',
+};
+
+const CARD_SUBTITLE_KEYS: Record<string, TranslationKey> = {
+  'today-income': 'card_today_sales_subtitle',
+  'new-customers-today': 'card_new_customers_today_subtitle',
+  'today-expenses': 'card_today_expenses_subtitle',
+  'today-purchases': 'card_today_purchases_subtitle',
+  'week-sales': 'card_week_sales_subtitle',
+  'week-expenses': 'card_week_expenses_subtitle',
+  'loans-given-today': 'card_loans_given_subtitle',
+  'debt-recovered-today': 'card_debt_recovered_subtitle',
+  'total-outstanding-debt': 'card_total_outstanding_subtitle',
+};
+
 const ICONS = {
   TrendingUp,
-  ReceiptText,
-  Package,
-  AlertTriangle,
   Users,
-  BriefcaseBusiness,
-  Boxes,
+  ReceiptText,
+  ShoppingBag,
+  HandCoins,
+  HandHeart,
   Wallet,
 } as const;
 
@@ -123,41 +163,27 @@ const formatValue = (value: number, format?: 'currency' | 'number') => {
   return new Intl.NumberFormat('en-US').format(value);
 };
 
-const formatCompact = (value: number) =>
-  new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
-
 const formatDateTime = (value: string) => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
 };
 
-const statusTone = (status: string) => {
-  const normalized = status.toLowerCase();
-  if (normalized.includes('paid') || normalized.includes('posted') || normalized.includes('received')) {
-    return 'border-success-200 bg-success-50 text-success-700 dark:border-success-800 dark:bg-success-900/30 dark:text-success-200';
-  }
-  if (normalized.includes('void') || normalized.includes('cancel')) {
-    return 'border-error-200 bg-error-50 text-error-700 dark:border-error-800 dark:bg-error-900/30 dark:text-error-200';
-  }
-  if (normalized.includes('unpaid') || normalized.includes('pending') || normalized.includes('partial')) {
-    return 'border-warning-200 bg-warning-50 text-warning-700 dark:border-warning-800 dark:bg-warning-900/30 dark:text-warning-200';
-  }
-  return 'border-primary-200 bg-primary-50 text-primary-700 dark:border-primary-800 dark:bg-primary-900/30 dark:text-primary-200';
-};
-
 const Dashboard = () => {
-  const { theme } = useTheme();
-  const isDark = theme === 'dark';
   const { permissions: userPermissions } = useAuth();
   const { activeBranchId } = useBranch();
+  const { t } = useLanguage();
+  const { theme } = useTheme();
 
-  const [data, setData] = useState<DashboardResponse | null>(null);
+  const cacheKey = dashboardCacheKey(activeBranchId);
+  const cachedEntry = dashboardCache.get(cacheKey);
+  const hasFreshCache = !!cachedEntry && Date.now() - cachedEntry.fetchedAt < DASHBOARD_CACHE_TTL_MS;
+
+  const [data, setData] = useState<DashboardResponse | null>(() => (hasFreshCache ? cachedEntry!.payload : null));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<string>('');
-  const [hasLoaded, setHasLoaded] = useState(false);
-  const [valuesVisible, setValuesVisible] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(hasFreshCache);
   const [companyInfo, setCompanyInfo] = useState<{
     name?: string;
     logoUrl?: string;
@@ -203,7 +229,16 @@ const Dashboard = () => {
   }, []);
 
   useEffect(() => {
-    void loadDashboard(false);
+    // Reusing a still-fresh cache entry from a previous mount means simply returning to
+    // this page never hits the server again - only a real data change (Show/refresh) does.
+    const cached = dashboardCache.get(dashboardCacheKey(activeBranchId));
+    if (cached && Date.now() - cached.fetchedAt < DASHBOARD_CACHE_TTL_MS) {
+      setData(cached.payload);
+      setLastUpdated(new Date(cached.fetchedAt).toISOString());
+      setHasLoaded(true);
+      return;
+    }
+    void loadDashboard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeBranchId]);
 
@@ -214,15 +249,6 @@ const Dashboard = () => {
     if (permKey.startsWith('products.')) {
       return [permKey, permKey.replace('products.', 'items.')];
     }
-    if (permKey === 'stock.view') {
-      return [permKey, 'warehouse_stock.view', 'inventory.view', 'items.view', 'products.view'];
-    }
-    if (permKey === 'warehouse_stock.view') {
-      return [permKey, 'stock.view', 'inventory.view', 'items.view', 'products.view'];
-    }
-    if (permKey === 'inventory.view') {
-      return [permKey, 'stock.view', 'warehouse_stock.view', 'items.view', 'products.view'];
-    }
     return [permKey];
   };
 
@@ -231,28 +257,111 @@ const Dashboard = () => {
 
   const visibleCards = useMemo(() => {
     const cards = data?.cards ?? [];
-
     const cardPermissions: Record<string, string[]> = {
-      'total-customers': ['customers.view'],
-      'total-employees': ['employees.view', 'users.view'],
-      'total-products': ['items.view', 'products.view'],
-      'inventory-stock': ['stock.view', 'warehouse_stock.view', 'inventory.view', 'items.view', 'products.view'],
-      'low-stock-alert': ['stock.view', 'warehouse_stock.view', 'inventory.view', 'items.view', 'products.view'],
       'today-income': ['sales.view'],
-      'monthly-income': ['sales.view'],
-      'today-payment': ['accounts.view', 'expenses.view'],
-      'monthly-payment': ['accounts.view', 'expenses.view'],
-      'total-revenue': ['sales.view'],
+      'new-customers-today': ['customers.view'],
+      'today-expenses': ['expenses.view'],
+      'today-purchases': ['purchases.view'],
+      'week-sales': ['sales.view'],
+      'week-expenses': ['expenses.view'],
+      'loans-given-today': ['sales.view'],
+      'debt-recovered-today': ['customers.view'],
+      'total-outstanding-debt': ['customers.view'],
     };
 
-    return cards.filter((card) => {
-      const required = cardPermissions[card.id];
-      if (!required?.length) return true;
-      return hasAnyPermission(required);
-    });
+    // Keep only the four dashboard cards, in the fixed order above, regardless of what
+    // order the backend returns them in or what other cards it may include.
+    return DASHBOARD_CARD_ORDER
+      .map((id) => cards.find((card) => card.id === id))
+      .filter((card): card is DashboardCard => {
+        if (!card) return false;
+        const required = cardPermissions[card.id];
+        if (!required?.length) return true;
+        return hasAnyPermission(required);
+      });
   }, [data?.cards, userPermissions]);
 
-  const loadDashboard = async (reveal = true) => {
+  // 'sales-6m' is an older bar chart kept in the API for other consumers; it duplicates
+  // income-trend-12m's data in a different shape, so it's left out of the dashboard to
+  // avoid showing two near-identical income charts side by side.
+  const visibleCharts = useMemo(
+    () => (data?.charts ?? []).filter((chart) => chart.id !== 'sales-6m'),
+    [data?.charts]
+  );
+
+  const isDark = theme === 'dark';
+  const chartTextColor = isDark ? '#cbd5e1' : '#475569';
+  const chartGridColor = isDark ? '#334155' : '#e2e8f0';
+  const chartPalette = ['#2a6f97', '#468faf', '#61a5c2', '#01497c', '#89c2d9', '#94a3b8'];
+
+  const formatMonthLabel = (yyyyMm: string) => {
+    const [year, month] = yyyyMm.split('-').map(Number);
+    if (!year || !month) return yyyyMm;
+    return new Date(year, month - 1, 1).toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
+  };
+
+  const buildChartView = (chart: DashboardChart): { options: ApexOptions; series: ApexOptions['series'] } => {
+    const baseOptions: ApexOptions = {
+      chart: { fontFamily: 'inherit', toolbar: { show: false }, background: 'transparent' },
+      colors: chartPalette,
+      theme: { mode: isDark ? 'dark' : 'light' },
+      grid: { borderColor: chartGridColor, strokeDashArray: 4 },
+      legend: { labels: { colors: chartTextColor } },
+      dataLabels: { enabled: false },
+    };
+
+    if (chart.type === 'line') {
+      return {
+        options: {
+          ...baseOptions,
+          stroke: { curve: 'smooth', width: 3 },
+          fill: { type: 'gradient', gradient: { opacityFrom: 0.35, opacityTo: 0 } },
+          xaxis: {
+            categories: chart.labels.map(formatMonthLabel),
+            labels: { style: { colors: chartTextColor } },
+            axisBorder: { show: false },
+            axisTicks: { show: false },
+          },
+          yaxis: { labels: { style: { colors: chartTextColor }, formatter: (v: number) => formatValue(v, 'currency') } },
+          tooltip: { theme: isDark ? 'dark' : 'light', y: { formatter: (v: number) => formatValue(v, 'currency') } },
+        },
+        series: chart.series,
+      };
+    }
+
+    if (chart.type === 'donut') {
+      const labels = chart.labels.map((label) => (label === 'Other Customers' ? t('chart_other_customers') : label));
+      return {
+        options: {
+          ...baseOptions,
+          labels,
+          legend: { ...baseOptions.legend, position: 'bottom' },
+          dataLabels: { enabled: true, formatter: (v: number) => `${v.toFixed(0)}%` },
+          tooltip: { theme: isDark ? 'dark' : 'light', y: { formatter: (v: number) => formatValue(v, 'currency') } },
+        },
+        series: chart.series[0]?.data ?? [],
+      };
+    }
+
+    // bar
+    return {
+      options: {
+        ...baseOptions,
+        plotOptions: { bar: { horizontal: true, borderRadius: 4, barHeight: '60%' } },
+        xaxis: {
+          categories: chart.labels,
+          labels: { style: { colors: chartTextColor } },
+          axisBorder: { show: false },
+          axisTicks: { show: false },
+        },
+        yaxis: { labels: { style: { colors: chartTextColor } } },
+        tooltip: { theme: isDark ? 'dark' : 'light' },
+      },
+      series: chart.series,
+    };
+  };
+
+  const loadDashboard = async () => {
     setLoading(true);
     setError(null);
 
@@ -260,34 +369,18 @@ const Dashboard = () => {
     const res: ApiResponse<DashboardResponse> = await apiClient.get<DashboardResponse>(dashboardUrl);
     if (res.success && res.data) {
       setData(res.data);
+      dashboardCache.set(dashboardCacheKey(activeBranchId), { payload: res.data, fetchedAt: Date.now() });
       setLastUpdated(new Date().toISOString());
-      if (reveal) setValuesVisible(true);
     } else {
       setData(null);
       setError(res.error || 'Failed to load dashboard data');
-      if (reveal) setValuesVisible(false);
     }
 
     setHasLoaded(true);
     setLoading(false);
   };
 
-  const handleShowToggle = () => {
-    if (valuesVisible) {
-      setValuesVisible(false);
-      return;
-    }
-    if (data) {
-      setValuesVisible(true);
-      return;
-    }
-    void loadDashboard(true);
-  };
-
-  const maskedValue = (format?: 'currency' | 'number') => (format === 'currency' ? '••••••' : '••••');
-
   const openCardModal = async (card: DashboardCard) => {
-    if (!valuesVisible) return;
     try {
       setCardModalLoadingId(card.id);
       const drilldownUrl = `${API.DASHBOARD}/cards/${encodeURIComponent(card.id)}${
@@ -309,14 +402,6 @@ const Dashboard = () => {
           render: (row) => formatValue(Number(row[key] || 0), 'currency'),
         }) satisfies ReportColumn<Record<string, unknown>>;
 
-      const num = (key: string, header: string) =>
-        ({
-          key,
-          header,
-          align: 'right',
-          render: (row) => formatValue(Number(row[key] || 0), 'number'),
-        }) satisfies ReportColumn<Record<string, unknown>>;
-
       const text = (key: string, header: string) =>
         ({
           key,
@@ -330,97 +415,60 @@ const Dashboard = () => {
           render: (row) => (row[key] ? formatDateTime(String(row[key])) : '—'),
         }) satisfies ReportColumn<Record<string, unknown>>;
 
-      const totalsOnlyColumn = (key: string, header: string) =>
-        ({
-          key,
-          header,
-          align: 'right',
-          render: () => '—',
-        }) satisfies ReportColumn<Record<string, unknown>>;
-
       let columns: ReportColumn<Record<string, unknown>>[] = [];
       let totalLabel = 'Total';
       let totalKey = 'total';
       let totalValue = payload.format === 'currency' ? formatValue(payload.total, 'currency') : formatValue(payload.total, 'number');
 
       switch (card.id) {
-        case 'total-customers':
-          columns = [
-            text('customer_id', 'ID'),
-            text('name', 'Customer'),
-            text('phone', 'Phone'),
-            dateTime('created_at', 'Created At'),
-            totalsOnlyColumn('total_value', 'Total'),
-          ];
-          totalLabel = 'Total Customers';
-          totalKey = 'total_value';
-          totalValue = formatValue(payload.total, 'number');
-          break;
-        case 'total-employees':
-          columns = [
-            text('employee_id', 'ID'),
-            text('name', 'Employee'),
-            text('phone', 'Phone'),
-            text('position', 'Position'),
-            text('status', 'Status'),
-            totalsOnlyColumn('total_value', 'Total'),
-          ];
-          totalLabel = 'Total Employees';
-          totalKey = 'total_value';
-          totalValue = formatValue(payload.total, 'number');
-          break;
-        case 'total-products':
-          columns = [
-            text('item_id', 'ID'),
-            text('name', 'Product'),
-            num('opening_balance', 'Opening Qty'),
-            money('sale_price', 'Sale Price'),
-            text('is_active', 'Active'),
-            totalsOnlyColumn('total_value', 'Total'),
-          ];
-          totalLabel = 'Total Products';
-          totalKey = 'total_value';
-          totalValue = formatValue(payload.total, 'number');
-          break;
-        case 'inventory-stock':
-          columns = [text('item_id', 'ID'), text('item_name', 'Item'), num('quantity', 'Quantity'), num('stock_alert', 'Alert')];
-          totalLabel = 'Total Units';
-          totalKey = 'quantity';
-          totalValue = formatValue(payload.total, 'number');
-          break;
-        case 'low-stock-alert':
-          columns = [
-            text('item_id', 'ID'),
-            text('item_name', 'Item'),
-            num('quantity', 'Quantity'),
-            num('stock_alert', 'Alert'),
-            totalsOnlyColumn('total_value', 'Total'),
-          ];
-          totalLabel = 'Low Stock Items';
-          totalKey = 'total_value';
-          totalValue = formatValue(payload.total, 'number');
+        case 'new-customers-today':
+          columns = [text('customer_id', 'ID'), text('name', 'Name'), text('phone', 'Phone'), dateTime('created_at', 'Registered')];
+          totalLabel = 'New Customers Today';
           break;
         case 'today-income':
-        case 'monthly-income':
-        case 'total-revenue':
+        case 'week-sales':
           columns = [text('sale_id', 'Sale #'), dateTime('sale_date', 'Date'), text('doc_type', 'Type'), text('customer_name', 'Customer'), money('total', 'Total'), text('status', 'Status')];
-          totalLabel = card.id === 'total-revenue' ? 'Total Revenue' : 'Total Income';
+          totalLabel = card.id === 'today-income' ? "Today's Sales" : "This Week's Sales";
           totalKey = 'total';
           totalValue = formatValue(payload.total, 'currency');
           break;
-        case 'today-payment':
-        case 'monthly-payment':
-          columns = [text('payment_type', 'Type'), dateTime('pay_date', 'Date'), text('name', 'Name'), text('account_name', 'Account'), money('amount_paid', 'Amount'), text('note', 'Note')];
-          totalLabel = 'Total Payments';
-          totalKey = 'amount_paid';
+        case 'today-purchases':
+          columns = [text('purchase_id', 'Purchase #'), dateTime('purchase_date', 'Date'), text('supplier_name', 'Supplier'), money('total', 'Total'), text('status', 'Status')];
+          totalLabel = "Today's Purchases";
+          totalKey = 'total';
+          totalValue = formatValue(payload.total, 'currency');
+          break;
+        case 'today-expenses':
+        case 'week-expenses':
+          columns = [dateTime('charge_date', 'Date'), text('name', 'Expense'), money('amount', 'Amount'), text('note', 'Note')];
+          totalLabel = card.id === 'today-expenses' ? "Today's Expenses" : "This Week's Expenses";
+          totalKey = 'amount';
+          totalValue = formatValue(payload.total, 'currency');
+          break;
+        case 'loans-given-today':
+          columns = [text('sale_id', 'Sale #'), dateTime('sale_date', 'Date'), text('customer_name', 'Customer'), money('total', 'Amount'), text('status', 'Status')];
+          totalLabel = 'Total Loaned Today';
+          totalKey = 'total';
+          totalValue = formatValue(payload.total, 'currency');
+          break;
+        case 'debt-recovered-today':
+          columns = [dateTime('receipt_date', 'Date'), text('customer_name', 'Customer'), money('amount', 'Amount'), text('note', 'Note')];
+          totalLabel = 'Total Recovered Today';
+          totalKey = 'amount';
+          totalValue = formatValue(payload.total, 'currency');
+          break;
+        case 'total-outstanding-debt':
+          columns = [text('customer_id', 'ID'), text('name', 'Customer'), text('phone', 'Phone'), money('remaining_balance', 'Owed')];
+          totalLabel = 'Total Outstanding';
+          totalKey = 'remaining_balance';
           totalValue = formatValue(payload.total, 'currency');
           break;
         default:
           columns = Object.keys(rows[0] || {}).map((key) => text(key, key));
       }
 
-      setCardModalTitle(payload.title || card.title);
-      setCardModalSubtitle(card.subtitle);
+      setCardModalTitle(CARD_TITLE_KEYS[card.id] ? t(CARD_TITLE_KEYS[card.id]) : payload.title || card.title);
+      setCardModalSubtitle(CARD_SUBTITLE_KEYS[card.id] ? t(CARD_SUBTITLE_KEYS[card.id]) : card.subtitle);
       setCardModalData(rows);
       setCardModalColumns(columns);
       setCardModalTotalLabel(totalLabel);
@@ -434,142 +482,6 @@ const Dashboard = () => {
     }
   };
 
-  const orderedCharts = useMemo(() => {
-    if (!data?.charts) return [];
-    const order = ['income-trend-12m', 'sales-6m'];
-    return [...data.charts]
-      .filter((chart) => chart.id !== 'stock-14d')
-      .sort((a, b) => {
-      const aIndex = order.indexOf(a.id);
-      const bIndex = order.indexOf(b.id);
-      return (aIndex === -1 ? 99 : aIndex) - (bIndex === -1 ? 99 : bIndex);
-    });
-  }, [data?.charts]);
-
-  const chartOptions = useMemo(() => {
-    if (!orderedCharts.length) return {};
-
-    const themeById: Record<string, { base: string; soft: string }> = isDark
-      ? {
-        'income-trend-12m': { base: '#2A6F97', soft: '#A9D6E5' },
-        'sales-6m': { base: '#468FAF', soft: '#89C2D9' },
-        }
-      : {
-        'income-trend-12m': { base: '#2A6F97', soft: '#A9D6E5' },
-        'sales-6m': { base: '#468FAF', soft: '#89C2D9' },
-        };
-
-    const axisColor = isDark ? '#cbd5e1' : '#334155';
-    const legendColor = isDark ? '#e2e8f0' : '#1f2937';
-    const gridColor = isDark ? '#334155' : '#e2e8f0';
-
-    const base: ApexOptions = {
-      chart: {
-        toolbar: { show: false },
-        zoom: { enabled: false },
-        fontFamily: 'Manrope, Inter, sans-serif',
-      },
-      dataLabels: { enabled: false },
-      grid: {
-        borderColor: gridColor,
-        strokeDashArray: 4,
-      },
-      xaxis: {
-        axisBorder: { show: false },
-        axisTicks: { show: false },
-        labels: { style: { colors: axisColor } },
-      },
-      yaxis: {
-        labels: {
-          style: { colors: axisColor },
-          formatter: (value) => formatCompact(value),
-        },
-      },
-      legend: {
-        show: true,
-        position: 'top',
-        labels: { colors: legendColor },
-      },
-      tooltip: {
-        theme: isDark ? 'dark' : 'light',
-      },
-    };
-
-    return orderedCharts.reduce<Record<string, ApexOptions>>((acc, chart) => {
-      const themeColors = themeById[chart.id] || themeById['sales-6m'];
-      const isBar = chart.type === 'bar';
-      const isIncomeTrend = chart.id === 'income-trend-12m';
-
-      acc[chart.id] = {
-        ...base,
-        chart: {
-          ...base.chart,
-          type: isBar ? 'bar' : 'line',
-          height: 300,
-        },
-        colors: [themeColors.base],
-        stroke: isBar ? { width: 0 } : { curve: 'smooth', width: 4 },
-        markers: isBar ? { size: 0 } : { size: 4, strokeWidth: 0, hover: { size: 6 } },
-        fill: isBar
-          ? { type: 'solid', opacity: 0.92 }
-          : {
-              type: 'gradient',
-              gradient: {
-                shadeIntensity: 0.15,
-                opacityFrom: isDark ? 0.34 : 0.46,
-                opacityTo: 0.05,
-                colorStops: [
-                  [
-                    { offset: 0, color: themeColors.base, opacity: 0.35 },
-                    { offset: 100, color: themeColors.soft, opacity: 0.04 },
-                  ],
-                ],
-              },
-            },
-        plotOptions: isBar
-          ? {
-              bar: {
-                borderRadius: 8,
-                columnWidth: '48%',
-              },
-            }
-          : {},
-        xaxis: { ...base.xaxis, categories: chart.labels },
-        yaxis: isIncomeTrend
-          ? {
-              labels: {
-                style: { colors: axisColor },
-                formatter: (value) => formatValue(Number(value), 'currency'),
-              },
-            }
-          : base.yaxis,
-        tooltip: {
-          ...base.tooltip,
-          y: {
-            formatter: (value) =>
-              isIncomeTrend
-                ? formatValue(Number(value), 'currency')
-                : formatCompact(Number(value)),
-          },
-        },
-      };
-
-      return acc;
-    }, {});
-  }, [isDark, orderedCharts]);
-
-  const getChartSubtitle = (chartId: string) => {
-    if (chartId === 'income-trend-12m') return 'Monthly income trend for the last 12 months';
-    return 'Sales totals for the last 6 months';
-  };
-
-  const chartHasData = (chart: DashboardChart) => chart.series.some((series) => series.data.length > 0);
-  const incomeTrendChart = orderedCharts.find((chart) => chart.id === 'income-trend-12m');
-  const bottomCharts = orderedCharts.filter((chart) => chart.id !== 'income-trend-12m');
-  const hasRenderableCharts = orderedCharts.some((chart) => !!chartOptions[chart.id] && chartHasData(chart));
-
-  const lowStockItems = data?.low_stock_items || [];
-
   return (
     <div className="space-y-7">
       <section className="relative overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-r from-white via-slate-50 to-slate-100 p-6 shadow-sm dark:border-slate-800 dark:bg-gradient-to-r dark:from-black dark:via-black dark:to-black">
@@ -579,31 +491,12 @@ const Dashboard = () => {
         <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className="text-xs uppercase tracking-[0.2em] text-primary-700 dark:text-primary-200">Inventory ERP</p>
-            <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl lg:text-4xl dark:text-white">Dashboard</h1>
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl lg:text-4xl dark:text-white">{t('nav_dashboard')}</h1>
             <p className="mt-1 text-sm text-slate-700 dark:text-white/80">
               {loading && !data
-                ? 'Loading dashboard cards...'
-                : valuesVisible
-                  ? `Live metrics visible | ${lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : ''}`
-                  : 'Cards are visible. Click Show to reveal numbers and charts.'}
+                ? t('dashboard_loading_cards')
+                : `${t('dashboard_live_metrics')} | ${lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : ''}`}
             </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={handleShowToggle}
-              disabled={loading}
-              className="inline-flex items-center gap-2 rounded-xl border border-primary-400 bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-65 dark:border-primary-400 dark:bg-primary-600 dark:text-white dark:hover:bg-primary-700"
-            >
-              {loading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : valuesVisible ? (
-                <EyeOff className="h-4 w-4" />
-              ) : (
-                <Eye className="h-4 w-4" />
-              )}
-              {loading ? 'Loading...' : valuesVisible ? 'Hide' : 'Show'}
-            </button>
           </div>
         </div>
       </section>
@@ -616,7 +509,7 @@ const Dashboard = () => {
 
       {loading && !data && (
         <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {Array.from({ length: 8 }).map((_, index) => (
+          {Array.from({ length: 4 }).map((_, index) => (
             <div
               key={`dash-skeleton-${index}`}
               className="h-28 animate-pulse rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-100 dark:border-slate-700 dark:bg-gradient-to-br dark:from-slate-900 dark:to-slate-950"
@@ -626,48 +519,40 @@ const Dashboard = () => {
       )}
 
       {hasLoaded && data && (
-        <>
-          <section className="relative">
-            <div className={`grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 ${loading ? 'pointer-events-none opacity-60' : ''}`}>
-              {visibleCards.map((card, index) => {
+        <section className="relative">
+          <div className={`grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 ${loading ? 'pointer-events-none opacity-60' : ''}`}>
+            {visibleCards.map((card, index) => {
               const tone = CARD_TONES[index % CARD_TONES.length];
               const Icon = card.icon && card.icon in ICONS ? ICONS[card.icon as keyof typeof ICONS] : TrendingUp;
               return (
                 <article
                   key={card.id}
-                  onClick={() => {
-                    if (valuesVisible) void openCardModal(card);
-                  }}
+                  onClick={() => void openCardModal(card)}
                   role="button"
                   tabIndex={0}
                   onKeyDown={(event) => {
-                    if (!valuesVisible) return;
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
                       void openCardModal(card);
                     }
                   }}
-                  className={`group relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-slate-100 p-4 shadow-sm transition duration-300 focus:outline-none focus:ring-2 focus:ring-primary-500/40 dark:border-slate-700 dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-900 dark:to-slate-950 ${
-                    valuesVisible
-                      ? 'cursor-pointer hover:-translate-y-1 hover:shadow-md'
-                      : 'cursor-default'
-                  }`}
+                  className="group relative cursor-pointer overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-slate-100 p-4 shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary-500/40 dark:border-slate-700 dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-900 dark:to-slate-950"
                 >
                   <div className={`absolute left-0 top-0 h-1.5 w-full bg-gradient-to-r ${tone.stripe}`} />
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="truncate text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-300">
-                        {card.title}
+                        {CARD_TITLE_KEYS[card.id] ? t(CARD_TITLE_KEYS[card.id]) : card.title}
                       </p>
                       <p className="mt-2 truncate text-[1.7rem] font-semibold leading-tight text-slate-900 dark:text-slate-100">
-                        {valuesVisible ? formatValue(card.value, card.format) : maskedValue(card.format)}
+                        {formatValue(card.value, card.format)}
                       </p>
                       <p className="mt-1 text-xs text-slate-500 dark:text-slate-300">
-                        {valuesVisible ? card.subtitle : 'Hidden until Show'}
+                        {CARD_SUBTITLE_KEYS[card.id] ? t(CARD_SUBTITLE_KEYS[card.id]) : card.subtitle}
                       </p>
                     </div>
                     <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${tone.iconWrap}`}>
-                      {valuesVisible ? <Icon className="h-5 w-5" /> : <EyeOff className="h-5 w-5" />}
+                      <Icon className="h-5 w-5" />
                     </div>
                   </div>
                   {cardModalLoadingId === card.id && (
@@ -677,252 +562,47 @@ const Dashboard = () => {
                   )}
                 </article>
               );
-              })}
+            })}
+          </div>
+          {loading && (
+            <div className="pointer-events-none absolute inset-0 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {Array.from({ length: Math.max(visibleCards.length, 4) }).map((_, index) => (
+                <div
+                  key={`dash-refresh-skeleton-${index}`}
+                  className="h-28 animate-pulse rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-100 dark:border-slate-700 dark:bg-gradient-to-br dark:from-slate-900 dark:to-slate-950"
+                />
+              ))}
             </div>
-            {loading && (
-              <div className="pointer-events-none absolute inset-0 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-                {Array.from({ length: Math.max(visibleCards.length, 8) }).map((_, index) => (
-                  <div
-                    key={`dash-refresh-skeleton-${index}`}
-                    className="h-28 animate-pulse rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-100 dark:border-slate-700 dark:bg-gradient-to-br dark:from-slate-900 dark:to-slate-950"
-                  />
-                ))}
-              </div>
-            )}
-          </section>
+          )}
+        </section>
+      )}
 
-          {valuesVisible ? (
-          <>
-          <section className="space-y-5">
-            {incomeTrendChart && chartOptions[incomeTrendChart.id] && chartHasData(incomeTrendChart) && (
-              <article className="rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/80">
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div>
-                    <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                      {incomeTrendChart.name}
-                    </h3>
-                    <p className="text-xs text-slate-600 dark:text-slate-300">
-                      {getChartSubtitle(incomeTrendChart.id)}
-                    </p>
-                  </div>
-
-                  {(() => {
-                    const incomeSeries = incomeTrendChart.series[0]?.data ?? [];
-                    const start = incomeSeries[0] ?? 0;
-                    const end = incomeSeries[incomeSeries.length - 1] ?? 0;
-                    const change = start === 0 ? (end > 0 ? 100 : 0) : ((end - start) / start) * 100;
-                    const toneClass =
-                      change >= 0
-                        ? 'border-success-200 bg-success-50 text-success-700 dark:border-success-800 dark:bg-success-900/30 dark:text-success-200'
-                        : 'border-error-200 bg-error-50 text-error-700 dark:border-error-800 dark:bg-error-900/30 dark:text-error-200';
-
-                    return (
-                      <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-wide ${toneClass}`}>
-                        {`${change >= 0 ? '+' : ''}${change.toFixed(1)}% vs first month`}
-                      </span>
-                    );
-                  })()}
-                </div>
-                <div className="mt-4 overflow-hidden">
+      {hasLoaded && visibleCharts.length > 0 && (
+        <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          {visibleCharts.map((chart) => {
+            const title = CHART_TITLE_KEYS[chart.id] ? t(CHART_TITLE_KEYS[chart.id]) : chart.name;
+            const subtitle = CHART_SUBTITLE_KEYS[chart.id] ? t(CHART_SUBTITLE_KEYS[chart.id]) : undefined;
+            const span = chart.id === 'income-trend-12m' ? 'lg:col-span-3' : chart.id === 'top-items-30d' ? 'lg:col-span-2' : 'lg:col-span-1';
+            const view = buildChartView(chart);
+            return (
+              <div
+                key={chart.id}
+                className={`rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900 ${span}`}
+              >
+                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{title}</p>
+                {subtitle && <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{subtitle}</p>}
+                <div className="mt-3">
                   <Chart
-                    options={chartOptions[incomeTrendChart.id]}
-                    series={incomeTrendChart.series}
-                    type="line"
-                    height={260}
+                    options={view.options}
+                    series={view.series}
+                    type={chart.type}
+                    height={chart.type === 'donut' ? 260 : 240}
                   />
                 </div>
-              </article>
-            )}
-
-            {(() => {
-              const salesBottomChart = bottomCharts.find((chart) => chart.id === 'sales-6m');
-              const remainingBottomCharts = bottomCharts.filter((chart) => chart.id !== 'sales-6m');
-
-              return (
-                <>
-                  {salesBottomChart && chartOptions[salesBottomChart.id] && chartHasData(salesBottomChart) && (
-                    <section className="grid grid-cols-1 gap-5 xl:grid-cols-3">
-                      <article className="xl:col-span-2 rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/80">
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div>
-                            <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                              {salesBottomChart.name}
-                            </h3>
-                            <p className="text-xs text-slate-600 dark:text-slate-300">
-                              {getChartSubtitle(salesBottomChart.id)}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="mt-4 overflow-hidden">
-                          <Chart
-                            options={chartOptions[salesBottomChart.id]}
-                            series={salesBottomChart.series}
-                            type={salesBottomChart.type === 'bar' ? 'bar' : 'line'}
-                            height={240}
-                          />
-                        </div>
-                      </article>
-
-                      <article className="rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/80">
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                              Low Stock Alert Items
-                            </h3>
-                            <p className="text-xs text-slate-600 dark:text-slate-300">
-                              Items at or below reorder level
-                            </p>
-                          </div>
-                          <span className="rounded-full border border-primary-200 bg-primary-50 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-primary-700 dark:border-primary-800 dark:bg-primary-900/30 dark:text-primary-200">
-                            {lowStockItems.length} items
-                          </span>
-                        </div>
-                        <div className="mt-4 space-y-2">
-                          {lowStockItems.length === 0 ? (
-                            <p className="text-sm text-slate-500 dark:text-slate-300">
-                              No low stock alerts right now.
-                            </p>
-                          ) : (
-                            lowStockItems.slice(0, 8).map((item) => (
-                              <div
-                                key={item.item_id}
-                                className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700"
-                              >
-                                <div className="min-w-0">
-                                  <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
-                                    {item.item_name}
-                                  </p>
-                                  <p className="text-xs text-slate-500 dark:text-slate-300">
-                                    Stock: {item.quantity} / Alert: {item.stock_alert}
-                                  </p>
-                                </div>
-                                <span className="ml-3 rounded-full border border-warning-200 bg-warning-50 px-2 py-0.5 text-xs font-semibold text-warning-700 dark:border-warning-800 dark:bg-warning-900/30 dark:text-warning-200">
-                                  Need {item.shortage}
-                                </span>
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      </article>
-                    </section>
-                  )}
-
-                  {remainingBottomCharts.length > 0 && (
-                    <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-                      {remainingBottomCharts.map((chart) => {
-                        const options = chartOptions[chart.id];
-                        if (!options || !chartHasData(chart)) return null;
-
-                        return (
-                          <article
-                            key={chart.id}
-                            className="rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-sm backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/80"
-                          >
-                            <div className="flex flex-wrap items-start justify-between gap-2">
-                              <div>
-                                <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">{chart.name}</h3>
-                                <p className="text-xs text-slate-600 dark:text-slate-300">{getChartSubtitle(chart.id)}</p>
-                              </div>
-                            </div>
-                            <div className="mt-4 overflow-hidden">
-                              <Chart
-                                options={options}
-                                series={chart.series}
-                                type={chart.type === 'bar' ? 'bar' : 'line'}
-                                height={240}
-                              />
-                            </div>
-                          </article>
-                        );
-                      })}
-                    </div>
-                  )}
-                </>
-              );
-            })()}
-
-            {!hasRenderableCharts && (
-              <article className="rounded-2xl border border-dashed border-slate-200 bg-white/90 p-8 text-center text-slate-500 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-300">
-                No charts available for your current permissions.
-              </article>
-            )}
-          </section>
-
-          <section className="grid grid-cols-1 gap-5">
-            <article className="rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900/80">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Recent Activity</h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-300">Latest sales and purchase transactions</p>
-                </div>
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-300">
-                  Last {Math.min(10, data.recent.length)} records
-                </span>
               </div>
-
-              <div className="mt-4 md:hidden space-y-3">
-                {data.recent.map((row) => (
-                  <article key={row.id} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{row.type}</p>
-                      <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${statusTone(row.status)}`}>
-                        {row.status}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-300">{row.ref}</p>
-                    <div className="mt-2 flex items-center justify-between text-sm">
-                      <span className="text-slate-700 dark:text-slate-200">{formatValue(row.amount, 'currency')}</span>
-                      <span className="text-slate-500 dark:text-slate-300">{formatDateTime(row.date)}</span>
-                    </div>
-                  </article>
-                ))}
-                {data.recent.length === 0 && (
-                  <p className="px-2 py-8 text-center text-sm text-slate-500 dark:text-slate-300">
-                    No recent activity found.
-                  </p>
-                )}
-              </div>
-
-              <div className="mt-4 hidden overflow-x-auto custom-scrollbar md:block">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500 dark:border-slate-700 dark:text-slate-300">
-                      <th className="px-2 py-3">Type</th>
-                      <th className="px-2 py-3">Reference</th>
-                      <th className="px-2 py-3">Amount</th>
-                      <th className="px-2 py-3">Date</th>
-                      <th className="px-2 py-3 text-right">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.recent.map((row) => (
-                      <tr key={row.id} className="border-b border-slate-200 dark:border-slate-800">
-                        <td className="px-2 py-3 text-sm font-semibold text-slate-900 dark:text-slate-100">{row.type}</td>
-                        <td className="px-2 py-3 text-sm text-slate-500 dark:text-slate-300">{row.ref}</td>
-                        <td className="px-2 py-3 text-sm text-slate-700 dark:text-slate-200">{formatValue(row.amount, 'currency')}</td>
-                        <td className="px-2 py-3 text-sm text-slate-500 dark:text-slate-300">{formatDateTime(row.date)}</td>
-                        <td className="px-2 py-3 text-right">
-                          <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${statusTone(row.status)}`}>
-                            {row.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                    {data.recent.length === 0 && (
-                      <tr>
-                        <td colSpan={5} className="px-2 py-8 text-center text-sm text-slate-500 dark:text-slate-300">
-                          No recent activity found.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </article>
-          </section>
-          </>
-          ) : null}
-        </>
+            );
+          })}
+        </section>
       )}
 
       <ReportModal

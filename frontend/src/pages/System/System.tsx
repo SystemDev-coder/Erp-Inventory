@@ -1,12 +1,12 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
-import { CheckSquare, Home, Lock, Pencil, Plus, Shield, Trash2, Users } from 'lucide-react';
+import { CheckSquare, Home, Lock, Pencil, Plus, Settings2, Shield, Trash2, Users } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
 import { Tabs } from '../../components/ui/tabs';
 import { Modal } from '../../components/ui/modal/Modal';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { useToast } from '../../components/ui/toast/Toast';
 import { useAuth } from '../../context/AuthContext';
-import { SIDEBAR_PERMISSION_KEY_SET } from '../../config/sidebarPermissionKeys';
+import { useLanguage } from '../../context/LanguageContext';
 import {
   systemService,
   SystemBranch,
@@ -18,6 +18,7 @@ import { settingsService, CompanyInfo } from '../../services/settings.service';
 import { ImageUpload } from '../../components/common/ImageUpload';
 import { imageService } from '../../services/image.service';
 import { env } from '../../config/env';
+import { useBusinessConfig } from '../../context/BusinessConfigContext';
 
 const SHOW_PERMISSION_TAB = false;
 const HIDDEN_USERNAMES = new Set(['isfahan']);
@@ -49,7 +50,13 @@ type ConfirmTarget =
 
 const System = () => {
   const { showToast } = useToast();
-  const { permissions: currentPermissions } = useAuth();
+  const { permissions: currentPermissions, user } = useAuth();
+  const { t } = useLanguage();
+  // Business Profile is Developer-only: choosing/changing a client's
+  // business type is a one-time deployment-setup decision (it wholesale
+  // resets product config defaults), not a day-to-day admin task - same
+  // role-gate style already used for the Trash feature.
+  const isDeveloper = (user?.role_name || '').toLowerCase() === 'developer';
   const allowRemoteImageUpload = true;
   const logoStorageKey = 'erp.company.logo_img';
   const bannerStorageKey = 'erp.company.banner_img';
@@ -62,6 +69,65 @@ const System = () => {
   const [companyDeleting, setCompanyDeleting] = useState(false);
   const [companyDeleteConfirmOpen, setCompanyDeleteConfirmOpen] = useState(false);
   const [companyForm, setCompanyForm] = useState(emptyCompanyForm);
+
+  // Phase 11: Business Profile - reuses the same app-wide resolved profile
+  // useBusinessConfig() already fetched (so every other page's view stays in
+  // sync the moment this saves), not a second independent fetch.
+  const { profile: businessProfile, refresh: refreshBusinessProfile } = useBusinessConfig();
+  const [businessProfileModalOpen, setBusinessProfileModalOpen] = useState(false);
+  const [businessProfileSaving, setBusinessProfileSaving] = useState(false);
+  const [businessProfileForm, setBusinessProfileForm] = useState({
+    businessType: '',
+    currency: '',
+    country: '',
+  });
+  const BUSINESS_TYPE_LABELS: Record<string, string> = {
+    general: 'General / Not configured',
+    supermarket: 'Supermarket',
+    clothing: 'Clothing',
+    pharmacy: 'Pharmacy',
+    perfume: 'Perfume',
+    cosmetics: 'Cosmetics',
+    other: 'Other',
+  };
+  const openBusinessProfileEdit = () => {
+    setBusinessProfileForm({
+      businessType: businessProfile.businessType || 'general',
+      currency: businessProfile.currency || '',
+      country: businessProfile.country || '',
+    });
+    setBusinessProfileModalOpen(true);
+  };
+  const handleBusinessProfileSave = async () => {
+    setBusinessProfileSaving(true);
+    const res = await settingsService.updateBusinessProfile({
+      businessType: businessProfileForm.businessType,
+      currency: businessProfileForm.currency || null,
+      country: businessProfileForm.country || null,
+    });
+    setBusinessProfileSaving(false);
+    if (!res.success) {
+      showToast('error', 'Business Profile', res.error || 'Failed to save business profile');
+      return;
+    }
+    await refreshBusinessProfile();
+    showToast('success', 'Business Profile', 'Business profile updated');
+    setBusinessProfileModalOpen(false);
+  };
+  const enabledFeatureList = [
+    businessProfile.productConfig.barcode && 'Barcode',
+    businessProfile.productConfig.variants && 'Variants',
+    businessProfile.productConfig.size && (businessProfile.businessType === 'perfume' ? 'Volume' : 'Size'),
+    businessProfile.productConfig.color && (businessProfile.businessType === 'cosmetics' ? 'Shade' : 'Color'),
+    businessProfile.productConfig.batchTracking && 'Batch Tracking',
+    businessProfile.productConfig.expiryTracking && 'Expiry Tracking',
+    businessProfile.productConfig.genericName && 'Generic Name',
+    businessProfile.productConfig.strength && 'Strength',
+    businessProfile.salesConfig.retail && 'Retail Sales',
+    businessProfile.salesConfig.wholesale && 'Wholesale Sales',
+    businessProfile.salesConfig.credit && 'Credit Sales',
+    businessProfile.purchaseConfig.creditPurchases && 'Credit Purchases',
+  ].filter(Boolean) as string[];
 
   const readFileAsDataUrl = (file: File): Promise<string> =>
     new Promise((resolve, reject) => {
@@ -465,16 +531,12 @@ const System = () => {
   };
 
   const saveUser = async () => {
-    if (!userForm.name.trim() || !userForm.username.trim()) {
-      showToast('error', 'Users', 'Name and username are required');
-      return;
-    }
-    if (!editingUser && !userForm.password.trim()) {
-      showToast('error', 'Users', 'Password is required');
-      return;
-    }
-    if (!userForm.roleId || !userForm.branchIds.length) {
-      showToast('error', 'Users', 'Role and at least one branch are required');
+    // Name/username/password/role are enforced natively via `required` on the inputs
+    // below (the browser blocks submission before this runs), so only the branch
+    // checkbox group needs a manual check - there's no native "pick at least one"
+    // constraint for a set of checkboxes.
+    if (!userForm.branchIds.length) {
+      showToast('error', 'Users', 'At least one branch is required');
       return;
     }
 
@@ -849,17 +911,134 @@ const System = () => {
     </div>
   );
 
+  // Business Profile lives in its own tab (Developer-only, see isDeveloper
+  // above) rather than nested inside Company Info - it's a distinct,
+  // higher-impact "which industry is this deployment" decision, not part of
+  // everyday company-identity editing.
+  const businessProfileContent = (
+    <div className="bg-white border border-black rounded-xl p-6 space-y-4 text-black">
+      <div className="flex items-center justify-between">
+        <h3 className="text-base font-semibold">Business Profile</h3>
+        <button
+          onClick={openBusinessProfileEdit}
+          className="px-3 py-2 rounded border border-black bg-black text-white text-sm inline-flex items-center gap-2"
+        >
+          <Pencil className="w-3.5 h-3.5" /> Edit
+        </button>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
+        <div>
+          <div className="text-xs uppercase tracking-wide text-slate-500">Business Name</div>
+          <div>{company?.company_name || '-'}</div>
+        </div>
+        <div>
+          <div className="text-xs uppercase tracking-wide text-slate-500">Business Type</div>
+          <div>{BUSINESS_TYPE_LABELS[businessProfile.businessType || 'general']}</div>
+        </div>
+        <div>
+          <div className="text-xs uppercase tracking-wide text-slate-500">Currency / Country</div>
+          <div>{businessProfile.currency || '-'} / {businessProfile.country || '-'}</div>
+        </div>
+      </div>
+      <div>
+        <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">Enabled Features</div>
+        {enabledFeatureList.length ? (
+          <div className="flex flex-wrap gap-2">
+            {enabledFeatureList.map((feature) => (
+              <span key={feature} className="px-2 py-1 rounded border border-black text-xs">
+                {feature}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-500">No features enabled.</p>
+        )}
+      </div>
+
+      <Modal
+        isOpen={businessProfileModalOpen}
+        onClose={() => setBusinessProfileModalOpen(false)}
+        title="Edit Business Profile"
+        size="md"
+      >
+        <div className="space-y-4">
+          <label className="text-sm font-medium flex flex-col gap-1">
+            Business Type
+            <select
+              className="rounded border border-black px-3 py-2"
+              value={businessProfileForm.businessType}
+              onChange={(e) => setBusinessProfileForm((prev) => ({ ...prev, businessType: e.target.value }))}
+            >
+              {Object.entries(BUSINESS_TYPE_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+            <span className="text-xs text-slate-500">
+              Changing business type resets its feature defaults (barcode, variants, size/color, batch/expiry
+              tracking, etc.) unless you have already customized them individually.
+            </span>
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <label className="text-sm font-medium flex flex-col gap-1">
+              Currency
+              <input
+                className="rounded border border-black px-3 py-2"
+                placeholder="e.g. USD"
+                value={businessProfileForm.currency}
+                onChange={(e) => setBusinessProfileForm((prev) => ({ ...prev, currency: e.target.value }))}
+              />
+            </label>
+            <label className="text-sm font-medium flex flex-col gap-1">
+              Country
+              <input
+                className="rounded border border-black px-3 py-2"
+                placeholder="e.g. Somalia"
+                value={businessProfileForm.country}
+                onChange={(e) => setBusinessProfileForm((prev) => ({ ...prev, country: e.target.value }))}
+              />
+            </label>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 pt-4">
+          <button className="px-4 py-2 rounded border border-black" onClick={() => setBusinessProfileModalOpen(false)}>
+            Cancel
+          </button>
+          <button
+            className="px-4 py-2 rounded border border-black bg-black text-white"
+            onClick={handleBusinessProfileSave}
+            disabled={businessProfileSaving}
+          >
+            {businessProfileSaving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+      </Modal>
+    </div>
+  );
+
   const tabs = [
     {
       id: 'company',
-      label: 'Company Info',
+      label: t('tab_company_info'),
       icon: Home,
       badge: 0,
       content: companyContent,
     },
+    // Business Profile: its own tab, visible only to the Developer role -
+    // see isDeveloper above for why this is tighter than plain company.update.
+    ...(isDeveloper
+      ? [
+          {
+            id: 'business-profile',
+            label: 'Business Profile',
+            icon: Settings2,
+            badge: 0,
+            content: businessProfileContent,
+          },
+        ]
+      : []),
     {
       id: 'users',
-      label: 'Users',
+      label: t('tab_users'),
       icon: Users,
       badge: users.length,
       content: (
@@ -968,7 +1147,7 @@ const System = () => {
     },
 	    {
 	      id: 'roles',
-	      label: 'Roles',
+	      label: t('tab_roles'),
 	      icon: Shield,
 	      badge: roles.length,
 	      content: (
@@ -1045,7 +1224,7 @@ const System = () => {
 	      ? [
 	          {
 	            id: 'privileges',
-	            label: 'Privileges',
+	            label: t('tab_privileges'),
 	            icon: CheckSquare,
 	            badge: 0,
 	            content: (
@@ -1062,8 +1241,6 @@ const System = () => {
 	                  loadUsers={loadUsers}
 	                  initialUserId={privilegesPrefillUserId}
 	                  onUserSelected={(id) => setPrivilegesPrefillUserId(id)}
-	                  // UPDATED: Show only permissions currently used in the sidebar (v1.0)
-	                  allowedPermissionKeys={SIDEBAR_PERMISSION_KEY_SET}
 	                />
 	              </Suspense>
 	            ),
@@ -1075,7 +1252,7 @@ const System = () => {
 	      ? [
 	          {
 	            id: 'role-privileges',
-	            label: 'Role Privileges',
+	            label: t('tab_role_privileges'),
 	            icon: CheckSquare,
 	            badge: 0,
 	            content: (
@@ -1104,7 +1281,7 @@ const System = () => {
 	      ? [
 	          {
 	            id: 'permissions',
-            label: 'Permissions',
+            label: t('tab_permissions'),
             icon: Lock,
             badge: permissions.length,
             content: (
@@ -1145,10 +1322,17 @@ const System = () => {
         title={editingUser ? 'Edit User' : 'Add User'}
         size="lg"
       >
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Relies on native HTML5 validation (required on the inputs themselves) instead
+            of custom red-border flashing, matching the Employee modal's behavior. */}
+        <form
+          id="user-form"
+          onSubmit={(e) => { e.preventDefault(); void saveUser(); }}
+          className="grid grid-cols-1 md:grid-cols-2 gap-4"
+        >
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
-            Name
+            Name *
             <input
+              required
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
               value={userForm.name}
               onChange={(e) => setUserForm({ ...userForm, name: e.target.value })}
@@ -1156,8 +1340,9 @@ const System = () => {
             />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
-            Username
+            Username *
             <input
+              required
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
               value={userForm.username}
               onChange={(e) => setUserForm({ ...userForm, username: e.target.value })}
@@ -1165,9 +1350,10 @@ const System = () => {
             />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
-            Password {editingUser ? '(Optional)' : ''}
+            Password {editingUser ? '(Optional)' : '*'}
             <input
               type="password"
+              required={!editingUser}
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
               value={userForm.password}
               onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
@@ -1175,13 +1361,14 @@ const System = () => {
             />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
-            Role
+            Role *
             <select
+              required
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
               value={userForm.roleId}
               onChange={(e) => setUserForm({ ...userForm, roleId: e.target.value })}
             >
-              <option value="">Select role</option>
+              <option value="" disabled>Select role</option>
               {roles.map((role) => (
                 <option key={role.role_id} value={role.role_id}>
                   {role.role_name}
@@ -1208,7 +1395,11 @@ const System = () => {
             </div>
             <div className="grid max-h-40 grid-cols-2 gap-1 overflow-y-auto rounded-lg border border-slate-300 bg-white p-2 text-sm dark:border-slate-700 dark:bg-slate-800 sm:grid-cols-3">
               {branches.map((branch) => (
-                <label key={branch.branch_id} className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-slate-50 dark:hover:bg-slate-700">
+                <label
+                  key={branch.branch_id}
+                  className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-slate-50 dark:hover:bg-slate-700"
+                  style={{ flexDirection: 'row' }}
+                >
                   <input
                     type="checkbox"
                     checked={userForm.branchIds.includes(branch.branch_id)}
@@ -1242,17 +1433,19 @@ const System = () => {
               </select>
             </label>
           )}
-        </div>
+        </form>
         <div className="flex justify-end gap-3 pt-4">
           <button
+            type="button"
             className="px-4 py-2 rounded-lg border border-slate-200 text-slate-700 dark:border-slate-700 dark:text-slate-300"
             onClick={() => setUserModalOpen(false)}
           >
             Cancel
           </button>
           <button
+            type="submit"
+            form="user-form"
             className="px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700"
-            onClick={saveUser}
             disabled={savingUser}
           >
             {savingUser ? 'Saving...' : editingUser ? 'Update' : 'Create'}

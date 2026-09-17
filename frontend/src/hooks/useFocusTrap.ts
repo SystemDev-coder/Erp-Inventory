@@ -19,6 +19,14 @@ export function useFocusTrap(
   containerRef: RefObject<HTMLElement | null>,
   onEscape?: () => void
 ) {
+  // Auto-focus the first focusable element exactly once per "opened" transition. This is
+  // deliberately its own effect, keyed only on `active`/`containerRef` (both stable across
+  // re-renders) - NOT on `onEscape`. Several callers pass an inline onClose/onEscape that
+  // gets a new function identity on every parent re-render (e.g. a form whose state lives in
+  // the parent page re-renders the parent on every keystroke). If the refocus lived in the
+  // same effect as `onEscape`, every keystroke would re-run it and steal focus back to the
+  // first focusable element - typically the header's X close button, since it sits before
+  // the form fields in the DOM - away from whatever the user was typing into.
   useEffect(() => {
     if (!active) return;
     const container = containerRef.current;
@@ -27,6 +35,19 @@ export function useFocusTrap(
     const previouslyFocused = document.activeElement as HTMLElement | null;
     const items = getFocusable(container);
     (items[0] || container).focus();
+
+    return () => {
+      previouslyFocused?.focus?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, containerRef]);
+
+  // Escape/Tab handling can safely depend on onEscape - re-subscribing the listener has no
+  // side effect on focus, unlike the effect above.
+  useEffect(() => {
+    if (!active) return;
+    const container = containerRef.current;
+    if (!container) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -57,9 +78,6 @@ export function useFocusTrap(
     };
 
     document.addEventListener('keydown', onKeyDown, true);
-    return () => {
-      document.removeEventListener('keydown', onKeyDown, true);
-      previouslyFocused?.focus?.();
-    };
+    return () => document.removeEventListener('keydown', onKeyDown, true);
   }, [active, containerRef, onEscape]);
 }

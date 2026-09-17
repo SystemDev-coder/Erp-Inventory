@@ -4,6 +4,7 @@ import { ApiResponse } from '../../utils/ApiResponse';
 import { ApiError } from '../../utils/ApiError';
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { resolveBranchScope } from '../../utils/branchScope';
+import { deleteCloudinaryImage, getUploadedImageUrl } from '../../config/cloudinary';
 import { productsService } from './products.service';
 import {
   categoryCreateSchema,
@@ -74,6 +75,13 @@ const normalizeProductBody = (body: any) => ({
   name: body?.name,
   barcode: body?.barcode ?? body?.sku,
   storeId: body?.storeId ?? body?.store_id,
+  categoryId: body?.categoryId ?? body?.category_id,
+  unitId: body?.unitId ?? body?.unit_id,
+  brand: body?.brand,
+  size: body?.size,
+  color: body?.color,
+  genericName: body?.genericName ?? body?.generic_name,
+  strength: body?.strength,
   quantity: body?.quantity,
   stockAlert: body?.stockAlert ?? body?.stock_alert,
   openingBalance: body?.openingBalance ?? body?.opening_balance,
@@ -91,10 +99,27 @@ export const listProducts = asyncHandler(async (req: AuthRequest, res: Response)
   return ApiResponse.success(res, listPayload('products', result));
 });
 
+export const getProductsSummary = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
+  const summary = await productsService.getProductsSummary(scope, branchId);
+  return ApiResponse.success(res, { summary });
+});
+
 export const getProduct = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const product = await productsService.getProduct(Number(req.params.id), scope);
   if (!product) throw ApiError.notFound('Product not found');
+  return ApiResponse.success(res, { product });
+});
+
+export const getProductByBarcode = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const barcode = String(req.params.barcode || '').trim();
+  if (!barcode) throw ApiError.badRequest('Barcode is required');
+  const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
+  const product = await productsService.getProductByBarcode(barcode, scope, branchId);
+  if (!product) throw ApiError.notFound('No product found for this barcode');
   return ApiResponse.success(res, { product });
 });
 
@@ -116,7 +141,18 @@ export const updateProduct = asyncHandler(async (req: AuthRequest, res: Response
 export const deleteProduct = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
+  // M11 fix: capture the image URL before the row is gone, so it can be
+  // cleaned up after the DB delete succeeds - never before, since an
+  // external asset delete can't be rolled back if the transaction below
+  // then fails for an unrelated reason (e.g. a blocked-delete race).
+  const existing = await productsService.getProduct(id, scope);
   await productsService.deleteProduct(Number(req.params.id), scope);
+  if (existing?.image_url) {
+    const stillReferenced = await productsService.hasOtherProductWithImage(existing.image_url, id);
+    if (!stillReferenced) {
+      await deleteCloudinaryImage(existing.image_url);
+    }
+  }
   await logAudit({
     userId: req.user?.userId ?? null,
     action: 'delete',
@@ -213,10 +249,33 @@ export const deleteTax = asyncHandler(async (req: AuthRequest, res: Response) =>
   return ApiResponse.success(res, null, 'Tax deleted');
 });
 
-export const uploadProductImage = asyncHandler(async (_req: AuthRequest, _res: Response) => {
-  throw ApiError.badRequest('Product image upload is not available for this schema');
+export const uploadProductImage = asyncHandler(async (req: AuthRequest, res: Response) => {
+  if (!req.file) {
+    throw ApiError.badRequest('No file uploaded');
+  }
+  const scope = await resolveBranchScope(req);
+  const id = Number(req.params.id);
+  const existing = await productsService.getProduct(id, scope);
+  if (!existing) throw ApiError.notFound('Product not found');
+
+  const imageUrl = getUploadedImageUrl(req.file.path);
+  if (existing.image_url) {
+    await deleteCloudinaryImage(existing.image_url);
+  }
+
+  const product = await productsService.setProductImageUrl(id, imageUrl, scope);
+  return ApiResponse.success(res, { product, imageUrl }, 'Image uploaded successfully');
 });
 
-export const deleteProductImage = asyncHandler(async (_req: AuthRequest, _res: Response) => {
-  throw ApiError.badRequest('Product image delete is not available for this schema');
+export const deleteProductImage = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const id = Number(req.params.id);
+  const existing = await productsService.getProduct(id, scope);
+  if (!existing) throw ApiError.notFound('Product not found');
+
+  if (existing.image_url) {
+    await deleteCloudinaryImage(existing.image_url);
+  }
+  const product = await productsService.setProductImageUrl(id, null, scope);
+  return ApiResponse.success(res, { product }, 'Image deleted successfully');
 });
