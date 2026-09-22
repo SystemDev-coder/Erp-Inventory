@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router';
 import { Plus, Trash2, ArrowLeft, Package } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
@@ -117,6 +117,15 @@ const PurchaseEditor = () => {
   const [lineSearchQuery, setLineSearchQuery] = useState('');
   const QUICK_CREATE_SENTINEL = -1;
 
+  // Keyboard-friendly product entry (mirrors SaleCreate.tsx's identical
+  // pattern): barcode scan/entry, and focusing a newly-added line's Product
+  // field after "+ Add line" or a Tab-triggered new line.
+  const [barcodeInput, setBarcodeInput] = useState('');
+  const [barcodeLoading, setBarcodeLoading] = useState(false);
+  const barcodeInputRef = useRef<HTMLInputElement | null>(null);
+  const focusNewLineOnNextRenderRef = useRef(false);
+  const productFieldId = (idx: number) => `purchase-line-product-${idx}`;
+
   const loadProducts = async (search?: string) => {
     const limit = 200; // server max for /api/products
     const q = (search || '').trim();
@@ -211,6 +220,68 @@ const PurchaseEditor = () => {
       next[index] = updated;
       return next;
     });
+  };
+
+  // Focus the newly-added line's Product field once it's actually rendered -
+  // same pattern as SaleCreate.tsx. Only acts when addLine() explicitly set
+  // the flag, so Delete/other line-count changes never steal focus.
+  useEffect(() => {
+    if (!focusNewLineOnNextRenderRef.current) return;
+    focusNewLineOnNextRenderRef.current = false;
+    const lastIdx = lineItems.length - 1;
+    requestAnimationFrame(() => {
+      document.getElementById(productFieldId(lastIdx))?.focus();
+    });
+  }, [lineItems.length]);
+
+  const addLine = () => {
+    focusNewLineOnNextRenderRef.current = true;
+    setLineItems((prev) => [...prev, { ...emptyLine }]);
+  };
+
+  // Same rule as SaleCreate.tsx: Tab out of the LAST line's Quantity field
+  // creates + focuses a new line, but only when this line already has a
+  // product selected - an empty last line's Tab stays normal browser
+  // navigation, which is what stops repeated/endless line creation.
+  const handleLineQuantityTab = (
+    event: KeyboardEvent<HTMLInputElement>,
+    idx: number,
+    item: LineItem
+  ) => {
+    if (event.key !== 'Tab' || event.shiftKey) return;
+    if (idx !== lineItems.length - 1) return;
+    if (!item.product_id) return;
+    event.preventDefault();
+    addLine();
+  };
+
+  // Barcode entry for the Purchase line grid - mirrors SaleCreate.tsx's
+  // handleBarcodeScan exactly (same exact-match backend lookup, same "never
+  // auto-create a product" rule), but follows handleSelectProduct's own
+  // existing duplicate-merge/blank-line-replace logic above since that's
+  // this file's established pattern for adding a product to the grid.
+  const handleBarcodeScan = async () => {
+    const raw = barcodeInput.trim();
+    if (barcodeLoading) return;
+    if (!raw) {
+      showToast('error', 'Barcode', 'Scan or type a barcode first.');
+      return;
+    }
+    setBarcodeLoading(true);
+    const res = await productService.getByBarcode(raw, activeBranchId ?? undefined);
+    setBarcodeLoading(false);
+    if (!res.success || !res.data?.product) {
+      showToast('error', 'Not found', res.error || `Product not found for this barcode ("${raw}").`);
+      requestAnimationFrame(() => barcodeInputRef.current?.focus());
+      return;
+    }
+    const product = res.data.product;
+    if (!products.some((p) => Number(p.product_id) === Number(product.product_id))) {
+      setProducts((prev) => [product, ...prev]);
+    }
+    handleSelectProduct(product);
+    setBarcodeInput('');
+    requestAnimationFrame(() => barcodeInputRef.current?.focus());
   };
 
   const loadOptions = async () => {
@@ -930,6 +1001,22 @@ const PurchaseEditor = () => {
         <div className="flex items-center justify-between">
           <span className="font-semibold text-slate-800 dark:text-slate-200">Products</span>
           <div className="flex flex-wrap items-end gap-2 justify-end">
+            <input
+              ref={barcodeInputRef}
+              type="text"
+              value={barcodeInput}
+              onChange={(e) => setBarcodeInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void handleBarcodeScan();
+                }
+              }}
+              placeholder="Scan or enter barcode"
+              aria-label="Scan or enter barcode"
+              disabled={loading || barcodeLoading}
+              className="h-12 w-48 px-3 text-sm border border-slate-300 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+            />
             <select
               className="h-12 rounded-md border px-3 text-base transition-colors bg-white border-slate-300 text-slate-900 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 focus:outline-none"
               value={discountMode}
@@ -950,7 +1037,7 @@ const PurchaseEditor = () => {
             </button>
             <button
               type="button"
-              onClick={() => setLineItems((prev) => [...prev, { ...emptyLine }])}
+              onClick={addLine}
               className="h-12 inline-flex items-center gap-2 text-base px-4 rounded-md border border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-800"
             >
               <Plus size={16} /> Add line
@@ -1186,6 +1273,7 @@ const PurchaseEditor = () => {
 	                <tr key={idx}>
 	                  <td className="px-2 py-2">
 	                    <SearchableCombobox<number>
+	                      id={productFieldId(idx)}
 	                      value={item.product_id}
 	                      options={(() => {
 	                        const base = products.map((p) => ({
@@ -1274,6 +1362,7 @@ const PurchaseEditor = () => {
                             effectiveHeaderDiscount
                           );
                         }}
+                        onKeyDown={(e) => handleLineQuantityTab(e, idx, item)}
                       />
                       <button
                         type="button"

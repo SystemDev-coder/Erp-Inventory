@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router';
 import { ArrowLeft, Plus, Trash2, AlertCircle, Image as ImageIcon, X } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
@@ -87,6 +87,13 @@ const SaleCreate = () => {
   const QUICK_CREATE_SENTINEL = -1;
   const [barcodeInput, setBarcodeInput] = useState('');
   const [barcodeLoading, setBarcodeLoading] = useState(false);
+  const barcodeInputRef = useRef<HTMLInputElement | null>(null);
+  // Keyboard-friendly product entry: after "+ Add line", a Tab-triggered new
+  // line, or a barcode scan that appends a fresh line, focus that new line's
+  // Product field once React has actually rendered it (the ref flag defers
+  // the focus() call to the effect below, keyed on item count).
+  const focusNewLineOnNextRenderRef = useRef(false);
+  const productFieldId = (idx: number) => `sale-line-product-${idx}`;
   const [categories, setCategories] = useState<Category[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
   const [newProductModalOpen, setNewProductModalOpen] = useState(false);
@@ -537,6 +544,46 @@ const SaleCreate = () => {
     return Number(line.available_qty ?? 0);
   };
 
+  // Focus the newly-added line's Product field once it's actually in the
+  // DOM - runs after every items-count change, but only acts when a caller
+  // (Add line / Tab-to-new-line) explicitly asked for it via the ref flag,
+  // so this never steals focus on unrelated line-count changes (e.g. Delete).
+  useEffect(() => {
+    if (!focusNewLineOnNextRenderRef.current) return;
+    focusNewLineOnNextRenderRef.current = false;
+    const lastIdx = saleForm.items.length - 1;
+    requestAnimationFrame(() => {
+      document.getElementById(productFieldId(lastIdx))?.focus();
+    });
+  }, [saleForm.items.length]);
+
+  const addLine = () => {
+    focusNewLineOnNextRenderRef.current = true;
+    setSaleForm((prev) => ({
+      ...prev,
+      items: [...prev.items, { item_id: '', quantity: 1, unit_price: 0 }],
+    }));
+  };
+
+  // Keyboard data-entry: pressing Tab out of the LAST line's Quantity field
+  // (Unit Price is read-only and Line Total isn't an input, so Quantity is
+  // the last field a keyboard user actually fills per row) creates a new
+  // line and focuses it, IF this line has a real product selected - an
+  // empty last line's Tab is left as normal browser navigation, which is
+  // what stops this from ever creating more than one new line per press or
+  // spawning an endless chain while tabbing on through the rest of the form.
+  const handleLineQuantityTab = (
+    event: KeyboardEvent<HTMLInputElement>,
+    idx: number,
+    line: FormLine
+  ) => {
+    if (event.key !== 'Tab' || event.shiftKey) return;
+    if (idx !== saleForm.items.length - 1) return;
+    if (!line.item_id) return;
+    event.preventDefault();
+    addLine();
+  };
+
   // Phase 12: barcode entry for the normal Sales/Invoice line grid (same
   // doc_type-driven form as both - see the docType select above). Reuses the
   // shared exact-match backend lookup rather than the combobox's substring
@@ -548,12 +595,19 @@ const SaleCreate = () => {
   // line" / the combobox is untouched and still always adds a fresh line.
   const handleBarcodeScan = async () => {
     const raw = barcodeInput.trim();
-    if (!raw || barcodeLoading) return;
+    if (barcodeLoading) return;
+    if (!raw) {
+      showToast('error', 'Barcode', 'Scan or type a barcode first.');
+      return;
+    }
     setBarcodeLoading(true);
     const res = await productService.getByBarcode(raw, activeBranchId ?? undefined);
     setBarcodeLoading(false);
     if (!res.success || !res.data?.product) {
-      showToast('error', 'Not found', res.error || `No product matches barcode "${raw}".`);
+      showToast('error', 'Not found', res.error || `Product not found for this barcode ("${raw}").`);
+      // Keep focus on the barcode field either way so scanning can continue
+      // without reaching for the mouse.
+      requestAnimationFrame(() => barcodeInputRef.current?.focus());
       return;
     }
     const product = res.data.product;
@@ -596,6 +650,10 @@ const SaleCreate = () => {
     setSaleForm((prev) => ({ ...prev, items: nextItems }));
     recalcTotals(nextItems, saleForm.discount);
     setBarcodeInput('');
+    // Requirement: after a successful scan, focus goes to the logical next
+    // input - back to the barcode field itself, so repeated scanning never
+    // needs the mouse.
+    requestAnimationFrame(() => barcodeInputRef.current?.focus());
   };
 
   const firstInsufficientLine = saleForm.items.find((line) => {
@@ -1108,6 +1166,7 @@ const SaleCreate = () => {
             </div>
             <div className="flex items-center gap-2">
               <input
+                ref={barcodeInputRef}
                 type="text"
                 value={barcodeInput}
                 onChange={(e) => setBarcodeInput(e.target.value)}
@@ -1118,17 +1177,13 @@ const SaleCreate = () => {
                   }
                 }}
                 placeholder="Scan or enter barcode"
+                aria-label="Scan or enter barcode"
                 disabled={loading || barcodeLoading}
                 className="w-48 px-3 py-1 text-sm border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
               />
               <button
                 type="button"
-                onClick={() =>
-                  setSaleForm((prev) => ({
-                    ...prev,
-                    items: [...prev.items, { item_id: '', quantity: 1, unit_price: 0 }],
-                  }))
-                }
+                onClick={addLine}
                 className="inline-flex items-center gap-1 text-sm px-3 py-1 rounded-lg bg-primary-600 text-white hover:bg-primary-700"
               >
                 <Plus size={16} /> Add line
@@ -1172,6 +1227,7 @@ const SaleCreate = () => {
                     <tr key={idx}>
                       <td className="px-2 py-2 align-top">
                         <SearchableCombobox<number>
+                          id={productFieldId(idx)}
                           value={line.item_id}
                           options={(() => {
                             const base = itemOptions.map((item) => ({
@@ -1256,6 +1312,7 @@ const SaleCreate = () => {
                               setSaleForm((prev) => ({ ...prev, items: nextItems }));
                               recalcTotals(nextItems, saleForm.discount);
                             }}
+                            onKeyDown={(e) => handleLineQuantityTab(e, idx, line)}
                             disabled={loading}
                           />
                           <button
