@@ -1,4 +1,5 @@
 import { query, queryMany, queryOne } from '../../db/query';
+import { withTransaction } from '../../db/withTx';
 import { ensureCreditDueNotifications } from '../../utils/creditDueNotifications';
 
 export interface NotificationRow {
@@ -109,22 +110,32 @@ const ensureLowStockNotifications = async (branchId: number, userId: number) => 
     [branchId, userId]
   );
 
-  await query(
-    `WITH low_stock AS (${lowStockRowsSql})
-     UPDATE ims.notifications n
-        SET is_deleted = TRUE,
-            deleted_at = NOW()
-      WHERE n.user_id = $2
-        AND n.branch_id = $1
-        AND COALESCE(n.is_deleted, FALSE) = FALSE
-        AND COALESCE(n.meta->>'type', '') = 'low_stock'
-        AND NOT EXISTS (
-          SELECT 1
-          FROM low_stock ls
-          WHERE ls.product_id::text = COALESCE(n.meta->>'product_id', '')
-        )`,
-    [branchId, userId]
-  );
+  // The rls_soft_delete policy on is_deleted-bearing tables gates writing a
+  // row into a soft-deleted state on this session var (same root cause
+  // diagnosed and fixed for sales/purchase returns in returns.service.ts) -
+  // without it, this UPDATE fails with "new row violates row-level security
+  // policy for table notifications" and the whole notification list request
+  // 500s. Scoped to its own short transaction since this fix must not affect
+  // any other query sharing this pooled connection.
+  await withTransaction(async (client) => {
+    await client.query(`SET LOCAL app.include_deleted = '1'`);
+    await client.query(
+      `WITH low_stock AS (${lowStockRowsSql})
+       UPDATE ims.notifications n
+          SET is_deleted = TRUE,
+              deleted_at = NOW()
+        WHERE n.user_id = $2
+          AND n.branch_id = $1
+          AND COALESCE(n.is_deleted, FALSE) = FALSE
+          AND COALESCE(n.meta->>'type', '') = 'low_stock'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM low_stock ls
+            WHERE ls.product_id::text = COALESCE(n.meta->>'product_id', '')
+          )`,
+      [branchId, userId]
+    );
+  });
 };
 
 export const notificationsService = {
