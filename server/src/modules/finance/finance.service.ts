@@ -1050,7 +1050,12 @@ export const financeService = {
         [receipt.branch_id, id]
       );
 
-      await client.query(`DELETE FROM ims.customer_receipts WHERE receipt_id = $1`, [id]);
+      // Delete-protection audit (Phase 10 Batch 1, Finding F5): the GL/
+      // ledger/balance reversal above is correct - the only gap was the
+      // receipt record itself being hard-deleted, destroying the evidentiary
+      // history of a real cash movement. Soft-delete instead, same pattern
+      // already used by deleteExpense in this file.
+      await softDeleteById('customer_receipts', id, { runner: client });
       return { deleted: true };
     });
   },
@@ -1331,7 +1336,9 @@ export const financeService = {
         [receipt.branch_id, id]
       );
 
-      await client.query(`DELETE FROM ims.supplier_receipts WHERE receipt_id = $1`, [id]);
+      // Delete-protection audit (Phase 10 Batch 1, Finding F5): soft-delete
+      // instead of hard-delete - same rationale as deleteCustomerReceipt above.
+      await softDeleteById('supplier_receipts', id, { runner: client });
       return { deleted: true };
     });
   },
@@ -2559,7 +2566,9 @@ export const financeService = {
         [payment.branch_id, id]
       );
 
-      await client.query(`DELETE FROM ims.expense_payments WHERE exp_payment_id = $1`, [id]);
+      // Delete-protection audit (Phase 10 Batch 1, Finding F5): soft-delete
+      // instead of hard-delete - same rationale as the receipt deletes above.
+      await softDeleteById('expense_payments', id, { runner: client });
       return { deleted: true };
     });
   },
@@ -2788,7 +2797,9 @@ export const financeService = {
         [payment.branch_id, id]
       );
 
-      await client.query(`DELETE FROM ims.liability_payments WHERE liability_payment_id = $1`, [id]);
+      // Delete-protection audit (Phase 10 Batch 1, Finding F5): soft-delete
+      // instead of hard-delete - same rationale as the other Finance deletes.
+      await softDeleteById('liability_payments', id, { runner: client });
       return { deleted: true };
     });
   },
@@ -3055,8 +3066,66 @@ export const financeService = {
     );
     if (!budget) throw ApiError.notFound('Expense budget not found');
     assertBranchAccess(scope, budget.branch_id);
-    await queryOne(`DELETE FROM ims.expense_charges WHERE ref_table = 'expense_budgets' AND ref_id = $1`, [id]);
-    await queryOne(`DELETE FROM ims.expense_budgets WHERE budget_id = $1`, [id]);
+
+    // Delete-protection audit (Phase 10 Batch 1, Finding F6): this used to
+    // delete every linked expense_charges row directly, bypassing
+    // deleteExpenseCharge's own "has payments" block AND its GL-balance
+    // reversal - a budget with an already-paid charge could be deleted,
+    // leaving accounts.balance permanently overstated (the same bug class
+    // as the payroll-delete finding elsewhere in this audit). Block if any
+    // linked charge has a payment; otherwise reverse each charge's GL
+    // impact the same way deleteExpenseCharge does before removing it.
+    const linkedCharges = await queryMany<{ charge_id: number }>(
+      `SELECT charge_id FROM ims.expense_charges WHERE ref_table = 'expense_budgets' AND ref_id = $1`,
+      [id]
+    );
+    const chargeIds = linkedCharges.map((row) => Number(row.charge_id));
+    if (chargeIds.length) {
+      const paidCharge = await queryOne<{ exp_payment_id: number }>(
+        `SELECT exp_payment_id FROM ims.expense_payments WHERE exp_ch_id = ANY($1::bigint[]) LIMIT 1`,
+        [chargeIds]
+      );
+      if (paidCharge) {
+        const paymentCount = await queryOne<{ total: string }>(
+          `SELECT COUNT(*)::text AS total FROM ims.expense_payments WHERE exp_ch_id = ANY($1::bigint[])`,
+          [chargeIds]
+        );
+        throw ApiError.conflict('Cannot delete budget: one or more charged periods already have payments recorded.', {
+          code: 'RECORD_HAS_TRANSACTIONS',
+          dependencies: { expense_payments: Number(paymentCount?.total || 0) },
+        });
+      }
+    }
+
+    await withTransaction(async (client) => {
+      for (const chargeId of chargeIds) {
+        const debitRows = (
+          await client.query<{ acc_id: number; debit: string }>(
+            `SELECT acc_id, debit::text AS debit
+               FROM ims.account_transactions
+              WHERE branch_id = $1
+                AND ref_table = 'expense_charges'
+                AND ref_id = $2
+                AND debit > 0`,
+            [budget.branch_id, chargeId]
+          )
+        ).rows;
+        for (const row of debitRows) {
+          await client.query(`UPDATE ims.accounts SET balance = balance - $1 WHERE acc_id = $2 AND branch_id = $3`, [
+            Number(row.debit), Number(row.acc_id), Number(budget.branch_id),
+          ]);
+        }
+        await client.query(
+          `DELETE FROM ims.account_transactions
+            WHERE branch_id = $1
+              AND ref_table = 'expense_charges'
+              AND ref_id = $2`,
+          [budget.branch_id, chargeId]
+        );
+      }
+      await client.query(`DELETE FROM ims.expense_charges WHERE ref_table = 'expense_budgets' AND ref_id = $1`, [id]);
+      await client.query(`DELETE FROM ims.expense_budgets WHERE budget_id = $1`, [id]);
+    });
   },
 
   async chargeExpenseBudget(input: ExpenseBudgetChargeInput, scope: BranchScope, userId: number) {
@@ -3463,9 +3532,30 @@ export const financeService = {
                 AND ref_id = $2`,
             [line.branch_id, payment.emp_payment_id]
           );
+          // F5: soft-delete the payment record itself instead of erasing it.
+          await softDeleteById('employee_payments', Number(payment.emp_payment_id), { runner: client });
         }
 
-        await client.query(`DELETE FROM ims.employee_payments WHERE payroll_line_id = $1`, [line.payroll_line_id]);
+        // Inventory/Payroll audit Finding F1 (accounting-correctness pass):
+        // the payroll_lines GL rows (the actual "Payroll Expense" charge)
+        // were deleted below with no preceding balance reversal, leaving
+        // accounts.balance permanently overstated by the deleted charge's
+        // amount - reverse it first, same pattern deleteExpenseCharge uses.
+        const lineDebits = (await client.query<{ acc_id: number; total_debit: string }>(
+          `SELECT acc_id, SUM(debit)::text AS total_debit
+             FROM ims.account_transactions
+            WHERE branch_id = $1
+              AND ref_table = 'payroll_lines'
+              AND ref_id = $2
+              AND debit > 0
+            GROUP BY acc_id`,
+          [line.branch_id, line.payroll_line_id]
+        )).rows;
+        for (const row of lineDebits) {
+          await client.query(`UPDATE ims.accounts SET balance = balance - $1 WHERE branch_id = $2 AND acc_id = $3`, [
+            Number(row.total_debit), line.branch_id, Number(row.acc_id),
+          ]);
+        }
 
         await client.query(
           `DELETE FROM ims.account_transactions
@@ -3475,14 +3565,16 @@ export const financeService = {
           [line.branch_id, line.payroll_line_id]
         );
 
-        await client.query(`DELETE FROM ims.payroll_lines WHERE payroll_line_id = $1`, [line.payroll_line_id]);
+        // Delete-protection audit (Phase 10 Batch 1, Finding F5): soft-delete
+        // the payroll line/run instead of hard-deleting them.
+        await softDeleteById('payroll_lines', Number(line.payroll_line_id), { runner: client });
 
         const remaining = (await client.query<{ cnt: string }>(
-          `SELECT COUNT(*)::text AS cnt FROM ims.payroll_lines WHERE payroll_id = $1`,
+          `SELECT COUNT(*)::text AS cnt FROM ims.payroll_lines WHERE payroll_id = $1 AND COALESCE(is_deleted, 0) = 0`,
           [line.payroll_id]
         )).rows[0];
         if (!remaining || Number(remaining.cnt) === 0) {
-          await client.query(`DELETE FROM ims.payroll_runs WHERE payroll_id = $1`, [line.payroll_id]);
+          await softDeleteById('payroll_runs', Number(line.payroll_id), { runner: client });
         }
 
         return { deleted: 1 };
@@ -3539,15 +3631,34 @@ export const financeService = {
               AND ref_id = $2`,
           [payment.branch_id, payment.emp_payment_id]
         );
+        // F5: soft-delete the payment record itself instead of erasing it.
+        await softDeleteById('employee_payments', Number(payment.emp_payment_id), { runner: client });
       }
 
-      await client.query(
-        `DELETE FROM ims.employee_payments
-          WHERE payroll_line_id IN (
-            SELECT payroll_line_id FROM ims.payroll_lines WHERE payroll_id = ANY($1::bigint[])
-          )`,
+      // Inventory/Payroll audit Finding F1 (accounting-correctness pass):
+      // same missing reversal as the 'line' branch above, but across every
+      // payroll_lines row in this period - reverse each (branch_id, acc_id)
+      // debit total before the GL rows are removed.
+      const periodDebits = (await client.query<{ branch_id: number; acc_id: number; total_debit: string }>(
+        `SELECT at.branch_id, at.acc_id, SUM(at.debit)::text AS total_debit
+           FROM ims.account_transactions at
+           JOIN ims.payroll_lines pl ON pl.branch_id = at.branch_id AND pl.payroll_line_id = at.ref_id
+          WHERE at.ref_table = 'payroll_lines'
+            AND at.debit > 0
+            AND pl.payroll_id = ANY($1::bigint[])
+          GROUP BY at.branch_id, at.acc_id`,
         [runIds]
-      );
+      )).rows;
+      for (const row of periodDebits) {
+        await client.query(`UPDATE ims.accounts SET balance = balance - $1 WHERE branch_id = $2 AND acc_id = $3`, [
+          Number(row.total_debit), Number(row.branch_id), Number(row.acc_id),
+        ]);
+      }
+
+      const periodLines = (await client.query<{ payroll_line_id: number }>(
+        `SELECT payroll_line_id FROM ims.payroll_lines WHERE payroll_id = ANY($1::bigint[])`,
+        [runIds]
+      )).rows;
 
       await client.query(
         `DELETE FROM ims.account_transactions at
@@ -3559,8 +3670,16 @@ export const financeService = {
         [runIds]
       );
 
-      await client.query(`DELETE FROM ims.payroll_lines WHERE payroll_id = ANY($1::bigint[])`, [runIds]);
-      await client.query(`DELETE FROM ims.payroll_runs WHERE payroll_id = ANY($1::bigint[])`, [runIds]);
+      // Delete-protection audit (Phase 10 Batch 1, Finding F5): soft-delete
+      // every payroll line and run instead of hard-deleting them - payments
+      // are already soft-deleted above, so sp_soft_delete's own dependency
+      // check on payroll_lines/payroll_runs passes cleanly.
+      for (const row of periodLines) {
+        await softDeleteById('payroll_lines', Number(row.payroll_line_id), { runner: client });
+      }
+      for (const runId of runIds) {
+        await softDeleteById('payroll_runs', runId, { runner: client });
+      }
 
       return { deleted: runIds.length };
     });

@@ -28,6 +28,8 @@ export const errorHandler = (
     return res.status(err.statusCode).json({
       success: false,
       message: err.message,
+      ...(err.details?.code ? { code: err.details.code } : {}),
+      ...(err.details?.dependencies ? { dependencies: err.details.dependencies } : {}),
     });
   }
 

@@ -1,5 +1,6 @@
 import { queryMany, queryOne } from '../../db/query';
 import { adminQueryMany } from '../../db/adminQuery';
+import { ApiError } from '../../utils/ApiError';
 import {
   EmployeeInput,
   EmployeeUpdateInput,
@@ -7,6 +8,40 @@ import {
   ShiftAssignmentUpdateInput,
   StateUpdateInput,
 } from './employees.schemas';
+
+// Delete-protection audit (Phase 10 Batch 1, Finding F1): the old delete()
+// relied entirely on catching a Postgres 23503 (FK RESTRICT violation) to
+// decide whether an employee had history. That backstop only fires for
+// payroll_lines/employee_payments/employee_loans (all RESTRICT) - but
+// employee_salary and employee_shift_assignments are ON DELETE CASCADE, so
+// an employee with only salary/shift history (no payroll run yet) would
+// hard-delete successfully and silently take those rows down with it.
+// Explicit pre-check across all five, mirroring the pattern already used by
+// products.service.ts's findProductDeleteBlockReason.
+const findEmployeeDependencyCounts = async (empId: number): Promise<Record<string, number>> => {
+  const row = await queryOne<{
+    payroll_lines: string;
+    employee_payments: string;
+    employee_loans: string;
+    employee_salary: string;
+    shift_assignments: string;
+  }>(
+    `SELECT
+       (SELECT COUNT(*) FROM ims.payroll_lines WHERE emp_id = $1) AS payroll_lines,
+       (SELECT COUNT(*) FROM ims.employee_payments WHERE emp_id = $1) AS employee_payments,
+       (SELECT COUNT(*) FROM ims.employee_loans WHERE emp_id = $1) AS employee_loans,
+       (SELECT COUNT(*) FROM ims.employee_salary WHERE emp_id = $1) AS employee_salary,
+       (SELECT COUNT(*) FROM ims.employee_shift_assignments WHERE emp_id = $1) AS shift_assignments`,
+    [empId]
+  );
+  return {
+    payroll_lines: Number(row?.payroll_lines || 0),
+    employee_payments: Number(row?.employee_payments || 0),
+    employee_loans: Number(row?.employee_loans || 0),
+    employee_salary: Number(row?.employee_salary || 0),
+    shift_assignments: Number(row?.shift_assignments || 0),
+  };
+};
 
 export interface Employee {
   emp_id: number;
@@ -519,21 +554,19 @@ export const employeesService = {
    * Delete employee
    */
   async delete(id: number): Promise<void> {
-    try {
-      await queryOne('DELETE FROM ims.employees WHERE emp_id = $1', [id]);
-    } catch (error: any) {
-      // If employee has dependent records, keep the row and mark inactive.
-      if (error?.code === '23503') {
-        await queryOne(
-          `UPDATE ims.employees
-              SET status = 'inactive'::ims.employment_status_enum
-            WHERE emp_id = $1`,
-          [id]
-        );
-        return;
-      }
-      throw error;
+    const dependencies = await findEmployeeDependencyCounts(id);
+    const total = Object.values(dependencies).reduce((sum, n) => sum + n, 0);
+    if (total > 0) {
+      // Block, same as products/customers/suppliers' own delete-block
+      // pattern - no side effect here. The caller can deactivate separately
+      // via PATCH /employees/state (targetType: 'employee'), which is the
+      // existing, purpose-built action for that.
+      throw ApiError.conflict(
+        'Cannot delete employee with related payroll, salary, loan, or shift-assignment records. Deactivate the employee instead.',
+        { code: 'RECORD_HAS_TRANSACTIONS', dependencies }
+      );
     }
+    await queryOne('DELETE FROM ims.employees WHERE emp_id = $1', [id]);
   },
 
   async updateState(input: StateUpdateInput, branchIds?: number[]): Promise<void> {
