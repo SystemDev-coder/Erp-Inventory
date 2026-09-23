@@ -7,6 +7,7 @@ import { productService, Product } from '../../services/product.service';
 import { inventoryService } from '../../services/inventory.service';
 import { Modal } from '../../components/ui/modal/Modal';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
+import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
 import { itemLabelWithAvailability } from '../../utils/itemAvailability';
 import { useBranch } from '../../context/BranchContext';
 
@@ -200,8 +201,11 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
     }
   };
 
-  const openTransferModal = async () => {
-    if (!products.length) await loadProducts();
+  const openTransferModal = () => {
+    // Load stores/products independently of whether "Display" was already
+    // clicked on the Store list - the transfer modal must not depend on it.
+    if (!products.length) void loadProducts();
+    if (!stores.length) void loadStores();
     setTransferForm({ fromStoreId: '', toStoreId: '', productId: '', qty: 1, note: '' });
     setTransferModalOpen(true);
   };
@@ -250,6 +254,13 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   };
 
   const fieldCls = 'w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 dark:bg-slate-800 text-slate-900 dark:text-slate-100';
+
+  const storeOptions = stores.map((s) => ({ value: s.store_id, label: s.store_name }));
+  const toStoreOptions = storeOptions.filter((o) => o.value !== transferForm.fromStoreId);
+  const productOptions = products.map((p) => ({
+    value: p.product_id,
+    label: itemLabelWithAvailability(p.name, p.stock ?? p.quantity ?? p.opening_balance),
+  }));
 
   return (
     <div className="space-y-6">
@@ -435,14 +446,13 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
         {itemModalStore && (
           <form onSubmit={handleAddItem} className="space-y-3">
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Product</label>
-            <select className={fieldCls} value={addProductId} onChange={(e) => setAddProductId(e.target.value ? Number(e.target.value) : '')}>
-              <option value="">Select product</option>
-              {products.map((p) => (
-                <option key={p.product_id} value={p.product_id}>
-                  {itemLabelWithAvailability(p.name, p.stock ?? p.quantity ?? p.opening_balance)}
-                </option>
-              ))}
-            </select>
+            <SearchableCombobox
+              id="store-add-item-product"
+              value={addProductId}
+              options={productOptions}
+              onChange={setAddProductId}
+              placeholder="Select product"
+            />
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Quantity</label>
             <input type="number" min={0} step={1} className={fieldCls} value={addQty} onChange={(e) => setAddQty(Number(e.target.value) || 0)} />
             <div className="flex justify-end gap-2 pt-2">
@@ -456,45 +466,29 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
       <Modal isOpen={transferModalOpen} onClose={() => setTransferModalOpen(false)} title="Store Transfer" size="md">
         <form onSubmit={handleSubmitTransfer} className="space-y-3">
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">From store *</label>
-          <select
-            className={fieldCls}
+          <SearchableCombobox
+            id="store-transfer-from"
             value={transferForm.fromStoreId}
-            onChange={(e) => setTransferForm((p) => ({ ...p, fromStoreId: e.target.value ? Number(e.target.value) : '' }))}
-            required
-          >
-            <option value="">Select source store</option>
-            {stores.map((s) => (
-              <option key={s.store_id} value={s.store_id}>{s.store_name}</option>
-            ))}
-          </select>
+            options={storeOptions}
+            onChange={(v) => setTransferForm((p) => ({ ...p, fromStoreId: v }))}
+            placeholder="Select source store"
+          />
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">To store *</label>
-          <select
-            className={fieldCls}
+          <SearchableCombobox
+            id="store-transfer-to"
             value={transferForm.toStoreId}
-            onChange={(e) => setTransferForm((p) => ({ ...p, toStoreId: e.target.value ? Number(e.target.value) : '' }))}
-            required
-          >
-            <option value="">Select destination store</option>
-            {stores
-              .filter((s) => s.store_id !== transferForm.fromStoreId)
-              .map((s) => (
-                <option key={s.store_id} value={s.store_id}>{s.store_name}</option>
-              ))}
-          </select>
+            options={toStoreOptions}
+            onChange={(v) => setTransferForm((p) => ({ ...p, toStoreId: v }))}
+            placeholder="Select destination store"
+          />
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Product *</label>
-          <select
-            className={fieldCls}
+          <SearchableCombobox
+            id="store-transfer-product"
             value={transferForm.productId}
-            onChange={(e) => setTransferForm((p) => ({ ...p, productId: e.target.value ? Number(e.target.value) : '' }))}
-            required
-          >
-            <option value="">Select product</option>
-            {products.map((p) => (
-              <option key={p.product_id} value={p.product_id}>
-                {itemLabelWithAvailability(p.name, p.stock ?? p.quantity ?? p.opening_balance)}
-              </option>
-            ))}
-          </select>
+            options={productOptions}
+            onChange={(v) => setTransferForm((p) => ({ ...p, productId: v }))}
+            placeholder="Select product"
+          />
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Quantity *</label>
           <input
             type="number"

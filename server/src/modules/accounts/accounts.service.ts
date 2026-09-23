@@ -5,7 +5,8 @@ import { BranchScope } from '../../utils/branchScope';
 import { ApiError } from '../../utils/ApiError';
 import { AccountInput } from './accounts.schemas';
 import { postGl } from '../../utils/glPosting';
-import { ensureCoaAccounts } from '../../utils/coaDefaults';
+import { ensureCoaAccounts, isProtectedAccountName } from '../../utils/coaDefaults';
+import { softDeleteById } from '../../db/softDelete';
 
 export interface Account {
   acc_id: number;
@@ -541,6 +542,10 @@ export const accountsService = {
       throw ApiError.notFound('Account not found');
     }
 
+    if (isProtectedAccountName(target.name)) {
+      throw ApiError.badRequest('This is a core system account and cannot be deleted.');
+    }
+
     if ((target.account_type || 'asset') !== 'asset') {
       throw ApiError.badRequest('Only current asset accounts can be deleted.');
     }
@@ -550,22 +555,12 @@ export const accountsService = {
       throw ApiError.badRequest('Only zero-balance accounts can be deleted.');
     }
 
-    try {
-      if (scope.isAdmin) {
-        await queryOne(`DELETE FROM ims.accounts WHERE acc_id = $1`, [id]);
-        return;
-      }
-      await queryOne(`DELETE FROM ims.accounts WHERE acc_id = $1 AND branch_id = ANY($2)`, [
-        id,
-        scope.branchIds,
-      ]);
-    } catch (error: any) {
-      if (String(error?.code || '') === '23503') {
-        throw ApiError.badRequest(
-          'Account cannot be deleted because it is linked to existing transactions.'
-        );
-      }
-      throw error;
-    }
+    // Central Delete Architecture (Phase 7): archives the account instead of
+    // a hard delete. Its ledger/GL/receipt history is preserved untouched,
+    // hidden alongside it (policy rows in
+    // 20260923d_phase7_delete_policy.sql); an account still in active use by
+    // a profit-share rule/partner stays blocked (deliberately left
+    // unclassified - see that migration's comment).
+    await softDeleteById('accounts', id);
   },
 };

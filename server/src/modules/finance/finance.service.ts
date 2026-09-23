@@ -2525,7 +2525,9 @@ export const financeService = {
         [locked.branch_id, id]
       );
 
-      await client.query(`DELETE FROM ims.expense_charges WHERE charge_id = $1`, [id]);
+      // Central Delete Architecture (Phase 7): archive instead of hard
+      // delete, matching deleteExpensePayment/deleteLiabilityPayment above.
+      await softDeleteById('expense_charges', id, { runner: client });
     });
   },
 
@@ -3123,8 +3125,12 @@ export const financeService = {
           [budget.branch_id, chargeId]
         );
       }
-      await client.query(`DELETE FROM ims.expense_charges WHERE ref_table = 'expense_budgets' AND ref_id = $1`, [id]);
-      await client.query(`DELETE FROM ims.expense_budgets WHERE budget_id = $1`, [id]);
+      // Central Delete Architecture (Phase 7): archive instead of hard
+      // delete, matching deleteExpenseCharge above.
+      for (const chargeId of chargeIds) {
+        await softDeleteById('expense_charges', chargeId, { runner: client });
+      }
+      await softDeleteById('expense_budgets', id, { runner: client });
     });
   },
 

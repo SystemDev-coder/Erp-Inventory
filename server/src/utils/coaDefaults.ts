@@ -61,6 +61,20 @@ const COA_SPECS: Record<CoaKey, CoaAccountSpec> = {
 
 const normalizeName = (name: string) => name.trim().toLowerCase();
 
+// Central Delete Architecture (Phase 7): these core GL accounts are only
+// ever matched by name (there is no is_system flag on ims.accounts), so an
+// asset-typed one (Cash, Accounts Receivable, Inventory...) with a zero
+// balance and no history yet - e.g. right after a branch is created - could
+// otherwise be deleted through accounts.service.ts#remove() like any
+// ordinary user-created account, silently breaking the accounting engine
+// for that branch.
+const PROTECTED_ACCOUNT_NAMES = new Set(
+  Object.values(COA_SPECS).map((spec) => normalizeName(spec.name))
+);
+
+export const isProtectedAccountName = (name: string): boolean =>
+  PROTECTED_ACCOUNT_NAMES.has(normalizeName(name || ''));
+
 const findAccountByName = async (
   client: PoolClient,
   branchId: number,

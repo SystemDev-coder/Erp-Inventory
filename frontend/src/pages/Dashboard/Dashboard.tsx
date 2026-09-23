@@ -484,23 +484,6 @@ const Dashboard = () => {
 
   return (
     <div className="space-y-7">
-      <section className="relative overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-r from-white via-slate-50 to-slate-100 p-6 shadow-sm dark:border-slate-800 dark:bg-gradient-to-r dark:from-black dark:via-black dark:to-black">
-        <div className="pointer-events-none absolute -right-20 top-[-60px] h-64 w-64 rounded-full bg-primary-500/10 blur-3xl dark:bg-primary-400/20" />
-        <div className="pointer-events-none absolute -left-20 -bottom-28 h-64 w-64 rounded-full bg-primary-300/10 blur-3xl dark:bg-primary-300/20" />
-
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-primary-700 dark:text-primary-200">Inventory ERP</p>
-            <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl lg:text-4xl dark:text-white">{t('nav_dashboard')}</h1>
-            <p className="mt-1 text-sm text-slate-700 dark:text-white/80">
-              {loading && !data
-                ? t('dashboard_loading_cards')
-                : `${t('dashboard_live_metrics')} | ${lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : ''}`}
-            </p>
-          </div>
-        </div>
-      </section>
-
       {error && (
         <div className="rounded-xl border border-error-200 bg-error-50 px-4 py-3 text-sm font-medium text-error-700 dark:border-error-800 dark:bg-error-900/30 dark:text-error-200">
           {error}
