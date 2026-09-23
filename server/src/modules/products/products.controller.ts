@@ -42,6 +42,7 @@ const parseListFilters = (query: Record<string, unknown>) => {
     storeId: parsed.storeId ?? parsed.store_id,
     branchId: parsed.branchId ?? parsed.branch_id,
     includeInactive: parsed.includeInactive,
+    stockStatus: parsed.stockStatus,
     page: parsed.page,
     limit: parsed.limit,
     fromDate: parsed.fromDate,

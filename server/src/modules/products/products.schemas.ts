@@ -74,6 +74,7 @@ export const listQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(200).default(50),
   fromDate: dateString.optional(),
   toDate: dateString.optional(),
+  stockStatus: z.enum(['in_stock', 'low_stock', 'no_stock']).optional(),
 }).superRefine((value, ctx) => {
   if (value.fromDate && value.toDate && value.fromDate > value.toDate) {
     ctx.addIssue({

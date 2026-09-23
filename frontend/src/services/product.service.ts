@@ -81,6 +81,7 @@ type ListOptions = {
   limit?: number;
   fromDate?: string;
   toDate?: string;
+  stockStatus?: 'in_stock' | 'low_stock' | 'no_stock';
 };
 
 type MasterListOptions = {
@@ -120,6 +121,7 @@ export const productService = {
       limit: options.limit,
       fromDate: options.fromDate,
       toDate: options.toDate,
+      stockStatus: options.stockStatus,
     });
     return apiClient.get<{ products: Product[]; pagination?: PaginationMeta }>(`${API.PRODUCTS.LIST}${qs}`);
   },

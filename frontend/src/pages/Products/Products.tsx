@@ -91,11 +91,15 @@ const Products = () => {
   const [transactions, setTransactions] = useState<InventoryTransactionRow[]>([]);
   const [itemsDisplayed, setItemsDisplayed] = useState(false);
   // Server-side pagination for the Items tab: fetch one small page at a time.
-  const ITEMS_PAGE_SIZE = 20;
+  const [itemsPageSize, setItemsPageSize] = useState(20);
   const [itemsPageIndex, setItemsPageIndex] = useState(0); // 0-based
   const [itemsTotalPages, setItemsTotalPages] = useState(0);
   const [itemsTotalRows, setItemsTotalRows] = useState(0);
   const [itemsSearch, setItemsSearch] = useState('');
+  // Made clickable (Total/In Stock/Low Stock/No Stock summary cards): filters
+  // the server-side query, not just the currently-loaded page, so every
+  // matching item shows up regardless of which page it would otherwise fall on.
+  const [itemsStockFilter, setItemsStockFilter] = useState<'in_stock' | 'low_stock' | 'no_stock' | null>(null);
   const [txDisplayed, setTxDisplayed] = useState(false);
   const [inactiveDisplayed, setInactiveDisplayed] = useState(false);
   const [txCategory, setTxCategory] = useState<TxCategory>('adjustment');
@@ -359,14 +363,20 @@ const Products = () => {
     if (res.success && res.data?.summary) setItemsSummary(res.data.summary);
   };
 
-  const loadProducts = async (nextPageIndex = itemsPageIndex, search = itemsSearch) => {
+  const loadProducts = async (
+    nextPageIndex = itemsPageIndex,
+    search = itemsSearch,
+    pageSize = itemsPageSize,
+    stockFilter = itemsStockFilter
+  ) => {
     setLoading(true);
     await Promise.all([resolveStores(), resolveCategories(), resolveUnits(), loadSummary()]);
     const res = await productService.list({
       page: nextPageIndex + 1,
-      limit: ITEMS_PAGE_SIZE,
+      limit: pageSize,
       search: search || undefined,
       branchId: activeBranchId ?? undefined,
+      stockStatus: stockFilter ?? undefined,
     });
     if (res.success && res.data?.products) {
       setProducts(res.data.products);
@@ -383,10 +393,24 @@ const Products = () => {
     void loadProducts(next, itemsSearch);
   };
 
+  const handleItemsPageSizeChange = (nextSize: number) => {
+    setItemsPageSize(nextSize);
+    setItemsPageIndex(0);
+    void loadProducts(0, itemsSearch, nextSize);
+  };
+
   const handleItemsServerSearch = (value: string) => {
     setItemsSearch(value);
     setItemsPageIndex(0);
     void loadProducts(0, value);
+  };
+
+  const handleItemsStockFilterClick = (status: 'in_stock' | 'low_stock' | 'no_stock') => {
+    const next = itemsStockFilter === status ? null : status;
+    setItemsStockFilter(next);
+    setItemsDisplayed(true);
+    setItemsPageIndex(0);
+    void loadProducts(0, itemsSearch, itemsPageSize, next);
   };
 
   const loadTransactions = async (category: TxCategory = txCategory) => {
@@ -690,25 +714,60 @@ const Products = () => {
         <div className="space-y-2">
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {[
-              { label: 'Total Products', value: itemsSummary.total, icon: Boxes, cls: 'text-primary-600 dark:text-primary-300 bg-primary-50 dark:bg-primary-500/10' },
-              { label: 'In Stock', value: itemsSummary.inStock, icon: PackageCheck, cls: 'text-emerald-600 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/10' },
-              { label: 'Low Stock', value: itemsSummary.lowStock, icon: PackageSearch, cls: 'text-amber-600 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10' },
-              { label: 'No Stock', value: itemsSummary.noStock, icon: PackageX, cls: 'text-rose-600 dark:text-rose-300 bg-rose-50 dark:bg-rose-500/10' },
-            ].map(({ label, value, icon: Icon, cls }) => (
-              <div
-                key={label}
-                className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
-              >
-                <div className={`flex h-11 w-11 items-center justify-center rounded-xl ${cls}`}>
-                  <Icon className="h-5 w-5" aria-hidden="true" />
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</p>
-                  <p className="text-xl font-bold text-slate-900 dark:text-white">{value}</p>
-                </div>
-              </div>
-            ))}
+              { label: 'Total Products', value: itemsSummary.total, icon: Boxes, cls: 'text-primary-600 dark:text-primary-300 bg-primary-50 dark:bg-primary-500/10', status: null as const },
+              { label: 'In Stock', value: itemsSummary.inStock, icon: PackageCheck, cls: 'text-emerald-600 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/10', status: 'in_stock' as const },
+              { label: 'Low Stock', value: itemsSummary.lowStock, icon: PackageSearch, cls: 'text-amber-600 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10', status: 'low_stock' as const },
+              { label: 'No Stock', value: itemsSummary.noStock, icon: PackageX, cls: 'text-rose-600 dark:text-rose-300 bg-rose-50 dark:bg-rose-500/10', status: 'no_stock' as const },
+            ].map(({ label, value, icon: Icon, cls, status }) => {
+              const isActive = itemsStockFilter === status;
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => {
+                    if (status === null) {
+                      setItemsStockFilter(null);
+                      setItemsDisplayed(true);
+                      setItemsPageIndex(0);
+                      void loadProducts(0, itemsSearch, itemsPageSize, null);
+                    } else {
+                      handleItemsStockFilterClick(status);
+                    }
+                  }}
+                  title={status === null ? 'Show all products' : `Filter to ${label.toLowerCase()}`}
+                  className={`flex items-center gap-3 rounded-2xl border p-4 text-left shadow-sm transition-colors ${
+                    isActive
+                      ? 'border-primary-500 bg-primary-50/60 ring-2 ring-primary-500/30 dark:border-primary-400 dark:bg-primary-500/10'
+                      : 'border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800/60'
+                  }`}
+                >
+                  <div className={`flex h-11 w-11 items-center justify-center rounded-xl ${cls}`}>
+                    <Icon className="h-5 w-5" aria-hidden="true" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</p>
+                    <p className="text-xl font-bold text-slate-900 dark:text-white">{value}</p>
+                  </div>
+                </button>
+              );
+            })}
           </div>
+          {itemsStockFilter && (
+            <p className="text-xs font-medium text-primary-700 dark:text-primary-300">
+              Showing only "{itemsStockFilter.replace('_', ' ')}" products.{' '}
+              <button
+                type="button"
+                onClick={() => {
+                  setItemsStockFilter(null);
+                  setItemsPageIndex(0);
+                  void loadProducts(0, itemsSearch, itemsPageSize, null);
+                }}
+                className="underline hover:no-underline"
+              >
+                Clear filter
+              </button>
+            </p>
+          )}
           <div className="flex flex-wrap items-center justify-end gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
             <button
               type="button"
@@ -767,11 +826,11 @@ const Products = () => {
             searchPlaceholder="Search products..."
             serverPagination={{
               pageIndex: itemsPageIndex,
-              pageSize: ITEMS_PAGE_SIZE,
+              pageSize: itemsPageSize,
               pageCount: Math.max(itemsTotalPages, 1),
               totalRows: itemsTotalRows,
               onPageChange: handleItemsPageChange,
-              onPageSizeChange: () => {},
+              onPageSizeChange: handleItemsPageSizeChange,
             }}
             onServerSearch={handleItemsServerSearch}
           />

@@ -1,10 +1,12 @@
 ﻿import { useEffect, useState } from 'react';
-import { Store, Package, Plus, Trash2, ChevronDown, ChevronRight, Pencil, Eye } from 'lucide-react';
+import { Store, Package, Plus, Trash2, ChevronDown, ChevronRight, Pencil, Eye, ArrowLeftRight } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
 import { useToast } from '../../components/ui/toast/Toast';
 import { storeService, Store as StoreType, StoreItem } from '../../services/store.service';
 import { productService, Product } from '../../services/product.service';
+import { inventoryService } from '../../services/inventory.service';
 import { Modal } from '../../components/ui/modal/Modal';
+import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { itemLabelWithAvailability } from '../../utils/itemAvailability';
 import { useBranch } from '../../context/BranchContext';
 
@@ -26,6 +28,27 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const [storeModalOpen, setStoreModalOpen] = useState(false);
   const [editingStoreId, setEditingStoreId] = useState<number | null>(null);
   const [formStore, setFormStore] = useState({ storeName: '', storeCode: '', address: '', phone: '' });
+
+  // removeItem requires a delete reason (same rule as every other delete in
+  // this app) but the button used to call it with none, which always failed
+  // server-side with no explanation shown to the user - prompt for it instead.
+  const [removeTarget, setRemoveTarget] = useState<{ storeId: number; itemId: number; productName: string } | null>(null);
+  const [removing, setRemoving] = useState(false);
+
+  // Store Transfer: a focused store-to-store variant of the existing generic
+  // Transfers page/API (frontend/src/pages/Transfers/Transfers.tsx already
+  // supports fromType/toType='store', added in the Central Delete
+  // Architecture's Phase 6) - no new backend endpoint, just a simpler modal
+  // scoped to store<->store so it doesn't need to leave this tab.
+  const [transferModalOpen, setTransferModalOpen] = useState(false);
+  const [transferSubmitting, setTransferSubmitting] = useState(false);
+  const [transferForm, setTransferForm] = useState({
+    fromStoreId: '' as number | '',
+    toStoreId: '' as number | '',
+    productId: '' as number | '',
+    qty: 1,
+    note: '',
+  });
 
   const loadStores = async () => {
     setLoading(true);
@@ -145,12 +168,15 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
     }
   };
 
-  const handleRemoveItem = async (storeId: number, itemId: number) => {
-    setLoading(true);
-    const res = await storeService.removeItem(storeId, itemId);
-    setLoading(false);
+  const handleRemoveItem = async (reason: string) => {
+    if (!removeTarget) return;
+    const { storeId, itemId } = removeTarget;
+    setRemoving(true);
+    const res = await storeService.removeItem(storeId, itemId, reason);
+    setRemoving(false);
     if (res.success) {
       showToast('success', 'Product removed');
+      setRemoveTarget(null);
       loadStoreItems(storeId);
     } else {
       showToast('error', 'Remove failed', res.error || 'Could not remove product');
@@ -174,6 +200,47 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
     }
   };
 
+  const openTransferModal = async () => {
+    if (!products.length) await loadProducts();
+    setTransferForm({ fromStoreId: '', toStoreId: '', productId: '', qty: 1, note: '' });
+    setTransferModalOpen(true);
+  };
+
+  const handleSubmitTransfer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!transferForm.fromStoreId || !transferForm.toStoreId) {
+      showToast('error', 'Store Transfer', 'Choose both a source and destination store');
+      return;
+    }
+    if (transferForm.fromStoreId === transferForm.toStoreId) {
+      showToast('error', 'Store Transfer', 'Source and destination stores must be different');
+      return;
+    }
+    if (!transferForm.productId || Number(transferForm.qty) <= 0) {
+      showToast('error', 'Store Transfer', 'Choose a product and a quantity greater than zero');
+      return;
+    }
+    setTransferSubmitting(true);
+    const res = await inventoryService.transfer({
+      fromType: 'store',
+      toType: 'store',
+      fromStoreId: Number(transferForm.fromStoreId),
+      toStoreId: Number(transferForm.toStoreId),
+      productId: Number(transferForm.productId),
+      qty: Number(transferForm.qty),
+      note: transferForm.note || undefined,
+    });
+    setTransferSubmitting(false);
+    if (res.success) {
+      showToast('success', 'Store Transfer', 'Stock transferred');
+      setTransferModalOpen(false);
+      if (expandedId === Number(transferForm.fromStoreId)) await loadStoreItems(Number(transferForm.fromStoreId));
+      if (expandedId === Number(transferForm.toStoreId)) await loadStoreItems(Number(transferForm.toStoreId));
+    } else {
+      showToast('error', 'Store Transfer', res.error || 'Transfer failed');
+    }
+  };
+
   const toggleExpanded = async (storeId: number) => {
     const next = expandedId === storeId ? null : storeId;
     setExpandedId(next);
@@ -193,6 +260,12 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
           actions={
             <div className="flex items-center gap-2">
               <button
+                onClick={() => void openTransferModal()}
+                className="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-xl text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+              >
+                <ArrowLeftRight className="w-4 h-4" /> Store Transfer
+              </button>
+              <button
                 onClick={openCreateStore}
                 className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-xl hover:bg-primary-700"
               >
@@ -205,6 +278,12 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
 
       {embedded && (
         <div className="flex items-center justify-end gap-2">
+          <button
+            onClick={() => void openTransferModal()}
+            className="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-xl text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+          >
+            <ArrowLeftRight className="w-4 h-4" /> Store Transfer
+          </button>
           <button
             onClick={openCreateStore}
             className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-xl hover:bg-primary-700"
@@ -305,7 +384,13 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
                                   </button>
                                   <button
                                     type="button"
-                                    onClick={() => handleRemoveItem(store.store_id, item.store_item_id)}
+                                    onClick={() =>
+                                      setRemoveTarget({
+                                        storeId: store.store_id,
+                                        itemId: item.store_item_id,
+                                        productName: item.product_name || `Product #${item.product_id}`,
+                                      })
+                                    }
                                     className="text-red-500 hover:text-red-600 p-1"
                                     title="Remove"
                                   >
@@ -368,6 +453,87 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
         )}
       </Modal>
 
+      <Modal isOpen={transferModalOpen} onClose={() => setTransferModalOpen(false)} title="Store Transfer" size="md">
+        <form onSubmit={handleSubmitTransfer} className="space-y-3">
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">From store *</label>
+          <select
+            className={fieldCls}
+            value={transferForm.fromStoreId}
+            onChange={(e) => setTransferForm((p) => ({ ...p, fromStoreId: e.target.value ? Number(e.target.value) : '' }))}
+            required
+          >
+            <option value="">Select source store</option>
+            {stores.map((s) => (
+              <option key={s.store_id} value={s.store_id}>{s.store_name}</option>
+            ))}
+          </select>
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">To store *</label>
+          <select
+            className={fieldCls}
+            value={transferForm.toStoreId}
+            onChange={(e) => setTransferForm((p) => ({ ...p, toStoreId: e.target.value ? Number(e.target.value) : '' }))}
+            required
+          >
+            <option value="">Select destination store</option>
+            {stores
+              .filter((s) => s.store_id !== transferForm.fromStoreId)
+              .map((s) => (
+                <option key={s.store_id} value={s.store_id}>{s.store_name}</option>
+              ))}
+          </select>
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Product *</label>
+          <select
+            className={fieldCls}
+            value={transferForm.productId}
+            onChange={(e) => setTransferForm((p) => ({ ...p, productId: e.target.value ? Number(e.target.value) : '' }))}
+            required
+          >
+            <option value="">Select product</option>
+            {products.map((p) => (
+              <option key={p.product_id} value={p.product_id}>
+                {itemLabelWithAvailability(p.name, p.stock ?? p.quantity ?? p.opening_balance)}
+              </option>
+            ))}
+          </select>
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Quantity *</label>
+          <input
+            type="number"
+            min={1}
+            step={1}
+            className={fieldCls}
+            value={transferForm.qty}
+            onChange={(e) => setTransferForm((p) => ({ ...p, qty: Number(e.target.value) || 0 }))}
+            required
+          />
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Note</label>
+          <input
+            className={fieldCls}
+            value={transferForm.note}
+            onChange={(e) => setTransferForm((p) => ({ ...p, note: e.target.value }))}
+            placeholder="Optional"
+          />
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={() => setTransferModalOpen(false)} className="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600">Cancel</button>
+            <button type="submit" disabled={transferSubmitting} className="px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60">
+              {transferSubmitting ? 'Transferring...' : 'Transfer'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <ConfirmDialog
+        isOpen={!!removeTarget}
+        onClose={() => setRemoveTarget(null)}
+        onConfirm={(reason) => void handleRemoveItem(reason || '')}
+        requireReason
+        title="Remove Product from Store?"
+        highlightedName={removeTarget?.productName}
+        message="This removes the product's stock record from this store. Provide a reason for the audit log."
+        confirmText="Remove"
+        cancelText="Cancel"
+        variant="danger"
+        isLoading={removing}
+      />
     </div>
   );
 };

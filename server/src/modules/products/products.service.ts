@@ -36,6 +36,7 @@ type ProductFilters = MasterFilters & {
   unitId?: number;
   taxId?: number;
   storeId?: number;
+  stockStatus?: 'in_stock' | 'low_stock' | 'no_stock';
 };
 
 type Paged<T> = { rows: T[]; total: number; page: number; limit: number };
@@ -792,8 +793,34 @@ export const productsService = {
       where.push(`i.created_at::date <= $${params.length}::date`);
     }
 
+    // Stock-status filter (Total/In Stock/Low Stock/No Stock summary cards,
+    // made clickable): reuses the exact same quantity computation as
+    // getProductsSummary above and as getProductSql's own `sq` LATERAL join
+    // below, so the count always agrees with what those two already show.
+    // The count query has no `sq` of its own, so it gets an identically-
+    // aliased join added only when this filter is active.
+    let stockJoinForCount = '';
+    if (filters.stockStatus) {
+      stockJoinForCount = `
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(SUM(si.quantity), 0)::int AS qty, COUNT(*)::int AS row_count
+            FROM ims.store_items si
+            JOIN ims.stores s2 ON s2.store_id = si.store_id
+           WHERE si.product_id = i.item_id
+             AND s2.branch_id = i.branch_id
+        ) sq ON TRUE`;
+      const qtyExpr = `CASE WHEN COALESCE(sq.row_count, 0) = 0 THEN COALESCE(i.opening_balance, 0) ELSE COALESCE(sq.qty, 0) END`;
+      if (filters.stockStatus === 'no_stock') {
+        where.push(`(${qtyExpr}) <= 0`);
+      } else if (filters.stockStatus === 'low_stock') {
+        where.push(`(${qtyExpr}) > 0 AND (${qtyExpr}) <= ${stockAlertExpr}`);
+      } else {
+        where.push(`(${qtyExpr}) > ${stockAlertExpr}`);
+      }
+    }
+
     const count = await queryOne<{ total: string }>(
-      `SELECT COUNT(*)::text AS total FROM ims.items i WHERE ${where.join(' AND ')}`,
+      `SELECT COUNT(*)::text AS total FROM ims.items i ${stockJoinForCount} WHERE ${where.join(' AND ')}`,
       params
     );
 
