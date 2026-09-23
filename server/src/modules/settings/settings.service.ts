@@ -9,6 +9,7 @@ import { systemService } from '../system/system.service';
 import { postGl } from '../../utils/glPosting';
 import { ensureCoaAccounts } from '../../utils/coaDefaults';
 import { assetsService } from '../assets/assets.service';
+import { inventoryService } from '../inventory/inventory.service';
 
 export interface Branch {
   branch_id: number;
@@ -1379,8 +1380,14 @@ export const settingsService = {
     );
   },
 
+  // Delete-protection audit (Phase 10 Batch 1, Finding F2): this used to be
+  // a bare, unguarded `DELETE FROM ims.branches` with no dependency check
+  // and no soft-delete fallback - a second, divergent implementation of the
+  // same action `inventory.service.ts`'s deleteBranch already does safely
+  // (checks for warehouses, soft-deletes via softDeleteById). Delegate to
+  // that one instead of maintaining two copies that can drift apart.
   async deleteBranch(id: number): Promise<void> {
-    await queryOne(`DELETE FROM ims.branches WHERE branch_id = $1`, [id]);
+    await inventoryService.deleteBranch(id);
   },
 
   async listAuditLogs(

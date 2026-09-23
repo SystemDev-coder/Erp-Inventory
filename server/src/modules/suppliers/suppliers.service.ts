@@ -6,6 +6,7 @@ import { BranchScope } from '../../utils/branchScope';
 import { offsetOf, type Paged } from '../../utils/pagination';
 import { deleteGlByRef, ensureCoreCoa, postGl } from '../../utils/glPosting';
 import { syncSystemAccountBalancesWithClient } from '../../utils/systemAccounts';
+import { softDeleteById } from '../../db/softDelete';
 
 export interface Supplier {
   supplier_id: number;
@@ -20,6 +21,7 @@ export interface Supplier {
   is_active: boolean;
   created_at: string;
   updated_at: string | null;
+  has_transactions: boolean;
 }
 
 export interface SupplierInput {
@@ -67,6 +69,16 @@ const detectSupplierShape = async (): Promise<SupplierSchemaShape> => {
   return supplierShape;
 };
 
+// Mirrors hasSupplierNonOpeningLedger's predicate exactly, so the UI's
+// disabled state and the server-side save-time guard never disagree
+// (see customers.service.ts#HAS_TRANSACTIONS_SELECT, Phase 1).
+const HAS_TRANSACTIONS_SELECT = `EXISTS (
+  SELECT 1 FROM ims.supplier_ledger sl
+   WHERE sl.branch_id = suppliers.branch_id
+     AND sl.supplier_id = suppliers.supplier_id
+     AND NOT (sl.entry_type = 'opening' AND sl.ref_table = 'opening_balance')
+) AS has_transactions`;
+
 const hasSupplierNonOpeningLedger = async (
   client: PoolClient,
   branchId: number,
@@ -85,20 +97,18 @@ const hasSupplierNonOpeningLedger = async (
   return Boolean(result.rows[0]?.exists);
 };
 
-const findSupplierDeleteBlockReason = async (
+// Phase 4 (Central Delete Architecture): deleteSupplier below now soft-deletes
+// via ims.sp_soft_delete, which lets a supplier with real purchase/return/
+// ledger history be archived (that history is 'preserve'd, untouched - see
+// server/sql/20260923_customer_supplier_delete_policy.sql). The one thing the
+// generic policy engine can't express is "outstanding balance must be zero" -
+// mirrors getCustomerOutstandingBalance from Phase 4 / getProductStockOnHand
+// from Phase 3.
+const getSupplierOutstandingBalance = async (
   client: PoolClient,
   branchId: number,
   supplierId: number
-): Promise<string | null> => {
-  // M14 fix: customers.service.ts's equivalent check blocks deletion on any
-  // non-zero outstanding balance before it ever reaches this DB write -
-  // suppliers never had that guard, so a supplier with an unpaid opening
-  // balance and no purchase/ledger history (i.e. nothing else here would
-  // catch it) could be deleted outright. deleteSupplier only removes
-  // supplier_ledger rows; it never reverses the opening-balance GL entry
-  // (upsertSupplierOpeningLedger posts it to account_transactions with
-  // ref_table='opening_balance') or the accounts.balance it contributed,
-  // so that delete would leave both permanently orphaned.
+): Promise<number> => {
   const shape = await detectSupplierShape();
   const balanceRow = await client.query<{ balance: string }>(
     `SELECT COALESCE(${shape.balanceColumn}, 0)::text AS balance
@@ -107,42 +117,7 @@ const findSupplierDeleteBlockReason = async (
         AND branch_id = $2`,
     [supplierId, branchId]
   );
-  const balance = Math.abs(Number(balanceRow.rows[0]?.balance || 0));
-  if (balance > 0.005) {
-    return `Cannot delete — outstanding balance of ${balance.toFixed(2)} exists. Settle to zero first.`;
-  }
-
-  const purchaseLinked = await client.query<{ exists: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1
-         FROM ims.purchases
-        WHERE branch_id = $1
-          AND supplier_id = $2
-     ) AS exists`,
-    [branchId, supplierId]
-  );
-  if (Boolean(purchaseLinked.rows[0]?.exists)) {
-    return 'Cannot delete supplier because it has purchase transactions';
-  }
-
-  const purchaseReturnLinked = await client.query<{ exists: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1
-         FROM ims.purchase_returns
-        WHERE branch_id = $1
-          AND supplier_id = $2
-     ) AS exists`,
-    [branchId, supplierId]
-  );
-  if (Boolean(purchaseReturnLinked.rows[0]?.exists)) {
-    return 'Cannot delete supplier because it has purchase return transactions';
-  }
-
-  if (await hasSupplierNonOpeningLedger(client, branchId, supplierId)) {
-    return 'Cannot delete supplier because it has supplier ledger transactions';
-  }
-
-  return null;
+  return Math.abs(Number(balanceRow.rows[0]?.balance || 0));
 };
 
 const upsertSupplierOpeningLedger = async (
@@ -234,6 +209,7 @@ const mapSupplier = (row: {
   supplier_balance_value: string | number;
   is_active: boolean;
   created_at: string;
+  has_transactions?: boolean | null;
 }): Supplier => ({
   supplier_id: Number(row.supplier_id),
   supplier_name: row.supplier_name_value,
@@ -247,6 +223,7 @@ const mapSupplier = (row: {
   is_active: Boolean(row.is_active),
   created_at: row.created_at,
   updated_at: null,
+  has_transactions: Boolean(row.has_transactions),
 });
 
 const scopedSupplier = async (
@@ -263,6 +240,7 @@ const scopedSupplier = async (
         supplier_balance_value: string;
         is_active: boolean;
         created_at: string;
+        has_transactions: boolean;
       }>(
         `SELECT
             supplier_id,
@@ -271,7 +249,8 @@ const scopedSupplier = async (
             phone,
             ${shape.balanceColumn}::text AS supplier_balance_value,
             is_active,
-            created_at::text
+            created_at::text,
+            ${HAS_TRANSACTIONS_SELECT}
            FROM ims.suppliers
           WHERE supplier_id = $1`,
         [id]
@@ -284,6 +263,7 @@ const scopedSupplier = async (
         supplier_balance_value: string;
         is_active: boolean;
         created_at: string;
+        has_transactions: boolean;
       }>(
         `SELECT
             supplier_id,
@@ -292,7 +272,8 @@ const scopedSupplier = async (
             phone,
             ${shape.balanceColumn}::text AS supplier_balance_value,
             is_active,
-            created_at::text
+            created_at::text,
+            ${HAS_TRANSACTIONS_SELECT}
            FROM ims.suppliers
           WHERE supplier_id = $1
             AND branch_id = ANY($2)`,
@@ -352,6 +333,7 @@ export const suppliersService = {
       supplier_balance_value: string;
       is_active: boolean;
       created_at: string;
+      has_transactions: boolean;
     }>(
       `SELECT
           supplier_id,
@@ -360,7 +342,8 @@ export const suppliersService = {
           phone,
           ${shape.balanceColumn}::text AS supplier_balance_value,
           is_active,
-          created_at::text
+          created_at::text,
+          ${HAS_TRANSACTIONS_SELECT}
          FROM ims.suppliers
          ${whereSql}
         ORDER BY ${shape.nameColumn}
@@ -530,25 +513,30 @@ export const suppliersService = {
     }
 
     return withTransaction(async (client) => {
-      const branchRow = await client.query<{ branch_id: number }>(
+      const branchRow = await client.query<{ branch_id: number; current_balance: string | null }>(
         scope.isAdmin
-          ? `SELECT branch_id FROM ims.suppliers WHERE supplier_id = $1`
-          : `SELECT branch_id FROM ims.suppliers WHERE supplier_id = $1 AND branch_id = ANY($2)`,
+          ? `SELECT branch_id, ${shape.balanceColumn}::text AS current_balance FROM ims.suppliers WHERE supplier_id = $1`
+          : `SELECT branch_id, ${shape.balanceColumn}::text AS current_balance FROM ims.suppliers WHERE supplier_id = $1 AND branch_id = ANY($2)`,
         scope.isAdmin ? [id] : [id, scope.branchIds]
       );
       const branchId = Number(branchRow.rows[0]?.branch_id || 0);
       if (!branchId) return null;
 
-      if (wantsOpeningUpdate) {
+      // Phase 4 fix: mirrors customers.service.ts#updateCustomer (Phase 1) -
+      // the frontend submits remainingBalance on every save regardless of
+      // whether the user touched it, so gating on "was it present" instead of
+      // "did it actually change" blocked ALL edits to any supplier with
+      // ledger history. Compare against the supplier's current balance so an
+      // unchanged value never triggers the guard or the ledger rewrite below.
+      const currentBalance = Number(branchRow.rows[0]?.current_balance ?? 0);
+      const openingAmount = Math.max(0, Number(input.remainingBalance ?? 0));
+      const balanceActuallyChanged = wantsOpeningUpdate && Math.abs(openingAmount - currentBalance) > 0.005;
+
+      if (balanceActuallyChanged) {
         if (await hasSupplierNonOpeningLedger(client, branchId, id)) {
           throw ApiError.badRequest('Supplier has transactions; cannot change opening balance');
         }
-        await upsertSupplierOpeningLedger(
-          client,
-          branchId,
-          id,
-          Math.max(0, Number(input.remainingBalance ?? 0))
-        );
+        await upsertSupplierOpeningLedger(client, branchId, id, openingAmount);
       }
 
       const rowRes = await client.query<{
@@ -600,36 +588,12 @@ export const suppliersService = {
       if (!supplier) return;
 
       const branchId = Number(supplier.branch_id || 0);
-      const reason = await findSupplierDeleteBlockReason(client, branchId, id);
-      if (reason) {
-        throw ApiError.badRequest(reason);
+      const balance = await getSupplierOutstandingBalance(client, branchId, id);
+      if (balance > 0.005) {
+        throw ApiError.badRequest(`Cannot delete — outstanding balance of ${balance.toFixed(2)} exists. Settle to zero first.`);
       }
 
-      await client.query(
-        `DELETE FROM ims.item_suppliers
-          WHERE branch_id = $1
-            AND supplier_id = $2`,
-        [branchId, id]
-      );
-
-      await client.query(
-        `DELETE FROM ims.supplier_ledger
-          WHERE branch_id = $1
-            AND supplier_id = $2`,
-        [branchId, id]
-      );
-
-      if (scope.isAdmin) {
-        await client.query(`DELETE FROM ims.suppliers WHERE supplier_id = $1`, [id]);
-        return;
-      }
-
-      await client.query(
-        `DELETE FROM ims.suppliers
-          WHERE supplier_id = $1
-            AND branch_id = ANY($2)`,
-        [id, scope.branchIds]
-      );
+      await softDeleteById('suppliers', id, { runner: client });
     });
   },
 };

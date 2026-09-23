@@ -9,6 +9,7 @@ import {
 } from '../../utils/branchScope';
 import { ensureCoaAccounts } from '../../utils/coaDefaults';
 import { postGl, deleteGlByRef } from '../../utils/glPosting';
+import { softDeleteById } from '../../db/softDelete';
 import {
   CategoryCreateInput,
   CategoryUpdateInput,
@@ -428,23 +429,24 @@ const rewriteItemOpeningStockGl = async (
   ]);
 };
 
-const findProductDeleteBlockReason = async (client: PoolClient, itemId: number): Promise<string | null> => {
-  const result = await client.query<{ exists: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1 FROM ims.warehouse_stock WHERE item_id = $1
-       UNION ALL SELECT 1 FROM ims.inventory_transaction WHERE item_id = $1 OR product_id = $1
-       UNION ALL SELECT 1 FROM ims.inventory_movements WHERE item_id = $1
-       UNION ALL SELECT 1 FROM ims.stock_adjustment WHERE item_id = $1
-       UNION ALL SELECT 1 FROM ims.sale_items WHERE item_id = $1
-       UNION ALL SELECT 1 FROM ims.purchase_items WHERE item_id = $1
-       UNION ALL SELECT 1 FROM ims.sales_return_items WHERE item_id = $1
-       UNION ALL SELECT 1 FROM ims.purchase_return_items WHERE item_id = $1
-       UNION ALL SELECT 1 FROM ims.transfer_items WHERE item_id = $1
-       UNION ALL SELECT 1 FROM ims.warehouse_transfer_items WHERE item_id = $1
-     ) AS exists`,
+// Phase 3 (Central Delete Architecture): deleteProduct below now soft-deletes
+// via ims.sp_soft_delete, which lets a product with real sale/purchase/return
+// history be archived (that history is 'preserve'd, untouched - see
+// server/sql/20260922b_product_delete_policy.sql). The one thing the generic
+// policy engine can't express is "on-hand quantity must be zero" - it only
+// knows whether a dependent row exists, not its quantity - so that stays a
+// manual pre-check here, kept deliberately narrow to just the two tables
+// that track current stock (not history: sale_items/purchase_items/etc are
+// intentionally excluded).
+const getProductStockOnHand = async (client: PoolClient, itemId: number): Promise<number> => {
+  const result = await client.query<{ total: string }>(
+    `SELECT (
+       COALESCE((SELECT SUM(quantity) FROM ims.store_items WHERE product_id = $1 AND COALESCE(is_deleted, 0) = 0), 0)
+       + COALESCE((SELECT SUM(quantity) FROM ims.warehouse_stock WHERE item_id = $1 AND COALESCE(is_deleted, 0) = 0), 0)
+     )::text AS total`,
     [itemId]
   );
-  return result.rows[0]?.exists ? 'Cannot delete product with inventory or transaction history' : null;
+  return Number(result.rows[0]?.total || 0);
 };
 
 export const productsService = {
@@ -524,6 +526,22 @@ export const productsService = {
   },
 
   async deleteCategory(id: number, scope: BranchScope): Promise<void> {
+    // Delete-protection audit (Phase 10 Batch 1, Finding F3): items.category_id
+    // is ON DELETE SET NULL, so this used to succeed silently and orphan
+    // every product in the category (no error, no history destroyed, but a
+    // real data-integrity surprise). Block instead, same pattern as products'
+    // own delete-block check.
+    const inUse = await queryOne<{ total: string }>(
+      `SELECT COUNT(*)::text AS total FROM ims.items WHERE category_id = $1`,
+      [id]
+    );
+    const productCount = Number(inUse?.total || 0);
+    if (productCount > 0) {
+      throw ApiError.conflict('Cannot delete category with products assigned to it.', {
+        code: 'RECORD_HAS_TRANSACTIONS',
+        dependencies: { products: productCount },
+      });
+    }
     if (scope.isAdmin) await queryOne(`DELETE FROM ims.categories WHERE cat_id = $1`, [id]);
     else await queryOne(`DELETE FROM ims.categories WHERE cat_id = $1 AND branch_id = ANY($2::bigint[])`, [id, scope.branchIds]);
   },
@@ -596,6 +614,19 @@ export const productsService = {
   },
 
   async deleteUnit(id: number, scope: BranchScope): Promise<void> {
+    // Delete-protection audit (Phase 10 Batch 1, Finding F3): items.unit_id
+    // is ON DELETE SET NULL - same silent-orphan risk as deleteCategory above.
+    const inUse = await queryOne<{ total: string }>(
+      `SELECT COUNT(*)::text AS total FROM ims.items WHERE unit_id = $1`,
+      [id]
+    );
+    const productCount = Number(inUse?.total || 0);
+    if (productCount > 0) {
+      throw ApiError.conflict('Cannot delete unit with products assigned to it.', {
+        code: 'RECORD_HAS_TRANSACTIONS',
+        dependencies: { products: productCount },
+      });
+    }
     if (scope.isAdmin) await queryOne(`DELETE FROM ims.units WHERE unit_id = $1`, [id]);
     else await queryOne(`DELETE FROM ims.units WHERE unit_id = $1 AND branch_id = ANY($2::bigint[])`, [id, scope.branchIds]);
   },
@@ -669,6 +700,20 @@ export const productsService = {
   },
 
   async deleteTax(id: number, scope: BranchScope): Promise<void> {
+    // Delete-protection audit (Phase 10 Batch 1, Finding F3): sales.tax_id is
+    // ON DELETE SET NULL - would silently detach the tax used on historical
+    // sales. Block instead.
+    const inUse = await queryOne<{ total: string }>(
+      `SELECT COUNT(*)::text AS total FROM ims.sales WHERE tax_id = $1`,
+      [id]
+    );
+    const salesCount = Number(inUse?.total || 0);
+    if (salesCount > 0) {
+      throw ApiError.conflict('Cannot delete tax used on existing sales.', {
+        code: 'RECORD_HAS_TRANSACTIONS',
+        dependencies: { sales: salesCount },
+      });
+    }
     if (scope.isAdmin) await queryOne(`DELETE FROM ims.taxes WHERE tax_id = $1`, [id]);
     else await queryOne(`DELETE FROM ims.taxes WHERE tax_id = $1 AND branch_id = ANY($2::bigint[])`, [id, scope.branchIds]);
   },
@@ -800,19 +845,6 @@ export const productsService = {
           AND (${branchWhere})`,
       params
     );
-  },
-
-  // M11 fix: lets the controller decide whether it's safe to delete a
-  // product's Cloudinary/local image asset after the product row itself is
-  // gone. Deliberately not branch-scoped - the concern is whether ANY item
-  // record anywhere still points at this exact URL, since the underlying
-  // file is shared by URL, not by branch.
-  async hasOtherProductWithImage(imageUrl: string, excludeId: number): Promise<boolean> {
-    const row = await queryOne<{ item_id: number }>(
-      `SELECT item_id FROM ims.items WHERE image_url = $1 AND item_id <> $2 LIMIT 1`,
-      [imageUrl, excludeId]
-    );
-    return Boolean(row);
   },
 
   async createProduct(input: ProductCreateInput, scope: BranchScope): Promise<Product> {
@@ -1002,16 +1034,15 @@ export const productsService = {
 
   async deleteProduct(id: number, scope: BranchScope): Promise<void> {
     await withTransaction(async (client) => {
-      // C7 fix: ims.account_transactions.ref_table/ref_id has no foreign key
-      // (it's a generic polymorphic reference used across the whole ledger),
-      // so a plain DELETE here left this item's opening-stock GL rows - and
-      // the accounts.balance they contributed to - orphaned forever, with no
-      // way to trace them back once the item was gone. Reverse that
-      // contribution and remove the GL rows first, in the same transaction as
-      // the item delete, so either both happen or neither does. Tables with a
-      // real FK to items (inventory_movements, sale_items, stock_adjustment,
-      // etc.) are unaffected by this fix - Postgres already protects those via
-      // RESTRICT, correctly blocking deletion of an item with real activity.
+      // Phase 3 (Central Delete Architecture): this now soft-deletes via
+      // ims.sp_soft_delete instead of a hard DELETE, so a product with real
+      // sale/purchase/return/stock-adjustment/transfer history can be
+      // archived - that history is 'preserve'd (left completely untouched),
+      // see server/sql/20260922b_product_delete_policy.sql. GL/accounts.balance
+      // are deliberately NOT touched here (no reverseAccountBalanceForRef/
+      // deleteGlByRef) - soft-delete must stay non-destructive and reversible
+      // via Trash; reversing the opening-stock GL entry is a permanent-delete
+      // concern, out of scope until Phase 8.
       const found = scope.isAdmin
         ? await client.query<{ item_id: number; branch_id: number }>(
             `SELECT item_id, branch_id FROM ims.items WHERE item_id = $1`,
@@ -1024,13 +1055,191 @@ export const productsService = {
       const row = found.rows[0];
       if (!row) return;
 
-      const branchId = Number(row.branch_id);
-      const blockReason = await findProductDeleteBlockReason(client, id);
-      if (blockReason) throw ApiError.badRequest(blockReason);
-      await reverseAccountBalanceForRef(client, { branchId, refTable: 'items', refId: id });
-      await deleteGlByRef(client, { branchId, refTable: 'items', refId: id });
+      const stockOnHand = await getProductStockOnHand(client, id);
+      if (stockOnHand > 0) {
+        throw ApiError.badRequest(
+          `Cannot delete: ${stockOnHand} unit(s) of stock remain across store(s)/warehouse(s). Adjust stock to zero first.`
+        );
+      }
 
-      await client.query(`DELETE FROM ims.items WHERE item_id = $1`, [id]);
+      await softDeleteById('items', id, { runner: client });
+    });
+  },
+
+  // Phase 6: consolidates two "duplicate" items (near-identical products that
+  // each accumulated real history before anyone noticed they're the same
+  // thing) into one. Every historical/reference table is repointed from
+  // fromItemId to toItemId; store_items/warehouse_stock/item_suppliers have
+  // real unique keys that could collide once both point at the same target,
+  // so those three are merged (quantities summed, conflicting rows dropped)
+  // rather than blindly reassigned. The source item ends the transaction
+  // with provably zero stock everywhere, so it's archived via the same
+  // softDeleteById('items', ...) deleteProduct itself uses (called inline,
+  // not via deleteProduct(), to stay on this same transaction/connection -
+  // Phase 5 found a real cross-connection self-deadlock risk from mixing
+  // connections within one logical operation).
+  async mergeItems(fromItemId: number, toItemId: number, scope: BranchScope): Promise<void> {
+    if (fromItemId === toItemId) {
+      throw ApiError.badRequest('Cannot merge an item into itself');
+    }
+
+    await withTransaction(async (client) => {
+      // The rls_soft_delete policy on is_deleted-bearing tables only allows a
+      // row to be written into a soft-deleted state when this session has
+      // explicitly set app.include_deleted='1' first (same as
+      // ims.sp_soft_delete/restoreAdjustment do internally) - without it,
+      // any direct UPDATE ... SET is_deleted = 1 is rejected outright.
+      await client.query(`SET LOCAL app.include_deleted = '1'`);
+
+      const rows = await client.query<{ item_id: number; branch_id: number; is_active: boolean }>(
+        `SELECT item_id, branch_id, is_active FROM ims.items WHERE item_id = ANY($1::bigint[])`,
+        [[fromItemId, toItemId]]
+      );
+      const fromItem = rows.rows.find((r) => Number(r.item_id) === fromItemId);
+      const toItem = rows.rows.find((r) => Number(r.item_id) === toItemId);
+      if (!fromItem || !toItem) {
+        throw ApiError.notFound('Item not found');
+      }
+      if (
+        !scope.isAdmin &&
+        (!scope.branchIds.includes(Number(fromItem.branch_id)) || !scope.branchIds.includes(Number(toItem.branch_id)))
+      ) {
+        throw ApiError.forbidden('You can only merge items in your branch');
+      }
+      // Mirrors the same branch-scoping caution already documented on
+      // transfer()'s CRIT-02 fix: the schema has no concept of "this item in
+      // branch A is the same item as that one in branch B" yet.
+      if (Number(fromItem.branch_id) !== Number(toItem.branch_id)) {
+        throw ApiError.badRequest('Cannot merge items across different branches');
+      }
+      if (!toItem.is_active) {
+        throw ApiError.badRequest('Cannot merge into an inactive item');
+      }
+
+      // 1. Purely-referential tables: no unique key on item_id, safe to
+      // reassign directly. inventory_transaction has two item-referencing
+      // columns (item_id, product_id) - both are reassigned.
+      const simpleReassignTables: Array<{ table: string; column: string }> = [
+        { table: 'sale_items', column: 'item_id' },
+        { table: 'purchase_items', column: 'item_id' },
+        { table: 'sales_return_items', column: 'item_id' },
+        { table: 'purchase_return_items', column: 'item_id' },
+        { table: 'stock_adjustment', column: 'item_id' },
+        { table: 'transfer_items', column: 'item_id' },
+        { table: 'warehouse_transfer_items', column: 'item_id' },
+        { table: 'inventory_transaction', column: 'item_id' },
+        { table: 'inventory_transaction', column: 'product_id' },
+        { table: 'inventory_movements', column: 'item_id' },
+      ];
+      for (const { table, column } of simpleReassignTables) {
+        await client.query(`UPDATE ims.${table} SET ${column} = $1 WHERE ${column} = $2`, [toItemId, fromItemId]);
+      }
+
+      // 2. store_items: unique on (store_id, product_id). Where the target
+      // already has a row for a store, fold the source's quantity into it
+      // and archive the source's row; otherwise just repoint it.
+      await client.query(
+        `UPDATE ims.store_items tgt
+            SET quantity = tgt.quantity + src.quantity,
+                updated_at = NOW()
+           FROM ims.store_items src
+          WHERE tgt.product_id = $1
+            AND src.product_id = $2
+            AND tgt.store_id = src.store_id
+            AND COALESCE(tgt.is_deleted, 0) = 0
+            AND COALESCE(src.is_deleted, 0) = 0`,
+        [toItemId, fromItemId]
+      );
+      await client.query(
+        `UPDATE ims.store_items
+            SET is_deleted = 1, deleted_at = NOW(), quantity = 0, updated_at = NOW()
+          WHERE product_id = $1
+            AND COALESCE(is_deleted, 0) = 0
+            AND EXISTS (
+              SELECT 1 FROM ims.store_items t2
+               WHERE t2.product_id = $2
+                 AND t2.store_id = ims.store_items.store_id
+                 AND COALESCE(t2.is_deleted, 0) = 0
+            )`,
+        [fromItemId, toItemId]
+      );
+      await client.query(
+        `UPDATE ims.store_items
+            SET product_id = $1, updated_at = NOW()
+          WHERE product_id = $2
+            AND COALESCE(is_deleted, 0) = 0`,
+        [toItemId, fromItemId]
+      );
+
+      // 3. warehouse_stock: PK (wh_id, item_id). Same sum-then-archive /
+      // repoint pattern as store_items, per warehouse instead of per store.
+      await client.query(
+        `UPDATE ims.warehouse_stock tgt
+            SET quantity = tgt.quantity + src.quantity
+           FROM ims.warehouse_stock src
+          WHERE tgt.item_id = $1
+            AND src.item_id = $2
+            AND tgt.wh_id = src.wh_id
+            AND COALESCE(tgt.is_deleted, 0) = 0
+            AND COALESCE(src.is_deleted, 0) = 0`,
+        [toItemId, fromItemId]
+      );
+      await client.query(
+        `UPDATE ims.warehouse_stock
+            SET is_deleted = 1, deleted_at = NOW(), quantity = 0
+          WHERE item_id = $1
+            AND COALESCE(is_deleted, 0) = 0
+            AND EXISTS (
+              SELECT 1 FROM ims.warehouse_stock t2
+               WHERE t2.item_id = $2
+                 AND t2.wh_id = ims.warehouse_stock.wh_id
+                 AND COALESCE(t2.is_deleted, 0) = 0
+            )`,
+        [fromItemId, toItemId]
+      );
+      await client.query(
+        `UPDATE ims.warehouse_stock
+            SET item_id = $1
+          WHERE item_id = $2
+            AND COALESCE(is_deleted, 0) = 0`,
+        [toItemId, fromItemId]
+      );
+
+      // 4. item_suppliers: PK (branch_id, item_id, supplier_id) - no
+      // quantity to sum, just dedupe: keep the target's existing supplier
+      // link where one exists, otherwise repoint the source's.
+      await client.query(
+        `UPDATE ims.item_suppliers
+            SET is_deleted = 1, deleted_at = NOW()
+          WHERE item_id = $1
+            AND branch_id = $2
+            AND COALESCE(is_deleted, 0) = 0
+            AND EXISTS (
+              SELECT 1 FROM ims.item_suppliers t2
+               WHERE t2.item_id = $3
+                 AND t2.branch_id = ims.item_suppliers.branch_id
+                 AND t2.supplier_id = ims.item_suppliers.supplier_id
+                 AND COALESCE(t2.is_deleted, 0) = 0
+            )`,
+        [fromItemId, fromItem.branch_id, toItemId]
+      );
+      await client.query(
+        `UPDATE ims.item_suppliers
+            SET item_id = $1
+          WHERE item_id = $2
+            AND branch_id = $3
+            AND COALESCE(is_deleted, 0) = 0`,
+        [toItemId, fromItemId, fromItem.branch_id]
+      );
+
+      // The source item's stock is now provably zero everywhere (folded
+      // into the target or repointed away) - archive it exactly like a
+      // normal delete, on this same connection/transaction.
+      const stockOnHand = await getProductStockOnHand(client, fromItemId);
+      if (stockOnHand > 0) {
+        throw ApiError.internal('Merge did not fully consolidate stock - aborting');
+      }
+      await softDeleteById('items', fromItemId, { runner: client });
     });
   },
 

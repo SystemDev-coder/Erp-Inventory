@@ -11,6 +11,7 @@ import Badge from '../../components/ui/badge/Badge';
 import { useToast } from '../../components/ui/toast/Toast';
 import { PurchaseItem, purchaseService, Purchase, PurchaseItemView } from '../../services/purchase.service';
 import { supplierService, Supplier } from '../../services/supplier.service';
+import { deletePreviewService, DeleteImpactPreview } from '../../services/deletePreview.service';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
 import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
@@ -23,10 +24,12 @@ import { usePermissions } from '../../hooks/usePermissions';
 function SupplierField({
   label,
   required,
+  hint,
   children,
 }: {
   label: string;
   required?: boolean;
+  hint?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -35,6 +38,7 @@ function SupplierField({
         <span>{label}{required ? ' *' : ''}</span>
       </label>
       {children}
+      {hint && <p className="text-xs text-slate-400 dark:text-slate-500">{hint}</p>}
     </div>
   );
 }
@@ -71,12 +75,14 @@ const Purchases = () => {
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [purchaseToDelete, setPurchaseToDelete] = useState<Purchase | null>(null);
+  const [purchaseDeleteImpact, setPurchaseDeleteImpact] = useState<DeleteImpactPreview | null>(null);
   const [viewOpen, setViewOpen] = useState(false);
   const [viewLoading, setViewLoading] = useState(false);
   const [viewPurchase, setViewPurchase] = useState<Purchase | null>(null);
   const [viewItems, setViewItems] = useState<PurchaseItem[]>([]);
   const [supplierDeleteOpen, setSupplierDeleteOpen] = useState(false);
   const [supplierToDelete, setSupplierToDelete] = useState<Supplier | null>(null);
+  const [supplierDeleteImpact, setSupplierDeleteImpact] = useState<DeleteImpactPreview | null>(null);
   const [supplierModalOpen, setSupplierModalOpen] = useState(false);
   const [supplierImportOpen, setSupplierImportOpen] = useState(false);
 
@@ -199,6 +205,10 @@ const Purchases = () => {
   const onDelete = (row: Purchase) => {
     setPurchaseToDelete(row);
     setDeleteOpen(true);
+    setPurchaseDeleteImpact(null);
+    void deletePreviewService.preview('purchases', row.purchase_id).then((res) => {
+      if (res.success && res.data?.preview) setPurchaseDeleteImpact(res.data.preview);
+    });
   };
 
   const onView = async (row: Purchase) => {
@@ -306,6 +316,10 @@ const Purchases = () => {
   const deleteSupplier = async (row: Supplier) => {
     setSupplierToDelete(row);
     setSupplierDeleteOpen(true);
+    setSupplierDeleteImpact(null);
+    void deletePreviewService.preview('suppliers', row.supplier_id).then((res) => {
+      if (res.success && res.data?.preview) setSupplierDeleteImpact(res.data.preview);
+    });
   };
 
   const confirmDeleteSupplier = async (reason: string) => {
@@ -321,7 +335,27 @@ const Purchases = () => {
     setLoading(false);
     setSupplierDeleteOpen(false);
     setSupplierToDelete(null);
+    setSupplierDeleteImpact(null);
   };
+
+  // Mirrors Customers.tsx / Products.tsx: the generic Impact Preview has no
+  // concept of value, so the outstanding-balance block (which deleteSupplier
+  // requires to be zero) is checked client-side from data already on the row
+  // and merged into the same impact summary the dialog renders.
+  const supplierOutstandingBalance = Math.abs(Number(supplierToDelete?.remaining_balance || 0));
+  const supplierDeleteConfirmImpact: DeleteImpactPreview | null = supplierToDelete
+    ? {
+        blocked: Boolean(supplierDeleteImpact?.blocked) || supplierOutstandingBalance > 0.005,
+        blockedBy: [
+          ...(supplierOutstandingBalance > 0.005
+            ? [{ table: 'balance', label: 'Outstanding balance', count: Math.round(supplierOutstandingBalance * 100) / 100 }]
+            : []),
+          ...(supplierDeleteImpact?.blockedBy || []),
+        ],
+        cascaded: supplierDeleteImpact?.cascaded || [],
+        preserved: supplierDeleteImpact?.preserved || [],
+      }
+    : null;
 
 
   const confirmDelete = async (reason: string) => {
@@ -337,6 +371,7 @@ const Purchases = () => {
     setLoading(false);
     setPurchaseToDelete(null);
     setDeleteOpen(false);
+    setPurchaseDeleteImpact(null);
   };
 
   const loadOrders = async () => {
@@ -731,16 +766,17 @@ const Purchases = () => {
 
       <ConfirmDialog
         isOpen={deleteOpen}
-        onClose={() => { setDeleteOpen(false); setPurchaseToDelete(null); }}
+        onClose={() => { setDeleteOpen(false); setPurchaseToDelete(null); setPurchaseDeleteImpact(null); }}
         onConfirm={(reason) => void confirmDelete(reason || '')}
         requireReason
         title="Delete Purchase?"
         message={
           purchaseToDelete
-            ? `Deleting purchase #${purchaseToDelete.purchase_id} will remove its line items. This cannot be undone.`
+            ? `Delete purchase #${purchaseToDelete.purchase_id}? This cannot be undone.`
             : 'Are you sure you want to delete this purchase?'
         }
         confirmText="Delete"
+        impact={purchaseDeleteImpact}
         cancelText="Cancel"
         variant="danger"
         isLoading={loading}
@@ -830,19 +866,20 @@ const Purchases = () => {
 
       <ConfirmDialog
         isOpen={supplierDeleteOpen}
-        onClose={() => { setSupplierDeleteOpen(false); setSupplierToDelete(null); }}
+        onClose={() => { setSupplierDeleteOpen(false); setSupplierToDelete(null); setSupplierDeleteImpact(null); }}
         onConfirm={(reason) => void confirmDeleteSupplier(reason || '')}
         requireReason
         title="Delete Supplier?"
         message={
-          supplierToDelete
-            ? `Deleting supplier "${supplierToDelete.supplier_name}" will remove their record. If this supplier has transactions, deletion will be blocked automatically.`
-            : 'Are you sure you want to delete this supplier?'
+          supplierOutstandingBalance > 0.005
+            ? `Cannot delete — outstanding balance of $${supplierOutstandingBalance.toFixed(2)} exists. Settle to zero first.`
+            : `Deleting supplier "${supplierToDelete?.supplier_name || ''}" will archive their record.`
         }
         confirmText="Delete"
         cancelText="Cancel"
         variant="danger"
         isLoading={loading}
+        impact={supplierDeleteConfirmImpact}
       />
 
       <Modal
@@ -1026,13 +1063,21 @@ const Purchases = () => {
             />
           </SupplierField>
 
-          <SupplierField label="Remaining Balance">
+          <SupplierField
+            label="Remaining Balance"
+            hint={
+              supplierForm.has_transactions
+                ? 'Cannot change — this supplier already has transactions'
+                : undefined
+            }
+          >
             <input
               type="number"
               min={0}
               placeholder="0.00"
               value={supplierForm.remaining_balance ?? 0}
               onChange={(e) => setSupplierField('remaining_balance', Number(e.target.value || 0))}
+              disabled={Boolean(supplierForm.has_transactions)}
             />
           </SupplierField>
 

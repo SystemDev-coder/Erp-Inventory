@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, Trash2, CheckCircle, Info } from 'lucide-react';
 import { useFocusTrap } from '../../../hooks/useFocusTrap';
+import type { DeleteImpactPreview } from '../../../services/deletePreview.service';
 
 interface ConfirmDialogProps {
     isOpen: boolean;
@@ -17,6 +18,11 @@ interface ConfirmDialogProps {
     hideCancel?: boolean;
     requireReason?: boolean;
     reasonLabel?: string;
+    // Central Delete Architecture (Phase 2/3): optional Impact Preview summary.
+    // Omitted by existing callers, so none of them change behavior - only a
+    // caller that fetches this via deletePreviewService and passes it in gets
+    // the extra summary section + the confirm button auto-disabling on a block.
+    impact?: DeleteImpactPreview | null;
 }
 
 export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
@@ -33,6 +39,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
     hideCancel = false,
     requireReason = false,
     reasonLabel = 'Reason',
+    impact,
 }) => {
     const MODAL_Z_INDEX = 2147483000;
     const [reason, setReason] = useState('');
@@ -150,6 +157,26 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
                         <p id={messageId} className="text-sm leading-relaxed text-slate-500 dark:text-slate-300">
                             {message}
                         </p>
+                        {impact && (impact.blockedBy.length > 0 || impact.cascaded.length > 0 || impact.preserved.length > 0) && (
+                            <div className="mt-3 space-y-1.5 rounded-lg border border-slate-200 bg-slate-50 p-3 text-left text-xs dark:border-slate-700 dark:bg-slate-800/40">
+                                {impact.blockedBy.length > 0 && (
+                                    <p className="text-red-600 dark:text-red-400">
+                                        Cannot delete — already used in{' '}
+                                        {impact.blockedBy.map((e) => `${e.label} (${e.count})`).join(', ')}.
+                                    </p>
+                                )}
+                                {impact.cascaded.length > 0 && (
+                                    <p className="text-slate-600 dark:text-slate-300">
+                                        Will also be removed: {impact.cascaded.map((e) => `${e.label} (${e.count})`).join(', ')}.
+                                    </p>
+                                )}
+                                {impact.preserved.length > 0 && (
+                                    <p className="text-slate-500 dark:text-slate-400">
+                                        Kept for history, unaffected: {impact.preserved.map((e) => `${e.label} (${e.count})`).join(', ')}.
+                                    </p>
+                                )}
+                            </div>
+                        )}
                         {requireReason && (
                             <div className="mt-4 text-left">
                                 <label
@@ -195,7 +222,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
                         <button
                             type="button"
                             onClick={handleConfirm}
-                            disabled={isLoading}
+                            disabled={isLoading || Boolean(impact?.blocked)}
                             className={`flex-1 min-h-11 px-3 py-2 text-sm rounded-lg ${style.buttonBg} text-white font-medium transition-colors shadow-md disabled:opacity-50 disabled:cursor-not-allowed`}
                         >
                             {isLoading ? (

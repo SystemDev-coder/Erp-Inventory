@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ColumnDef } from '@tanstack/react-table';
-import { BadgeAlert, Boxes, Edit3, Image as ImageIcon, MoreVertical, PackageCheck, PackageSearch, PackageX, RefreshCw, Ruler, Store, Tags, Trash2, X } from 'lucide-react';
+import { BadgeAlert, Boxes, Edit3, GitMerge, Image as ImageIcon, MoreVertical, PackageCheck, PackageSearch, PackageX, RefreshCw, Ruler, Store, Tags, Trash2, X } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
 import { DataTable } from '../../components/ui/table/DataTable';
 import { ActionDropdown } from '../../components/ui/dropdown/ActionDropdown';
@@ -10,6 +10,7 @@ import { PageHeader } from '../../components/ui/layout';
 import { useToast } from '../../components/ui/toast/Toast';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
 import { Category, Product, Unit, productService } from '../../services/product.service';
+import { deletePreviewService, DeleteImpactPreview } from '../../services/deletePreview.service';
 import { imageService } from '../../services/image.service';
 import { InventoryTransactionRow, inventoryService } from '../../services/inventory.service';
 import { storeService, Store as StoreType } from '../../services/store.service';
@@ -138,6 +139,73 @@ const Products = () => {
   const [unitToDelete, setUnitToDelete] = useState<Unit | null>(null);
 
   const [itemToDelete, setItemToDelete] = useState<Product | null>(null);
+  const [deleteImpact, setDeleteImpact] = useState<DeleteImpactPreview | null>(null);
+
+  // Phase 3 (Central Delete Architecture): fetch the Impact Preview as soon as
+  // the delete confirm dialog opens, so the user sees what's blocked/kept
+  // before confirming rather than after a failed save.
+  const openDeleteConfirm = (item: Product) => {
+    setItemToDelete(item);
+    setDeleteImpact(null);
+    void deletePreviewService.preview('items', item.product_id).then((res) => {
+      if (res.success && res.data?.preview) setDeleteImpact(res.data.preview);
+    });
+  };
+
+  const closeDeleteConfirm = () => {
+    setItemToDelete(null);
+    setDeleteImpact(null);
+  };
+
+  // Phase 6: consolidates a "duplicate" product's history/stock into another
+  // product, then archives the duplicate - see products.service.ts#mergeItems.
+  const [itemToMerge, setItemToMerge] = useState<Product | null>(null);
+  const [mergeTargetId, setMergeTargetId] = useState<number | ''>('');
+  const [mergeTargetQuery, setMergeTargetQuery] = useState('');
+  const [merging, setMerging] = useState(false);
+
+  const openMergeModal = (item: Product) => {
+    setItemToMerge(item);
+    setMergeTargetId('');
+    setMergeTargetQuery('');
+  };
+
+  const closeMergeModal = () => {
+    setItemToMerge(null);
+    setMergeTargetId('');
+    setMergeTargetQuery('');
+  };
+
+  const confirmMerge = async () => {
+    if (!itemToMerge || !mergeTargetId) return;
+    setMerging(true);
+    const res = await productService.merge(itemToMerge.product_id, Number(mergeTargetId));
+    setMerging(false);
+    if (res.success) {
+      showToast('success', 'Products', 'Products merged');
+      closeMergeModal();
+      if (itemsDisplayed) await loadProducts();
+    } else {
+      showToast('error', 'Merge failed', res.error || 'Could not merge products');
+    }
+  };
+
+  // The generic Impact Preview has no concept of quantity - it only knows
+  // whether a dependent row exists - so on-hand stock (which deleteProduct
+  // requires to be zero) is checked here client-side, from data already on
+  // the row, and merged into the same impact summary the dialog renders.
+  const deleteStockOnHand = itemToDelete ? Number(itemToDelete.stock ?? itemToDelete.quantity ?? 0) : 0;
+  const deleteConfirmImpact: DeleteImpactPreview | null = itemToDelete
+    ? {
+        blocked: Boolean(deleteImpact?.blocked) || deleteStockOnHand > 0,
+        blockedBy: [
+          ...(deleteStockOnHand > 0 ? [{ table: 'stock', label: 'On-hand stock', count: deleteStockOnHand }] : []),
+          ...(deleteImpact?.blockedBy || []),
+        ],
+        cascaded: deleteImpact?.cascaded || [],
+        preserved: deleteImpact?.preserved || [],
+      }
+    : null;
 
   const QUICK_CREATE_CATEGORY_SENTINEL = -1;
   const QUICK_CREATE_UNIT_SENTINEL = -1;
@@ -431,11 +499,16 @@ const Products = () => {
               icon: <Edit3 className="h-4 w-4" aria-hidden="true" />,
               onClick: () => void openEditItem(item),
             },
+            can('items.update') && can('items.delete') && {
+              label: 'Merge into...',
+              icon: <GitMerge className="h-4 w-4" aria-hidden="true" />,
+              onClick: () => openMergeModal(item),
+            },
             can('items.delete') && {
               label: 'Delete',
               icon: <Trash2 className="h-4 w-4" aria-hidden="true" />,
               variant: 'danger' as const,
-              onClick: () => setItemToDelete(item),
+              onClick: () => openDeleteConfirm(item),
             },
           ].filter(Boolean) as { label: string; icon: React.ReactNode; onClick: () => void; variant?: 'danger' }[];
           if (!menuItems.length) return null;
@@ -601,7 +674,7 @@ const Products = () => {
     const res = await productService.remove(itemToDelete.product_id, reason);
     if (res.success) {
       showToast('success', 'Products', 'Product deleted');
-      setItemToDelete(null);
+      closeDeleteConfirm();
       if (itemsDisplayed) await loadProducts();
     } else {
       showToast('error', 'Products', res.error || 'Failed to delete product');
@@ -1256,7 +1329,68 @@ const Products = () => {
         </div>
       </Modal>
 
-      <ConfirmDialog isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={(reason) => void removeItem(reason || '')} requireReason title="Delete Product" message={`Delete "${itemToDelete?.name || ''}"?`} confirmText="Delete" variant="danger" isLoading={loading} />
+      <ConfirmDialog
+        isOpen={!!itemToDelete}
+        onClose={closeDeleteConfirm}
+        onConfirm={(reason) => void removeItem(reason || '')}
+        requireReason
+        title="Delete Product"
+        message={
+          deleteStockOnHand > 0
+            ? `Delete "${itemToDelete?.name || ''}"? ${deleteStockOnHand} unit(s) of stock remain — reduce to zero first.`
+            : `Delete "${itemToDelete?.name || ''}"?`
+        }
+        confirmText="Delete"
+        variant="danger"
+        isLoading={loading}
+        impact={deleteConfirmImpact}
+      />
+
+      <Modal isOpen={!!itemToMerge} onClose={closeMergeModal} title="Merge Product" size="sm">
+        <div className="space-y-3">
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            Move all history and stock from <strong>{itemToMerge?.name}</strong> into another product, then archive{' '}
+            <strong>{itemToMerge?.name}</strong>. This cannot be undone.
+          </p>
+          <label className="text-sm font-medium">
+            Merge into
+            <select
+              className={fieldCls}
+              value={mergeTargetId}
+              onChange={(e) => setMergeTargetId(e.target.value ? Number(e.target.value) : '')}
+            >
+              <option value="">Select target product</option>
+              {products
+                .filter((p) => p.product_id !== itemToMerge?.product_id)
+                .filter((p) => !mergeTargetQuery.trim() || p.name.toLowerCase().includes(mergeTargetQuery.trim().toLowerCase()))
+                .map((p) => (
+                  <option key={p.product_id} value={p.product_id}>
+                    {p.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <input
+            className={fieldCls}
+            placeholder="Type to filter products..."
+            value={mergeTargetQuery}
+            onChange={(e) => setMergeTargetQuery(e.target.value)}
+          />
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={closeMergeModal} className="rounded-lg border px-4 py-2" disabled={merging}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void confirmMerge()}
+              disabled={!mergeTargetId || merging}
+              className="rounded-lg bg-primary-600 px-4 py-2 text-white disabled:opacity-50"
+            >
+              {merging ? 'Merging...' : 'Merge'}
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal isOpen={categoryModalOpen} onClose={() => setCategoryModalOpen(false)} title={categoryForm.category_id ? 'Edit Category' : 'New Category'} size="sm">
         <form onSubmit={(e) => { e.preventDefault(); void saveCategory(); }} className="space-y-3">

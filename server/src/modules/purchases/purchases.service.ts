@@ -11,6 +11,7 @@ import { ensureCoaAccounts } from '../../utils/coaDefaults';
 import { resolvePurchaseDueDate } from '../../utils/creditDueHelpers';
 import { offsetOf, type Paged } from '../../utils/pagination';
 import { settingsService } from '../settings/settings.service';
+import { softDeleteById } from '../../db/softDelete';
 
 export interface Purchase {
   purchase_id: number;
@@ -1628,6 +1629,17 @@ export const purchasesService = {
         throw ApiError.forbidden('You can only delete purchases in your branch');
       }
 
+      // Delete-protection audit (Phase 10 Batch 1, Finding F4): a
+      // received/partial/unpaid purchase applied stock/AP/GL effects and
+      // must be voided first (which fully reverses those, see
+      // updatePurchase's void-transition handling above) before its rows
+      // can be removed - mirrors deleteSale's identical guard. 'ordered'
+      // purchase orders are exempt, same as sales quotations, since
+      // isNonAppliedPurchaseStatus() means they never touched stock/AP/GL.
+      if (!isNonAppliedPurchaseStatus(current.status)) {
+        throw ApiError.badRequest('Only voided purchases or purchase orders can be deleted');
+      }
+
       const itemsResult = await client.query<{
         item_id: number;
         quantity: string;
@@ -1716,8 +1728,13 @@ export const purchasesService = {
         [branchId, id]
       );
       await client.query(`DELETE FROM ims.supplier_payments WHERE purchase_id = $1`, [id]);
-      await client.query(`DELETE FROM ims.purchase_items WHERE purchase_id = $1`, [id]);
-      await client.query(`DELETE FROM ims.purchases WHERE purchase_id = $1`, [id]);
+
+      // Phase 5 (Central Delete Architecture): soft-deletes via sp_soft_delete
+      // instead of a hard DELETE. purchase_items are 'preserve'd (see
+      // server/sql/20260923b_sales_purchases_delete_policy.sql), so they stay
+      // fully intact; a purchase that still has an active purchase_returns
+      // row against it is blocked (unclassified FK defaults to 'block').
+      await softDeleteById('purchases', id, { runner: client });
 
       await syncLowStockNotifications(client, {
         branchId,

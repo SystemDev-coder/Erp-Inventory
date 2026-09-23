@@ -9,6 +9,7 @@ import {
   createProduct,
   updateProduct,
   deleteProduct,
+  mergeProducts,
   listCategories,
   createCategory,
   updateCategory,
@@ -56,6 +57,7 @@ router.get('/:id', requirePerm('items.view'), getProduct);
 router.post('/', requirePerm('items.create'), createProduct);
 router.put('/:id', requirePerm('items.update'), updateProduct);
 router.delete('/:id', requirePerm('items.delete'), deleteProduct);
+router.post('/:id/merge-into/:targetId', requirePerm('items.update'), requirePerm('items.delete'), mergeProducts);
 
 // Product Image Upload
 router.post(

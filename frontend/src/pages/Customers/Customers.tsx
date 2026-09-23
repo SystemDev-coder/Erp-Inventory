@@ -10,6 +10,7 @@ import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { useToast } from '../../components/ui/toast/Toast';
 import Badge from '../../components/ui/badge/Badge';
 import { customerService, Customer } from '../../services/customer.service';
+import { deletePreviewService, DeleteImpactPreview } from '../../services/deletePreview.service';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
 import { useBranch } from '../../context/BranchContext';
 import { usePermissions } from '../../hooks/usePermissions';
@@ -105,8 +106,10 @@ const Customers = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [form, setForm] = useState<CustomerForm>(emptyForm);
     const [originalOpeningBalance, setOriginalOpeningBalance] = useState<number | null>(null);
+    const [openingBalanceLocked, setOpeningBalanceLocked] = useState(false);
     const [reasonRevealed, setReasonRevealed] = useState(false);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+    const [deleteImpact, setDeleteImpact] = useState<DeleteImpactPreview | null>(null);
     const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null);
     const [importModalOpen, setImportModalOpen] = useState(false);
 
@@ -118,9 +121,10 @@ const Customers = () => {
         if (hasOpeningBalanceChanged(next, originalOpeningBalance)) setReasonRevealed(true);
     };
 
-    const openModal = (preset?: CustomerForm, openingBalance: number | null = null) => {
+    const openModal = (preset?: CustomerForm, openingBalance: number | null = null, balanceLocked = false) => {
         setForm(preset ?? emptyForm);
         setOriginalOpeningBalance(openingBalance);
+        setOpeningBalanceLocked(balanceLocked);
         setReasonRevealed(false);
         setIsAddOpen(true);
     };
@@ -128,6 +132,7 @@ const Customers = () => {
     const closeModal = () => {
         setIsAddOpen(false);
         setOriginalOpeningBalance(null);
+        setOpeningBalanceLocked(false);
         setReasonRevealed(false);
     };
 
@@ -225,10 +230,17 @@ const Customers = () => {
             credit_limit: row.credit_limit == null ? '' : String(row.credit_limit),
             remaining_balance: String(openingBalance),
             edit_reason: '',
-        }, openingBalance);
+        }, openingBalance, Boolean(row.has_transactions));
     };
 
-    const onDelete = (row: Customer) => { setCustomerToDelete(row); setDeleteConfirmOpen(true); };
+    const onDelete = (row: Customer) => {
+        setCustomerToDelete(row);
+        setDeleteConfirmOpen(true);
+        setDeleteImpact(null);
+        void deletePreviewService.preview('customers', row.customer_id).then((res) => {
+            if (res.success && res.data?.preview) setDeleteImpact(res.data.preview);
+        });
+    };
 
     const confirmDelete = async (reason: string) => {
         if (!customerToDelete) return;
@@ -243,7 +255,28 @@ const Customers = () => {
         setLoading(false);
         setCustomerToDelete(null);
         setDeleteConfirmOpen(false);
+        setDeleteImpact(null);
     };
+
+    // The generic Impact Preview has no concept of value - it only knows
+    // whether a dependent row exists - so the outstanding-balance block
+    // (which deleteCustomer requires to be zero) is checked here
+    // client-side, from data already on the row, and merged into the same
+    // impact summary the dialog renders (mirrors Products.tsx, Phase 3).
+    const customerOutstandingBalance = Math.abs(Number(customerToDelete?.balance || 0));
+    const deleteConfirmImpact: DeleteImpactPreview | null = customerToDelete
+        ? {
+            blocked: Boolean(deleteImpact?.blocked) || customerOutstandingBalance > 0.005,
+            blockedBy: [
+                ...(customerOutstandingBalance > 0.005
+                    ? [{ table: 'balance', label: 'Outstanding balance', count: Math.round(customerOutstandingBalance * 100) / 100 }]
+                    : []),
+                ...(deleteImpact?.blockedBy || []),
+            ],
+            cascaded: deleteImpact?.cascaded || [],
+            preserved: deleteImpact?.preserved || [],
+        }
+        : null;
 
     const columns: ColumnDef<Customer>[] = useMemo(() => [
         { accessorKey: 'full_name', header: 'Customer Name' },
@@ -441,7 +474,11 @@ const Customers = () => {
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                         <Field
                             label="Opening Balance"
-                            hint="Amount the customer already owes (go-live balance)"
+                            hint={
+                                openingBalanceLocked
+                                    ? 'Cannot change — this customer already has transactions'
+                                    : 'Amount the customer already owes (go-live balance)'
+                            }
                         >
                             <input
                                 type="number"
@@ -450,7 +487,7 @@ const Customers = () => {
                                 placeholder="0.00"
                                 value={form.remaining_balance}
                                 onChange={(ev) => set('remaining_balance', ev.target.value)}
-                                disabled={loading}
+                                disabled={loading || openingBalanceLocked}
                             />
                         </Field>
 
@@ -569,20 +606,21 @@ const Customers = () => {
             {/* ══ Delete confirm ══════════════════════════════════════════════ */}
             <ConfirmDialog
                 isOpen={deleteConfirmOpen}
-                onClose={() => { setDeleteConfirmOpen(false); setCustomerToDelete(null); }}
+                onClose={() => { setDeleteConfirmOpen(false); setCustomerToDelete(null); setDeleteImpact(null); }}
                 onConfirm={(reason) => void confirmDelete(reason || '')}
                 requireReason
                 title="Delete Customer?"
                 highlightedName={customerToDelete?.full_name}
                 message={
-                    customerToDelete
-                        ? `Cannot delete if outstanding balance exists. Current balance: $${Number(customerToDelete.balance || 0).toFixed(2)}`
+                    customerOutstandingBalance > 0.005
+                        ? `Cannot delete — outstanding balance of $${customerOutstandingBalance.toFixed(2)} exists. Settle to zero first.`
                         : 'Are you sure you want to delete this customer?'
                 }
                 confirmText="Delete"
                 cancelText="Cancel"
                 variant="danger"
                 isLoading={loading}
+                impact={deleteConfirmImpact}
             />
 
             {/* ══ Import ══════════════════════════════════════════════════════ */}

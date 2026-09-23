@@ -11,6 +11,7 @@ import Badge from '../../components/ui/badge/Badge';
 import { Tabs } from '../../components/ui/tabs/Tabs';
 import { useToast } from '../../components/ui/toast/Toast';
 import { Sale, SaleItem, salesService } from '../../services/sales.service';
+import { deletePreviewService, DeleteImpactPreview } from '../../services/deletePreview.service';
 import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
 import { usePermissions } from '../../hooks/usePermissions';
@@ -39,6 +40,7 @@ const Sales = () => {
   const [saleToConvert, setSaleToConvert] = useState<Sale | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [saleToDelete, setSaleToDelete] = useState<Sale | null>(null);
+  const [saleDeleteImpact, setSaleDeleteImpact] = useState<DeleteImpactPreview | null>(null);
   const [viewOpen, setViewOpen] = useState(false);
   const [viewLoading, setViewLoading] = useState(false);
   const [viewSale, setViewSale] = useState<Sale | null>(null);
@@ -200,11 +202,16 @@ const Sales = () => {
     }
     setSaleToDelete(null);
     setDeleteOpen(false);
+    setSaleDeleteImpact(null);
   }, [loadSales, saleToDelete, showToast]);
 
   const handleDelete = useCallback((sale: Sale) => {
     setSaleToDelete(sale);
     setDeleteOpen(true);
+    setSaleDeleteImpact(null);
+    void deletePreviewService.preview('sales', sale.sale_id).then((res) => {
+      if (res.success && res.data?.preview) setSaleDeleteImpact(res.data.preview);
+    });
   }, []);
 
   const handleView = useCallback(
@@ -556,6 +563,7 @@ const Sales = () => {
         onClose={() => {
           setDeleteOpen(false);
           setSaleToDelete(null);
+          setSaleDeleteImpact(null);
         }}
         onConfirm={(reason) => {
           void confirmDelete(reason || '');
@@ -570,6 +578,7 @@ const Sales = () => {
         confirmText="Delete"
         cancelText="Cancel"
         variant="danger"
+        impact={saleDeleteImpact}
         isLoading={loading}
       />
 

@@ -73,29 +73,38 @@ router.delete('/branches/:id', requirePerm('system.branches'), deleteBranch);
 router.get('/audit', requireAnyPerm(['audit_logs.view', 'system.audit.view', 'system.settings']), listAudit);
 
 // Capital (Owner Equity)
-router.get('/capital', requireAnyPerm(['system.settings', 'accounts.view', 'finance.reports']), listCapitalContributions);
-router.post('/capital', requireAnyPerm(['system.settings', 'accounts.view']), createCapitalContribution);
-router.put('/capital/:id', requireAnyPerm(['system.settings', 'accounts.view']), updateCapitalContribution);
-router.delete('/capital/:id', requireAnyPerm(['system.settings', 'accounts.view']), deleteCapitalContribution);
-router.get('/capital/report', requireAnyPerm(['system.settings', 'accounts.view', 'finance.reports']), getCapitalReport);
-router.get('/capital/owners', requireAnyPerm(['system.settings', 'accounts.view', 'finance.reports']), listCapitalOwnerEquity);
-router.get('/capital/drawings', requireAnyPerm(['system.settings', 'accounts.view', 'finance.reports']), listOwnerDrawings);
-router.post('/capital/drawings', requireAnyPerm(['system.settings', 'accounts.view']), createOwnerDrawing);
-router.put('/capital/drawings/:id', requireAnyPerm(['system.settings', 'accounts.view']), updateOwnerDrawing);
-router.delete('/capital/drawings/:id', requireAnyPerm(['system.settings', 'accounts.view']), deleteOwnerDrawing);
+// Phase 10 RBAC audit fix: writes here were gated by 'accounts.view'
+// (a read permission held by Viewer/Accountant), letting either create,
+// edit, or delete capital contributions/owner drawings/closing periods via
+// direct API call despite holding none of the dedicated permission-catalog
+// keys below (granted only to Administrator/Developer). Reads keep the
+// broader read-permission fallback; writes now require the matching
+// capital_contributions.*/owner_drawings.*/finance_closing_periods.* key.
+router.get('/capital', requireAnyPerm(['system.settings', 'capital_contributions.view', 'accounts.view', 'finance.reports']), listCapitalContributions);
+router.post('/capital', requireAnyPerm(['system.settings', 'capital_contributions.create']), createCapitalContribution);
+router.put('/capital/:id', requireAnyPerm(['system.settings', 'capital_contributions.update']), updateCapitalContribution);
+router.delete('/capital/:id', requireAnyPerm(['system.settings', 'capital_contributions.delete']), deleteCapitalContribution);
+router.get('/capital/report', requireAnyPerm(['system.settings', 'capital_contributions.view', 'accounts.view', 'finance.reports']), getCapitalReport);
+router.get('/capital/owners', requireAnyPerm(['system.settings', 'capital_contributions.view', 'accounts.view', 'finance.reports']), listCapitalOwnerEquity);
+router.get('/capital/drawings', requireAnyPerm(['system.settings', 'owner_drawings.view', 'accounts.view', 'finance.reports']), listOwnerDrawings);
+router.post('/capital/drawings', requireAnyPerm(['system.settings', 'owner_drawings.create']), createOwnerDrawing);
+router.put('/capital/drawings/:id', requireAnyPerm(['system.settings', 'owner_drawings.update']), updateOwnerDrawing);
+router.delete('/capital/drawings/:id', requireAnyPerm(['system.settings', 'owner_drawings.delete']), deleteOwnerDrawing);
 
-// Accounting cleanup: Opening Balance Equity reclassification
+// Accounting cleanup: Opening Balance Equity reclassification (destructive
+// accounting-structure change - kept admin-only via system.settings, not
+// widened to any dedicated key since none exists for this specific action).
 router.get('/account-cleanup/opening-balance-equity', requireAnyPerm(['system.settings', 'accounts.view', 'finance.reports']), getOpeningBalanceCleanupInfo);
-router.post('/account-cleanup/opening-balance-equity/transfer', requireAnyPerm(['system.settings', 'accounts.view']), transferOpeningBalanceEquityCleanup);
+router.post('/account-cleanup/opening-balance-equity/transfer', requireAnyPerm(['system.settings']), transferOpeningBalanceEquityCleanup);
 
 // Settings > Closing Finance + Profit Sharing
-router.get('/closing/periods', requireAnyPerm(['system.settings', 'finance.reports', 'accounts.view']), listSettingsClosingPeriods);
-router.post('/closing/periods', requireAnyPerm(['system.settings', 'finance.reports', 'accounts.view']), createSettingsClosingPeriod);
-router.put('/closing/periods/:id', requireAnyPerm(['system.settings', 'finance.reports', 'accounts.view']), updateSettingsClosingPeriod);
-router.get('/closing/periods/:id/summary', requireAnyPerm(['system.settings', 'finance.reports', 'accounts.view']), getSettingsClosingSummary);
-router.post('/closing/periods/:id/close', requireAnyPerm(['system.settings', 'finance.reports', 'accounts.view']), closeSettingsClosingPeriod);
-router.get('/closing/profit/owners', requireAnyPerm(['system.settings', 'finance.reports', 'accounts.view']), listSettingsProfitOwners);
-router.post('/closing/profit/owners', requireAnyPerm(['system.settings', 'finance.reports', 'accounts.view']), upsertSettingsProfitOwner);
-router.post('/closing/profit/preview', requireAnyPerm(['system.settings', 'finance.reports', 'accounts.view']), previewSettingsOwnerProfit);
+router.get('/closing/periods', requireAnyPerm(['system.settings', 'finance_closing_periods.view', 'finance.reports', 'accounts.view']), listSettingsClosingPeriods);
+router.post('/closing/periods', requireAnyPerm(['system.settings', 'finance_closing_periods.create']), createSettingsClosingPeriod);
+router.put('/closing/periods/:id', requireAnyPerm(['system.settings', 'finance_closing_periods.update']), updateSettingsClosingPeriod);
+router.get('/closing/periods/:id/summary', requireAnyPerm(['system.settings', 'finance_closing_periods.view', 'finance.reports', 'accounts.view']), getSettingsClosingSummary);
+router.post('/closing/periods/:id/close', requireAnyPerm(['system.settings', 'finance_closing_periods.update']), closeSettingsClosingPeriod);
+router.get('/closing/profit/owners', requireAnyPerm(['system.settings', 'finance_closing_periods.view', 'finance.reports', 'accounts.view']), listSettingsProfitOwners);
+router.post('/closing/profit/owners', requireAnyPerm(['system.settings', 'finance_closing_periods.update']), upsertSettingsProfitOwner);
+router.post('/closing/profit/preview', requireAnyPerm(['system.settings', 'finance_closing_periods.view', 'finance.reports', 'accounts.view']), previewSettingsOwnerProfit);
 
 export default router;

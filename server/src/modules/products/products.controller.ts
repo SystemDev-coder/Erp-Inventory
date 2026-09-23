@@ -141,18 +141,11 @@ export const updateProduct = asyncHandler(async (req: AuthRequest, res: Response
 export const deleteProduct = asyncHandler(async (req: AuthRequest, res: Response) => {
   const scope = await resolveBranchScope(req);
   const id = Number(req.params.id);
-  // M11 fix: capture the image URL before the row is gone, so it can be
-  // cleaned up after the DB delete succeeds - never before, since an
-  // external asset delete can't be rolled back if the transaction below
-  // then fails for an unrelated reason (e.g. a blocked-delete race).
-  const existing = await productsService.getProduct(id, scope);
-  await productsService.deleteProduct(Number(req.params.id), scope);
-  if (existing?.image_url) {
-    const stillReferenced = await productsService.hasOtherProductWithImage(existing.image_url, id);
-    if (!stillReferenced) {
-      await deleteCloudinaryImage(existing.image_url);
-    }
-  }
+  // Phase 3 (Central Delete Architecture): deleteProduct now soft-deletes
+  // (archives, restorable via Trash) rather than hard-deleting, so the
+  // product's image must survive - deleting the Cloudinary asset here would
+  // leave a restored product permanently broken.
+  await productsService.deleteProduct(id, scope);
   await logAudit({
     userId: req.user?.userId ?? null,
     action: 'delete',
@@ -163,6 +156,25 @@ export const deleteProduct = asyncHandler(async (req: AuthRequest, res: Response
   });
 
   return ApiResponse.success(res, null, 'Product deleted');
+});
+
+export const mergeProducts = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const fromId = Number(req.params.id);
+  const toId = Number(req.params.targetId);
+  if (!fromId || !toId) throw ApiError.badRequest('Invalid item id');
+  await productsService.mergeItems(fromId, toId, scope);
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'merge',
+    entity: 'items',
+    entityId: fromId,
+    newValue: { mergedInto: toId },
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
+
+  return ApiResponse.success(res, null, 'Products merged');
 });
 
 export const listCategories = asyncHandler(async (req: AuthRequest, res: Response) => {

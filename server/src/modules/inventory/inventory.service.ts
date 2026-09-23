@@ -161,12 +161,17 @@ const resolveStoreForItem = async (
 
 const applyStoreItemDelta = async (
   client: PoolClient,
-  params: { branchId: number; itemId: number; delta: number }
+  params: { branchId: number; itemId: number; delta: number; storeId?: number | null }
 ) => {
   const delta = Math.round(params.delta);
   if (!delta) return;
 
-  const storeId = await resolveStoreForItem(client, params.branchId, params.itemId);
+  // Phase 6 (store-to-store transfer): callers that need to move quantity
+  // between two SPECIFIC stores (not just "the" item's home store) pass an
+  // explicit storeId to override the auto-resolve below - every existing
+  // caller (sales, purchases, adjustments, warehouse/branch transfers)
+  // leaves it unset and keeps today's behavior exactly.
+  const storeId = params.storeId ?? (await resolveStoreForItem(client, params.branchId, params.itemId));
   const existing = await client.query<{ quantity: string }>(
     `SELECT quantity::text AS quantity
        FROM ims.store_items
@@ -1520,6 +1525,24 @@ export const inventoryService = {
       throw ApiError.forbidden('You can only delete warehouses in your branch');
     }
 
+    // Phase 6: mirrors getProductStockOnHand (Phase 3) - on-hand quantity
+    // must be zero before this warehouse can be archived, so its
+    // warehouse_stock rows (preserved, not cascaded - composite PK) never
+    // silently hide real stock.
+    const stockRow = await queryOne<{ total: string }>(
+      `SELECT COALESCE(SUM(quantity), 0)::text AS total
+         FROM ims.warehouse_stock
+        WHERE wh_id = $1
+          AND COALESCE(is_deleted, 0) = 0`,
+      [id]
+    );
+    const stockOnHand = Number(stockRow?.total || 0);
+    if (stockOnHand > 0) {
+      throw ApiError.badRequest(
+        `Cannot delete: ${stockOnHand} unit(s) of stock remain in this warehouse. Adjust stock to zero first.`
+      );
+    }
+
     // UPDATED: Soft-delete via DB function so this doesn't break when triggers cancel hard deletes.
     await softDeleteById('warehouses', id);
   },
@@ -2481,13 +2504,13 @@ export const inventoryService = {
       }
 
       const resolveLocation = async (
-        kind: 'warehouse' | 'branch',
+        kind: 'warehouse' | 'branch' | 'store',
         locationId?: number,
         overrideWarehouseId?: number
-      ) => {
+      ): Promise<{ branchId: number; whId: number | null; storeId: number | null }> => {
         if (!locationId) {
           throw ApiError.badRequest(
-            kind === 'warehouse' ? 'Warehouse is required for transfer' : 'Branch is required for transfer'
+            kind === 'warehouse' ? 'Warehouse is required for transfer' : kind === 'store' ? 'Store is required for transfer' : 'Branch is required for transfer'
           );
         }
 
@@ -2503,7 +2526,26 @@ export const inventoryService = {
           if (!row) {
             throw ApiError.badRequest('Warehouse missing or inactive');
           }
-          return { branchId: Number(row.branch_id), whId: Number(row.wh_id) };
+          return { branchId: Number(row.branch_id), whId: Number(row.wh_id), storeId: null };
+        }
+
+        // Phase 6 (store-to-store transfer): 'store' resolves the store's own
+        // branch_id and threads the store_id through untouched, so the
+        // applyStoreItemDelta calls below can target it explicitly instead
+        // of falling back to the item's auto-resolved home store.
+        if (kind === 'store') {
+          const store = await client.query<{ store_id: number; branch_id: number }>(
+            `SELECT store_id, branch_id
+               FROM ims.stores
+              WHERE store_id = $1
+                AND is_active = TRUE`,
+            [locationId]
+          );
+          const row = store.rows[0];
+          if (!row) {
+            throw ApiError.badRequest('Store missing or inactive');
+          }
+          return { branchId: Number(row.branch_id), whId: null, storeId: Number(row.store_id) };
         }
 
         const branch = await client.query<{ branch_id: number }>(
@@ -2533,19 +2575,23 @@ export const inventoryService = {
           return {
             branchId: Number(branchWarehouseRow.branch_id),
             whId: Number(branchWarehouseRow.wh_id),
+            storeId: null,
           };
         }
-        return { branchId: Number(row.branch_id), whId: null };
+        return { branchId: Number(row.branch_id), whId: null, storeId: null };
       };
+
+      const locationIdFor = (type: 'warehouse' | 'branch' | 'store', whId?: number, branchId?: number, storeId?: number) =>
+        type === 'warehouse' ? whId : type === 'store' ? storeId : branchId;
 
       const fromLocation = await resolveLocation(
         input.fromType,
-        input.fromType === 'warehouse' ? input.fromWhId : input.fromBranchId,
+        locationIdFor(input.fromType, input.fromWhId, input.fromBranchId, input.fromStoreId),
         input.fromType === 'branch' ? input.fromWhId : undefined
       );
       const toLocation = await resolveLocation(
         input.toType,
-        input.toType === 'warehouse' ? input.toWhId : input.toBranchId,
+        locationIdFor(input.toType, input.toWhId, input.toBranchId, input.toStoreId),
         input.toType === 'branch' ? input.toWhId : undefined
       );
 
@@ -2553,6 +2599,7 @@ export const inventoryService = {
         input.fromType === input.toType
         && fromLocation.branchId === toLocation.branchId
         && Number(fromLocation.whId || 0) === Number(toLocation.whId || 0)
+        && Number(fromLocation.storeId || 0) === Number(toLocation.storeId || 0)
       ) {
         throw ApiError.badRequest('Source and destination locations must differ');
       }
@@ -2598,6 +2645,7 @@ export const inventoryService = {
         branchId: fromLocation.branchId,
         itemId: input.productId,
         delta: -qty,
+        storeId: fromLocation.storeId,
       });
       await applyItemQuantityDelta(client, {
         branchId: fromLocation.branchId,
@@ -2617,6 +2665,7 @@ export const inventoryService = {
         branchId: toLocation.branchId,
         itemId: input.productId,
         delta: qty,
+        storeId: toLocation.storeId,
       });
       await applyItemQuantityDelta(client, {
         branchId: toLocation.branchId,

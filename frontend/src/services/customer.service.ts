@@ -17,6 +17,7 @@ export interface Customer {
   open_balance?: number;
   remaining_balance?: number;
   registered_date?: string;
+  has_transactions?: boolean;
 }
 
 export const customerService = {

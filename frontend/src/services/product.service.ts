@@ -159,6 +159,11 @@ export const productService = {
     return apiClient.delete<{ message: string }>(API.PRODUCTS.ITEM(id), reason);
   },
 
+  // Phase 6: consolidates fromId's history/stock into toId, then archives fromId.
+  async merge(fromId: number, toId: number) {
+    return apiClient.post<{ message: string }>(`/api/products/${fromId}/merge-into/${toId}`, {});
+  },
+
   async listCategories(options: MasterListOptions = {}) {
     const qs = buildQuery(options);
     return apiClient.get<{ categories: Category[]; pagination?: PaginationMeta }>(`${API.PRODUCTS.CATEGORIES}${qs}`);

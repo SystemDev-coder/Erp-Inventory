@@ -28,3 +28,9 @@ export const restoreTrashRow = asyncHandler(async (req: AuthRequest, res: Respon
   const result = await trashService.restore(input.table, input.id, userId);
   return ApiResponse.success(res, { result }, 'Record restored');
 });
+
+export const previewDeleteRow = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const input = trashRestoreSchema.parse({ table: req.params.module, id: req.params.id });
+  const preview = await trashService.previewDelete(input.table, input.id);
+  return ApiResponse.success(res, { preview });
+});

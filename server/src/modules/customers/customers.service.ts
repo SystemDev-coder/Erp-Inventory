@@ -5,6 +5,7 @@ import { ApiError } from '../../utils/ApiError';
 import { BranchScope } from '../../utils/branchScope';
 import { deleteGlByRef, ensureCoreCoa, postGl } from '../../utils/glPosting';
 import { syncSystemAccountBalancesWithClient } from '../../utils/systemAccounts';
+import { softDeleteById } from '../../db/softDelete';
 
 export interface Customer {
   customer_id: number;
@@ -22,6 +23,7 @@ export interface Customer {
   balance: number;
   open_balance: number;
   remaining_balance: number;
+  has_transactions: boolean;
 }
 
 export interface CustomerInput {
@@ -91,6 +93,7 @@ const mapCustomer = (row: {
   balance_value: string | number;
   credit_limit?: number | string | null;
   open_balance_value?: string | number | null;
+  has_transactions?: boolean | null;
 }): Customer => ({
   customer_id: Number(row.customer_id),
   full_name: row.full_name,
@@ -107,6 +110,7 @@ const mapCustomer = (row: {
   credit_limit: row.credit_limit == null ? null : Number(row.credit_limit),
   open_balance: Number(row.open_balance_value ?? row.balance_value ?? 0),
   remaining_balance: Number(row.balance_value || 0),
+  has_transactions: Boolean(row.has_transactions),
 });
 
 const getGenderSelect = (meta: CustomerColumnMeta) =>
@@ -121,6 +125,15 @@ const getCreditLimitSelect = (meta: CustomerColumnMeta) =>
   meta.hasCreditLimit ? 'credit_limit::text AS credit_limit' : 'NULL::text AS credit_limit';
 const getOpenBalanceSelect = (meta: CustomerColumnMeta) =>
   meta.hasOpenBalance ? 'open_balance::text AS open_balance_value' : 'NULL::text AS open_balance_value';
+
+// Mirrors hasCustomerNonOpeningLedger's predicate exactly, so the UI's disabled
+// state and the server-side save-time guard never disagree.
+const HAS_TRANSACTIONS_SELECT = `EXISTS (
+  SELECT 1 FROM ims.customer_ledger cl
+   WHERE cl.branch_id = customers.branch_id
+     AND cl.customer_id = customers.customer_id
+     AND NOT (cl.entry_type = 'opening' AND cl.ref_table = 'opening_balance')
+) AS has_transactions`;
 
 const scopedCustomer = async (
   id: number,
@@ -144,8 +157,9 @@ const scopedCustomer = async (
         credit_days: number | null;
         balance_value: string;
         open_balance_value: string | null;
+        has_transactions: boolean;
       }>(
-        `SELECT customer_id, full_name, phone, sex::text AS sex, address, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect(meta)}, ${getCreditAllowedSelect(meta)}, ${getCreditDaysSelect(meta)}, ${getCreditLimitSelect(meta)}, ${balanceColumn}::text AS balance_value, ${getOpenBalanceSelect(meta)}
+        `SELECT customer_id, full_name, phone, sex::text AS sex, address, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect(meta)}, ${getCreditAllowedSelect(meta)}, ${getCreditDaysSelect(meta)}, ${getCreditLimitSelect(meta)}, ${balanceColumn}::text AS balance_value, ${getOpenBalanceSelect(meta)}, ${HAS_TRANSACTIONS_SELECT}
            FROM ims.customers
           WHERE customer_id = $1
             AND COALESCE(is_deleted, 0)::int = 0`,
@@ -165,8 +179,9 @@ const scopedCustomer = async (
         credit_days: number | null;
         balance_value: string;
         open_balance_value: string | null;
+        has_transactions: boolean;
       }>(
-        `SELECT customer_id, full_name, phone, sex::text AS sex, address, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect(meta)}, ${getCreditAllowedSelect(meta)}, ${getCreditDaysSelect(meta)}, ${getCreditLimitSelect(meta)}, ${balanceColumn}::text AS balance_value, ${getOpenBalanceSelect(meta)}
+        `SELECT customer_id, full_name, phone, sex::text AS sex, address, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect(meta)}, ${getCreditAllowedSelect(meta)}, ${getCreditDaysSelect(meta)}, ${getCreditLimitSelect(meta)}, ${balanceColumn}::text AS balance_value, ${getOpenBalanceSelect(meta)}, ${HAS_TRANSACTIONS_SELECT}
            FROM ims.customers
           WHERE customer_id = $1
             AND branch_id = ANY($2)
@@ -177,11 +192,18 @@ const scopedCustomer = async (
   return row ? mapCustomer(row) : null;
 };
 
-const findCustomerDeleteBlockReason = async (
+// Phase 4 (Central Delete Architecture): deleteCustomer below now soft-deletes
+// via ims.sp_soft_delete, which lets a customer with real sales/returns/ledger
+// history be archived (that history is 'preserve'd, untouched - see
+// server/sql/20260923_customer_supplier_delete_policy.sql). The one thing the
+// generic policy engine can't express is "outstanding balance must be zero" -
+// it only knows whether a dependent row exists, not its value - so that stays
+// a manual pre-check here, mirroring getProductStockOnHand from Phase 3.
+const getCustomerOutstandingBalance = async (
   client: PoolClient,
   branchId: number,
   customerId: number
-): Promise<string | null> => {
+): Promise<number> => {
   const meta = await detectCustomerColumns();
   const balanceCol = meta.balanceColumn;
   const balanceRow = await client.query<{ balance: string }>(
@@ -191,38 +213,7 @@ const findCustomerDeleteBlockReason = async (
         AND branch_id = $2`,
     [customerId, branchId]
   );
-  const balance = Math.abs(Number(balanceRow.rows[0]?.balance || 0));
-  if (balance > 0.005) {
-    return `Cannot delete — outstanding balance of ${balance.toFixed(2)} exists. Settle to zero first.`;
-  }
-
-  const saleLinked = await client.query<{ exists: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1 FROM ims.sales
-        WHERE branch_id = $1 AND customer_id = $2
-     ) AS exists`,
-    [branchId, customerId]
-  );
-  if (Boolean(saleLinked.rows[0]?.exists)) {
-    return 'Cannot delete customer because it has sales transactions';
-  }
-
-  const returnLinked = await client.query<{ exists: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1 FROM ims.sales_returns
-        WHERE branch_id = $1 AND customer_id = $2
-     ) AS exists`,
-    [branchId, customerId]
-  );
-  if (Boolean(returnLinked.rows[0]?.exists)) {
-    return 'Cannot delete customer because it has sales return transactions';
-  }
-
-  if (await hasCustomerNonOpeningLedger(client, branchId, customerId)) {
-    return 'Cannot delete customer because it has ledger transactions';
-  }
-
-  return null;
+  return Math.abs(Number(balanceRow.rows[0]?.balance || 0));
 };
 
 const hasCustomerNonOpeningLedger = async (
@@ -389,6 +380,7 @@ export const customersService = {
       credit_days: number | null;
       balance_value: string;
       open_balance_value: string | null;
+      has_transactions: boolean;
     }>(
       `SELECT
           customer_id,
@@ -404,7 +396,8 @@ export const customersService = {
           ${getCreditDaysSelect(meta)},
           ${getCreditLimitSelect(meta)},
           ${balanceColumn}::text AS balance_value,
-          ${getOpenBalanceSelect(meta)}
+          ${getOpenBalanceSelect(meta)},
+          ${HAS_TRANSACTIONS_SELECT}
        FROM ims.customers
        ${whereSql}
        ORDER BY full_name
@@ -670,10 +663,10 @@ export const customersService = {
     }
 
     return withTransaction(async (client) => {
-      const branchRow = await client.query<{ branch_id: number }>(
+      const branchRow = await client.query<{ branch_id: number; current_balance: string | null }>(
         scope.isAdmin
-          ? `SELECT branch_id FROM ims.customers WHERE customer_id = $1`
-          : `SELECT branch_id FROM ims.customers WHERE customer_id = $1 AND branch_id = ANY($2)`,
+          ? `SELECT branch_id, ${meta.balanceColumn}::text AS current_balance FROM ims.customers WHERE customer_id = $1`
+          : `SELECT branch_id, ${meta.balanceColumn}::text AS current_balance FROM ims.customers WHERE customer_id = $1 AND branch_id = ANY($2)`,
         scope.isAdmin ? [id] : [id, scope.branchIds]
       );
       const branchId = Number(branchRow.rows[0]?.branch_id || 0);
@@ -689,7 +682,16 @@ export const customersService = {
       // supplier side exactly (suppliers.service.ts#updateSupplier), which
       // already hard-rejects any opening-balance change once transactions
       // exist rather than accepting a free-text bypass.
-      if (wantsOpeningUpdate) {
+      //
+      // Phase 1 fix: the frontend always submits remainingBalance on every
+      // save (even when the user only touched phone/name), so gating on
+      // "was it present" instead of "did it actually change" blocked ALL
+      // edits to any customer with transaction history. Compare against the
+      // customer's current balance so an unchanged value never triggers the
+      // guard or the ledger rewrite below.
+      const currentBalance = Number(branchRow.rows[0]?.current_balance ?? 0);
+      const balanceActuallyChanged = wantsOpeningUpdate && Math.abs(openingAmount - currentBalance) > 0.005;
+      if (balanceActuallyChanged) {
         const hasTransactions = await hasCustomerNonOpeningLedger(client, branchId, id);
         if (hasTransactions) {
           throw ApiError.badRequest('Customer has transactions; cannot change opening balance');
@@ -726,6 +728,10 @@ export const customersService = {
 
   async deleteCustomer(id: number, scope: BranchScope): Promise<void> {
     await withTransaction(async (client) => {
+      // Phase 4 (Central Delete Architecture): soft-deletes via sp_soft_delete
+      // instead of a hard DELETE, so a customer with real sales/returns/ledger
+      // history can be archived - that history is 'preserve'd, completely
+      // untouched. Only a nonzero outstanding balance still blocks the delete.
       const row = await client.query<{ branch_id: number }>(
         scope.isAdmin
           ? `SELECT branch_id FROM ims.customers WHERE customer_id = $1`
@@ -735,14 +741,12 @@ export const customersService = {
       const branchId = Number(row.rows[0]?.branch_id || 0);
       if (!branchId) throw ApiError.notFound('Customer not found');
 
-      const blockReason = await findCustomerDeleteBlockReason(client, branchId, id);
-      if (blockReason) throw ApiError.badRequest(blockReason);
+      const balance = await getCustomerOutstandingBalance(client, branchId, id);
+      if (balance > 0.005) {
+        throw ApiError.badRequest(`Cannot delete — outstanding balance of ${balance.toFixed(2)} exists. Settle to zero first.`);
+      }
 
-      await client.query(`DELETE FROM ims.customer_ledger WHERE customer_id = $1 AND branch_id = $2`, [
-        id,
-        branchId,
-      ]);
-      await client.query(`DELETE FROM ims.customers WHERE customer_id = $1`, [id]);
+      await softDeleteById('customers', id, { runner: client });
     });
   },
 };

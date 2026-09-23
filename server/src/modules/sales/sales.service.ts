@@ -13,6 +13,7 @@ import { assertCustomerCreditAllowed } from '../../utils/creditRules';
 import { resolveSaleDueDate } from '../../utils/creditDueHelpers';
 import { syncCustomerOutstandingFromLedger } from '../../utils/customerOutstanding';
 import { requireDeleteReason } from '../../utils/refundRules';
+import { softDeleteById } from '../../db/softDelete';
 import {
   QuotationConvertInput,
   SaleInput,
@@ -1875,8 +1876,12 @@ export const salesService = {
         `Auto reopen for sale delete #${current.sale_id}`
       );
 
-      await client.query(`DELETE FROM ims.sale_items WHERE sale_id = $1`, [id]);
-      await client.query(`DELETE FROM ims.sales WHERE sale_id = $1`, [id]);
+      // Phase 5 (Central Delete Architecture): soft-deletes via sp_soft_delete
+      // instead of a hard DELETE. sale_items are 'preserve'd (see
+      // server/sql/20260923b_sales_purchases_delete_policy.sql), so they stay
+      // fully intact; a sale that still has an active sales_returns row
+      // against it is blocked (unclassified FK defaults to 'block').
+      await softDeleteById('sales', id, { runner: client });
 
       await client.query('COMMIT');
     } catch (error) {
