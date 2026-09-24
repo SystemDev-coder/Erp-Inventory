@@ -122,6 +122,23 @@ export const translations = {
   chart_debt_breakdown_title: { en: 'Customer Debt Breakdown', so: 'Kala Qaybsanaanta Deynta Macaamiisha' },
   chart_debt_breakdown_subtitle: { en: 'Top customers by outstanding balance', so: 'Macaamiisha ugu deynta badan' },
   chart_other_customers: { en: 'Other Customers', so: 'Macaamiisha Kale' },
+  dashboard_view_all: { en: 'View All', so: 'Dhammaan Arag' },
+  dashboard_col_product_sku: { en: 'Product & SKU', so: 'Alaabta & SKU' },
+  dashboard_col_category: { en: 'Category', so: 'Qaybta' },
+  dashboard_col_sold: { en: 'Sold', so: 'La Iibiyay' },
+  dashboard_col_revenue: { en: 'Revenue', so: 'Dakhliga' },
+  dashboard_col_status: { en: 'Status', so: 'Xaaladda' },
+  dashboard_stock_in: { en: 'In Stock', so: 'Stock Ayuu Ku Jiraa' },
+  dashboard_stock_low: { en: 'Low Stock', so: 'Stock Yar' },
+  dashboard_stock_out: { en: 'No Stock', so: 'Stock Ma Jiro' },
+  dashboard_aging_overdue: { en: 'Overdue', so: 'Wakhtigii Dhaafay' },
+  dashboard_aging_due_soon: { en: 'Due Soon', so: 'Dhawaan Dhammaanaya' },
+  dashboard_aging_current: { en: '0-30 Days', so: '0-30 Maalmood' },
+  dashboard_collect: { en: 'Collect', so: 'Ururi' },
+  dashboard_view_balances: { en: 'View Balances', so: 'Arag Hadhaaga' },
+  dashboard_send_statements: { en: 'Send Statements', so: 'Dir Warbixin' },
+  dashboard_no_top_products: { en: 'No sales in the last 30 days yet.', so: 'Wali iib kuma jiro 30-kii maalmood ee la soo dhaafay.' },
+  dashboard_no_debt: { en: 'No customers currently owe a balance.', so: 'Hadda macmiil hadhaaga lugu leeyahay ma jiro.' },
 
   // Report card hints shared across multiple report categories (same English text reused
   // verbatim in several *ReportsTab.tsx files, so one key covers all of them)

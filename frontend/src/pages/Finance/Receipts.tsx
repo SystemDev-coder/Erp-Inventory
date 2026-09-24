@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { ColumnDef } from '@tanstack/react-table';
 import { Plus, RefreshCw, AlertCircle, DollarSign, Wallet, TrendingDown } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
@@ -156,6 +157,29 @@ const Receipts = () => {
             setSupplierLookup(res.data.suppliers);
         }
     };
+
+    // Dashboard's "Collect" button on a customer debt row links here as
+    // /finance/receipts?customerId=X - open straight into a pre-filled New
+    // Customer Receipt instead of making them pick the customer again.
+    const [searchParams, setSearchParams] = useSearchParams();
+    useEffect(() => {
+        const customerId = Number(searchParams.get('customerId'));
+        if (!customerId || !Number.isFinite(customerId)) return;
+        setEditingReceiptId(null);
+        setReceiptForm({ customer_id: customerId, payment_method: 'Cash' });
+        void lookupCustomers('');
+        setIsCustModalOpen(true);
+        void (async () => {
+            setCustomerBalanceLoading(true);
+            const balanceRes = await financeService.getCustomerCombinedBalance(customerId, activeBranchId ?? undefined);
+            if (balanceRes.success && balanceRes.data?.balance) {
+                setCustomerCombinedBalance(Number(balanceRes.data.balance.total_balance ?? 0));
+            }
+            setCustomerBalanceLoading(false);
+        })();
+        setSearchParams({}, { replace: true });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // ─── Data Loading ──────────────────────────────────────────────────────────
     const loadCustomerData = async () => {

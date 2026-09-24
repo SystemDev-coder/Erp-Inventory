@@ -3,8 +3,10 @@ import {
   DashboardCard,
   DashboardChart,
   DashboardCardDrilldown,
+  DashboardDebtRow,
   DashboardLowStockItem,
   DashboardRecentRow,
+  DashboardTopProduct,
   DashboardWidget,
 } from './dashboard.types';
 
@@ -937,6 +939,150 @@ export class DashboardService {
         quantity,
         stock_alert: stockAlert,
         shortage: Math.max(stockAlert - quantity, 0),
+      };
+    });
+  }
+
+  // Same "Top Selling Products" table the reference dashboard design shows -
+  // extends the top-items-30d chart's own query with the fields a real table
+  // needs (SKU, category, revenue, stock status) instead of just quantity.
+  async getTopSellingProducts(
+    branchIds: number[],
+    permissions: string[]
+  ): Promise<DashboardTopProduct[]> {
+    if (!permissions.includes('sales.view')) {
+      return [];
+    }
+
+    const alertExpr = await getItemAlertExpression();
+    const thresholdExpr = `GREATEST(COALESCE(NULLIF(${alertExpr}, 0), 5), 1)`;
+
+    const rows = await queryMany<{
+      item_id: number;
+      item_name: string;
+      barcode: string | null;
+      cat_name: string | null;
+      quantity_sold: string;
+      revenue: string;
+      quantity: string;
+      stock_alert: string;
+    }>(
+      `WITH sale_item_map AS (
+         SELECT
+           si.sale_id,
+           COALESCE(
+             (to_jsonb(si) ->> 'product_id')::bigint,
+             (to_jsonb(si) ->> 'item_id')::bigint
+           ) AS item_id,
+           COALESCE((to_jsonb(si) ->> 'quantity')::numeric, 0) AS quantity,
+           COALESCE((to_jsonb(si) ->> 'line_total')::numeric, 0) AS line_total
+         FROM ims.sale_items si
+       ),
+       stock AS (
+         SELECT
+           s.branch_id,
+           si.product_id AS item_id,
+           COALESCE(SUM(si.quantity), 0)::numeric(14,3) AS store_qty,
+           COUNT(*)::int AS row_count
+         FROM ims.store_items si
+         JOIN ims.stores s ON s.store_id = si.store_id
+         GROUP BY s.branch_id, si.product_id
+       )
+       SELECT
+         i.item_id,
+         i.name AS item_name,
+         i.barcode,
+         c.cat_name,
+         COALESCE(SUM(m.quantity), 0)::double precision AS quantity_sold,
+         COALESCE(SUM(m.line_total), 0)::double precision AS revenue,
+         CASE
+           WHEN COALESCE(st.row_count, 0) = 0 THEN COALESCE(i.opening_balance, 0)
+           ELSE COALESCE(st.store_qty, 0)
+         END::numeric(14,3) AS quantity,
+         ${thresholdExpr}::numeric(14,3) AS stock_alert
+         FROM sale_item_map m
+         JOIN ims.sales s ON s.sale_id = m.sale_id
+         JOIN ims.items i ON i.item_id = m.item_id
+         LEFT JOIN ims.categories c ON c.cat_id = i.category_id
+         LEFT JOIN stock st ON st.item_id = i.item_id AND st.branch_id = i.branch_id
+        WHERE s.branch_id = ANY($1)
+          AND s.status <> 'void'
+          AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
+          AND s.sale_date >= CURRENT_DATE - INTERVAL '30 days'
+        GROUP BY i.item_id, i.name, i.barcode, c.cat_name, st.row_count, st.store_qty, i.opening_balance
+       HAVING COALESCE(SUM(m.quantity), 0) > 0
+        ORDER BY quantity_sold DESC
+        LIMIT 5`,
+      [branchIds]
+    );
+
+    return rows.map((row) => {
+      const quantity = Number(row.quantity || 0);
+      const stockAlert = Number(row.stock_alert || 0);
+      const stockStatus: DashboardTopProduct['stock_status'] =
+        quantity <= 0 ? 'no_stock' : quantity <= stockAlert ? 'low_stock' : 'in_stock';
+      return {
+        item_id: Number(row.item_id),
+        name: row.item_name,
+        sku: row.barcode,
+        category_name: row.cat_name,
+        quantity_sold: Number(row.quantity_sold || 0),
+        revenue: Number(row.revenue || 0),
+        stock_status: stockStatus,
+      };
+    });
+  }
+
+  // Same "Customer Debt Breakdown" list the reference dashboard design shows
+  // - reuses the total-outstanding-debt card's own rows, plus a real (not
+  // fabricated) aging bucket derived from how long ago the customer's most
+  // recent still-unpaid sale was made.
+  async getCustomerDebtList(
+    branchIds: number[],
+    permissions: string[]
+  ): Promise<DashboardDebtRow[]> {
+    if (!permissions.includes('customers.view')) {
+      return [];
+    }
+
+    const nameCol = await pickFirstColumn('customers', ['full_name', 'name'], 'full_name');
+    const phoneCol = await pickFirstColumn('customers', ['phone', 'mobile', 'phone_number'], 'phone');
+
+    const rows = await queryMany<{
+      customer_id: number;
+      name: string;
+      phone: string | null;
+      balance: string;
+      days_since: string | null;
+    }>(
+      `SELECT
+         cu.customer_id,
+         COALESCE(${nameCol}, '')::text AS name,
+         NULLIF(${phoneCol}, '')::text AS phone,
+         cu.remaining_balance::text AS balance,
+         (SELECT (CURRENT_DATE - MAX(s.sale_date::date))::int
+            FROM ims.sales s
+           WHERE s.customer_id = cu.customer_id
+             AND s.status IN ('unpaid', 'partial')) AS days_since
+       FROM ims.customers cu
+      WHERE cu.branch_id = ANY($1)
+        AND cu.remaining_balance > 0
+      ORDER BY cu.remaining_balance DESC
+      LIMIT 6`,
+      [branchIds]
+    );
+
+    return rows.map((row) => {
+      const daysSince = row.days_since === null ? null : Number(row.days_since);
+      const aging: DashboardDebtRow['aging'] =
+        daysSince === null ? 'current' : daysSince > 45 ? 'overdue' : daysSince > 20 ? 'due_soon' : 'current';
+      return {
+        customer_id: Number(row.customer_id),
+        name: row.name,
+        phone: row.phone,
+        balance: Number(row.balance || 0),
+        aging,
+        days_since_last_unpaid_sale: daysSince,
       };
     });
   }

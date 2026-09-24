@@ -48,10 +48,12 @@ export class DashboardController {
     }
 
     const widgets = dashboardService.getDashboardWidgets(permissions);
-    const [cards, charts, lowStockItems, recent] = await Promise.all([
+    const [cards, charts, lowStockItems, topProducts, debtBreakdown, recent] = await Promise.all([
       dashboardService.getDashboardCards(branchIds, permissions),
       dashboardService.getDashboardCharts(branchIds, permissions),
       dashboardService.getLowStockItems(branchIds, permissions),
+      dashboardService.getTopSellingProducts(branchIds, permissions),
+      dashboardService.getCustomerDebtList(branchIds, permissions),
       dashboardService.getRecentActivity(branchIds, permissions),
     ]);
 
@@ -60,6 +62,8 @@ export class DashboardController {
       cards,
       charts,
       low_stock_items: lowStockItems,
+      top_products: topProducts,
+      debt_breakdown: debtBreakdown,
       recent,
       summary: {
         modules: cards.length,
