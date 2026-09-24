@@ -1040,8 +1040,15 @@ export const settingsService = {
     return mapCompany(row);
   },
 
+  // ims.company is a singleton (always company_id=1) every other setting/
+  // feature in the app depends on existing. A plain DELETE here used to be
+  // silently intercepted by the generic soft-delete trigger (is_deleted
+  // set to 1 instead of the row actually going away), which then broke
+  // Business Profile saves with an opaque RLS 42501 error - hit once in
+  // production. Refuse outright instead of leaving the row in that broken
+  // in-between state.
   async deleteCompanyInfo(): Promise<void> {
-    await queryOne(`DELETE FROM ims.company WHERE company_id = 1`);
+    throw ApiError.badRequest('Company profile cannot be deleted - edit it instead.');
   },
 
   // Part 5: the single configuration resolver. Loads the client's Business
@@ -1157,28 +1164,39 @@ export const settingsService = {
     // upsertCompanyInfo above. The INSERT branch only exists for the
     // pathological case of no company row at all; ON CONFLICT is the real
     // path for every actual deployment (bootstrap always creates row 1).
-    await queryOne(
-      `INSERT INTO ims.company (company_id, company_name, business_type, email, website, currency, country, timezone, business_profile, is_active)
-       VALUES (1, 'My Inventory ERP', $1, $2, $3, $4, $5, $6, $7::jsonb, TRUE)
-       ON CONFLICT (company_id) DO UPDATE SET
-         business_type = EXCLUDED.business_type,
-         email = EXCLUDED.email,
-         website = EXCLUDED.website,
-         currency = EXCLUDED.currency,
-         country = EXCLUDED.country,
-         timezone = EXCLUDED.timezone,
-         business_profile = EXCLUDED.business_profile,
-         updated_at = NOW()`,
-      [
-        merged.businessType,
-        merged.email,
-        merged.website,
-        merged.currency,
-        merged.country,
-        merged.timezone,
-        profileJson,
-      ]
-    );
+    //
+    // ON CONFLICT DO UPDATE is subject to rls_soft_delete's USING clause
+    // (same as any UPDATE) - if row 1 ever ends up with is_deleted <> 0 for
+    // any reason, this write would 42501 with no way to fix it except
+    // hand-editing the DB (hit once in production - see the fix
+    // accompanying this comment). SET LOCAL app.include_deleted='1' first,
+    // same as every other hand-written soft-delete-adjacent write in this
+    // codebase.
+    await withTransaction(async (client) => {
+      await client.query(`SET LOCAL app.include_deleted = '1'`);
+      await client.query(
+        `INSERT INTO ims.company (company_id, company_name, business_type, email, website, currency, country, timezone, business_profile, is_active)
+         VALUES (1, 'My Inventory ERP', $1, $2, $3, $4, $5, $6, $7::jsonb, TRUE)
+         ON CONFLICT (company_id) DO UPDATE SET
+           business_type = EXCLUDED.business_type,
+           email = EXCLUDED.email,
+           website = EXCLUDED.website,
+           currency = EXCLUDED.currency,
+           country = EXCLUDED.country,
+           timezone = EXCLUDED.timezone,
+           business_profile = EXCLUDED.business_profile,
+           updated_at = NOW()`,
+        [
+          merged.businessType,
+          merged.email,
+          merged.website,
+          merged.currency,
+          merged.country,
+          merged.timezone,
+          profileJson,
+        ]
+      );
+    });
 
     return merged;
   },

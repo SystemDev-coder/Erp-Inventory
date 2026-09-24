@@ -67,8 +67,6 @@ const System = () => {
   const [companyLoading, setCompanyLoading] = useState(false);
   const [companyModalOpen, setCompanyModalOpen] = useState(false);
   const [companySaving, setCompanySaving] = useState(false);
-  const [companyDeleting, setCompanyDeleting] = useState(false);
-  const [companyDeleteConfirmOpen, setCompanyDeleteConfirmOpen] = useState(false);
   const [companyForm, setCompanyForm] = useState(emptyCompanyForm);
 
   // Phase 11: Business Profile - reuses the same app-wide resolved profile
@@ -336,21 +334,6 @@ const System = () => {
     setCompanyModalOpen(false);
     showToast('success', 'Company Info', 'Saved');
     await loadCompany();
-  };
-
-  const handleCompanyDelete = async (reason: string) => {
-    if (!company) return;
-    setCompanyDeleting(true);
-    const res = await settingsService.deleteCompany(reason);
-    setCompanyDeleting(false);
-    if (!res.success) {
-      showToast('error', 'Company Info', res.error || 'Delete failed');
-      return;
-    }
-    setCompany(null);
-    setCompanyForm(emptyCompanyForm);
-    setCompanyDeleteConfirmOpen(false);
-    showToast('success', 'Company Info', 'Deleted');
   };
 
   const [activeTabId, setActiveTabId] = useState('company');
@@ -827,18 +810,17 @@ const System = () => {
                 </td>
                 <td className="py-2 pr-4">{company.updated_at ? new Date(company.updated_at).toLocaleString() : '-'}</td>
                 <td className="py-2 pr-4">
-                  <div className="flex gap-2">
-                    <button onClick={handleCompanyEdit} className="px-2 py-1 rounded border border-black inline-flex items-center gap-1">
-                      <Pencil className="w-3.5 h-3.5" /> Edit
-                    </button>
-                    <button
-                      onClick={() => setCompanyDeleteConfirmOpen(true)}
-                      disabled={companyDeleting}
-                      className="px-2 py-1 rounded border border-black inline-flex items-center gap-1"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" /> Delete
-                    </button>
-                  </div>
+                  {/* No Delete action here on purpose: ims.company is a
+                      singleton row (always company_id=1) every other
+                      setting/feature in the app depends on existing -
+                      "deleting" it used to silently soft-delete that one
+                      row instead (the generic soft-delete trigger
+                      intercepts even a hard DELETE), which then broke
+                      Business Profile saves with an opaque RLS error until
+                      someone noticed and fixed the row by hand. */}
+                  <button onClick={handleCompanyEdit} className="px-2 py-1 rounded border border-black inline-flex items-center gap-1">
+                    <Pencil className="w-3.5 h-3.5" /> Edit
+                  </button>
                 </td>
               </tr>
             </tbody>
@@ -897,19 +879,6 @@ const System = () => {
         </div>
       </Modal>
 
-      <ConfirmDialog
-        isOpen={companyDeleteConfirmOpen}
-        onClose={() => setCompanyDeleteConfirmOpen(false)}
-        onConfirm={(reason) => void handleCompanyDelete(reason || '')}
-        requireReason
-        title="Delete Company Profile?"
-        highlightedName={company?.company_name || undefined}
-        message="This action will permanently remove company profile data."
-        confirmText="Delete"
-        cancelText="Cancel"
-        variant="danger"
-        isLoading={companyDeleting}
-      />
     </div>
   );
 
