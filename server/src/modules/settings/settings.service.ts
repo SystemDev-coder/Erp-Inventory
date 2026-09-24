@@ -928,6 +928,16 @@ const PRODUCT_CONFIG_BY_TYPE: Record<string, ProductConfig> = {
     batchTracking: false, expiryTracking: false, serialNumber: false, multipleUnits: true,
     genericName: false, strength: false,
   },
+  // Phase 9: variants/color/serialNumber cover the legacy flat-column
+  // fields; the rest of an electronics item's real detail (Model, Storage,
+  // RAM, Processor, Screen Size, IMEI, ...) comes from the category's own
+  // attribute_keys via the Dynamic Product Attributes catalog
+  // (server/src/config/productAttributes.ts), not a new flag per field.
+  electronics: {
+    barcode: true, variants: true, size: false, color: true, brand: true,
+    batchTracking: false, expiryTracking: false, serialNumber: true, multipleUnits: false,
+    genericName: false, strength: false,
+  },
 };
 
 const resolveBusinessType = (value: string | null | undefined): string =>

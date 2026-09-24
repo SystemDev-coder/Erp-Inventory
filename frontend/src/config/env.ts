@@ -95,10 +95,12 @@ export const API = {
   PRODUCTS: {
     LIST: '/api/products',
     SUMMARY: '/api/products/summary',
+    EXPORT: '/api/products/export',
     BARCODE: (barcode: string) => `/api/products/barcode/${encodeURIComponent(barcode)}`,
     ITEM: (id: number) => `/api/products/${id}`,
     CATEGORIES: '/api/products/categories',
     CATEGORY: (id: number) => `/api/products/categories/${id}`,
+    CATEGORIES_SEED_DEFAULTS: '/api/products/categories/seed-defaults',
     UNITS: '/api/products/units',
     UNIT: (id: number) => `/api/products/units/${id}`,
     TAXES: '/api/products/taxes',

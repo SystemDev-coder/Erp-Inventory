@@ -88,6 +88,7 @@ const System = () => {
     pharmacy: 'Pharmacy',
     perfume: 'Perfume',
     cosmetics: 'Cosmetics',
+    electronics: 'Electronics',
     other: 'Other',
   };
   const openBusinessProfileEdit = () => {

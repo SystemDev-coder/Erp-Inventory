@@ -6,6 +6,17 @@ import { AuthRequest } from '../../middlewares/requireAuth';
 import { resolveBranchScope } from '../../utils/branchScope';
 import { deleteCloudinaryImage, getUploadedImageUrl } from '../../config/cloudinary';
 import { productsService } from './products.service';
+import { settingsService } from '../settings/settings.service';
+import { PRODUCT_ATTRIBUTE_CATALOG, isKnownAttributeKey } from '../../config/productAttributes';
+
+const loadSheetJs = () => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return require('xlsx') as any;
+  } catch (_error) {
+    throw ApiError.internal('Excel export dependency is missing. Install xlsx, then restart server.');
+  }
+};
 import {
   categoryCreateSchema,
   categoryUpdateSchema,
@@ -55,6 +66,7 @@ const normalizeCategoryBody = (body: any) => ({
   description: body?.description,
   isActive: body?.isActive ?? body?.is_active,
   branchId: body?.branchId ?? body?.branch_id,
+  attributeKeys: body?.attributeKeys ?? body?.attribute_keys,
 });
 
 const normalizeUnitBody = (body: any) => ({
@@ -83,6 +95,8 @@ const normalizeProductBody = (body: any) => ({
   color: body?.color,
   genericName: body?.genericName ?? body?.generic_name,
   strength: body?.strength,
+  serialNumber: body?.serialNumber ?? body?.serial_number,
+  attributes: body?.attributes,
   quantity: body?.quantity,
   stockAlert: body?.stockAlert ?? body?.stock_alert,
   openingBalance: body?.openingBalance ?? body?.opening_balance,
@@ -98,6 +112,64 @@ export const listProducts = asyncHandler(async (req: AuthRequest, res: Response)
   const filters = parseListFilters(req.query as Record<string, unknown>);
   const result = await productsService.listProducts(scope, filters);
   return ApiResponse.success(res, listPayload('products', result));
+});
+
+// Phase 9: Excel export - columns always match the active Business
+// Profile/Product Category/DataTable, because they're computed the same
+// way for all three: the fixed product fields, plus whichever Dynamic
+// Product Attributes catalog keys are actually assigned (via
+// ims.categories.attribute_keys) to the categories present in the rows
+// being exported.
+export const exportProducts = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const filters = parseListFilters(req.query as Record<string, unknown>);
+  const XLSX = loadSheetJs();
+
+  const result = await productsService.listProducts(scope, { ...filters, page: 1, limit: 5000 });
+  const products = result.rows;
+
+  const categoryIds = Array.from(
+    new Set(products.map((p) => p.category_id).filter((id): id is number => Boolean(id)))
+  );
+  const categories = await productsService.getCategoriesByIds(categoryIds);
+  const attributeKeySet = new Set<string>();
+  for (const category of categories) {
+    for (const key of category.attribute_keys || []) {
+      if (isKnownAttributeKey(key)) attributeKeySet.add(key);
+    }
+  }
+  const attributeKeys = Array.from(attributeKeySet);
+
+  const rows = products.map((p) => {
+    const row: Record<string, unknown> = {
+      name: p.name,
+      barcode: p.barcode || '',
+      category: p.category_name || '',
+      unit: p.unit_name || '',
+      quantity: p.quantity ?? p.stock ?? 0,
+      cost_price: p.cost_price,
+      sell_price: p.sell_price,
+      stock_alert: p.stock_alert,
+      is_active: p.is_active ? 'active' : 'inactive',
+    };
+    for (const key of attributeKeys) {
+      const def = PRODUCT_ATTRIBUTE_CATALOG[key];
+      const value = def.column ? (p as unknown as Record<string, unknown>)[def.column] : (p.attributes || {})[key];
+      row[def.label] = value ?? '';
+    }
+    return row;
+  });
+
+  const sheet = XLSX.utils.json_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Products');
+
+  const buffer: Buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+  const today = new Date().toISOString().slice(0, 10);
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="products_${today}.xlsx"`);
+  return res.status(200).send(buffer);
 });
 
 export const getProductsSummary = asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -198,6 +270,18 @@ export const updateCategory = asyncHandler(async (req: AuthRequest, res: Respons
   const category = await productsService.updateCategory(Number(req.params.id), input, scope);
   if (!category) throw ApiError.notFound('Category not found');
   return ApiResponse.success(res, { category }, 'Category updated');
+});
+
+// Phase 9: seeds the current Business Profile's starter categories (e.g.
+// Electronics -> Mobile Phones/Laptops/TVs/...) on request. Additive and
+// idempotent - safe to click more than once.
+export const seedDefaultCategories = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const profile = await settingsService.getBusinessProfile();
+  const businessType = profile.businessType || 'general';
+  const branchId = req.body?.branchId ? Number(req.body.branchId) : undefined;
+  const categories = await productsService.seedDefaultCategories(businessType, scope, branchId);
+  return ApiResponse.success(res, { categories }, `${categories.length} categor${categories.length === 1 ? 'y' : 'ies'} seeded`);
 });
 
 export const deleteCategory = asyncHandler(async (req: AuthRequest, res: Response) => {

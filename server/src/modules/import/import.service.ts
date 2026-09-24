@@ -5,6 +5,7 @@ import { ApiError } from '../../utils/ApiError';
 import { deleteGlByRef, ensureCoreCoa, postGl } from '../../utils/glPosting';
 import { syncSystemAccountBalancesWithClient } from '../../utils/systemAccounts';
 import { parseSpreadsheet } from './import.parser';
+import { PRODUCT_ATTRIBUTE_CATALOG, splitAttributes } from '../../config/productAttributes';
 import {
   ImportMode,
   ImportRowError,
@@ -94,6 +95,11 @@ type ItemImportRow = {
   unit_name: string | null;
   category_id: number | null;
   unit_id: number | null;
+  // Phase 9: any Dynamic Product Attributes catalog column present in the
+  // file, keyed the same way the product form/API sends them - routed to
+  // the right storage (legacy column vs. attributes JSONB) by insertItem
+  // via the same splitAttributes helper products.service.ts uses.
+  attributes: Record<string, string>;
 };
 
 type CustomerShape = {
@@ -689,6 +695,17 @@ const parseItemRow = (raw: Record<string, unknown>): ParseResult<ItemImportRow> 
   const isActive = parseBooleanLike(isActiveRaw, 'is_active', errors, true);
   const storeId = parseOptionalPositiveInt(storeIdRaw, 'store_id', errors);
 
+  // Phase 9: any catalog column present in this row's file (matched by its
+  // key, e.g. "Screen Size" -> screen_size, same as every other header
+  // here) - whatever isn't present is simply omitted, never an error, so
+  // every business profile's template (which lists every possible
+  // attribute column) works for every other profile too.
+  const attributes: Record<string, string> = {};
+  for (const def of Object.values(PRODUCT_ATTRIBUTE_CATALOG)) {
+    const value = readString(raw, [def.key]);
+    if (value) attributes[def.key] = value;
+  }
+
   const data: ItemImportRow = {
     name,
     barcode: barcode || null,
@@ -702,6 +719,7 @@ const parseItemRow = (raw: Record<string, unknown>): ParseResult<ItemImportRow> 
     unit_name: unitName || null,
     category_id: null,
     unit_id: null,
+    attributes,
   };
 
   return {
@@ -1480,6 +1498,24 @@ const insertItem = async (
     );
   }
 
+  if (Object.keys(row.attributes).length) {
+    const { columns: attrColumns, jsonb: attrJsonb } = splitAttributes(row.attributes);
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    for (const [column, value] of Object.entries(attrColumns)) {
+      values.push(value);
+      setClauses.push(`${column} = $${values.length}`);
+    }
+    if (Object.keys(attrJsonb).length) {
+      values.push(JSON.stringify(attrJsonb));
+      setClauses.push(`attributes = $${values.length}::jsonb`);
+    }
+    if (setClauses.length) {
+      values.push(itemId);
+      await client.query(`UPDATE ims.items SET ${setClauses.join(', ')} WHERE item_id = $${values.length}`, values);
+    }
+  }
+
   await postItemOpeningStockGl(client, {
     branchId,
     itemId,
@@ -1591,6 +1627,7 @@ const itemsDefinition: ImportDefinition<ItemImportRow> = {
       stock_alert: Number(row.stock_alert || 0),
       category: row.category_name || '(default)',
       unit: row.unit_name || '(default)',
+      ...row.attributes,
     };
   },
 };

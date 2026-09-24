@@ -850,7 +850,8 @@ export const inventoryService = {
             0
           )::numeric(14,2) AS weighted_unit_cost,
           COALESCE(${alertExpr}, 0)::numeric(14,3) AS min_stock_threshold,
-          pc.last_purchase_date
+          pc.last_purchase_date,
+          COALESCE(i.attributes, '{}'::jsonb) AS attributes
        FROM ims.items i
        LEFT JOIN purchase_cost pc ON pc.item_id = i.item_id
       WHERE ${where.join(' AND ')}

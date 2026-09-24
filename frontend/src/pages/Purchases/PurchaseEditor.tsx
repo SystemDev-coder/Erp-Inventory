@@ -11,6 +11,7 @@ import { Modal } from '../../components/ui/modal/Modal';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { useBranch } from '../../context/BranchContext';
+import { attributeSummary } from '../../config/productAttributes';
 
 const addDaysToDate = (baseDate: string, days: number) => {
   const dt = new Date(`${baseDate}T00:00:00`);
@@ -1276,10 +1277,11 @@ const PurchaseEditor = () => {
 	                      id={productFieldId(idx)}
 	                      value={item.product_id}
 	                      options={(() => {
-	                        const base = products.map((p) => ({
-	                          value: p.product_id,
-	                          label: p.name?.trim() ? p.name : `Product #${p.product_id}`,
-	                        }));
+	                        const base = products.map((p) => {
+	                          const name = p.name?.trim() ? p.name : `Product #${p.product_id}`;
+	                          const summary = attributeSummary(p.attributes);
+	                          return { value: p.product_id, label: summary ? `${name} - ${summary}` : name };
+	                        });
 	                        const q = lineSearchQuery.trim();
 	                        if (!q) return base;
 	                        const exists = base.some((o) => o.label.toLowerCase() === q.toLowerCase());

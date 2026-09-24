@@ -19,6 +19,13 @@ import ImportUploadModal from '../../components/import/ImportUploadModal';
 import { useBranch } from '../../context/BranchContext';
 import { useBusinessConfig } from '../../context/BusinessConfigContext';
 import { usePermissions } from '../../hooks/usePermissions';
+import { PRODUCT_ATTRIBUTE_CATALOG, ProductAttributeDef, attributeSummary } from '../../config/productAttributes';
+
+// All catalog keys not already covered by the base Excel columns above
+// (brand/color/size/generic_name/strength already have their own legacy
+// column and are covered separately where relevant) - offered as optional
+// columns so one template/import works across every business profile.
+const ATTRIBUTE_CATALOG_KEYS = Object.keys(PRODUCT_ATTRIBUTE_CATALOG);
 
 type ProductForm = Partial<Product>;
 type TxCategory = 'adjustment' | 'paid' | 'sales' | 'cancelled';
@@ -113,6 +120,7 @@ const Products = () => {
   const [itemModalOpen, setItemModalOpen] = useState(false);
   const [stateModalOpen, setStateModalOpen] = useState(false);
   const [itemImportOpen, setItemImportOpen] = useState(false);
+  const [exportingItems, setExportingItems] = useState(false);
 
   const [itemForm, setItemForm] = useState<ProductForm>(defaultProductForm);
   const [itemStoreId, setItemStoreId] = useState<number | ''>('');
@@ -318,6 +326,47 @@ const Products = () => {
     }
   };
 
+  const handleExportProducts = async () => {
+    setExportingItems(true);
+    const res = await productService.exportXlsx({
+      search: itemsSearch || undefined,
+      stockStatus: itemsStockFilter || undefined,
+      branchId: activeBranchId ?? undefined,
+    });
+    setExportingItems(false);
+    if (!res.success || !res.blob) {
+      showToast('error', 'Export failed', res.success ? 'No file returned from server.' : res.error || 'Could not export products');
+      return;
+    }
+    const url = window.URL.createObjectURL(res.blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = res.filename || 'products.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  };
+
+  const [seedingCategories, setSeedingCategories] = useState(false);
+  const handleSeedDefaultCategories = async () => {
+    setSeedingCategories(true);
+    const res = await productService.seedDefaultCategories(activeBranchId ?? undefined);
+    setSeedingCategories(false);
+    if (res.success) {
+      const count = res.data?.categories?.length ?? 0;
+      showToast(
+        'success',
+        'Categories',
+        count > 0 ? `${count} starter categor${count === 1 ? 'y' : 'ies'} added` : 'Starter categories already exist'
+      );
+      setCategoriesDisplayed(true);
+      await resolveCategories();
+    } else {
+      showToast('error', 'Categories', res.error || 'Failed to seed starter categories');
+    }
+  };
+
   const removeCategory = async (reason: string) => {
     if (!categoryToDelete) return;
     const res = await productService.removeCategory(categoryToDelete.category_id, reason);
@@ -484,7 +533,24 @@ const Products = () => {
         header: 'Code',
         cell: ({ row }) => `#PRD${String(row.original.product_id).padStart(4, '0')}`,
       },
-      { accessorKey: 'name', header: 'Product' },
+      {
+        accessorKey: 'name',
+        header: 'Product',
+        // Phase 9: the DataTable is also part of the centralized Dynamic
+        // Product Attributes config - a light caption of up to 2 of the
+        // product's own attribute values (e.g. "Model: iPhone 15 - Storage:
+        // 128GB") instead of a fixed extra column, since different
+        // categories under the same profile use different keys.
+        cell: ({ row }) => {
+          const summary = attributeSummary(row.original.attributes);
+          return (
+            <div>
+              <div>{row.original.name}</div>
+              {summary && <div className="text-xs text-slate-400">{summary}</div>}
+            </div>
+          );
+        },
+      },
       { accessorKey: 'category_name', header: 'Category', cell: ({ row }) => row.original.category_name || '-' },
       { accessorKey: 'brand', header: 'Brand', cell: ({ row }) => row.original.brand || '-' },
       {
@@ -600,6 +666,38 @@ const Products = () => {
   const setItemField = (field: string, value: unknown) => {
     const next = { ...itemForm, [field]: value } as ProductForm;
     setItemForm(next);
+  };
+
+  // Phase 9: Dynamic Product Attributes - the selected category's
+  // attribute_keys, minus whichever ones are already covered by the legacy
+  // flag-driven fields above (Brand is always shown; Size/Color/Generic
+  // Name/Strength depend on productConfig) so nothing is ever duplicated.
+  // Loose/coerced comparison, not === : category_id comes back from Postgres
+  // as a JSON string for BIGINT columns (node-postgres default), while
+  // itemForm.category_id is set as a number by the combobox's onChange -
+  // the same "bigint id is a string" mismatch already fixed a few times
+  // elsewhere in this app's Sales/Purchases item selection.
+  const selectedItemCategory = categories.find((c) => String(c.category_id) === String(itemForm.category_id));
+  const legacyAttributeColumns = new Set<string>(
+    ['brand', productConfig.size && 'size', productConfig.color && 'color', productConfig.genericName && 'generic_name', productConfig.strength && 'strength'].filter(
+      (v): v is string => Boolean(v)
+    )
+  );
+  const dynamicAttributeDefs: ProductAttributeDef[] = (selectedItemCategory?.attribute_keys || [])
+    .map((key) => PRODUCT_ATTRIBUTE_CATALOG[key])
+    .filter((def): def is ProductAttributeDef => Boolean(def) && !(def.column && legacyAttributeColumns.has(def.column)));
+
+  const setAttributeField = (def: ProductAttributeDef, value: string) => {
+    if (def.column) {
+      setItemField(def.column, value);
+    } else {
+      setItemForm((prev) => ({ ...prev, attributes: { ...(prev.attributes || {}), [def.key]: value } }));
+    }
+  };
+
+  const getAttributeValue = (def: ProductAttributeDef): string => {
+    if (def.column) return String((itemForm as unknown as Record<string, unknown>)[def.column] ?? '');
+    return String(itemForm.attributes?.[def.key] ?? '');
   };
 
   const closeItemModal = () => {
@@ -789,6 +887,16 @@ const Products = () => {
                 className="rounded-lg border border-primary-300 px-3 py-2 text-sm font-medium text-primary-700 hover:bg-primary-50 dark:border-primary-500/40 dark:text-primary-300 dark:hover:bg-primary-500/10"
               >
                 Upload Data
+              </button>
+            )}
+            {can('items.view') && (
+              <button
+                type="button"
+                disabled={exportingItems}
+                onClick={() => void handleExportProducts()}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                {exportingItems ? 'Exporting...' : 'Export Excel'}
               </button>
             )}
             {can('items.create') && (
@@ -998,6 +1106,16 @@ const Products = () => {
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
               {loading ? 'Loading...' : 'Display'}
             </button>
+            {can('items.create') && businessProfile.businessType === 'electronics' && (
+              <button
+                type="button"
+                disabled={seedingCategories}
+                onClick={() => void handleSeedDefaultCategories()}
+                className="inline-flex items-center gap-2 rounded-lg border border-primary-300 px-3 py-2 text-sm text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-primary-700 dark:text-primary-300 dark:hover:bg-primary-900/20"
+              >
+                {seedingCategories ? 'Adding...' : 'Add Electronics Starter Categories'}
+              </button>
+            )}
             {can('items.create') && (
               <button
                 type="button"
@@ -1282,6 +1400,32 @@ const Products = () => {
             </ItemField>
           )}
 
+          {/* Phase 9: Dynamic Product Attributes - one field per key the
+              selected category lists (Category tab controls the list),
+              e.g. Model/Storage/RAM/Screen Size/IMEI for an Electronics
+              "Mobile Phones" category. */}
+          {dynamicAttributeDefs.map((def) =>
+            def.type === 'select' ? (
+              <ItemField key={def.key} label={def.label}>
+                <select value={getAttributeValue(def)} onChange={(e) => setAttributeField(def, e.target.value)}>
+                  <option value="">Select {def.label.toLowerCase()}</option>
+                  {(def.options || []).map((opt) => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              </ItemField>
+            ) : (
+              <ItemField key={def.key} label={def.label}>
+                <input
+                  type={def.type === 'number' ? 'number' : def.type === 'date' ? 'date' : 'text'}
+                  placeholder={`e.g. ${def.label}`}
+                  value={getAttributeValue(def)}
+                  onChange={(e) => setAttributeField(def, e.target.value)}
+                />
+              </ItemField>
+            )
+          )}
+
           <ItemField label="Stock Alert">
             <input
               type="number"
@@ -1469,6 +1613,30 @@ const Products = () => {
               onChange={(e) => setCategoryForm({ ...categoryForm, description: e.target.value })}
             />
           </ItemField>
+          <ItemField label="Attributes">
+            <p className="text-xs text-slate-500 dark:text-slate-400 -mt-0.5 mb-1">
+              Which fields do products in this category need? (e.g. Model, Storage, RAM for phones)
+            </p>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 max-h-48 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 p-2">
+              {Object.values(PRODUCT_ATTRIBUTE_CATALOG).map((def) => {
+                const checked = (categoryForm.attribute_keys || []).includes(def.key);
+                return (
+                  <label key={def.key} className="flex items-center gap-1.5 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => {
+                        const current = categoryForm.attribute_keys || [];
+                        const next = e.target.checked ? [...current, def.key] : current.filter((k) => k !== def.key);
+                        setCategoryForm({ ...categoryForm, attribute_keys: next });
+                      }}
+                    />
+                    {def.label}
+                  </label>
+                );
+              })}
+            </div>
+          </ItemField>
           <div className="flex justify-end gap-2 pt-1 border-t border-slate-100 dark:border-slate-700 mt-1">
             <button type="button" onClick={() => setCategoryModalOpen(false)} className="px-3 py-1.5 text-sm rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
             <button type="submit" className="px-4 py-1.5 text-sm rounded-lg bg-primary-600 text-white hover:bg-primary-700">{categoryForm.category_id ? 'Update' : 'Save'}</button>
@@ -1510,9 +1678,12 @@ const Products = () => {
         onClose={() => setItemImportOpen(false)}
         importType="items"
         title="Upload Products"
-        columns={['item', 'quantity', 'cost_price', 'amount', 'sell_price', 'category', 'unit']}
-        templateHeaders={['item', 'quantity', 'cost_price', 'sell_price', 'store_id', 'barcode', 'stock_alert', 'is_active', 'category', 'unit']}
-        hint="store_id, category, and unit are all optional. If left blank, the system assigns Main Store / the default category / the default unit - and creates a new category or unit automatically if you type a name that doesn't exist yet."
+        columns={['item', 'quantity', 'cost_price', 'amount', 'sell_price', 'category', 'unit', ...ATTRIBUTE_CATALOG_KEYS]}
+        templateHeaders={[
+          'item', 'quantity', 'cost_price', 'sell_price', 'store_id', 'barcode', 'stock_alert', 'is_active', 'category', 'unit',
+          ...ATTRIBUTE_CATALOG_KEYS,
+        ]}
+        hint="store_id, category, and unit are all optional. If left blank, the system assigns Main Store / the default category / the default unit - and creates a new category or unit automatically if you type a name that doesn't exist yet. The remaining columns (Model, Storage, RAM, ...) are also optional - only fill in the ones relevant to what you're importing."
         onImported={async () => {
           if (itemsDisplayed) await loadProducts();
         }}

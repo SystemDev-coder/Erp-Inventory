@@ -45,7 +45,7 @@ export interface PurchaseConfig {
   supplierCreditDays: number;
 }
 
-export type BusinessType = 'general' | 'supermarket' | 'clothing' | 'pharmacy' | 'perfume' | 'cosmetics' | 'other';
+export type BusinessType = 'general' | 'supermarket' | 'clothing' | 'pharmacy' | 'perfume' | 'cosmetics' | 'electronics' | 'other';
 
 export interface BusinessProfile {
   businessType: string | null;

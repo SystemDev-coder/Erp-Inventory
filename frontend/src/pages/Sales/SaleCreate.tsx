@@ -53,6 +53,7 @@ type SaleItemOption = {
   item_name: string;
   unit_price: number;
   available_qty?: number;
+  attributes?: Record<string, string | number>;
 };
 
 const SaleCreate = () => {
@@ -211,6 +212,7 @@ const SaleCreate = () => {
             item_name: item.item_name,
             unit_price: Number(fallbackPrice),
             available_qty: stockMap.get(itemId) ?? 0,
+            attributes: item.attributes,
           };
         });
         setItemOptions(mapped);
@@ -1232,7 +1234,7 @@ const SaleCreate = () => {
                           options={(() => {
                             const base = itemOptions.map((item) => ({
                               value: item.item_id,
-                              label: itemLabelWithAvailability(item.item_name, item.available_qty),
+                              label: itemLabelWithAvailability(item.item_name, item.available_qty, item.attributes),
                             }));
                             const q = lineSearchQuery.trim();
                             if (!q) return base;

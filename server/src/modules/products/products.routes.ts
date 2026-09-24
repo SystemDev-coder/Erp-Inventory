@@ -14,6 +14,7 @@ import {
   createCategory,
   updateCategory,
   deleteCategory,
+  seedDefaultCategories,
   listUnits,
   createUnit,
   updateUnit,
@@ -25,6 +26,7 @@ import {
   uploadProductImage,
   deleteProductImage,
   getProductByBarcode,
+  exportProducts,
 } from './products.controller';
 
 const router = Router();
@@ -34,6 +36,7 @@ router.use(requireAuth);
 // Categories
 router.get('/categories', requirePerm('items.view'), listCategories);
 router.post('/categories', requirePerm('items.create'), createCategory);
+router.post('/categories/seed-defaults', requirePerm('items.create'), seedDefaultCategories);
 router.put('/categories/:id', requirePerm('items.update'), updateCategory);
 router.delete('/categories/:id', requirePerm('items.delete'), deleteCategory);
 
@@ -51,6 +54,7 @@ router.delete('/taxes/:id', requirePerm('items.delete'), deleteTax);
 
 // Products
 router.get('/', requirePerm('items.view'), listProducts);
+router.get('/export', requirePerm('items.view'), exportProducts);
 router.get('/summary', requirePerm('items.view'), getProductsSummary);
 router.get('/barcode/:barcode', requirePerm('items.view'), getProductByBarcode);
 router.get('/:id', requirePerm('items.view'), getProduct);

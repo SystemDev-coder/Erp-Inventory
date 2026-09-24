@@ -186,7 +186,7 @@ export const openingBalanceCleanupSchema = z.object({
 const optionalAccId = z.coerce.number().int().positive().nullable().optional();
 
 export const businessProfileSchema = z.object({
-  businessType: z.enum(['general', 'supermarket', 'clothing', 'pharmacy', 'perfume', 'cosmetics', 'other']).optional(),
+  businessType: z.enum(['general', 'supermarket', 'clothing', 'pharmacy', 'perfume', 'cosmetics', 'electronics', 'other']).optional(),
   email: z.string().trim().max(150).email('Invalid email').optional().or(z.literal('')),
   website: z.string().trim().max(255).optional().or(z.literal('')),
   currency: z.string().trim().max(10).optional().or(z.literal('')),

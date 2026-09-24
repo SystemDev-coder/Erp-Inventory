@@ -20,6 +20,11 @@ import {
   UnitCreateInput,
   UnitUpdateInput,
 } from './products.schemas';
+import {
+  DEFAULT_CATEGORIES_BY_BUSINESS_TYPE,
+  isKnownAttributeKey,
+  splitAttributes,
+} from '../../config/productAttributes';
 
 type MasterFilters = {
   search?: string;
@@ -47,6 +52,7 @@ export interface Category {
   name: string;
   description: string | null;
   is_active: boolean;
+  attribute_keys: string[];
   created_at: string;
   updated_at: string | null;
 }
@@ -88,6 +94,8 @@ export interface Product {
   color?: string | null;
   generic_name?: string | null;
   strength?: string | null;
+  serial_number?: string | null;
+  attributes?: Record<string, string | number>;
   stock_alert: number;
   cost_price: number;
   sell_price: number;
@@ -212,6 +220,7 @@ const getCategorySql = `
     c.cat_name AS name,
     c.description,
     COALESCE(c.is_active, TRUE) AS is_active,
+    COALESCE(c.attribute_keys, ARRAY[]::text[]) AS attribute_keys,
     c.created_at::text AS created_at,
     c.updated_at::text AS updated_at
   FROM ims.categories c
@@ -259,6 +268,8 @@ const getProductSql = (stockAlertExpr: string, storeIdExpr = 'NULL::bigint') => 
     i.color,
     i.generic_name,
     i.strength,
+    i.serial_number,
+    COALESCE(i.attributes, '{}'::jsonb) AS attributes,
     ${stockAlertExpr} AS stock_alert,
     i.cost_price,
     i.sell_price,
@@ -493,13 +504,21 @@ export const productsService = {
     );
   },
 
+  // Phase 9: used by Excel export to resolve which attribute_keys are in
+  // play across a batch of products' categories in one query.
+  async getCategoriesByIds(ids: number[]): Promise<Category[]> {
+    if (!ids.length) return [];
+    return queryMany<Category>(`${getCategorySql} WHERE c.cat_id = ANY($1::bigint[])`, [ids]);
+  },
+
   async createCategory(input: CategoryCreateInput, scope: BranchScope): Promise<Category> {
     const branchId = pickBranchForWrite(scope, input.branchId);
+    const attributeKeys = (input.attributeKeys || []).filter(isKnownAttributeKey);
     const created = await queryOne<{ cat_id: number }>(
-      `INSERT INTO ims.categories (branch_id, cat_name, description, is_active)
-       VALUES ($1, $2, NULLIF($3, ''), COALESCE($4, TRUE))
+      `INSERT INTO ims.categories (branch_id, cat_name, description, is_active, attribute_keys)
+       VALUES ($1, $2, NULLIF($3, ''), COALESCE($4, TRUE), $5::text[])
        RETURNING cat_id`,
-      [branchId, input.name, input.description || '', input.isActive]
+      [branchId, input.name, input.description || '', input.isActive, attributeKeys]
     );
     return (await this.getCategory(Number(created?.cat_id), scope)) as Category;
   },
@@ -513,6 +532,10 @@ export const productsService = {
     if (input.name !== undefined) { updates.push(`cat_name = $${p++}`); values.push(input.name); }
     if (input.description !== undefined) { updates.push(`description = NULLIF($${p++}, '')`); values.push(input.description || ''); }
     if (input.isActive !== undefined) { updates.push(`is_active = $${p++}`); values.push(input.isActive); }
+    if (input.attributeKeys !== undefined) {
+      updates.push(`attribute_keys = $${p++}::text[]`);
+      values.push(input.attributeKeys.filter(isKnownAttributeKey));
+    }
     updates.push('updated_at = NOW()');
     if (scope.isAdmin) {
       await queryOne(`UPDATE ims.categories SET ${updates.join(', ')} WHERE cat_id = $1`, values);
@@ -545,6 +568,33 @@ export const productsService = {
     }
     if (scope.isAdmin) await queryOne(`DELETE FROM ims.categories WHERE cat_id = $1`, [id]);
     else await queryOne(`DELETE FROM ims.categories WHERE cat_id = $1 AND branch_id = ANY($2::bigint[])`, [id, scope.branchIds]);
+  },
+
+  // Phase 9: on-demand starter categories for a business type (currently
+  // just electronics - see DEFAULT_CATEGORIES_BY_BUSINESS_TYPE). Additive
+  // and idempotent (ON CONFLICT on the existing branch+name unique
+  // constraint), never runs automatically on a business-type switch - the
+  // user triggers it explicitly from Settings/Products, so it never
+  // clutters a branch that already has its own category list.
+  async seedDefaultCategories(businessType: string, scope: BranchScope, branchId?: number): Promise<Category[]> {
+    const defaults = DEFAULT_CATEGORIES_BY_BUSINESS_TYPE[businessType];
+    if (!defaults?.length) return [];
+    const targetBranchId = pickBranchForWrite(scope, branchId);
+    const created: Category[] = [];
+    for (const def of defaults) {
+      const row = await queryOne<{ cat_id: number }>(
+        `INSERT INTO ims.categories (branch_id, cat_name, description, is_active, attribute_keys)
+         VALUES ($1, $2, $3, TRUE, $4::text[])
+         ON CONFLICT (branch_id, cat_name) DO NOTHING
+         RETURNING cat_id`,
+        [targetBranchId, def.name, `${businessType} starter category`, def.attributeKeys]
+      );
+      if (row?.cat_id) {
+        const category = await this.getCategory(Number(row.cat_id), scope);
+        if (category) created.push(category);
+      }
+    }
+    return created;
   },
 
   async listUnits(scope: BranchScope, filters: MasterFilters): Promise<Paged<Unit>> {
@@ -936,26 +986,48 @@ export const productsService = {
         throw ApiError.internal('Failed to create item');
       }
 
-      // Phase 11: set separately, deliberately outside the INSERT above.
+      // Phase 11/9: set separately, deliberately outside the INSERT above.
       // That INSERT's column/placeholder list already branches on
-      // catIdRequired via hand-counted $N positions - adding four more
-      // columns there risks an off-by-one in either branch. A follow-up
-      // UPDATE is just as correct here since nothing downstream in this
-      // transaction reads these columns before it runs.
+      // catIdRequired via hand-counted $N positions - adding more columns
+      // there risks an off-by-one in either branch. A follow-up UPDATE is
+      // just as correct here since nothing downstream in this transaction
+      // reads these columns before it runs.
+      const { columns: attrColumns, jsonb: attrJsonb } = splitAttributes(input.attributes);
+      const finalSerialNumber = input.serialNumber || attrColumns.serial_number || null;
+      const finalBrand = attrColumns.brand || null; // input.brand already set in the INSERT above
       if (
         input.size !== undefined ||
         input.color !== undefined ||
         input.genericName !== undefined ||
-        input.strength !== undefined
+        input.strength !== undefined ||
+        finalSerialNumber ||
+        finalBrand ||
+        attrColumns.size ||
+        attrColumns.color ||
+        Object.keys(attrJsonb).length
       ) {
         await client.query(
           `UPDATE ims.items
-              SET size = COALESCE(NULLIF($1, ''), size),
-                  color = COALESCE(NULLIF($2, ''), color),
-                  generic_name = COALESCE(NULLIF($3, ''), generic_name),
-                  strength = COALESCE(NULLIF($4, ''), strength)
-            WHERE item_id = $5`,
-          [input.size || null, input.color || null, input.genericName || null, input.strength || null, itemId]
+              SET size = COALESCE(NULLIF($1, ''), NULLIF($2, ''), size),
+                  color = COALESCE(NULLIF($3, ''), NULLIF($4, ''), color),
+                  generic_name = COALESCE(NULLIF($5, ''), generic_name),
+                  strength = COALESCE(NULLIF($6, ''), strength),
+                  serial_number = COALESCE(NULLIF($7, ''), serial_number),
+                  brand = COALESCE(NULLIF($8, ''), brand),
+                  attributes = attributes || $9::jsonb
+            WHERE item_id = $10`,
+          [
+            input.size || null,
+            attrColumns.size || null,
+            input.color || null,
+            attrColumns.color || null,
+            input.genericName || null,
+            input.strength || null,
+            finalSerialNumber,
+            finalBrand,
+            JSON.stringify(attrJsonb),
+            itemId,
+          ]
         );
       }
 
@@ -1006,6 +1078,21 @@ export const productsService = {
     if (input.color !== undefined) { updates.push(`color = NULLIF($${p++}, '')`); values.push(input.color || ''); }
     if (input.genericName !== undefined) { updates.push(`generic_name = NULLIF($${p++}, '')`); values.push(input.genericName || ''); }
     if (input.strength !== undefined) { updates.push(`strength = NULLIF($${p++}, '')`); values.push(input.strength || ''); }
+    if (input.serialNumber !== undefined) { updates.push(`serial_number = NULLIF($${p++}, '')`); values.push(input.serialNumber || ''); }
+    if (input.attributes !== undefined) {
+      const { columns: attrColumns, jsonb: attrJsonb } = splitAttributes(input.attributes);
+      if (attrColumns.brand) { updates.push(`brand = $${p++}`); values.push(attrColumns.brand); }
+      if (attrColumns.color) { updates.push(`color = $${p++}`); values.push(attrColumns.color); }
+      if (attrColumns.size) { updates.push(`size = $${p++}`); values.push(attrColumns.size); }
+      if (attrColumns.generic_name) { updates.push(`generic_name = $${p++}`); values.push(attrColumns.generic_name); }
+      if (attrColumns.strength) { updates.push(`strength = $${p++}`); values.push(attrColumns.strength); }
+      if (attrColumns.serial_number) { updates.push(`serial_number = $${p++}`); values.push(attrColumns.serial_number); }
+      // Full replace, not merge: the product form always sends the complete
+      // set of dynamic fields for the item's current category, so a stale
+      // key from a prior (different) category never lingers.
+      updates.push(`attributes = $${p++}::jsonb`);
+      values.push(JSON.stringify(attrJsonb));
+    }
     if (input.stockAlert !== undefined) { updates.push(`${stockAlertColumn} = $${p++}`); values.push(input.stockAlert); }
     if (input.sellPrice !== undefined) { updates.push(`sell_price = $${p++}`); values.push(input.sellPrice); }
     if (input.costPrice !== undefined) { updates.push(`cost_price = $${p++}`); values.push(input.costPrice); }
