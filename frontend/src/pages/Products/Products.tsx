@@ -19,7 +19,7 @@ import ImportUploadModal from '../../components/import/ImportUploadModal';
 import { useBranch } from '../../context/BranchContext';
 import { useBusinessConfig } from '../../context/BusinessConfigContext';
 import { usePermissions } from '../../hooks/usePermissions';
-import { PRODUCT_ATTRIBUTE_CATALOG, ProductAttributeDef, attributeSummary } from '../../config/productAttributes';
+import { PRODUCT_ATTRIBUTE_CATALOG, ProductAttributeDef, attributeSummary, DEFAULT_CATEGORIES_BY_BUSINESS_TYPE } from '../../config/productAttributes';
 
 // All catalog keys not already covered by the base Excel columns above
 // (brand/color/size/generic_name/strength already have their own legacy
@@ -1106,14 +1106,16 @@ const Products = () => {
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
               {loading ? 'Loading...' : 'Display'}
             </button>
-            {can('items.create') && businessProfile.businessType === 'electronics' && (
+            {can('items.create') && businessProfile.businessType && DEFAULT_CATEGORIES_BY_BUSINESS_TYPE[businessProfile.businessType] && (
               <button
                 type="button"
                 disabled={seedingCategories}
                 onClick={() => void handleSeedDefaultCategories()}
                 className="inline-flex items-center gap-2 rounded-lg border border-primary-300 px-3 py-2 text-sm text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-primary-700 dark:text-primary-300 dark:hover:bg-primary-900/20"
               >
-                {seedingCategories ? 'Adding...' : 'Add Electronics Starter Categories'}
+                {seedingCategories
+                  ? 'Adding...'
+                  : `Add ${businessProfile.businessType.charAt(0).toUpperCase()}${businessProfile.businessType.slice(1)} Starter Categories`}
               </button>
             )}
             {can('items.create') && (

@@ -50,6 +50,60 @@ export const ELECTRONICS_DEFAULT_CATEGORIES: { name: string; attributeKeys: stri
   { name: 'Other Electronics', attributeKeys: ['brand', 'model', 'color', 'warranty', 'serial_number'] },
 ];
 
+// Starter categories for the other business profiles - see the matching
+// (identical) comment in server/src/config/productAttributes.ts. General
+// and Other are deliberately left unseeded.
+export const DEFAULT_CATEGORIES_BY_BUSINESS_TYPE: Record<string, { name: string; attributeKeys: string[] }[]> = {
+  electronics: ELECTRONICS_DEFAULT_CATEGORIES,
+  supermarket: [
+    { name: 'Beverages', attributeKeys: ['size'] },
+    { name: 'Snacks & Confectionery', attributeKeys: ['size'] },
+    { name: 'Dairy & Eggs', attributeKeys: ['size'] },
+    { name: 'Household & Cleaning', attributeKeys: ['size'] },
+    { name: 'Personal Care', attributeKeys: ['size'] },
+    { name: 'Frozen Foods', attributeKeys: ['size'] },
+    { name: 'Bakery', attributeKeys: [] },
+    { name: 'Other Grocery', attributeKeys: [] },
+  ],
+  clothing: [
+    { name: 'Shirts', attributeKeys: ['material'] },
+    { name: 'Pants', attributeKeys: ['material'] },
+    { name: 'Dresses', attributeKeys: ['material'] },
+    { name: 'Outerwear', attributeKeys: ['material'] },
+    { name: 'Shoes', attributeKeys: ['material'] },
+    { name: 'Accessories', attributeKeys: ['material'] },
+    { name: 'Kids Wear', attributeKeys: ['material'] },
+    { name: 'Other Apparel', attributeKeys: [] },
+  ],
+  pharmacy: [
+    { name: 'Tablets & Capsules', attributeKeys: [] },
+    { name: 'Syrups & Liquids', attributeKeys: [] },
+    { name: 'Injections', attributeKeys: [] },
+    { name: 'Ointments & Creams', attributeKeys: [] },
+    { name: 'Medical Devices & Equipment', attributeKeys: ['brand', 'model', 'serial_number', 'warranty'] },
+    { name: 'Supplements', attributeKeys: [] },
+    { name: 'First Aid', attributeKeys: [] },
+    { name: 'Other Pharmacy', attributeKeys: [] },
+  ],
+  perfume: [
+    { name: "Men's Perfume", attributeKeys: [] },
+    { name: "Women's Perfume", attributeKeys: [] },
+    { name: 'Unisex Perfume', attributeKeys: [] },
+    { name: 'Perfume Gift Sets', attributeKeys: [] },
+    { name: 'Body Mist & Deodorant', attributeKeys: [] },
+    { name: 'Other Fragrance', attributeKeys: [] },
+  ],
+  cosmetics: [
+    { name: 'Skincare', attributeKeys: [] },
+    { name: 'Makeup', attributeKeys: [] },
+    { name: 'Haircare', attributeKeys: [] },
+    { name: 'Nail Care', attributeKeys: [] },
+    { name: 'Fragrance', attributeKeys: [] },
+    { name: 'Tools & Brushes', attributeKeys: ['material'] },
+    { name: 'Other Cosmetics', attributeKeys: [] },
+  ],
+};
+
 // Returns the label a value should be edited under: a legacy field name
 // (itemForm.brand, .color, ...) when the key has a column mapping, or the
 // key itself for the dynamic attributes bag.

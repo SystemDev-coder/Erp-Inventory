@@ -570,8 +570,9 @@ export const productsService = {
     else await queryOne(`DELETE FROM ims.categories WHERE cat_id = $1 AND branch_id = ANY($2::bigint[])`, [id, scope.branchIds]);
   },
 
-  // Phase 9: on-demand starter categories for a business type (currently
-  // just electronics - see DEFAULT_CATEGORIES_BY_BUSINESS_TYPE). Additive
+  // Phase 9: on-demand starter categories for a business type (electronics,
+  // supermarket, clothing, pharmacy, perfume, cosmetics - see
+  // DEFAULT_CATEGORIES_BY_BUSINESS_TYPE; general/other have none). Additive
   // and idempotent (ON CONFLICT on the existing branch+name unique
   // constraint), never runs automatically on a business-type switch - the
   // user triggers it explicitly from Settings/Products, so it never

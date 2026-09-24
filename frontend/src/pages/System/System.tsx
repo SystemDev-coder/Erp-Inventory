@@ -4,6 +4,7 @@ import { PageHeader } from '../../components/ui/layout';
 import { Tabs } from '../../components/ui/tabs';
 import { Modal } from '../../components/ui/modal/Modal';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
+import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
 import { useToast } from '../../components/ui/toast/Toast';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
@@ -965,15 +966,12 @@ const System = () => {
         <div className="space-y-4">
           <label className="text-sm font-medium flex flex-col gap-1">
             Business Type
-            <select
-              className="rounded border border-black px-3 py-2"
+            <SearchableCombobox<string>
               value={businessProfileForm.businessType}
-              onChange={(e) => setBusinessProfileForm((prev) => ({ ...prev, businessType: e.target.value }))}
-            >
-              {Object.entries(BUSINESS_TYPE_LABELS).map(([value, label]) => (
-                <option key={value} value={value}>{label}</option>
-              ))}
-            </select>
+              options={Object.entries(BUSINESS_TYPE_LABELS).map(([value, label]) => ({ value, label }))}
+              placeholder="Select business type"
+              onChange={(value) => setBusinessProfileForm((prev) => ({ ...prev, businessType: value || 'general' }))}
+            />
             <span className="text-xs text-slate-500">
               Changing business type resets its feature defaults (barcode, variants, size/color, batch/expiry
               tracking, etc.) unless you have already customized them individually.
