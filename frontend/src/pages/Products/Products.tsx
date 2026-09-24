@@ -642,18 +642,27 @@ const Products = () => {
   // CURRENT business type, or (b) not a starter category of any OTHER
   // business type either - i.e. a genuinely custom category the user made
   // for their own business, not a leftover from switching profiles.
-  const otherBusinessStarterNames = useMemo(() => {
+  const otherOnlyBusinessStarterNames = useMemo(() => {
+    const currentNames = new Set(
+      (starterCategoryDefs || []).map((def) => def.name.trim().toLowerCase())
+    );
     const names = new Set<string>();
     for (const [type, defs] of Object.entries(DEFAULT_CATEGORIES_BY_BUSINESS_TYPE)) {
       if (type === businessProfile.businessType) continue;
-      for (const def of defs) names.add(def.name.trim().toLowerCase());
+      for (const def of defs) {
+        const key = def.name.trim().toLowerCase();
+        // A name shared with the CURRENT type's own starter list (e.g.
+        // "Accessories" under both Electronics and Clothing) must not be
+        // excluded just because it also appears elsewhere.
+        if (!currentNames.has(key)) names.add(key);
+      }
     }
     return names;
-  }, [businessProfile.businessType]);
+  }, [businessProfile.businessType, starterCategoryDefs]);
   const activeAttributeKeys = useMemo(() => {
-    const relevant = categories.filter((c) => !otherBusinessStarterNames.has(c.name.trim().toLowerCase()));
+    const relevant = categories.filter((c) => !otherOnlyBusinessStarterNames.has(c.name.trim().toLowerCase()));
     return Array.from(new Set(relevant.flatMap((c) => c.attribute_keys || [])));
-  }, [categories, otherBusinessStarterNames]);
+  }, [categories, otherOnlyBusinessStarterNames]);
 
   const storeTabs = [
     {
