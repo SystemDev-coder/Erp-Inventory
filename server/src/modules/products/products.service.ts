@@ -606,27 +606,37 @@ export const productsService = {
   // DEFAULT_CATEGORIES_BY_BUSINESS_TYPE; general/other have none). Additive
   // and idempotent (ON CONFLICT on the existing branch+name unique
   // constraint), never runs automatically on a business-type switch - the
-  // user triggers it explicitly from Settings/Products, so it never
-  // clutters a branch that already has its own category list.
+  // user triggers it explicitly from Settings/Products.
+  //
+  // A few starter-category names are reused across business types (e.g.
+  // "Accessories" appears under both Electronics and Clothing, with
+  // different attribute_keys). ON CONFLICT resyncs the existing row's
+  // attribute_keys/description to the ACTIVE business type's definition
+  // instead of leaving it silently stuck on whichever type created it
+  // first - so switching business type and re-seeding correctly reclaims
+  // a colliding name for the new type.
   async seedDefaultCategories(businessType: string, scope: BranchScope, branchId?: number): Promise<Category[]> {
     const defaults = DEFAULT_CATEGORIES_BY_BUSINESS_TYPE[businessType];
     if (!defaults?.length) return [];
     const targetBranchId = pickBranchForWrite(scope, branchId);
-    const created: Category[] = [];
+    const touched: Category[] = [];
     for (const def of defaults) {
       const row = await queryOne<{ cat_id: number }>(
         `INSERT INTO ims.categories (branch_id, cat_name, description, is_active, attribute_keys)
          VALUES ($1, $2, $3, TRUE, $4::text[])
-         ON CONFLICT (branch_id, cat_name) DO NOTHING
+         ON CONFLICT (branch_id, cat_name) DO UPDATE
+           SET attribute_keys = EXCLUDED.attribute_keys,
+               description = EXCLUDED.description,
+               is_active = TRUE
          RETURNING cat_id`,
         [targetBranchId, def.name, `${businessType} starter category`, def.attributeKeys]
       );
       if (row?.cat_id) {
         const category = await this.getCategory(Number(row.cat_id), scope);
-        if (category) created.push(category);
+        if (category) touched.push(category);
       }
     }
-    return created;
+    return touched;
   },
 
   async listUnits(scope: BranchScope, filters: MasterFilters): Promise<Paged<Unit>> {
@@ -1374,6 +1384,26 @@ export const productsService = {
                WHERE t2.item_id = $3
                  AND t2.branch_id = ims.item_suppliers.branch_id
                  AND t2.supplier_id = ims.item_suppliers.supplier_id
+                 AND COALESCE(t2.is_deleted, 0) = 0
+            )`,
+        [fromItemId, fromItem.branch_id, toItemId]
+      );
+      // If the target already has its own default supplier, the source's
+      // default (a different supplier_id, since a same-supplier row was just
+      // deleted above) must not become a second default row once repointed
+      // below - the target's own default wins.
+      await client.query(
+        `UPDATE ims.item_suppliers
+            SET is_default = FALSE
+          WHERE item_id = $1
+            AND branch_id = $2
+            AND is_default = TRUE
+            AND COALESCE(is_deleted, 0) = 0
+            AND EXISTS (
+              SELECT 1 FROM ims.item_suppliers t2
+               WHERE t2.item_id = $3
+                 AND t2.branch_id = ims.item_suppliers.branch_id
+                 AND t2.is_default = TRUE
                  AND COALESCE(t2.is_deleted, 0) = 0
             )`,
         [fromItemId, fromItem.branch_id, toItemId]

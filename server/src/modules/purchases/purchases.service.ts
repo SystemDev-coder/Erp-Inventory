@@ -89,6 +89,36 @@ interface SupplierBalanceColumns {
 
 let cachedSupplierBalanceColumns: SupplierBalanceColumns | null = null;
 
+// Records that this item has been bought from this supplier, so
+// ims.item_suppliers (and the product's Supplier column/field) reflects real
+// purchase history instead of only items whose default supplier was set
+// manually via the product form or Excel import. Only claims the "default"
+// flag when the item doesn't already have one - a later purchase from a
+// different supplier should never silently reassign a deliberately-chosen
+// default.
+const linkItemSupplier = async (
+  client: PoolClient,
+  branchId: number,
+  itemId: number,
+  supplierId: number,
+  unitCost: number
+) => {
+  const hasDefault = await client.query(
+    `SELECT 1 FROM ims.item_suppliers
+      WHERE branch_id = $1 AND item_id = $2 AND is_default = TRUE
+      LIMIT 1`,
+    [branchId, itemId]
+  );
+  await client.query(
+    `INSERT INTO ims.item_suppliers
+       (branch_id, item_id, supplier_id, is_default, default_cost, created_at)
+     VALUES ($1, $2, $3, $4, $5, NOW())
+     ON CONFLICT (branch_id, item_id, supplier_id)
+     DO UPDATE SET default_cost = EXCLUDED.default_cost`,
+    [branchId, itemId, supplierId, !hasDefault.rows[0], unitCost]
+  );
+};
+
 const resolveProductForPurchaseItem = async (
   client: PoolClient,
   item: PurchaseItemInput,
@@ -127,6 +157,9 @@ const resolveProductForPurchaseItem = async (
         WHERE item_id = $1`,
       [item.productId, nextSale]
     );
+    if (supplierId) {
+      await linkItemSupplier(client, branchId, Number(item.productId), supplierId, requestedCost);
+    }
     return Number(item.productId);
   }
 
@@ -163,6 +196,9 @@ const resolveProductForPurchaseItem = async (
         WHERE item_id = $1`,
       [productId, nextSale]
     );
+    if (supplierId) {
+      await linkItemSupplier(client, branchId, productId, supplierId, requestedCost);
+    }
     return productId;
   }
   const nextSale = item.salePrice !== undefined ? Number(item.salePrice) : requestedCost;
@@ -176,22 +212,8 @@ const resolveProductForPurchaseItem = async (
   );
   const newProductId = Number(created.rows[0].product_id);
 
-  // Link supplier to item if provided and not already linked
   if (supplierId) {
-    const exists = await client.query(
-      `SELECT 1 FROM ims.item_suppliers
-        WHERE branch_id = $1 AND item_id = $2 AND supplier_id = $3
-        LIMIT 1`,
-      [branchId, newProductId, supplierId]
-    );
-    if (!exists.rows[0]) {
-      await client.query(
-        `INSERT INTO ims.item_suppliers
-           (branch_id, item_id, supplier_id, is_default, supplier_sku, default_cost, created_at)
-         VALUES ($1, $2, $3, TRUE, NULL, $4, NOW())`,
-        [branchId, newProductId, supplierId, requestedCost]
-      );
-    }
+    await linkItemSupplier(client, branchId, newProductId, supplierId, requestedCost);
   }
 
   return newProductId;

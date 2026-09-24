@@ -290,7 +290,7 @@ const Products = () => {
       showToast(
         'success',
         'Categories',
-        count > 0 ? `${count} starter categor${count === 1 ? 'y' : 'ies'} added` : 'Starter categories already exist'
+        count > 0 ? `${count} starter categor${count === 1 ? 'y' : 'ies'} ready` : 'Starter categories already exist'
       );
       setCategoriesDisplayed(true);
       await resolveCategories();
@@ -298,6 +298,20 @@ const Products = () => {
       showToast('error', 'Categories', res.error || 'Failed to seed starter categories');
     }
   };
+
+  // Whether every starter category name for the active business type already
+  // exists in this branch - by name only, not by attribute_keys, because
+  // seedDefaultCategories now resyncs attribute_keys on every click (fixing
+  // names that collide across business types, e.g. "Accessories" under both
+  // Electronics and Clothing) - so name-presence alone means "up to date".
+  const starterCategoryDefs = businessProfile.businessType
+    ? DEFAULT_CATEGORIES_BY_BUSINESS_TYPE[businessProfile.businessType]
+    : undefined;
+  const starterCategoriesSeeded = useMemo(() => {
+    if (!starterCategoryDefs?.length) return true;
+    const existingNames = new Set(categories.map((c) => c.name.trim().toLowerCase()));
+    return starterCategoryDefs.every((def) => existingNames.has(def.name.trim().toLowerCase()));
+  }, [categories, starterCategoryDefs]);
 
   const removeCategory = async (reason: string) => {
     if (!categoryToDelete) return;
@@ -618,14 +632,28 @@ const Products = () => {
     }
   };
 
-  // Phase 9: Excel Import's optional attribute columns - the union of
-  // attribute_keys across the branch's actual categories (loaded via
-  // Display/seeding above), not the full catalog - so the template only
-  // offers columns that are actually relevant to this business right now.
-  const activeAttributeKeys = useMemo(
-    () => Array.from(new Set(categories.flatMap((c) => c.attribute_keys || []))),
-    [categories]
-  );
+  // Phase 9: Excel Import's optional attribute columns - scoped to the
+  // ACTIVE Business Profile, not every category that merely exists in this
+  // branch. A branch that has switched business type before (or been used
+  // to demo more than one) can have leftover categories from a different
+  // profile sitting in the same table - those must not leak Electronics-only
+  // columns (IMEI, RAM, ...) into a Clothing business's Excel template.
+  // A category only counts here if it's either (a) a starter category of the
+  // CURRENT business type, or (b) not a starter category of any OTHER
+  // business type either - i.e. a genuinely custom category the user made
+  // for their own business, not a leftover from switching profiles.
+  const otherBusinessStarterNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const [type, defs] of Object.entries(DEFAULT_CATEGORIES_BY_BUSINESS_TYPE)) {
+      if (type === businessProfile.businessType) continue;
+      for (const def of defs) names.add(def.name.trim().toLowerCase());
+    }
+    return names;
+  }, [businessProfile.businessType]);
+  const activeAttributeKeys = useMemo(() => {
+    const relevant = categories.filter((c) => !otherBusinessStarterNames.has(c.name.trim().toLowerCase()));
+    return Array.from(new Set(relevant.flatMap((c) => c.attribute_keys || [])));
+  }, [categories, otherBusinessStarterNames]);
 
   const storeTabs = [
     {
@@ -922,7 +950,7 @@ const Products = () => {
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
               {loading ? 'Loading...' : 'Display'}
             </button>
-            {can('items.create') && businessProfile.businessType && DEFAULT_CATEGORIES_BY_BUSINESS_TYPE[businessProfile.businessType] && (
+            {can('items.create') && starterCategoryDefs && !starterCategoriesSeeded && (
               <button
                 type="button"
                 disabled={seedingCategories}
