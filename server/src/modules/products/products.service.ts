@@ -89,6 +89,8 @@ export interface Product {
   unit_id: number | null;
   unit_name?: string | null;
   unit_symbol?: string | null;
+  supplier_id?: number | null;
+  supplier_name?: string | null;
   brand?: string | null;
   size?: string | null;
   color?: string | null;
@@ -188,7 +190,7 @@ const scopeClause = (
 };
 
 const ensureInBranch = async (
-  table: 'categories' | 'units' | 'taxes' | 'stores',
+  table: 'categories' | 'units' | 'taxes' | 'stores' | 'suppliers',
   idColumn: string,
   id: number,
   branchId: number,
@@ -270,6 +272,8 @@ const getProductSql = (stockAlertExpr: string, storeIdExpr = 'NULL::bigint') => 
     i.strength,
     i.serial_number,
     COALESCE(i.attributes, '{}'::jsonb) AS attributes,
+    isup.supplier_id,
+    sup.name AS supplier_name,
     ${stockAlertExpr} AS stock_alert,
     i.cost_price,
     i.sell_price,
@@ -294,6 +298,8 @@ const getProductSql = (stockAlertExpr: string, storeIdExpr = 'NULL::bigint') => 
   LEFT JOIN ims.stores s ON s.store_id = i.store_id
   LEFT JOIN ims.categories c ON c.cat_id = i.category_id
   LEFT JOIN ims.units u ON u.unit_id = i.unit_id
+  LEFT JOIN ims.item_suppliers isup ON isup.item_id = i.item_id AND isup.is_default = TRUE
+  LEFT JOIN ims.suppliers sup ON sup.supplier_id = isup.supplier_id
   LEFT JOIN LATERAL (
     SELECT
       COALESCE(SUM(si.quantity), 0)::int AS qty,
@@ -308,6 +314,31 @@ const getProductSql = (stockAlertExpr: string, storeIdExpr = 'NULL::bigint') => 
        )
   ) sq ON TRUE
 `;
+
+// Reuses the existing ims.item_suppliers table (already there for
+// purchases.service.ts's own "this supplier sold this item" auto-link and
+// the item-merge path) rather than adding a new column - "the" supplier a
+// product's form/table shows is just whichever item_suppliers row for it
+// has is_default = TRUE. Only one row can be default per item.
+const setDefaultSupplier = async (
+  client: PoolClient,
+  branchId: number,
+  itemId: number,
+  supplierId: number | null | undefined
+): Promise<void> => {
+  if (supplierId === undefined) return;
+  await client.query(
+    `UPDATE ims.item_suppliers SET is_default = FALSE WHERE item_id = $1 AND is_default = TRUE`,
+    [itemId]
+  );
+  if (!supplierId) return;
+  await client.query(
+    `INSERT INTO ims.item_suppliers (branch_id, item_id, supplier_id, is_default)
+     VALUES ($1, $2, $3, TRUE)
+     ON CONFLICT (branch_id, item_id, supplier_id) DO UPDATE SET is_default = TRUE`,
+    [branchId, itemId, supplierId]
+  );
+};
 
 const upsertStoreItemQuantity = async (
   client: PoolClient,
@@ -932,6 +963,7 @@ export const productsService = {
     if (input.storeId) await ensureInBranch('stores', 'store_id', input.storeId, branchId, 'Store');
     if (input.categoryId) await ensureInBranch('categories', 'cat_id', input.categoryId, branchId, 'Category');
     if (input.unitId) await ensureInBranch('units', 'unit_id', input.unitId, branchId, 'Unit');
+    if (input.supplierId) await ensureInBranch('suppliers', 'supplier_id', input.supplierId, branchId, 'Supplier');
     // Legacy compat: some older deployments still have a NOT NULL ims.items.cat_id column
     // from before the current categories/units design - keep it satisfied with a default
     // row when present, independent of the real category_id selection below.
@@ -1035,6 +1067,8 @@ export const productsService = {
       const quantity = Number(input.quantity ?? input.openingBalance ?? 0);
       await upsertStoreItemQuantity(client, branchId, resolvedStoreId, itemId, quantity);
 
+      await setDefaultSupplier(client, branchId, itemId, input.supplierId);
+
       await rewriteItemOpeningStockGl(client, {
         branchId,
         itemId,
@@ -1065,6 +1099,7 @@ export const productsService = {
     if (input.storeId !== undefined && input.storeId !== null) await ensureInBranch('stores', 'store_id', input.storeId, current.branch_id, 'Store');
     if (input.categoryId !== undefined && input.categoryId !== null) await ensureInBranch('categories', 'cat_id', input.categoryId, current.branch_id, 'Category');
     if (input.unitId !== undefined && input.unitId !== null) await ensureInBranch('units', 'unit_id', input.unitId, current.branch_id, 'Unit');
+    if (input.supplierId !== undefined && input.supplierId !== null) await ensureInBranch('suppliers', 'supplier_id', input.supplierId, current.branch_id, 'Supplier');
 
     const updates: string[] = [];
     const values: unknown[] = [id];
@@ -1100,7 +1135,8 @@ export const productsService = {
     if (input.openingBalance !== undefined) { updates.push(`opening_balance = $${p++}`); values.push(input.openingBalance); }
     if (input.isActive !== undefined || input.status !== undefined) { updates.push(`is_active = $${p++}`); values.push(isActiveValue(input, true)); }
     const hasQuantityUpdate = input.quantity !== undefined;
-    if (!updates.length && !hasQuantityUpdate) return this.getProduct(id, scope, current.store_id ?? undefined);
+    const hasSupplierUpdate = input.supplierId !== undefined;
+    if (!updates.length && !hasQuantityUpdate && !hasSupplierUpdate) return this.getProduct(id, scope, current.store_id ?? undefined);
 
     await withTransaction(async (client) => {
       if (updates.length) {
@@ -1113,6 +1149,10 @@ export const productsService = {
             values
           );
         }
+      }
+
+      if (hasSupplierUpdate) {
+        await setDefaultSupplier(client, current.branch_id, id, input.supplierId);
       }
 
       const targetStoreId = input.storeId !== undefined ? input.storeId : current.store_id;

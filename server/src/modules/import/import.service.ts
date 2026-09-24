@@ -95,6 +95,11 @@ type ItemImportRow = {
   unit_name: string | null;
   category_id: number | null;
   unit_id: number | null;
+  // Optional - resolved (and auto-created if new) the same way category/unit
+  // are, but with no default fallback: a row with no Supplier column simply
+  // gets no default supplier linked.
+  supplier_name: string | null;
+  supplier_id: number | null;
   // Phase 9: any Dynamic Product Attributes catalog column present in the
   // file, keyed the same way the product form/API sends them - routed to
   // the right storage (legacy column vs. attributes JSONB) by insertItem
@@ -386,9 +391,9 @@ const resolveItemCategoriesAndUnits = async (
   if (!activeRows.length) return;
 
   const resolveMasterList = async (
-    table: 'categories' | 'units',
-    idColumn: 'cat_id' | 'unit_id',
-    nameColumn: 'cat_name' | 'unit_name',
+    table: 'categories' | 'units' | 'suppliers',
+    idColumn: 'cat_id' | 'unit_id' | 'supplier_id',
+    nameColumn: 'cat_name' | 'unit_name' | 'name',
     namesByKey: Map<string, string>
   ) => {
     const map = new Map<string, number>();
@@ -436,9 +441,17 @@ const resolveItemCategoriesAndUnits = async (
     activeRows.filter((row) => row.data.unit_name).map((row) => row.data.unit_name as string)
   );
 
-  const [categoryMap, unitMap] = await Promise.all([
+  // Unlike category/unit, supplier is optional - a row with no Supplier
+  // column value simply gets no default supplier (matching how the product
+  // form itself treats it), not auto-assigned to some fallback.
+  const supplierNamesByKey = collectNamesByKey(
+    activeRows.filter((row) => row.data.supplier_name).map((row) => row.data.supplier_name as string)
+  );
+
+  const [categoryMap, unitMap, supplierMap] = await Promise.all([
     resolveMasterList('categories', 'cat_id', 'cat_name', categoryNamesByKey),
     resolveMasterList('units', 'unit_id', 'unit_name', unitNamesByKey),
+    resolveMasterList('suppliers', 'supplier_id', 'name', supplierNamesByKey),
   ]);
 
   let defaultCategoryId: number | null = null;
@@ -463,6 +476,12 @@ const resolveItemCategoriesAndUnits = async (
         defaultUnitId = await withTransaction((client) => ensureDefaultUnit(client, branchId));
       }
       row.data.unit_id = defaultUnitId;
+    }
+
+    // No fallback here (unlike category/unit above) - a row with no
+    // Supplier column value stays supplier_id = null.
+    if (row.data.supplier_name) {
+      row.data.supplier_id = supplierMap.get(normalizeLookup(row.data.supplier_name)) ?? null;
     }
   }
 };
@@ -658,6 +677,7 @@ const parseItemRow = (raw: Record<string, unknown>): ParseResult<ItemImportRow> 
   const branchFromFile = readRawValue(raw, ['branch_id', 'branch']);
   const categoryName = readString(raw, ['category', 'category_name']);
   const unitName = readString(raw, ['unit', 'unit_name']);
+  const supplierName = readString(raw, ['supplier', 'supplier_name']);
 
   if (!name) {
     errors.push('item is required');
@@ -719,6 +739,8 @@ const parseItemRow = (raw: Record<string, unknown>): ParseResult<ItemImportRow> 
     unit_name: unitName || null,
     category_id: null,
     unit_id: null,
+    supplier_name: supplierName || null,
+    supplier_id: null,
     attributes,
   };
 
@@ -1516,6 +1538,17 @@ const insertItem = async (
     }
   }
 
+  if (row.supplier_id) {
+    // Mirrors products.service.ts#setDefaultSupplier - a freshly-inserted item
+    // has no prior item_suppliers rows to clear, so this is a plain insert.
+    await client.query(
+      `INSERT INTO ims.item_suppliers (branch_id, item_id, supplier_id, is_default)
+       VALUES ($1, $2, $3, TRUE)
+       ON CONFLICT (branch_id, item_id, supplier_id) DO UPDATE SET is_default = TRUE`,
+      [branchId, itemId, row.supplier_id]
+    );
+  }
+
   await postItemOpeningStockGl(client, {
     branchId,
     itemId,
@@ -1627,6 +1660,7 @@ const itemsDefinition: ImportDefinition<ItemImportRow> = {
       stock_alert: Number(row.stock_alert || 0),
       category: row.category_name || '(default)',
       unit: row.unit_name || '(default)',
+      supplier: row.supplier_name || '',
       ...row.attributes,
     };
   },

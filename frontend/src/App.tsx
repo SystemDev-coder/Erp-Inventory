@@ -20,6 +20,7 @@ const StockAdjustmentsPage = lazy(() => import("./pages/Stock/StockAdjustmentsPa
 const StockAdjustmentCreatePage = lazy(() => import("./pages/Stock/StockAdjustmentCreatePage"));
 const Purchases = lazy(() => import("./pages/Purchases/Purchases"));
 const PurchaseEditor = lazy(() => import("./pages/Purchases/PurchaseEditor"));
+const ProductEditor = lazy(() => import("./pages/Products/ProductEditor"));
 const Returns = lazy(() => import("./pages/Returns/Returns"));
 const SalesReturns = lazy(() => import("./pages/Returns/SalesReturns"));
 const PurchaseReturns = lazy(() => import("./pages/Returns/PurchaseReturns"));
@@ -72,6 +73,8 @@ function AppRoutes() {
           <Route path="/stock-management/adjust-items/new" element={<ProtectedRoute><Lazy><StockAdjustmentCreatePage /></Lazy></ProtectedRoute>} />
           <Route path="/return" element={<ProtectedRoute permission="sales_returns.view"><Lazy><Returns /></Lazy></ProtectedRoute>} />
           <Route path="/items" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
+          <Route path="/items/new" element={<ProtectedRoute permission="items.create"><Lazy><ProductEditor /></Lazy></ProtectedRoute>} />
+          <Route path="/items/:id/edit" element={<ProtectedRoute permission="items.update"><Lazy><ProductEditor /></Lazy></ProtectedRoute>} />
           <Route path="/stock/adjustments" element={<ProtectedRoute><Lazy><StockAdjustmentsPage /></Lazy></ProtectedRoute>} />
           <Route path="/stock/adjustments/new" element={<ProtectedRoute><Lazy><StockAdjustmentCreatePage /></Lazy></ProtectedRoute>} />
           <Route path="/sales" element={<ProtectedRoute permission="sales.view"><Sales /></ProtectedRoute>} />

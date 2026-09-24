@@ -54,6 +54,8 @@ export interface Product {
   unit_id?: number | null;
   unit_name?: string | null;
   unit_symbol?: string | null;
+  supplier_id?: number | null;
+  supplier_name?: string | null;
   brand?: string | null;
   size?: string | null;
   color?: string | null;

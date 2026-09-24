@@ -130,6 +130,7 @@ export const productCreateSchema = z.object({
   storeId: nullablePositiveInt.optional(),
   categoryId: nullablePositiveInt.optional(),
   unitId: nullablePositiveInt.optional(),
+  supplierId: nullablePositiveInt.optional(),
   brand: z.string().trim().max(120).or(z.literal('')).nullable().optional(),
   // Phase 11: business-type-driven product attributes. All optional/nullable,
   // same as barcode above - a business type that doesn't use a given field
