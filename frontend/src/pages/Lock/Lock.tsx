@@ -152,9 +152,9 @@ function useTheme() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Flags — cropped to fill a circle exactly (preserveAspectRatio="slice").
+// Flags — cropped to fill a circle exactly.
 // ─────────────────────────────────────────────────────────────────────────
-function FlagUS({ className = 'h-5 w-5' }: { className?: string }) {
+function FlagUS({ className = 'h-full w-full' }: { className?: string }) {
   return (
     <svg
       viewBox="0 0 40 40"
@@ -176,7 +176,7 @@ function FlagUS({ className = 'h-5 w-5' }: { className?: string }) {
   );
 }
 
-function FlagSO({ className = 'h-5 w-5' }: { className?: string }) {
+function FlagSO({ className = 'h-full w-full' }: { className?: string }) {
   return (
     <svg
       viewBox="0 0 40 40"
@@ -193,53 +193,21 @@ function FlagSO({ className = 'h-5 w-5' }: { className?: string }) {
   );
 }
 
-function FlagIcon({
-  lang,
-  className = 'h-6 w-6',
-  ring = true,
-}: {
-  lang: Lang;
-  className?: string;
-  ring?: boolean;
-}) {
-  return (
-    <span
-      className={
-        'relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800 ' +
-        (ring ? 'ring-1 ring-black/10 dark:ring-white/15 ' : '') +
-        className
-      }
-    >
-      {lang === 'en' ? (
-        <FlagUS className="absolute inset-0 h-full w-full" />
-      ) : (
-        <FlagSO className="absolute inset-0 h-full w-full" />
-      )}
-    </span>
-  );
-}
-
 // ─────────────────────────────────────────────────────────────────────────
-// Skeleton — shown briefly while the page bootstraps so the UI feels
-// polished instead of flashing the real card in.
+// Skeleton
 // ─────────────────────────────────────────────────────────────────────────
 function LockSkeleton() {
   return (
     <div className="w-full max-w-md" aria-hidden="true">
       <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-xl dark:border-slate-800 dark:bg-slate-900">
-        {/* Avatar */}
         <div className="flex flex-col items-center">
           <div className="h-16 w-16 animate-pulse rounded-full bg-slate-200 dark:bg-slate-800" />
         </div>
-
-        {/* Heading + subtitle */}
         <div className="mt-5 flex flex-col items-center gap-2">
           <div className="h-6 w-44 animate-pulse rounded-md bg-slate-200 dark:bg-slate-800" />
           <div className="h-4 w-56 animate-pulse rounded-md bg-slate-100 dark:bg-slate-800/70" />
           <div className="mt-2 h-4 w-32 animate-pulse rounded-md bg-slate-100 dark:bg-slate-800/70" />
         </div>
-
-        {/* Password label + input */}
         <div className="mt-7 space-y-4">
           <div>
             <div className="mb-1.5 h-3 w-20 animate-pulse rounded bg-slate-100 dark:bg-slate-800/70" />
@@ -247,18 +215,12 @@ function LockSkeleton() {
           </div>
           <div className="h-11 w-full animate-pulse rounded-xl bg-slate-200 dark:bg-slate-800" />
         </div>
-
-        {/* Divider */}
         <div className="my-5 h-px w-full bg-slate-100 dark:bg-slate-800/70" />
-
-        {/* Two secondary buttons */}
         <div className="grid grid-cols-2 gap-2">
           <div className="h-9 animate-pulse rounded-xl bg-slate-100 dark:bg-slate-800/70" />
           <div className="h-9 animate-pulse rounded-xl bg-slate-100 dark:bg-slate-800/70" />
         </div>
       </div>
-
-      {/* Security note placeholder */}
       <div className="mt-5 flex justify-center">
         <div className="h-3 w-64 animate-pulse rounded bg-slate-100 dark:bg-slate-800/70" />
       </div>
@@ -276,13 +238,11 @@ function ConfirmDialog({
   onCancel,
   onConfirm,
   t,
-  busy,
 }: {
   kind: ConfirmKind;
   onCancel: () => void;
   onConfirm: () => void;
   t: typeof translations['en'];
-  busy: boolean;
 }) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const isOpen = kind !== null;
@@ -316,56 +276,42 @@ function ConfirmDialog({
       className="fixed inset-0 z-50 flex items-center justify-center px-4"
     >
       <div
-        onClick={busy ? undefined : onCancel}
+        onClick={onCancel}
         aria-hidden="true"
         className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm dark:bg-slate-950/70"
       />
-
       <div className="relative z-10 w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
         <button
           type="button"
           onClick={onCancel}
-          disabled={busy}
           aria-label={t.close}
-          className="absolute right-3 top-3 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 disabled:opacity-50 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+          className="absolute right-3 top-3 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
         >
           <X className="h-4 w-4" />
         </button>
-
         <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">
           <AlertTriangle className="h-6 w-6" aria-hidden="true" />
         </div>
-
-        <h3
-          id="confirm-title"
-          className="text-center text-lg font-semibold text-slate-900 dark:text-white"
-        >
+        <h3 id="confirm-title" className="text-center text-lg font-semibold text-slate-900 dark:text-white">
           {title}
         </h3>
-        <p
-          id="confirm-body"
-          className="mt-2 text-center text-sm text-slate-500 dark:text-slate-400"
-        >
+        <p id="confirm-body" className="mt-2 text-center text-sm text-slate-500 dark:text-slate-400">
           {body}
         </p>
-
         <div className="mt-6 flex gap-2">
           <button
             ref={cancelRef}
             type="button"
             onClick={onCancel}
-            disabled={busy}
-            className="flex-1 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+            className="flex-1 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             {t.cancel}
           </button>
           <button
             type="button"
             onClick={onConfirm}
-            disabled={busy}
-            className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:bg-blue-600/60 dark:bg-blue-500 dark:hover:bg-blue-400 dark:focus-visible:ring-offset-slate-900 dark:disabled:bg-blue-500/50"
+            className="flex-1 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:bg-blue-500 dark:hover:bg-blue-400 dark:focus-visible:ring-offset-slate-900"
           >
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
             {t.confirmContinue}
           </button>
         </div>
@@ -375,8 +321,7 @@ function ConfirmDialog({
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Min duration helper — prevents the spinner from flashing for very fast
-// responses, which is the classic source of "double-click" fatigue.
+// Min duration — prevent spinner flash
 // ─────────────────────────────────────────────────────────────────────────
 const MIN_ACTION_MS = 350;
 const withMinDuration = async <T,>(promise: Promise<T>, minMs = MIN_ACTION_MS): Promise<T> => {
@@ -406,8 +351,6 @@ const Lock = () => {
   const [isBootstrapping, setIsBootstrapping] = useState(true);
 
   const langMenuRef = useRef<HTMLDivElement | null>(null);
-  // Guards against duplicate submits even before React state updates flush.
-  // Without this a fast double-Enter could fire two POSTs.
   const submitLockRef = useRef(false);
 
   const navigate = useNavigate();
@@ -419,7 +362,6 @@ const Lock = () => {
   const isCreating = useMemo(() => !isSetup, [isSetup]);
   const busy = saving || submitting;
 
-  // Brief skeleton on first mount so the card doesn't flash in.
   useEffect(() => {
     const timer = setTimeout(() => setIsBootstrapping(false), 250);
     return () => clearTimeout(timer);
@@ -431,7 +373,6 @@ const Lock = () => {
     }
   }, [lockedInfo, navigate]);
 
-  // Close language dropdown on outside click / Escape
   useEffect(() => {
     if (!langOpen) return;
     const onClick = (e: MouseEvent) => {
@@ -460,17 +401,11 @@ const Lock = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    // ── Double-submit guard ───────────────────────────────────────────
-    // Cheap synchronous check so a rapid double-Enter / double-click
-    // cannot fire two requests before React state updates.
     if (submitLockRef.current || busy) return;
     submitLockRef.current = true;
-
     setError('');
 
     try {
-      // ── CREATE MODE ───────────────────────────────────────────────
       if (isCreating) {
         if (!password || password.length < 4) {
           setError(t.errShortPassword);
@@ -498,17 +433,14 @@ const Lock = () => {
         }
       }
 
-      // ── UNLOCK MODE ───────────────────────────────────────────────
       try {
         setSubmitting(true);
         const res = await withMinDuration(unlock(password));
-
         if (res.success) {
           const target = (location.state as any)?.from?.pathname || '/';
           navigate(target, { replace: true });
           return;
         }
-
         if ((res as any).error === 'Lock password not set') {
           setIsSetup(false);
           setError(t.errNoLock);
@@ -526,7 +458,6 @@ const Lock = () => {
   };
 
   const performLogout = async () => {
-    // Close the dialog immediately so the user sees the state change
     setConfirmAction(null);
     await logout();
     navigate('/signin', { replace: true });
@@ -543,6 +474,20 @@ const Lock = () => {
     setConfirmAction('switch');
   };
 
+  // ── Shared circular button class for the top-right controls ────────
+  // Both the theme toggle and language button use the same shape, size,
+  // and border, so they read as a matched pair. The language button lets
+  // the flag fill the entire circle (no inner padding), matching the
+  // screenshot reference.
+  const circleButtonClass =
+    'group relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full ' +
+    'border border-slate-200 bg-white text-slate-600 shadow-sm transition-all ' +
+    'hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 ' +
+    'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-50 ' +
+    'dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 ' +
+    'dark:hover:border-slate-600 dark:hover:bg-slate-800 dark:hover:text-white ' +
+    'dark:focus-visible:ring-blue-400 dark:focus-visible:ring-offset-slate-950';
+
   return (
     <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-slate-50 px-4 py-16 dark:bg-slate-950">
       {/* Ambient glow */}
@@ -551,18 +496,24 @@ const Lock = () => {
         <div className="absolute -bottom-40 right-1/4 h-96 w-96 rounded-full bg-emerald-200/30 blur-3xl dark:bg-emerald-500/5" />
       </div>
 
-      {/* Top-right controls */}
+      {/* Top-right controls — theme toggle + language picker */}
       <div className="absolute right-4 top-4 z-20 flex items-center gap-2">
+        {/* Theme toggle */}
         <button
           type="button"
           onClick={toggleTheme}
           aria-label={theme === 'dark' ? t.switchToLight : t.switchToDark}
           title={theme === 'dark' ? t.switchToLight : t.switchToDark}
-          className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white dark:focus-visible:ring-blue-400"
+          className={circleButtonClass}
         >
-          {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          {theme === 'dark' ? (
+            <Sun className="h-4 w-4" aria-hidden="true" />
+          ) : (
+            <Moon className="h-4 w-4" aria-hidden="true" />
+          )}
         </button>
 
+        {/* Language picker */}
         <div ref={langMenuRef} className="relative">
           <button
             type="button"
@@ -571,9 +522,14 @@ const Lock = () => {
             aria-haspopup="menu"
             aria-expanded={langOpen}
             title={t.changeLanguage}
-            className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white p-1 shadow-sm transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800 dark:focus-visible:ring-blue-400"
+            className={circleButtonClass + (langOpen ? ' ring-2 ring-blue-500 ring-offset-2 ring-offset-slate-50 dark:ring-blue-400 dark:ring-offset-slate-950' : '')}
           >
-            <FlagIcon lang={lang} className="h-8 w-8" ring={false} />
+            {/* The flag fills the entire circle — no padding, no inner ring. */}
+            {lang === 'en' ? (
+              <FlagUS className="absolute inset-0 h-full w-full" />
+            ) : (
+              <FlagSO className="absolute inset-0 h-full w-full" />
+            )}
           </button>
 
           {langOpen && (
@@ -595,7 +551,9 @@ const Lock = () => {
                 }}
                 className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
               >
-                <FlagIcon lang="en" className="h-6 w-6" />
+                <span className="relative inline-flex h-6 w-6 shrink-0 overflow-hidden rounded-full ring-1 ring-black/10 dark:ring-white/15">
+                  <FlagUS className="absolute inset-0 h-full w-full" />
+                </span>
                 <span>{t.english}</span>
                 {lang === 'en' && <Check className="ml-auto h-4 w-4 text-blue-500" />}
               </button>
@@ -610,7 +568,9 @@ const Lock = () => {
                 }}
                 className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
               >
-                <FlagIcon lang="so" className="h-6 w-6" />
+                <span className="relative inline-flex h-6 w-6 shrink-0 overflow-hidden rounded-full ring-1 ring-black/10 dark:ring-white/15">
+                  <FlagSO className="absolute inset-0 h-full w-full" />
+                </span>
                 <span>{t.somali}</span>
                 {lang === 'so' && <Check className="ml-auto h-4 w-4 text-blue-500" />}
               </button>
@@ -619,7 +579,7 @@ const Lock = () => {
         </div>
       </div>
 
-      {/* Card — skeleton on first mount, then the real thing */}
+      {/* Card */}
       {isBootstrapping ? (
         <LockSkeleton />
       ) : (
@@ -814,7 +774,6 @@ const Lock = () => {
         onCancel={() => setConfirmAction(null)}
         onConfirm={confirmAction === 'logout' ? performLogout : performSwitch}
         t={t}
-        busy={false}
       />
     </div>
   );
