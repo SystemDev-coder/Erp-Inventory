@@ -615,18 +615,32 @@ export const customersService = {
       updates.push(`is_active = $${parameter++}`);
       values.push(input.isActive);
     }
+
+    // ── FIX (SQLSTATE 42701) ─────────────────────────────────────────────
+    // Previously, changing a customer to 'one-time' pushed `credit_allowed
+    // = false` from the type-change branch AND again from the standalone
+    // `input.creditAllowed !== undefined` branch below, producing:
+    //   ERROR: column "credit_allowed" specified more than once
+    // Regular updates never hit the first branch, so the duplicate never
+    // happened for them. Resolve credit_allowed to a single value once,
+    // then push at most one assignment.
     if (input.customerType !== undefined && meta.hasType) {
       updates.push(`customer_type = $${parameter++}`);
       values.push(input.customerType);
-      if (meta.hasCreditAllowed && input.customerType === 'one-time') {
-        updates.push(`credit_allowed = $${parameter++}`);
-        values.push(false);
-      }
     }
-    if (input.creditAllowed !== undefined && meta.hasCreditAllowed) {
+
+    let resolvedCreditAllowed: boolean | undefined;
+    if (input.customerType === 'one-time') {
+      resolvedCreditAllowed = false;
+    } else if (input.creditAllowed !== undefined) {
+      resolvedCreditAllowed = input.creditAllowed;
+    }
+    if (resolvedCreditAllowed !== undefined && meta.hasCreditAllowed) {
       updates.push(`credit_allowed = $${parameter++}`);
-      values.push(input.creditAllowed);
+      values.push(resolvedCreditAllowed);
     }
+    // ─────────────────────────────────────────────────────────────────────
+
     if (input.creditDays !== undefined && meta.hasCreditDays) {
       updates.push(`credit_days = $${parameter++}`);
       values.push(Math.max(0, Number(input.creditDays ?? 30)));
