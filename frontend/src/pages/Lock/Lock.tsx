@@ -16,6 +16,7 @@ import {
   X,
 } from 'lucide-react';
 import { authService } from '../../services/auth.service';
+import Footer from '../../layout/Footer';
 
 // ─────────────────────────────────────────────────────────────────────────
 // Bilingual support (English / Somali)
@@ -162,11 +163,18 @@ function FlagUS({ className = 'h-full w-full' }: { className?: string }) {
       className={className}
       aria-hidden="true"
     >
+      {/* Caddaan background */}
       <rect width="40" height="40" fill="#fff" />
+
+      {/* 13 xariiqood oo casaan ah */}
       {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((i) => (
         <rect key={i} y={i * 3.08} width="40" height="3.08" fill="#b22234" />
       ))}
+
+      {/* Blue canton (geeska bidix-sare) */}
       <rect width="20" height="16.5" fill="#3c3b6e" />
+
+      {/* Xiddigaha cad */}
       <g fill="#fff">
         {[3, 7, 11, 15, 17].map((x) =>
           [3, 7, 11, 15].map((y) => <circle key={`${x}-${y}`} cx={x} cy={y} r="1" />)
@@ -762,11 +770,7 @@ const Lock = () => {
       )}
 
       {/* Footer */}
-      <footer className="absolute bottom-0 left-0 right-0 z-10 py-4 text-center">
-        <p className="text-[11px] text-slate-400 dark:text-slate-500">
-          © {new Date().getFullYear()} Madal ERP · {t.copyright}
-        </p>
-      </footer>
+      <Footer />
 
       {/* Confirm dialog */}
       <ConfirmDialog
