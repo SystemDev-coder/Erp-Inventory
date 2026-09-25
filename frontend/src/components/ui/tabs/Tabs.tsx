@@ -35,8 +35,12 @@ export const Tabs: React.FC<TabsProps> = ({ tabs, defaultTab, onChange }) => {
 
     return (
         <div className="w-full">
-            <div className="rounded-2xl border border-slate-100 bg-white p-1.5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-                <div className="flex gap-1 overflow-x-auto no-scrollbar" role="tablist" aria-label="Sections">
+            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-1 dark:border-slate-800 dark:bg-slate-900/60">
+                <div
+                    className="no-scrollbar flex gap-1 overflow-x-auto"
+                    role="tablist"
+                    aria-label="Sections"
+                >
                     {tabs.map((tab, index) => {
                         const Icon = tab.icon;
                         const isActive = activeTab === tab.id;
@@ -71,18 +75,45 @@ export const Tabs: React.FC<TabsProps> = ({ tabs, defaultTab, onChange }) => {
                                         focusTabAt(tabs.length - 1);
                                     }
                                 }}
-                                className={`
-                  flex items-center gap-2 rounded-xl px-4 py-2.5 min-h-11 text-sm font-medium whitespace-nowrap transition-all duration-200
-                  ${isActive
-                                        ? 'bg-slate-900 text-white shadow-sm dark:bg-white dark:text-slate-900'
-                                        : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-800/60 dark:hover:text-slate-100'
-                                    }
-                `}
+                                className={[
+                                    // Layout
+                                    'group flex min-h-10 items-center gap-2 whitespace-nowrap rounded-lg px-3.5 py-2',
+                                    'text-sm font-medium',
+                                    // Motion
+                                    'transition-colors duration-150',
+                                    // Focus ring (keyboard only, themed offset)
+                                    'focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500',
+                                    'focus-visible:ring-offset-2 focus-visible:ring-offset-slate-50',
+                                    'dark:focus-visible:ring-emerald-400 dark:focus-visible:ring-offset-slate-900',
+                                    // States
+                                    isActive
+                                        ? // Active: primary tint, stays inside the container
+                                          'bg-emerald-50 text-emerald-700 shadow-sm ring-1 ring-inset ring-emerald-200/70 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/25'
+                                        : // Inactive: neutral text, subtle hover surface
+                                          'text-slate-600 hover:bg-white hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800/70 dark:hover:text-slate-100',
+                                ].join(' ')}
                             >
-                                {Icon && <Icon className="h-4 w-4" aria-hidden="true" />}
+                                {Icon && (
+                                    <Icon
+                                        className={[
+                                            'h-4 w-4 shrink-0 transition-colors duration-150',
+                                            isActive
+                                                ? 'text-emerald-600 dark:text-emerald-300'
+                                                : 'text-slate-400 group-hover:text-slate-600 dark:text-slate-500 dark:group-hover:text-slate-300',
+                                        ].join(' ')}
+                                        aria-hidden="true"
+                                    />
+                                )}
                                 <span>{tab.label}</span>
-                                {tab.badge !== undefined && isActive && (
-                                    <span className="rounded-full bg-white/15 px-2 py-0.5 text-xs font-semibold text-white dark:bg-slate-900/10 dark:text-slate-900">
+                                {tab.badge !== undefined && (
+                                    <span
+                                        className={[
+                                            'ml-0.5 rounded-full px-2 py-0.5 text-[11px] font-semibold leading-none',
+                                            isActive
+                                                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-400/20 dark:text-emerald-200'
+                                                : 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
+                                        ].join(' ')}
+                                    >
                                         {tab.badge}
                                     </span>
                                 )}
