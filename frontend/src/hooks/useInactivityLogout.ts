@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useAuth } from "../context/AuthContext";
 
-const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 daqiiqo
+const DEFAULT_TIMEOUT_MS = 30 * 1000; // 30 il-biriqsi — TIJAABO KALIYA
 const LAST_ACTIVITY_KEY = "lastActivityTime";
 
 /**
