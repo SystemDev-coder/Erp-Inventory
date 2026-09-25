@@ -1,15 +1,25 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router';
 import { useAuth } from '../../context/AuthContext';
-import { Lock as LockIcon, LogOut, ArrowLeft, Eye, EyeOff, Loader2, ShieldCheck } from 'lucide-react';
+import {
+  Lock as LockIcon,
+  LogOut,
+  ArrowLeft,
+  Eye,
+  EyeOff,
+  Loader2,
+  ShieldCheck,
+  Sun,
+  Moon,
+  Check,
+  AlertTriangle,
+  X,
+} from 'lucide-react';
 import { authService } from '../../services/auth.service';
 
-// ─────────────────────────────────────────────────────────────
-// Simple bilingual support (English / Somali).
-// Reads the current language from localStorage (key: 'app_lang'),
-// falling back to the browser's language, then to English.
-// A tiny toggle is rendered so the user can switch at any time.
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────
+// Bilingual support (English / Somali)
+// ─────────────────────────────────────────────────────────────────────────
 type Lang = 'en' | 'so';
 
 const translations = {
@@ -26,17 +36,34 @@ const translations = {
     unlocking: 'Unlocking…',
     saveLock: 'Save Lock',
     saving: 'Saving…',
-    loggingOut: 'Logging out…',
     logout: 'Logout',
     switchAccount: 'Switch account',
     or: 'or',
-    welcomeBack: 'Welcome back',
+    language: 'Language',
+    english: 'English',
+    somali: 'Somali',
     errShortPassword: 'Lock password must be at least 4 characters.',
     errMismatch: 'Passwords do not match.',
     errSaveFailed: 'Failed to save lock password.',
     errNoLock: 'No lock password set. Please create one.',
     errInvalid: 'Invalid password.',
     securityNote: 'Your session is protected. Only you can unlock it.',
+    showPassword: 'Show password',
+    hidePassword: 'Hide password',
+    switchToLight: 'Switch to light mode',
+    switchToDark: 'Switch to dark mode',
+    changeLanguage: 'Change language',
+    copyright: 'All rights reserved.',
+    // ── Confirm dialog ────────────────────────────────────────────────
+    confirmLogoutTitle: 'Sign out?',
+    confirmLogoutBody: 'You will be signed out and will need to log in again to continue.',
+    confirmSwitchTitle: 'Switch account?',
+    confirmSwitchBody: 'You will leave this locked session and return to the sign-in page.',
+    confirmContinue: 'Continue',
+    cancel: 'Cancel',
+    confirmGenericTitle: 'Are you sure?',
+    confirmGenericBody: 'Do you want to continue?',
+    close: 'Close',
   },
   so: {
     sessionLocked: 'Sesshanka Waa La Xidhay',
@@ -51,17 +78,34 @@ const translations = {
     unlocking: 'Waa la furayaa…',
     saveLock: 'Kaydi Furaha',
     saving: 'Waa la kaydinayaa…',
-    loggingOut: 'Waa la baxayaa…',
     logout: 'Ka Bax',
     switchAccount: 'Beddel Akoonka',
     or: 'ama',
-    welcomeBack: 'Ku soo dhawoow',
+    language: 'Luqadda',
+    english: 'Ingiriisi',
+    somali: 'Soomaali',
     errShortPassword: 'Furaha xidhitaanku waa inuu ka badan yahay 4 xaraf.',
     errMismatch: 'Furahaagu isku mid ma aha.',
     errSaveFailed: 'Kaydinta furaha xidhitaanka way fashilantay.',
     errNoLock: 'Furaha xidhitaan lama dejin. Fadlan abuur mid.',
     errInvalid: 'Furaha waa qaldan yahay.',
     securityNote: 'Sesshankaaga waa la ilaaliyaa. Adiga kaliya ayaad furi kartaa.',
+    showPassword: 'Muuji furaha',
+    hidePassword: 'Qari furaha',
+    switchToLight: 'U beddel hab-iftiinka',
+    switchToDark: 'U beddel hab-madow',
+    changeLanguage: 'Beddel luqadda',
+    copyright: 'Xuquuqda oo dhan way dhowran tahay.',
+    // ── Confirm dialog ────────────────────────────────────────────────
+    confirmLogoutTitle: 'Ma rabtaa inaad ka baxdo?',
+    confirmLogoutBody: 'Waa lagaa saarayaa oo waa inaad mar kale soo gashaa si aad u sii wadato.',
+    confirmSwitchTitle: 'Ma rabtaa inaad beddesho akoonka?',
+    confirmSwitchBody: 'Waxaad ka baxaysaa sesshankan xidhan oo waxaad ku noqonaysaa bogga gelitaanka.',
+    confirmContinue: 'Sii wad',
+    cancel: 'Jooji',
+    confirmGenericTitle: 'Ma hubtaa?',
+    confirmGenericBody: 'Ma rabtaa inaad sii wadato?',
+    close: 'Xir',
   },
 } as const;
 
@@ -69,7 +113,7 @@ const detectInitialLang = (): Lang => {
   if (typeof window === 'undefined') return 'en';
   const stored = localStorage.getItem('app_lang');
   if (stored === 'en' || stored === 'so') return stored;
-  const nav = navigator.language?.toLowerCase() || '';
+  const nav = (navigator.language || '').toLowerCase();
   if (nav.startsWith('so')) return 'so';
   return 'en';
 };
@@ -80,20 +124,223 @@ function useLang() {
     localStorage.setItem('app_lang', lang);
     document.documentElement.lang = lang;
   }, [lang]);
-  const t = translations[lang];
-  return { lang, setLang, t };
+  return { lang, setLang, t: translations[lang] };
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Theme
+// ─────────────────────────────────────────────────────────────────────────
+type Theme = 'light' | 'dark';
+
+const detectInitialTheme = (): Theme => {
+  if (typeof window === 'undefined') return 'light';
+  const stored = localStorage.getItem('app_theme');
+  if (stored === 'light' || stored === 'dark') return stored;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+};
+
+function useTheme() {
+  const [theme, setTheme] = useState<Theme>(detectInitialTheme);
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'dark') root.classList.add('dark');
+    else root.classList.remove('dark');
+    localStorage.setItem('app_theme', theme);
+  }, [theme]);
+  return {
+    theme,
+    toggle: () => setTheme((v) => (v === 'dark' ? 'light' : 'dark')),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Flags
+// ─────────────────────────────────────────────────────────────────────────
+function FlagUS({ className = 'h-5 w-5' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 60 40" className={className} aria-hidden="true">
+      <rect width="60" height="40" fill="#fff" />
+      {[0, 2, 4, 6, 8, 10, 12].map((i) => (
+        <rect key={i} y={i * 3.08} width="60" height="3.08" fill="#b22234" />
+      ))}
+      <rect width="24" height="18.5" fill="#3c3b6e" />
+      <g fill="#fff">
+        {[3, 9, 15, 21].map((x) =>
+          [3, 8, 13].map((y) => <circle key={`${x}-${y}`} cx={x} cy={y} r="0.9" />)
+        )}
+        {[6, 12, 18].map((x) =>
+          [5.5, 10.5].map((y) => <circle key={`${x}-${y}`} cx={x} cy={y} r="0.9" />)
+        )}
+      </g>
+    </svg>
+  );
+}
+
+function FlagSO({ className = 'h-5 w-5' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 60 40" className={className} aria-hidden="true">
+      <rect width="60" height="40" fill="#4189dd" />
+      <polygon
+        fill="#fff"
+        points="30,9 33.5,20.5 45,20.5 35.5,27 39,38.5 30,32 21,38.5 24.5,27 15,20.5 26.5,20.5"
+      />
+    </svg>
+  );
+}
+
+function FlagIcon({ lang, className = 'h-6 w-6' }: { lang: Lang; className?: string }) {
+  return (
+    <span className={`inline-flex ${className} overflow-hidden rounded-full ring-1 ring-black/5 dark:ring-white/10`}>
+      {lang === 'en' ? <FlagUS className="h-full w-full" /> : <FlagSO className="h-full w-full" />}
+    </span>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Confirm dialog — small, reusable, themed
+// ─────────────────────────────────────────────────────────────────────────
+type ConfirmKind = 'logout' | 'switch' | null;
+
+function ConfirmDialog({
+  kind,
+  onCancel,
+  onConfirm,
+  t,
+}: {
+  kind: ConfirmKind;
+  onCancel: () => void;
+  onConfirm: () => void;
+  t: typeof translations['en'];
+}) {
+  const cancelRef = useRef<HTMLButtonElement | null>(null);
+  const isOpen = kind !== null;
+
+  // Focus the Cancel button when the dialog opens + handle Escape
+  useEffect(() => {
+    if (!isOpen) return;
+    cancelRef.current?.focus();
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCancel();
+    };
+    document.addEventListener('keydown', onEsc);
+    // Prevent body scroll while modal is open
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onEsc);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [isOpen, onCancel]);
+
+  if (!isOpen) return null;
+
+  const title =
+    kind === 'logout'
+      ? t.confirmLogoutTitle
+      : kind === 'switch'
+      ? t.confirmSwitchTitle
+      : t.confirmGenericTitle;
+  const body =
+    kind === 'logout'
+      ? t.confirmLogoutBody
+      : kind === 'switch'
+      ? t.confirmSwitchBody
+      : t.confirmGenericBody;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="confirm-title"
+      aria-describedby="confirm-body"
+      className="fixed inset-0 z-50 flex items-center justify-center px-4"
+    >
+      {/* Backdrop */}
+      <div
+        onClick={onCancel}
+        aria-hidden="true"
+        className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm dark:bg-slate-950/70"
+      />
+
+      {/* Card */}
+      <div className="relative z-10 w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+        {/* Close X */}
+        <button
+          type="button"
+          onClick={onCancel}
+          aria-label={t.close}
+          className="absolute right-3 top-3 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+        >
+          <X className="h-4 w-4" />
+        </button>
+
+        {/* Icon */}
+        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">
+          <AlertTriangle className="h-6 w-6" aria-hidden="true" />
+        </div>
+
+        {/* Text */}
+        <h3
+          id="confirm-title"
+          className="text-center text-lg font-semibold text-slate-900 dark:text-white"
+        >
+          {title}
+        </h3>
+        <p
+          id="confirm-body"
+          className="mt-2 text-center text-sm text-slate-500 dark:text-slate-400"
+        >
+          {body}
+        </p>
+
+        {/* Actions */}
+        <div className="mt-6 flex gap-2">
+          <button
+            ref={cancelRef}
+            type="button"
+            onClick={onCancel}
+            className="flex-1 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            {t.cancel}
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="flex-1 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:bg-blue-500 dark:hover:bg-blue-400 dark:focus-visible:ring-offset-slate-900"
+          >
+            {t.confirmContinue}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Main component
+// ─────────────────────────────────────────────────────────────────────────
 const Lock = () => {
   const { lockedInfo, unlock, logout } = useAuth();
   const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [langOpen, setLangOpen] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<ConfirmKind>(null);
+
+  const langMenuRef = useRef<HTMLDivElement | null>(null);
+
   const navigate = useNavigate();
   const location = useLocation();
   const { lang, setLang, t } = useLang();
+  const { theme, toggle: toggleTheme } = useTheme();
+
+  const [isSetup, setIsSetup] = useState(() => Boolean(lockedInfo?.hasLock));
+  const isCreating = useMemo(() => !isSetup, [isSetup]);
+  const busy = saving || submitting;
 
   useEffect(() => {
     if (!lockedInfo) {
@@ -101,22 +348,34 @@ const Lock = () => {
     }
   }, [lockedInfo, navigate]);
 
-  const [isSetup, setIsSetup] = useState(() => Boolean(lockedInfo?.hasLock));
-  const [confirm, setConfirm] = useState('');
-  const [saving, setSaving] = useState(false);
+  // Close language dropdown on outside click / Escape
+  useEffect(() => {
+    if (!langOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (langMenuRef.current && !langMenuRef.current.contains(e.target as Node)) {
+        setLangOpen(false);
+      }
+    };
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLangOpen(false);
+    };
+    document.addEventListener('mousedown', onClick);
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, [langOpen]);
 
-  const isCreating = useMemo(() => !isSetup, [isSetup]);
-
-  // Initials for avatar
   const initials = useMemo(() => {
-    const name = lockedInfo?.name || lockedInfo?.identifier || '';
-    const parts = name.trim().split(/\s+/).filter(Boolean);
-    if (!parts.length) return '?';
+    const name = (lockedInfo?.name || lockedInfo?.identifier || '').trim();
+    if (!name) return '?';
+    const parts = name.split(/\s+/).filter(Boolean);
     if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
     return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   }, [lockedInfo]);
 
-  const handleUnlock = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -140,7 +399,7 @@ const Lock = () => {
         setPassword('');
         setConfirm('');
         return;
-      } catch (err) {
+      } catch {
         setSaving(false);
         setError(t.errSaveFailed);
         return;
@@ -151,87 +410,134 @@ const Lock = () => {
       setSubmitting(true);
       const res = await unlock(password);
       setSubmitting(false);
+
       if (res.success) {
         const target = (location.state as any)?.from?.pathname || '/';
         navigate(target, { replace: true });
-      } else {
-        if ((res as any).error === 'Lock password not set') {
-          setIsSetup(false);
-          setError(t.errNoLock);
-          return;
-        }
-        setError(res.error || (res as any).message || t.errInvalid);
+        return;
       }
+
+      if ((res as any).error === 'Lock password not set') {
+        setIsSetup(false);
+        setError(t.errNoLock);
+        return;
+      }
+      setError(res.error || (res as any).message || t.errInvalid);
     } catch {
       setSubmitting(false);
       setError(t.errInvalid);
     }
   };
 
-  const handleLogout = async () => {
+  // Actual actions (only run after confirmation)
+  const performLogout = async () => {
+    setConfirmAction(null);
     await logout();
     navigate('/signin', { replace: true });
   };
 
-  const busy = submitting || saving;
+  const performSwitch = () => {
+    setConfirmAction(null);
+    navigate('/signin', { replace: true });
+  };
+
+  // Button handlers — just open the dialog
+  const requestLogout = () => setConfirmAction('logout');
+  const requestSwitch = (e: React.MouseEvent) => {
+    e.preventDefault(); // block Link navigation
+    setConfirmAction('switch');
+  };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-50 px-4 dark:bg-slate-950">
-      {/* Ambient background glow */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 overflow-hidden"
-      >
+    <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-slate-50 px-4 py-16 dark:bg-slate-950">
+      {/* Ambient glow */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className="absolute -top-40 left-1/2 h-96 w-96 -translate-x-1/2 rounded-full bg-blue-200/40 blur-3xl dark:bg-blue-500/10" />
         <div className="absolute -bottom-40 right-1/4 h-96 w-96 rounded-full bg-emerald-200/30 blur-3xl dark:bg-emerald-500/5" />
       </div>
 
-      {/* Language toggle (top-right) */}
-      <div className="absolute right-4 top-4 z-10">
-        <div className="inline-flex overflow-hidden rounded-lg border border-slate-200 bg-white text-xs font-semibold shadow-sm dark:border-slate-700 dark:bg-slate-900">
+      {/* Top-right controls */}
+      <div className="absolute right-4 top-4 z-20 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={toggleTheme}
+          aria-label={theme === 'dark' ? t.switchToLight : t.switchToDark}
+          title={theme === 'dark' ? t.switchToLight : t.switchToDark}
+          className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white dark:focus-visible:ring-blue-400"
+        >
+          {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+        </button>
+
+        <div ref={langMenuRef} className="relative">
           <button
             type="button"
-            onClick={() => setLang('en')}
-            className={
-              'px-3 py-1.5 transition-colors ' +
-              (lang === 'en'
-                ? 'bg-blue-600 text-white'
-                : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800')
-            }
+            onClick={() => setLangOpen((v) => !v)}
+            aria-label={t.changeLanguage}
+            aria-haspopup="menu"
+            aria-expanded={langOpen}
+            title={t.changeLanguage}
+            className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-slate-200 bg-white p-1.5 shadow-sm transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800 dark:focus-visible:ring-blue-400"
           >
-            EN
+            <FlagIcon lang={lang} className="h-full w-full" />
           </button>
-          <button
-            type="button"
-            onClick={() => setLang('so')}
-            className={
-              'px-3 py-1.5 transition-colors ' +
-              (lang === 'so'
-                ? 'bg-blue-600 text-white'
-                : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800')
-            }
-          >
-            SO
-          </button>
+
+          {langOpen && (
+            <div
+              role="menu"
+              className="absolute right-0 top-12 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg ring-1 ring-black/5 dark:border-slate-700 dark:bg-slate-900 dark:ring-white/5"
+            >
+              <div className="px-2.5 pb-1.5 pt-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                {t.language}
+              </div>
+
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={lang === 'en'}
+                onClick={() => {
+                  setLang('en');
+                  setLangOpen(false);
+                }}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                <FlagIcon lang="en" className="h-5 w-5" />
+                <span>{t.english}</span>
+                {lang === 'en' && <Check className="ml-auto h-4 w-4 text-blue-500" />}
+              </button>
+
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={lang === 'so'}
+                onClick={() => {
+                  setLang('so');
+                  setLangOpen(false);
+                }}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                <FlagIcon lang="so" className="h-5 w-5" />
+                <span>{t.somali}</span>
+                {lang === 'so' && <Check className="ml-auto h-4 w-4 text-blue-500" />}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Card */}
       <div className="relative z-0 w-full max-w-md">
-        <div className="rounded-2xl border border-slate-200 bg-white/95 p-8 shadow-xl backdrop-blur-sm dark:border-slate-800 dark:bg-slate-900/95">
-          {/* Avatar + Lock badge */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-xl dark:border-slate-800 dark:bg-slate-900">
           <div className="flex flex-col items-center">
             <div className="relative">
-              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-600 text-lg font-semibold text-white shadow-md dark:from-blue-500 dark:to-blue-700">
+              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-700 text-lg font-semibold text-white shadow-md">
                 {initials}
               </div>
               <span className="absolute -bottom-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full border-2 border-white bg-slate-900 text-white shadow-sm dark:border-slate-900 dark:bg-slate-100 dark:text-slate-900">
-                <LockIcon className="h-3.5 w-3.5" />
+                <LockIcon className="h-3.5 w-3.5" aria-hidden="true" />
               </span>
             </div>
           </div>
 
-          {/* Heading */}
           <div className="mt-5 text-center">
             <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
               {isCreating ? t.setLockPassword : t.sessionLocked}
@@ -246,9 +552,7 @@ const Lock = () => {
             )}
           </div>
 
-          {/* Form */}
-          <form onSubmit={handleUnlock} className="mt-7 space-y-4">
-            {/* Password */}
+          <form onSubmit={handleSubmit} className="mt-7 space-y-4">
             <div>
               <label
                 htmlFor="lock-password"
@@ -284,7 +588,7 @@ const Lock = () => {
                   type="button"
                   onClick={() => setShowPassword((v) => !v)}
                   tabIndex={-1}
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  aria-label={showPassword ? t.hidePassword : t.showPassword}
                   className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-slate-400 transition-colors hover:text-slate-600 dark:hover:text-slate-200"
                 >
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -292,7 +596,6 @@ const Lock = () => {
               </div>
             </div>
 
-            {/* Confirm (create mode only) */}
             {isCreating && (
               <div>
                 <label
@@ -328,7 +631,7 @@ const Lock = () => {
                     type="button"
                     onClick={() => setShowConfirm((v) => !v)}
                     tabIndex={-1}
-                    aria-label={showConfirm ? 'Hide password' : 'Show password'}
+                    aria-label={showConfirm ? t.hidePassword : t.showPassword}
                     className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-slate-400 transition-colors hover:text-slate-600 dark:hover:text-slate-200"
                   >
                     {showConfirm ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -337,34 +640,34 @@ const Lock = () => {
               </div>
             )}
 
-            {/* Error */}
             {error && (
-              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-300">
+              <div
+                role="alert"
+                className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-300"
+              >
                 {error}
               </div>
             )}
 
-            {/* Primary CTA */}
             <button
               type="submit"
               disabled={busy || !password}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:bg-blue-600/50 dark:bg-blue-500 dark:text-white dark:hover:bg-blue-400 dark:focus-visible:ring-offset-slate-900 dark:disabled:bg-blue-500/40"
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:bg-blue-600/50 dark:bg-blue-500 dark:hover:bg-blue-400 dark:focus-visible:ring-offset-slate-900 dark:disabled:bg-blue-500/40"
             >
               {busy ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                   {isCreating ? t.saving : t.unlocking}
                 </>
               ) : (
                 <>
-                  <LockIcon className="h-4 w-4" />
+                  <LockIcon className="h-4 w-4" aria-hidden="true" />
                   {isCreating ? t.saveLock : t.unlock}
                 </>
               )}
             </button>
           </form>
 
-          {/* Divider */}
           <div className="my-5 flex items-center gap-3">
             <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
             <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
@@ -373,32 +676,47 @@ const Lock = () => {
             <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
           </div>
 
-          {/* Secondary actions */}
+          {/* Secondary actions — now open a confirm dialog first */}
           <div className="grid grid-cols-2 gap-2">
             <Link
               to="/signin"
+              onClick={requestSwitch}
               className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
             >
-              <ArrowLeft className="h-3.5 w-3.5" />
+              <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
               {t.switchAccount}
             </Link>
             <button
               type="button"
-              onClick={handleLogout}
+              onClick={requestLogout}
               disabled={busy}
               className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
             >
-              <LogOut className="h-3.5 w-3.5" />
+              <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
               {t.logout}
             </button>
           </div>
         </div>
 
-        {/* Security note */}
         <p className="mt-5 text-center text-[11px] text-slate-400 dark:text-slate-500">
           {t.securityNote}
         </p>
       </div>
+
+      {/* Footer */}
+      <footer className="absolute bottom-0 left-0 right-0 z-10 py-4 text-center">
+        <p className="text-[11px] text-slate-400 dark:text-slate-500">
+          © {new Date().getFullYear()} Madal ERP · {t.copyright}
+        </p>
+      </footer>
+
+      {/* Confirm dialog */}
+      <ConfirmDialog
+        kind={confirmAction}
+        onCancel={() => setConfirmAction(null)}
+        onConfirm={confirmAction === 'logout' ? performLogout : performSwitch}
+        t={t}
+      />
     </div>
   );
 };
