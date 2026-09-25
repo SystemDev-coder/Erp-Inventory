@@ -31,6 +31,18 @@ const QUICK_CREATE_CATEGORY_SENTINEL = -1;
 const QUICK_CREATE_UNIT_SENTINEL = -1;
 const QUICK_CREATE_SUPPLIER_SENTINEL = -1;
 
+// Shared, theme-aware control styling for every <input> / <select> in the form.
+// Defined once so light/dark, focus, placeholder and disabled states stay
+// consistent across the entire page instead of relying on implicit global CSS.
+const fieldControlClass =
+  'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm ' +
+  'placeholder:text-slate-400 [color-scheme:light] transition-colors ' +
+  'focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/25 ' +
+  'disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-500 ' +
+  'dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-400 ' +
+  'dark:[color-scheme:dark] dark:focus:border-emerald-400 dark:focus:ring-emerald-400/25 ' +
+  'dark:disabled:border-slate-700 dark:disabled:bg-slate-900/60 dark:disabled:text-slate-500';
+
 // Deliberately has no error/touched/success state: the form relies on native HTML5
 // validation (required/minLength/min on the inputs themselves) instead of custom
 // red-border flashing, matching the Employee modal's behavior.
@@ -45,7 +57,7 @@ function ItemField({
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <label className="text-xs font-semibold uppercase tracking-wide">
+      <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
         <span>{label}{required ? ' *' : ''}</span>
       </label>
       {children}
@@ -405,6 +417,7 @@ const ProductEditor = () => {
                     required
                     minLength={2}
                     placeholder="Enter product name"
+                    className={fieldControlClass}
                     value={itemForm.name || ''}
                     onChange={(e) => setItemField('name', e.target.value)}
                   />
@@ -418,7 +431,7 @@ const ProductEditor = () => {
                       {itemImagePreview ? (
                         <img src={itemImagePreview} alt="Product preview" className="h-full w-full object-cover" />
                       ) : (
-                        <ImageIcon className="h-8 w-8 text-slate-400" aria-hidden="true" />
+                        <ImageIcon className="h-8 w-8 text-slate-400 dark:text-slate-500" aria-hidden="true" />
                       )}
                     </div>
                     <div className="flex flex-col items-start gap-2">
@@ -438,7 +451,7 @@ const ProductEditor = () => {
                         <button
                           type="button"
                           onClick={handleRemoveItemImage}
-                          className="inline-flex w-fit items-center gap-1 text-xs font-medium text-red-500 hover:text-red-600"
+                          className="inline-flex w-fit items-center gap-1 text-xs font-medium text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300"
                         >
                           <X className="h-3.5 w-3.5" aria-hidden="true" /> Remove image
                         </button>
@@ -500,6 +513,7 @@ const ProductEditor = () => {
               <ItemField label="Brand">
                 <input
                   placeholder="e.g. Apple, Dell, Adidas"
+                  className={fieldControlClass}
                   value={itemForm.brand || ''}
                   onChange={(e) => setItemField('brand', e.target.value)}
                 />
@@ -533,6 +547,7 @@ const ProductEditor = () => {
                 <ItemField label="Barcode">
                   <input
                     placeholder="Scan or enter barcode"
+                    className={fieldControlClass}
                     value={itemForm.barcode || ''}
                     onChange={(e) => setItemField('barcode', e.target.value)}
                   />
@@ -549,6 +564,7 @@ const ProductEditor = () => {
                   <ItemField label={sizeLabel}>
                     <input
                       placeholder={sizeLabel === 'Volume' ? 'e.g. 50ml' : 'e.g. M, L, XL'}
+                      className={fieldControlClass}
                       value={itemForm.size || ''}
                       onChange={(e) => setItemField('size', e.target.value)}
                     />
@@ -559,6 +575,7 @@ const ProductEditor = () => {
                   <ItemField label={colorLabel}>
                     <input
                       placeholder={colorLabel === 'Shade' ? 'e.g. Ivory, Rose Gold' : 'e.g. Red, Navy Blue'}
+                      className={fieldControlClass}
                       value={itemForm.color || ''}
                       onChange={(e) => setItemField('color', e.target.value)}
                     />
@@ -569,6 +586,7 @@ const ProductEditor = () => {
                   <ItemField label="Generic Name">
                     <input
                       placeholder="e.g. Paracetamol"
+                      className={fieldControlClass}
                       value={itemForm.generic_name || ''}
                       onChange={(e) => setItemField('generic_name', e.target.value)}
                     />
@@ -579,6 +597,7 @@ const ProductEditor = () => {
                   <ItemField label="Strength">
                     <input
                       placeholder="e.g. 500mg"
+                      className={fieldControlClass}
                       value={itemForm.strength || ''}
                       onChange={(e) => setItemField('strength', e.target.value)}
                     />
@@ -592,7 +611,11 @@ const ProductEditor = () => {
                 {dynamicAttributeDefs.map((def) =>
                   def.type === 'select' ? (
                     <ItemField key={def.key} label={def.label}>
-                      <select value={getAttributeValue(def)} onChange={(e) => setAttributeField(def, e.target.value)}>
+                      <select
+                        className={fieldControlClass}
+                        value={getAttributeValue(def)}
+                        onChange={(e) => setAttributeField(def, e.target.value)}
+                      >
                         <option value="">Select {def.label.toLowerCase()}</option>
                         {(def.options || []).map((opt) => (
                           <option key={opt} value={opt}>{opt}</option>
@@ -604,6 +627,7 @@ const ProductEditor = () => {
                       <input
                         type={def.type === 'number' ? 'number' : def.type === 'date' ? 'date' : 'text'}
                         placeholder={`e.g. ${def.label}`}
+                        className={fieldControlClass}
                         value={getAttributeValue(def)}
                         onChange={(e) => setAttributeField(def, e.target.value)}
                       />
@@ -635,6 +659,7 @@ const ProductEditor = () => {
                   min="0.01"
                   required
                   placeholder="0.00"
+                  className={fieldControlClass}
                   value={itemForm.cost_price ?? 0}
                   onChange={(e) => setItemField('cost_price', Number(e.target.value || 0))}
                 />
@@ -647,6 +672,7 @@ const ProductEditor = () => {
                   min="0.01"
                   required
                   placeholder="0.00"
+                  className={fieldControlClass}
                   value={itemForm.sell_price ?? 0}
                   onChange={(e) => setItemField('sell_price', Number(e.target.value || 0))}
                 />
@@ -658,6 +684,7 @@ const ProductEditor = () => {
                   min={0}
                   step="1"
                   placeholder="5"
+                  className={fieldControlClass}
                   value={itemForm.stock_alert ?? 5}
                   onChange={(e) => setItemField('stock_alert', Number(e.target.value || 0))}
                 />
@@ -681,6 +708,7 @@ const ProductEditor = () => {
                       min={0}
                       step="1"
                       placeholder="0"
+                      className={fieldControlClass}
                       value={itemForm.opening_balance ?? 0}
                       onChange={(e) => setItemField('opening_balance', Number(e.target.value || 0))}
                     />
@@ -694,7 +722,7 @@ const ProductEditor = () => {
                       value={itemForm.quantity ?? 0}
                       disabled
                       readOnly
-                      className="cursor-not-allowed opacity-70"
+                      className={fieldControlClass}
                     />
                     <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                       Current stock - use Stock Adjustment to change it
@@ -710,6 +738,7 @@ const ProductEditor = () => {
                     min={0}
                     step="1"
                     placeholder="0"
+                    className={fieldControlClass}
                     value={itemForm.opening_balance ?? 0}
                     onChange={(e) => {
                       const value = Number(e.target.value || 0);
@@ -723,6 +752,7 @@ const ProductEditor = () => {
                 <select
                   required
                   value={itemStoreId}
+                  className={fieldControlClass}
                   onChange={(e) => setItemStoreId(e.target.value ? Number(e.target.value) : '')}
                 >
                   <option value="" disabled>Select store</option>
