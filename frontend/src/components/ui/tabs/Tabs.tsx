@@ -81,16 +81,18 @@ export const Tabs: React.FC<TabsProps> = ({ tabs, defaultTab, onChange }) => {
                                     'text-sm font-medium',
                                     // Motion
                                     'transition-colors duration-150',
-                                    // Focus ring (keyboard only, themed offset)
-                                    'focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500',
+                                    // Focus ring (keyboard only)
+                                    'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500',
                                     'focus-visible:ring-offset-2 focus-visible:ring-offset-slate-50',
-                                    'dark:focus-visible:ring-emerald-400 dark:focus-visible:ring-offset-slate-900',
+                                    'dark:focus-visible:ring-blue-400 dark:focus-visible:ring-offset-slate-900',
                                     // States
                                     isActive
-                                        ? // Active: primary tint, stays inside the container
-                                          'bg-emerald-50 text-emerald-700 shadow-sm ring-1 ring-inset ring-emerald-200/70 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/25'
+                                        ? // Active: navy blue (blue-500) in light mode, blue-600 in dark
+                                          'bg-blue-500 text-white shadow-sm ring-1 ring-inset ring-blue-600/40 ' +
+                                          'dark:bg-blue-600 dark:text-white dark:ring-blue-400/30'
                                         : // Inactive: neutral text, subtle hover surface
-                                          'text-slate-600 hover:bg-white hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800/70 dark:hover:text-slate-100',
+                                          'text-slate-600 hover:bg-white hover:text-slate-900 ' +
+                                          'dark:text-slate-400 dark:hover:bg-slate-800/70 dark:hover:text-slate-100',
                                 ].join(' ')}
                             >
                                 {Icon && (
@@ -98,8 +100,9 @@ export const Tabs: React.FC<TabsProps> = ({ tabs, defaultTab, onChange }) => {
                                         className={[
                                             'h-4 w-4 shrink-0 transition-colors duration-150',
                                             isActive
-                                                ? 'text-emerald-600 dark:text-emerald-300'
-                                                : 'text-slate-400 group-hover:text-slate-600 dark:text-slate-500 dark:group-hover:text-slate-300',
+                                                ? 'text-white'
+                                                : 'text-slate-400 group-hover:text-slate-600 ' +
+                                                  'dark:text-slate-500 dark:group-hover:text-slate-300',
                                         ].join(' ')}
                                         aria-hidden="true"
                                     />
@@ -110,7 +113,7 @@ export const Tabs: React.FC<TabsProps> = ({ tabs, defaultTab, onChange }) => {
                                         className={[
                                             'ml-0.5 rounded-full px-2 py-0.5 text-[11px] font-semibold leading-none',
                                             isActive
-                                                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-400/20 dark:text-emerald-200'
+                                                ? 'bg-white/20 text-white'
                                                 : 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
                                         ].join(' ')}
                                     >
