@@ -54,7 +54,6 @@ const translations = {
     switchToDark: 'Switch to dark mode',
     changeLanguage: 'Change language',
     copyright: 'All rights reserved.',
-    // ── Confirm dialog ────────────────────────────────────────────────
     confirmLogoutTitle: 'Sign out?',
     confirmLogoutBody: 'You will be signed out and will need to log in again to continue.',
     confirmSwitchTitle: 'Switch account?',
@@ -96,7 +95,6 @@ const translations = {
     switchToDark: 'U beddel hab-madow',
     changeLanguage: 'Beddel luqadda',
     copyright: 'Xuquuqda oo dhan way dhowran tahay.',
-    // ── Confirm dialog ────────────────────────────────────────────────
     confirmLogoutTitle: 'Ma rabtaa inaad ka baxdo?',
     confirmLogoutBody: 'Waa lagaa saarayaa oo waa inaad mar kale soo gashaa si aad u sii wadato.',
     confirmSwitchTitle: 'Ma rabtaa inaad beddesho akoonka?',
@@ -154,22 +152,24 @@ function useTheme() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Flags
+// Flags — cropped to fill a circle exactly (preserveAspectRatio="slice").
 // ─────────────────────────────────────────────────────────────────────────
 function FlagUS({ className = 'h-5 w-5' }: { className?: string }) {
   return (
-    <svg viewBox="0 0 60 40" className={className} aria-hidden="true">
-      <rect width="60" height="40" fill="#fff" />
-      {[0, 2, 4, 6, 8, 10, 12].map((i) => (
-        <rect key={i} y={i * 3.08} width="60" height="3.08" fill="#b22234" />
+    <svg
+      viewBox="0 0 40 40"
+      preserveAspectRatio="xMidYMid slice"
+      className={className}
+      aria-hidden="true"
+    >
+      <rect width="40" height="40" fill="#fff" />
+      {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((i) => (
+        <rect key={i} y={i * 3.08} width="40" height="3.08" fill="#b22234" />
       ))}
-      <rect width="24" height="18.5" fill="#3c3b6e" />
+      <rect width="20" height="16.5" fill="#3c3b6e" />
       <g fill="#fff">
-        {[3, 9, 15, 21].map((x) =>
-          [3, 8, 13].map((y) => <circle key={`${x}-${y}`} cx={x} cy={y} r="0.9" />)
-        )}
-        {[6, 12, 18].map((x) =>
-          [5.5, 10.5].map((y) => <circle key={`${x}-${y}`} cx={x} cy={y} r="0.9" />)
+        {[3, 7, 11, 15, 17].map((x) =>
+          [3, 7, 11, 15].map((y) => <circle key={`${x}-${y}`} cx={x} cy={y} r="1" />)
         )}
       </g>
     </svg>
@@ -178,26 +178,96 @@ function FlagUS({ className = 'h-5 w-5' }: { className?: string }) {
 
 function FlagSO({ className = 'h-5 w-5' }: { className?: string }) {
   return (
-    <svg viewBox="0 0 60 40" className={className} aria-hidden="true">
-      <rect width="60" height="40" fill="#4189dd" />
+    <svg
+      viewBox="0 0 40 40"
+      preserveAspectRatio="xMidYMid slice"
+      className={className}
+      aria-hidden="true"
+    >
+      <rect width="40" height="40" fill="#4189dd" />
       <polygon
         fill="#fff"
-        points="30,9 33.5,20.5 45,20.5 35.5,27 39,38.5 30,32 21,38.5 24.5,27 15,20.5 26.5,20.5"
+        points="20,7 23.5,17.5 34,17.5 25.5,24 29,34.5 20,28 11,34.5 14.5,24 6,17.5 16.5,17.5"
       />
     </svg>
   );
 }
 
-function FlagIcon({ lang, className = 'h-6 w-6' }: { lang: Lang; className?: string }) {
+function FlagIcon({
+  lang,
+  className = 'h-6 w-6',
+  ring = true,
+}: {
+  lang: Lang;
+  className?: string;
+  ring?: boolean;
+}) {
   return (
-    <span className={`inline-flex ${className} overflow-hidden rounded-full ring-1 ring-black/5 dark:ring-white/10`}>
-      {lang === 'en' ? <FlagUS className="h-full w-full" /> : <FlagSO className="h-full w-full" />}
+    <span
+      className={
+        'relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800 ' +
+        (ring ? 'ring-1 ring-black/10 dark:ring-white/15 ' : '') +
+        className
+      }
+    >
+      {lang === 'en' ? (
+        <FlagUS className="absolute inset-0 h-full w-full" />
+      ) : (
+        <FlagSO className="absolute inset-0 h-full w-full" />
+      )}
     </span>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Confirm dialog — small, reusable, themed
+// Skeleton — shown briefly while the page bootstraps so the UI feels
+// polished instead of flashing the real card in.
+// ─────────────────────────────────────────────────────────────────────────
+function LockSkeleton() {
+  return (
+    <div className="w-full max-w-md" aria-hidden="true">
+      <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-xl dark:border-slate-800 dark:bg-slate-900">
+        {/* Avatar */}
+        <div className="flex flex-col items-center">
+          <div className="h-16 w-16 animate-pulse rounded-full bg-slate-200 dark:bg-slate-800" />
+        </div>
+
+        {/* Heading + subtitle */}
+        <div className="mt-5 flex flex-col items-center gap-2">
+          <div className="h-6 w-44 animate-pulse rounded-md bg-slate-200 dark:bg-slate-800" />
+          <div className="h-4 w-56 animate-pulse rounded-md bg-slate-100 dark:bg-slate-800/70" />
+          <div className="mt-2 h-4 w-32 animate-pulse rounded-md bg-slate-100 dark:bg-slate-800/70" />
+        </div>
+
+        {/* Password label + input */}
+        <div className="mt-7 space-y-4">
+          <div>
+            <div className="mb-1.5 h-3 w-20 animate-pulse rounded bg-slate-100 dark:bg-slate-800/70" />
+            <div className="h-10 w-full animate-pulse rounded-xl bg-slate-100 dark:bg-slate-800/70" />
+          </div>
+          <div className="h-11 w-full animate-pulse rounded-xl bg-slate-200 dark:bg-slate-800" />
+        </div>
+
+        {/* Divider */}
+        <div className="my-5 h-px w-full bg-slate-100 dark:bg-slate-800/70" />
+
+        {/* Two secondary buttons */}
+        <div className="grid grid-cols-2 gap-2">
+          <div className="h-9 animate-pulse rounded-xl bg-slate-100 dark:bg-slate-800/70" />
+          <div className="h-9 animate-pulse rounded-xl bg-slate-100 dark:bg-slate-800/70" />
+        </div>
+      </div>
+
+      {/* Security note placeholder */}
+      <div className="mt-5 flex justify-center">
+        <div className="h-3 w-64 animate-pulse rounded bg-slate-100 dark:bg-slate-800/70" />
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Confirm dialog
 // ─────────────────────────────────────────────────────────────────────────
 type ConfirmKind = 'logout' | 'switch' | null;
 
@@ -206,16 +276,17 @@ function ConfirmDialog({
   onCancel,
   onConfirm,
   t,
+  busy,
 }: {
   kind: ConfirmKind;
   onCancel: () => void;
   onConfirm: () => void;
   t: typeof translations['en'];
+  busy: boolean;
 }) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const isOpen = kind !== null;
 
-  // Focus the Cancel button when the dialog opens + handle Escape
   useEffect(() => {
     if (!isOpen) return;
     cancelRef.current?.focus();
@@ -223,7 +294,6 @@ function ConfirmDialog({
       if (e.key === 'Escape') onCancel();
     };
     document.addEventListener('keydown', onEsc);
-    // Prevent body scroll while modal is open
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
@@ -234,18 +304,8 @@ function ConfirmDialog({
 
   if (!isOpen) return null;
 
-  const title =
-    kind === 'logout'
-      ? t.confirmLogoutTitle
-      : kind === 'switch'
-      ? t.confirmSwitchTitle
-      : t.confirmGenericTitle;
-  const body =
-    kind === 'logout'
-      ? t.confirmLogoutBody
-      : kind === 'switch'
-      ? t.confirmSwitchBody
-      : t.confirmGenericBody;
+  const title = kind === 'logout' ? t.confirmLogoutTitle : t.confirmSwitchTitle;
+  const body = kind === 'logout' ? t.confirmLogoutBody : t.confirmSwitchBody;
 
   return (
     <div
@@ -255,31 +315,27 @@ function ConfirmDialog({
       aria-describedby="confirm-body"
       className="fixed inset-0 z-50 flex items-center justify-center px-4"
     >
-      {/* Backdrop */}
       <div
-        onClick={onCancel}
+        onClick={busy ? undefined : onCancel}
         aria-hidden="true"
         className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm dark:bg-slate-950/70"
       />
 
-      {/* Card */}
       <div className="relative z-10 w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
-        {/* Close X */}
         <button
           type="button"
           onClick={onCancel}
+          disabled={busy}
           aria-label={t.close}
-          className="absolute right-3 top-3 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+          className="absolute right-3 top-3 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 disabled:opacity-50 dark:hover:bg-slate-800 dark:hover:text-slate-200"
         >
           <X className="h-4 w-4" />
         </button>
 
-        {/* Icon */}
         <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">
           <AlertTriangle className="h-6 w-6" aria-hidden="true" />
         </div>
 
-        {/* Text */}
         <h3
           id="confirm-title"
           className="text-center text-lg font-semibold text-slate-900 dark:text-white"
@@ -293,21 +349,23 @@ function ConfirmDialog({
           {body}
         </p>
 
-        {/* Actions */}
         <div className="mt-6 flex gap-2">
           <button
             ref={cancelRef}
             type="button"
             onClick={onCancel}
-            className="flex-1 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+            disabled={busy}
+            className="flex-1 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             {t.cancel}
           </button>
           <button
             type="button"
             onClick={onConfirm}
-            className="flex-1 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:bg-blue-500 dark:hover:bg-blue-400 dark:focus-visible:ring-offset-slate-900"
+            disabled={busy}
+            className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:bg-blue-600/60 dark:bg-blue-500 dark:hover:bg-blue-400 dark:focus-visible:ring-offset-slate-900 dark:disabled:bg-blue-500/50"
           >
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
             {t.confirmContinue}
           </button>
         </div>
@@ -315,6 +373,21 @@ function ConfirmDialog({
     </div>
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Min duration helper — prevents the spinner from flashing for very fast
+// responses, which is the classic source of "double-click" fatigue.
+// ─────────────────────────────────────────────────────────────────────────
+const MIN_ACTION_MS = 350;
+const withMinDuration = async <T,>(promise: Promise<T>, minMs = MIN_ACTION_MS): Promise<T> => {
+  const startedAt = Date.now();
+  const result = await promise;
+  const elapsed = Date.now() - startedAt;
+  if (elapsed < minMs) {
+    await new Promise((r) => setTimeout(r, minMs - elapsed));
+  }
+  return result;
+};
 
 // ─────────────────────────────────────────────────────────────────────────
 // Main component
@@ -330,8 +403,12 @@ const Lock = () => {
   const [submitting, setSubmitting] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState<ConfirmKind>(null);
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
 
   const langMenuRef = useRef<HTMLDivElement | null>(null);
+  // Guards against duplicate submits even before React state updates flush.
+  // Without this a fast double-Enter could fire two POSTs.
+  const submitLockRef = useRef(false);
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -341,6 +418,12 @@ const Lock = () => {
   const [isSetup, setIsSetup] = useState(() => Boolean(lockedInfo?.hasLock));
   const isCreating = useMemo(() => !isSetup, [isSetup]);
   const busy = saving || submitting;
+
+  // Brief skeleton on first mount so the card doesn't flash in.
+  useEffect(() => {
+    const timer = setTimeout(() => setIsBootstrapping(false), 250);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     if (!lockedInfo) {
@@ -377,60 +460,73 @@ const Lock = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // ── Double-submit guard ───────────────────────────────────────────
+    // Cheap synchronous check so a rapid double-Enter / double-click
+    // cannot fire two requests before React state updates.
+    if (submitLockRef.current || busy) return;
+    submitLockRef.current = true;
+
     setError('');
 
-    if (isCreating) {
-      if (!password || password.length < 4) {
-        setError(t.errShortPassword);
-        return;
-      }
-      if (password !== confirm) {
-        setError(t.errMismatch);
-        return;
-      }
-      try {
-        setSaving(true);
-        await authService.setLockPassword(password);
-        const payload = { ...(lockedInfo || { identifier: '' }), hasLock: true };
-        localStorage.setItem('app_lock', JSON.stringify(payload));
-        setSaving(false);
-        setIsSetup(true);
-        setError('');
-        setPassword('');
-        setConfirm('');
-        return;
-      } catch {
-        setSaving(false);
-        setError(t.errSaveFailed);
-        return;
-      }
-    }
-
     try {
-      setSubmitting(true);
-      const res = await unlock(password);
-      setSubmitting(false);
-
-      if (res.success) {
-        const target = (location.state as any)?.from?.pathname || '/';
-        navigate(target, { replace: true });
-        return;
+      // ── CREATE MODE ───────────────────────────────────────────────
+      if (isCreating) {
+        if (!password || password.length < 4) {
+          setError(t.errShortPassword);
+          return;
+        }
+        if (password !== confirm) {
+          setError(t.errMismatch);
+          return;
+        }
+        try {
+          setSaving(true);
+          await withMinDuration(authService.setLockPassword(password));
+          const payload = { ...(lockedInfo || { identifier: '' }), hasLock: true };
+          localStorage.setItem('app_lock', JSON.stringify(payload));
+          setIsSetup(true);
+          setError('');
+          setPassword('');
+          setConfirm('');
+          return;
+        } catch {
+          setError(t.errSaveFailed);
+          return;
+        } finally {
+          setSaving(false);
+        }
       }
 
-      if ((res as any).error === 'Lock password not set') {
-        setIsSetup(false);
-        setError(t.errNoLock);
-        return;
+      // ── UNLOCK MODE ───────────────────────────────────────────────
+      try {
+        setSubmitting(true);
+        const res = await withMinDuration(unlock(password));
+
+        if (res.success) {
+          const target = (location.state as any)?.from?.pathname || '/';
+          navigate(target, { replace: true });
+          return;
+        }
+
+        if ((res as any).error === 'Lock password not set') {
+          setIsSetup(false);
+          setError(t.errNoLock);
+          return;
+        }
+        setError(res.error || (res as any).message || t.errInvalid);
+      } catch {
+        setError(t.errInvalid);
+      } finally {
+        setSubmitting(false);
       }
-      setError(res.error || (res as any).message || t.errInvalid);
-    } catch {
-      setSubmitting(false);
-      setError(t.errInvalid);
+    } finally {
+      submitLockRef.current = false;
     }
   };
 
-  // Actual actions (only run after confirmation)
   const performLogout = async () => {
+    // Close the dialog immediately so the user sees the state change
     setConfirmAction(null);
     await logout();
     navigate('/signin', { replace: true });
@@ -441,10 +537,9 @@ const Lock = () => {
     navigate('/signin', { replace: true });
   };
 
-  // Button handlers — just open the dialog
   const requestLogout = () => setConfirmAction('logout');
   const requestSwitch = (e: React.MouseEvent) => {
-    e.preventDefault(); // block Link navigation
+    e.preventDefault();
     setConfirmAction('switch');
   };
 
@@ -476,9 +571,9 @@ const Lock = () => {
             aria-haspopup="menu"
             aria-expanded={langOpen}
             title={t.changeLanguage}
-            className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-slate-200 bg-white p-1.5 shadow-sm transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800 dark:focus-visible:ring-blue-400"
+            className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white p-1 shadow-sm transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800 dark:focus-visible:ring-blue-400"
           >
-            <FlagIcon lang={lang} className="h-full w-full" />
+            <FlagIcon lang={lang} className="h-8 w-8" ring={false} />
           </button>
 
           {langOpen && (
@@ -500,7 +595,7 @@ const Lock = () => {
                 }}
                 className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
               >
-                <FlagIcon lang="en" className="h-5 w-5" />
+                <FlagIcon lang="en" className="h-6 w-6" />
                 <span>{t.english}</span>
                 {lang === 'en' && <Check className="ml-auto h-4 w-4 text-blue-500" />}
               </button>
@@ -515,7 +610,7 @@ const Lock = () => {
                 }}
                 className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
               >
-                <FlagIcon lang="so" className="h-5 w-5" />
+                <FlagIcon lang="so" className="h-6 w-6" />
                 <span>{t.somali}</span>
                 {lang === 'so' && <Check className="ml-auto h-4 w-4 text-blue-500" />}
               </button>
@@ -524,98 +619,58 @@ const Lock = () => {
         </div>
       </div>
 
-      {/* Card */}
-      <div className="relative z-0 w-full max-w-md">
-        <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-xl dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex flex-col items-center">
-            <div className="relative">
-              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-700 text-lg font-semibold text-white shadow-md">
-                {initials}
-              </div>
-              <span className="absolute -bottom-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full border-2 border-white bg-slate-900 text-white shadow-sm dark:border-slate-900 dark:bg-slate-100 dark:text-slate-900">
-                <LockIcon className="h-3.5 w-3.5" aria-hidden="true" />
-              </span>
-            </div>
-          </div>
-
-          <div className="mt-5 text-center">
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-              {isCreating ? t.setLockPassword : t.sessionLocked}
-            </h1>
-            <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">
-              {isCreating ? t.setPasswordHint : t.enterPassword}
-            </p>
-            {lockedInfo && (
-              <p className="mt-3 text-sm font-semibold text-slate-800 dark:text-slate-200">
-                {lockedInfo.name || lockedInfo.identifier}
-              </p>
-            )}
-          </div>
-
-          <form onSubmit={handleSubmit} className="mt-7 space-y-4">
-            <div>
-              <label
-                htmlFor="lock-password"
-                className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300"
-              >
-                {t.password}
-              </label>
+      {/* Card — skeleton on first mount, then the real thing */}
+      {isBootstrapping ? (
+        <LockSkeleton />
+      ) : (
+        <div className="relative z-0 w-full max-w-md">
+          <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-xl dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex flex-col items-center">
               <div className="relative">
-                <LockIcon
-                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-slate-500"
-                  aria-hidden="true"
-                />
-                <input
-                  id="lock-password"
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder={t.passwordPlaceholder}
-                  autoFocus
-                  autoComplete="current-password"
-                  required
-                  disabled={busy}
-                  className={
-                    'w-full rounded-xl border bg-white py-2.5 pl-9 pr-10 text-sm text-slate-900 shadow-sm outline-none transition-colors placeholder:text-slate-400 ' +
-                    'focus:ring-2 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 ' +
-                    (error
-                      ? 'border-red-400 focus:border-red-500 focus:ring-red-500/25 dark:border-red-500'
-                      : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500/25 dark:border-slate-700 dark:focus:border-blue-400 dark:focus:ring-blue-400/25') +
-                    ' disabled:cursor-not-allowed disabled:opacity-60'
-                  }
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  tabIndex={-1}
-                  aria-label={showPassword ? t.hidePassword : t.showPassword}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-slate-400 transition-colors hover:text-slate-600 dark:hover:text-slate-200"
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-700 text-lg font-semibold text-white shadow-md">
+                  {initials}
+                </div>
+                <span className="absolute -bottom-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full border-2 border-white bg-slate-900 text-white shadow-sm dark:border-slate-900 dark:bg-slate-100 dark:text-slate-900">
+                  <LockIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                </span>
               </div>
             </div>
 
-            {isCreating && (
+            <div className="mt-5 text-center">
+              <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+                {isCreating ? t.setLockPassword : t.sessionLocked}
+              </h1>
+              <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">
+                {isCreating ? t.setPasswordHint : t.enterPassword}
+              </p>
+              {lockedInfo && (
+                <p className="mt-3 text-sm font-semibold text-slate-800 dark:text-slate-200">
+                  {lockedInfo.name || lockedInfo.identifier}
+                </p>
+              )}
+            </div>
+
+            <form onSubmit={handleSubmit} className="mt-7 space-y-4">
               <div>
                 <label
-                  htmlFor="lock-confirm"
+                  htmlFor="lock-password"
                   className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300"
                 >
-                  {t.confirmPassword}
+                  {t.password}
                 </label>
                 <div className="relative">
-                  <ShieldCheck
+                  <LockIcon
                     className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-slate-500"
                     aria-hidden="true"
                   />
                   <input
-                    id="lock-confirm"
-                    type={showConfirm ? 'text' : 'password'}
-                    value={confirm}
-                    onChange={(e) => setConfirm(e.target.value)}
-                    placeholder={t.confirmPlaceholder}
-                    autoComplete="new-password"
+                    id="lock-password"
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder={t.passwordPlaceholder}
+                    autoFocus
+                    autoComplete="current-password"
                     required
                     disabled={busy}
                     className={
@@ -629,79 +684,122 @@ const Lock = () => {
                   />
                   <button
                     type="button"
-                    onClick={() => setShowConfirm((v) => !v)}
+                    onClick={() => setShowPassword((v) => !v)}
                     tabIndex={-1}
-                    aria-label={showConfirm ? t.hidePassword : t.showPassword}
+                    aria-label={showPassword ? t.hidePassword : t.showPassword}
                     className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-slate-400 transition-colors hover:text-slate-600 dark:hover:text-slate-200"
                   >
-                    {showConfirm ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
               </div>
-            )}
 
-            {error && (
-              <div
-                role="alert"
-                className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-300"
-              >
-                {error}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={busy || !password}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:bg-blue-600/50 dark:bg-blue-500 dark:hover:bg-blue-400 dark:focus-visible:ring-offset-slate-900 dark:disabled:bg-blue-500/40"
-            >
-              {busy ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                  {isCreating ? t.saving : t.unlocking}
-                </>
-              ) : (
-                <>
-                  <LockIcon className="h-4 w-4" aria-hidden="true" />
-                  {isCreating ? t.saveLock : t.unlock}
-                </>
+              {isCreating && (
+                <div>
+                  <label
+                    htmlFor="lock-confirm"
+                    className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300"
+                  >
+                    {t.confirmPassword}
+                  </label>
+                  <div className="relative">
+                    <ShieldCheck
+                      className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-slate-500"
+                      aria-hidden="true"
+                    />
+                    <input
+                      id="lock-confirm"
+                      type={showConfirm ? 'text' : 'password'}
+                      value={confirm}
+                      onChange={(e) => setConfirm(e.target.value)}
+                      placeholder={t.confirmPlaceholder}
+                      autoComplete="new-password"
+                      required
+                      disabled={busy}
+                      className={
+                        'w-full rounded-xl border bg-white py-2.5 pl-9 pr-10 text-sm text-slate-900 shadow-sm outline-none transition-colors placeholder:text-slate-400 ' +
+                        'focus:ring-2 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 ' +
+                        (error
+                          ? 'border-red-400 focus:border-red-500 focus:ring-red-500/25 dark:border-red-500'
+                          : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500/25 dark:border-slate-700 dark:focus:border-blue-400 dark:focus:ring-blue-400/25') +
+                        ' disabled:cursor-not-allowed disabled:opacity-60'
+                      }
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirm((v) => !v)}
+                      tabIndex={-1}
+                      aria-label={showConfirm ? t.hidePassword : t.showPassword}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-slate-400 transition-colors hover:text-slate-600 dark:hover:text-slate-200"
+                    >
+                      {showConfirm ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
               )}
-            </button>
-          </form>
 
-          <div className="my-5 flex items-center gap-3">
-            <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
-            <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
-              {t.or}
-            </span>
-            <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
+              {error && (
+                <div
+                  role="alert"
+                  className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-300"
+                >
+                  {error}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={busy || !password}
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:bg-blue-600/50 dark:bg-blue-500 dark:hover:bg-blue-400 dark:focus-visible:ring-offset-slate-900 dark:disabled:bg-blue-500/40"
+              >
+                {busy ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    {isCreating ? t.saving : t.unlocking}
+                  </>
+                ) : (
+                  <>
+                    <LockIcon className="h-4 w-4" aria-hidden="true" />
+                    {isCreating ? t.saveLock : t.unlock}
+                  </>
+                )}
+              </button>
+            </form>
+
+            <div className="my-5 flex items-center gap-3">
+              <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
+              <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                {t.or}
+              </span>
+              <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <Link
+                to="/signin"
+                onClick={requestSwitch}
+                className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                {t.switchAccount}
+              </Link>
+              <button
+                type="button"
+                onClick={requestLogout}
+                disabled={busy}
+                className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
+                {t.logout}
+              </button>
+            </div>
           </div>
 
-          {/* Secondary actions — now open a confirm dialog first */}
-          <div className="grid grid-cols-2 gap-2">
-            <Link
-              to="/signin"
-              onClick={requestSwitch}
-              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-              {t.switchAccount}
-            </Link>
-            <button
-              type="button"
-              onClick={requestLogout}
-              disabled={busy}
-              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
-            >
-              <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
-              {t.logout}
-            </button>
-          </div>
+          <p className="mt-5 text-center text-[11px] text-slate-400 dark:text-slate-500">
+            {t.securityNote}
+          </p>
         </div>
-
-        <p className="mt-5 text-center text-[11px] text-slate-400 dark:text-slate-500">
-          {t.securityNote}
-        </p>
-      </div>
+      )}
 
       {/* Footer */}
       <footer className="absolute bottom-0 left-0 right-0 z-10 py-4 text-center">
@@ -716,6 +814,7 @@ const Lock = () => {
         onCancel={() => setConfirmAction(null)}
         onConfirm={confirmAction === 'logout' ? performLogout : performSwitch}
         t={t}
+        busy={false}
       />
     </div>
   );
