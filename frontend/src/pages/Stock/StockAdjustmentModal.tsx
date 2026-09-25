@@ -54,7 +54,7 @@ export default function StockAdjustmentModal({
     e.preventDefault();
 
     if (itemId === '') {
-      showToast('error', 'Validation error', 'Item is required.');
+      showToast('error', 'Validation error', 'Product is required.');
       return;
     }
     if (!Number.isFinite(quantity) || quantity < 1) {
@@ -90,14 +90,14 @@ export default function StockAdjustmentModal({
       <form onSubmit={submit} className="space-y-5">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-2 sm:col-span-2">
-            <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Item *</label>
+            <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Product *</label>
             <select
               value={itemId}
               onChange={(e) => setItemId(e.target.value ? Number(e.target.value) : '')}
               className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-900 outline-none transition-all focus:ring-2 focus:ring-primary-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               required
             >
-              <option value="">Select item</option>
+              <option value="">Select product</option>
               {items.map((it) => (
                 <option key={it.item_id} value={it.item_id}>
                   {it.item_name}

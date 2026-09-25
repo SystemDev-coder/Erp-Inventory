@@ -6,10 +6,12 @@ import { syncLowStockNotifications } from '../../utils/stockAlerts';
 import { PurchaseInput, PurchaseItemInput } from './purchases.schemas';
 import { PoolClient } from 'pg';
 import { adjustSystemAccountBalance } from '../../utils/systemAccounts';
-import { postGl } from '../../utils/glPosting';
+import { postGl, deleteGlByRef } from '../../utils/glPosting';
 import { ensureCoaAccounts } from '../../utils/coaDefaults';
 import { resolvePurchaseDueDate } from '../../utils/creditDueHelpers';
 import { offsetOf, type Paged } from '../../utils/pagination';
+import { settingsService } from '../settings/settings.service';
+import { softDeleteById } from '../../db/softDelete';
 
 export interface Purchase {
   purchase_id: number;
@@ -87,6 +89,36 @@ interface SupplierBalanceColumns {
 
 let cachedSupplierBalanceColumns: SupplierBalanceColumns | null = null;
 
+// Records that this item has been bought from this supplier, so
+// ims.item_suppliers (and the product's Supplier column/field) reflects real
+// purchase history instead of only items whose default supplier was set
+// manually via the product form or Excel import. Only claims the "default"
+// flag when the item doesn't already have one - a later purchase from a
+// different supplier should never silently reassign a deliberately-chosen
+// default.
+const linkItemSupplier = async (
+  client: PoolClient,
+  branchId: number,
+  itemId: number,
+  supplierId: number,
+  unitCost: number
+) => {
+  const hasDefault = await client.query(
+    `SELECT 1 FROM ims.item_suppliers
+      WHERE branch_id = $1 AND item_id = $2 AND is_default = TRUE
+      LIMIT 1`,
+    [branchId, itemId]
+  );
+  await client.query(
+    `INSERT INTO ims.item_suppliers
+       (branch_id, item_id, supplier_id, is_default, default_cost, created_at)
+     VALUES ($1, $2, $3, $4, $5, NOW())
+     ON CONFLICT (branch_id, item_id, supplier_id)
+     DO UPDATE SET default_cost = EXCLUDED.default_cost`,
+    [branchId, itemId, supplierId, !hasDefault.rows[0], unitCost]
+  );
+};
+
 const resolveProductForPurchaseItem = async (
   client: PoolClient,
   item: PurchaseItemInput,
@@ -125,6 +157,9 @@ const resolveProductForPurchaseItem = async (
         WHERE item_id = $1`,
       [item.productId, nextSale]
     );
+    if (supplierId) {
+      await linkItemSupplier(client, branchId, Number(item.productId), supplierId, requestedCost);
+    }
     return Number(item.productId);
   }
 
@@ -161,6 +196,9 @@ const resolveProductForPurchaseItem = async (
         WHERE item_id = $1`,
       [productId, nextSale]
     );
+    if (supplierId) {
+      await linkItemSupplier(client, branchId, productId, supplierId, requestedCost);
+    }
     return productId;
   }
   const nextSale = item.salePrice !== undefined ? Number(item.salePrice) : requestedCost;
@@ -174,22 +212,8 @@ const resolveProductForPurchaseItem = async (
   );
   const newProductId = Number(created.rows[0].product_id);
 
-  // Link supplier to item if provided and not already linked
   if (supplierId) {
-    const exists = await client.query(
-      `SELECT 1 FROM ims.item_suppliers
-        WHERE branch_id = $1 AND item_id = $2 AND supplier_id = $3
-        LIMIT 1`,
-      [branchId, newProductId, supplierId]
-    );
-    if (!exists.rows[0]) {
-      await client.query(
-        `INSERT INTO ims.item_suppliers
-           (branch_id, item_id, supplier_id, is_default, supplier_sku, default_cost, created_at)
-         VALUES ($1, $2, $3, TRUE, NULL, $4, NOW())`,
-        [branchId, newProductId, supplierId, requestedCost]
-      );
-    }
+    await linkItemSupplier(client, branchId, newProductId, supplierId, requestedCost);
   }
 
   return newProductId;
@@ -711,6 +735,72 @@ const applyPurchasePayment = async (
   }
 };
 
+// HIGH-02 fix: voiding/cancelling a purchase (a status transition to a
+// non-applied status, handled below in updatePurchase) already reversed the
+// bill/AP side via adjustSupplierBalance, but left every ims.supplier_payments
+// row already recorded against it completely untouched - the cash/bank debit
+// was never credited back, the AP/SupplierAdvances GL those payments posted
+// was never reversed, and the pooled supplier balance / cached AP balance
+// never got the payment's reversal on top of the bill's. This undoes exactly
+// what applyPurchasePayment() above did, symmetrically, for every payment on
+// the purchase - mirroring the same reversal shape already used by
+// deleteCustomerReceipt/deleteSupplierReceipt elsewhere in this codebase
+// (restore cash, deleteGlByRef, adjustSupplierBalance) rather than inventing
+// a new pattern.
+const reversePurchasePayments = async (
+  client: PoolClient,
+  params: { branchId: number; purchaseId: number; supplierId?: number | null }
+) => {
+  const payments = await client.query<{ sup_payment_id: number; acc_id: number; amount_paid: string }>(
+    `SELECT sup_payment_id, acc_id, amount_paid::text AS amount_paid
+       FROM ims.supplier_payments
+      WHERE branch_id = $1
+        AND purchase_id = $2`,
+    [params.branchId, params.purchaseId]
+  );
+
+  for (const row of payments.rows) {
+    const amount = roundMoney(Number(row.amount_paid || 0));
+    if (amount <= 0) continue;
+
+    await client.query(
+      `UPDATE ims.accounts
+          SET balance = balance + $1
+        WHERE acc_id = $2
+          AND branch_id = $3`,
+      [amount, Number(row.acc_id), params.branchId]
+    );
+
+    await deleteGlByRef(client, {
+      branchId: params.branchId,
+      refTable: 'supplier_payments',
+      refId: Number(row.sup_payment_id),
+    });
+
+    await adjustSupplierBalance(client, {
+      branchId: params.branchId,
+      supplierId: params.supplierId,
+      delta: amount,
+    });
+  }
+
+  await client.query(
+    `DELETE FROM ims.supplier_ledger
+      WHERE branch_id = $1
+        AND ref_table = 'purchases'
+        AND ref_id = $2
+        AND entry_type = 'payment'`,
+    [params.branchId, params.purchaseId]
+  );
+
+  await client.query(
+    `DELETE FROM ims.supplier_payments
+      WHERE branch_id = $1
+        AND purchase_id = $2`,
+    [params.branchId, params.purchaseId]
+  );
+};
+
 export const purchasesService = {
   async listPurchases(
     scope: BranchScope,
@@ -1049,6 +1139,18 @@ export const purchasesService = {
           | 'credit';
       const status: PurchaseStatus =
         purchaseType === 'credit' && requestedStatus !== 'void' ? 'unpaid' : requestedStatus;
+      // Part 8: Business Profile enforcement for supplier/credit purchases,
+      // mirroring assertCustomerCreditAllowed's sales-side gate. Checked only
+      // at creation, not threaded through every status-transition branch in
+      // updatePurchase - a purchase already created as credit stays valid
+      // through its own lifecycle even if the flag is toggled off later,
+      // same as how disabling a feature never deletes existing data.
+      if (purchaseType === 'credit') {
+        const profile = await settingsService.getBusinessProfile();
+        if (!profile.purchaseConfig.creditPurchases) {
+          throw ApiError.badRequest('Credit purchases are disabled for this business. Enable them in Business Profile settings first.');
+        }
+      }
       const storeId = await resolvePurchaseStoreId(client, {
         branchId: context.branchId,
         storeId: input.storeId ?? null,
@@ -1206,6 +1308,9 @@ export const purchasesService = {
       if (!scope.isAdmin && !scope.branchIds.includes(currentBranchId)) {
         throw ApiError.forbidden('You can only update purchases in your branch');
       }
+      if (current.status === 'void') {
+        throw ApiError.badRequest('Voided purchases cannot be edited');
+      }
 
       const oldItemsResult = await client.query<{
         item_id: number;
@@ -1343,6 +1448,35 @@ export const purchasesService = {
       const previousBillAmount = !isNonAppliedPurchaseStatus(current.status) ? Number(current.total || 0) : 0;
       const nextBillAmount = !isNonAppliedPurchaseStatus(nextStatus) ? nextTotal : 0;
 
+      // HIGH-02 fix: transitioning into a non-applied status (void/ordered)
+      // from an applied one must also reverse any payments already recorded
+      // - previously only the bill/AP side below was reversed, leaving
+      // supplier_payments, their GL, and the cash they debited untouched.
+      // Only fires on that specific transition, so a purchase that's
+      // already void and stays void (or one with no payments at all) is
+      // unaffected - hasPayments was already computed above for the
+      // supplier-change guard.
+      //
+      // Must run BEFORE the bill-amount reversal below, not after: a
+      // payment can never exceed its purchase's total, so crediting it back
+      // to AP first only ever increases the cached balance, while removing
+      // the (larger-or-equal) bill amount second brings it back down to the
+      // correct final figure without ever dipping below zero along the way.
+      // Doing it in the other order can transiently try to subtract the
+      // full bill amount before the payment is credited back, tripping
+      // accounts_balance_check even though the net final result is valid.
+      if (
+        hasPayments &&
+        isNonAppliedPurchaseStatus(nextStatus) &&
+        !isNonAppliedPurchaseStatus(current.status)
+      ) {
+        await reversePurchasePayments(client, {
+          branchId: currentBranchId,
+          purchaseId: id,
+          supplierId: previousSupplierId,
+        });
+      }
+
       if (previousSupplierId && previousBillAmount > 0) {
         await adjustSupplierBalance(client, {
           branchId: currentBranchId,
@@ -1464,7 +1598,17 @@ export const purchasesService = {
         });
       }
 
-      if (newStockApplied) {
+      // HIGH-02 fix: this used to skip rewritePurchaseGl() entirely on a
+      // transition INTO a non-applied status (e.g. received -> void), so the
+      // original Inventory/AP GL rows from when the purchase was created
+      // were never deleted - leaving the AP GL total permanently out of
+      // sync with the cached AP balance the adjustSupplierBalance calls
+      // above correctly updated. rewritePurchaseGl already deletes any
+      // existing GL for this purchase before deciding whether to repost
+      // (and correctly skips reposting for void/ordered), so calling it
+      // whenever either the old or new status had/has GL applied - not just
+      // the new one - covers both directions symmetrically.
+      if (newStockApplied || oldStockApplied) {
         await rewritePurchaseGl(client, { branchId: currentBranchId, purchaseId: id });
       }
 
@@ -1505,6 +1649,17 @@ export const purchasesService = {
       const branchId = Number(current.branch_id);
       if (!scope.isAdmin && !scope.branchIds.includes(branchId)) {
         throw ApiError.forbidden('You can only delete purchases in your branch');
+      }
+
+      // Delete-protection audit (Phase 10 Batch 1, Finding F4): a
+      // received/partial/unpaid purchase applied stock/AP/GL effects and
+      // must be voided first (which fully reverses those, see
+      // updatePurchase's void-transition handling above) before its rows
+      // can be removed - mirrors deleteSale's identical guard. 'ordered'
+      // purchase orders are exempt, same as sales quotations, since
+      // isNonAppliedPurchaseStatus() means they never touched stock/AP/GL.
+      if (!isNonAppliedPurchaseStatus(current.status)) {
+        throw ApiError.badRequest('Only voided purchases or purchase orders can be deleted');
       }
 
       const itemsResult = await client.query<{
@@ -1595,8 +1750,13 @@ export const purchasesService = {
         [branchId, id]
       );
       await client.query(`DELETE FROM ims.supplier_payments WHERE purchase_id = $1`, [id]);
-      await client.query(`DELETE FROM ims.purchase_items WHERE purchase_id = $1`, [id]);
-      await client.query(`DELETE FROM ims.purchases WHERE purchase_id = $1`, [id]);
+
+      // Phase 5 (Central Delete Architecture): soft-deletes via sp_soft_delete
+      // instead of a hard DELETE. purchase_items are 'preserve'd (see
+      // server/sql/20260923b_sales_purchases_delete_policy.sql), so they stay
+      // fully intact; a purchase that still has an active purchase_returns
+      // row against it is blocked (unclassified FK defaults to 'block').
+      await softDeleteById('purchases', id, { runner: client });
 
       await syncLowStockNotifications(client, {
         branchId,

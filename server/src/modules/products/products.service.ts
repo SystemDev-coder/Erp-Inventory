@@ -9,6 +9,7 @@ import {
 } from '../../utils/branchScope';
 import { ensureCoaAccounts } from '../../utils/coaDefaults';
 import { postGl, deleteGlByRef } from '../../utils/glPosting';
+import { softDeleteById } from '../../db/softDelete';
 import {
   CategoryCreateInput,
   CategoryUpdateInput,
@@ -19,6 +20,11 @@ import {
   UnitCreateInput,
   UnitUpdateInput,
 } from './products.schemas';
+import {
+  DEFAULT_CATEGORIES_BY_BUSINESS_TYPE,
+  isKnownAttributeKey,
+  splitAttributes,
+} from '../../config/productAttributes';
 
 type MasterFilters = {
   search?: string;
@@ -35,6 +41,7 @@ type ProductFilters = MasterFilters & {
   unitId?: number;
   taxId?: number;
   storeId?: number;
+  stockStatus?: 'in_stock' | 'low_stock' | 'no_stock';
 };
 
 type Paged<T> = { rows: T[]; total: number; page: number; limit: number };
@@ -45,6 +52,7 @@ export interface Category {
   name: string;
   description: string | null;
   is_active: boolean;
+  attribute_keys: string[];
   created_at: string;
   updated_at: string | null;
 }
@@ -76,6 +84,20 @@ export interface Product {
   sku?: string | null;
   store_id: number | null;
   store_name?: string | null;
+  category_id: number | null;
+  category_name?: string | null;
+  unit_id: number | null;
+  unit_name?: string | null;
+  unit_symbol?: string | null;
+  supplier_id?: number | null;
+  supplier_name?: string | null;
+  brand?: string | null;
+  size?: string | null;
+  color?: string | null;
+  generic_name?: string | null;
+  strength?: string | null;
+  serial_number?: string | null;
+  attributes?: Record<string, string | number>;
   stock_alert: number;
   cost_price: number;
   sell_price: number;
@@ -87,6 +109,7 @@ export interface Product {
   is_active: boolean;
   status: string;
   description?: string | null;
+  image_url?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -167,7 +190,7 @@ const scopeClause = (
 };
 
 const ensureInBranch = async (
-  table: 'categories' | 'units' | 'taxes' | 'stores',
+  table: 'categories' | 'units' | 'taxes' | 'stores' | 'suppliers',
   idColumn: string,
   id: number,
   branchId: number,
@@ -199,6 +222,7 @@ const getCategorySql = `
     c.cat_name AS name,
     c.description,
     COALESCE(c.is_active, TRUE) AS is_active,
+    COALESCE(c.attribute_keys, ARRAY[]::text[]) AS attribute_keys,
     c.created_at::text AS created_at,
     c.updated_at::text AS updated_at
   FROM ims.categories c
@@ -236,6 +260,20 @@ const getProductSql = (stockAlertExpr: string, storeIdExpr = 'NULL::bigint') => 
     i.barcode AS sku,
     i.store_id,
     s.store_name,
+    i.category_id,
+    c.cat_name AS category_name,
+    i.unit_id,
+    u.unit_name,
+    u.symbol AS unit_symbol,
+    i.brand,
+    i.size,
+    i.color,
+    i.generic_name,
+    i.strength,
+    i.serial_number,
+    COALESCE(i.attributes, '{}'::jsonb) AS attributes,
+    isup.supplier_id,
+    sup.name AS supplier_name,
     ${stockAlertExpr} AS stock_alert,
     i.cost_price,
     i.sell_price,
@@ -253,10 +291,15 @@ const getProductSql = (stockAlertExpr: string, storeIdExpr = 'NULL::bigint') => 
     i.is_active,
     CASE WHEN i.is_active THEN 'active' ELSE 'inactive' END AS status,
     NULL::text AS description,
+    i.image_url,
     i.created_at::text AS created_at,
     i.created_at::text AS updated_at
   FROM ims.items i
   LEFT JOIN ims.stores s ON s.store_id = i.store_id
+  LEFT JOIN ims.categories c ON c.cat_id = i.category_id
+  LEFT JOIN ims.units u ON u.unit_id = i.unit_id
+  LEFT JOIN ims.item_suppliers isup ON isup.item_id = i.item_id AND isup.is_default = TRUE
+  LEFT JOIN ims.suppliers sup ON sup.supplier_id = isup.supplier_id
   LEFT JOIN LATERAL (
     SELECT
       COALESCE(SUM(si.quantity), 0)::int AS qty,
@@ -271,6 +314,31 @@ const getProductSql = (stockAlertExpr: string, storeIdExpr = 'NULL::bigint') => 
        )
   ) sq ON TRUE
 `;
+
+// Reuses the existing ims.item_suppliers table (already there for
+// purchases.service.ts's own "this supplier sold this item" auto-link and
+// the item-merge path) rather than adding a new column - "the" supplier a
+// product's form/table shows is just whichever item_suppliers row for it
+// has is_default = TRUE. Only one row can be default per item.
+const setDefaultSupplier = async (
+  client: PoolClient,
+  branchId: number,
+  itemId: number,
+  supplierId: number | null | undefined
+): Promise<void> => {
+  if (supplierId === undefined) return;
+  await client.query(
+    `UPDATE ims.item_suppliers SET is_default = FALSE WHERE item_id = $1 AND is_default = TRUE`,
+    [itemId]
+  );
+  if (!supplierId) return;
+  await client.query(
+    `INSERT INTO ims.item_suppliers (branch_id, item_id, supplier_id, is_default)
+     VALUES ($1, $2, $3, TRUE)
+     ON CONFLICT (branch_id, item_id, supplier_id) DO UPDATE SET is_default = TRUE`,
+    [branchId, itemId, supplierId]
+  );
+};
 
 const upsertStoreItemQuantity = async (
   client: PoolClient,
@@ -341,14 +409,24 @@ const reverseAccountBalanceForRef = async (
   client: PoolClient,
   params: { branchId: number; refTable: string; refId: number }
 ) => {
-  const previous = await client.query<{ acc_id: number; debit: string; credit: string }>(
-    `SELECT acc_id, COALESCE(debit, 0)::text AS debit, COALESCE(credit, 0)::text AS credit
-       FROM ims.account_transactions
-      WHERE branch_id = $1 AND ref_table = $2 AND ref_id = $3 AND COALESCE(is_deleted, 0) = 0`,
+  // H4 fix: this previously assumed debit-increases (asset/expense/cost) for
+  // every account it reversed. For liability/equity/revenue accounts, credit
+  // is what increases balance, so reversing must flip that sign too - not
+  // doing so meant a re-post of an equity-side line (e.g. Opening Balance
+  // Equity) double-added instead of correcting itself.
+  const previous = await client.query<{ acc_id: number; debit: string; credit: string; account_type: string }>(
+    `SELECT t.acc_id, COALESCE(t.debit, 0)::text AS debit, COALESCE(t.credit, 0)::text AS credit, a.account_type
+       FROM ims.account_transactions t
+       JOIN ims.accounts a ON a.acc_id = t.acc_id
+      WHERE t.branch_id = $1 AND t.ref_table = $2 AND t.ref_id = $3 AND COALESCE(t.is_deleted, 0) = 0`,
     [params.branchId, params.refTable, params.refId]
   );
   for (const row of previous.rows) {
-    const delta = -(Number(row.debit) - Number(row.credit));
+    const debit = Number(row.debit);
+    const credit = Number(row.credit);
+    const creditIncreases = row.account_type === 'liability' || row.account_type === 'equity' || row.account_type === 'revenue';
+    const originalDelta = creditIncreases ? credit - debit : debit - credit;
+    const delta = -originalDelta;
     if (delta) {
       await client.query(
         `UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`,
@@ -382,6 +460,36 @@ const rewriteItemOpeningStockGl = async (
     coa.inventory,
     params.branchId,
   ]);
+  // H4 fix: the Opening Balance Equity credit above was never mirrored into
+  // accounts.balance (only reverseAccountBalanceForRef, called earlier in this
+  // function, ever reduced it back out on a re-run - nothing added the new
+  // value back in). Opening Balance Equity is an equity account (credit
+  // increases it), matching the amount just posted above.
+  await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+    value,
+    coa.openingBalanceEquity,
+    params.branchId,
+  ]);
+};
+
+// Phase 3 (Central Delete Architecture): deleteProduct below now soft-deletes
+// via ims.sp_soft_delete, which lets a product with real sale/purchase/return
+// history be archived (that history is 'preserve'd, untouched - see
+// server/sql/20260922b_product_delete_policy.sql). The one thing the generic
+// policy engine can't express is "on-hand quantity must be zero" - it only
+// knows whether a dependent row exists, not its quantity - so that stays a
+// manual pre-check here, kept deliberately narrow to just the two tables
+// that track current stock (not history: sale_items/purchase_items/etc are
+// intentionally excluded).
+const getProductStockOnHand = async (client: PoolClient, itemId: number): Promise<number> => {
+  const result = await client.query<{ total: string }>(
+    `SELECT (
+       COALESCE((SELECT SUM(quantity) FROM ims.store_items WHERE product_id = $1 AND COALESCE(is_deleted, 0) = 0), 0)
+       + COALESCE((SELECT SUM(quantity) FROM ims.warehouse_stock WHERE item_id = $1 AND COALESCE(is_deleted, 0) = 0), 0)
+     )::text AS total`,
+    [itemId]
+  );
+  return Number(result.rows[0]?.total || 0);
 };
 
 export const productsService = {
@@ -427,13 +535,21 @@ export const productsService = {
     );
   },
 
+  // Phase 9: used by Excel export to resolve which attribute_keys are in
+  // play across a batch of products' categories in one query.
+  async getCategoriesByIds(ids: number[]): Promise<Category[]> {
+    if (!ids.length) return [];
+    return queryMany<Category>(`${getCategorySql} WHERE c.cat_id = ANY($1::bigint[])`, [ids]);
+  },
+
   async createCategory(input: CategoryCreateInput, scope: BranchScope): Promise<Category> {
     const branchId = pickBranchForWrite(scope, input.branchId);
+    const attributeKeys = (input.attributeKeys || []).filter(isKnownAttributeKey);
     const created = await queryOne<{ cat_id: number }>(
-      `INSERT INTO ims.categories (branch_id, cat_name, description, is_active)
-       VALUES ($1, $2, NULLIF($3, ''), COALESCE($4, TRUE))
+      `INSERT INTO ims.categories (branch_id, cat_name, description, is_active, attribute_keys)
+       VALUES ($1, $2, NULLIF($3, ''), COALESCE($4, TRUE), $5::text[])
        RETURNING cat_id`,
-      [branchId, input.name, input.description || '', input.isActive]
+      [branchId, input.name, input.description || '', input.isActive, attributeKeys]
     );
     return (await this.getCategory(Number(created?.cat_id), scope)) as Category;
   },
@@ -447,6 +563,10 @@ export const productsService = {
     if (input.name !== undefined) { updates.push(`cat_name = $${p++}`); values.push(input.name); }
     if (input.description !== undefined) { updates.push(`description = NULLIF($${p++}, '')`); values.push(input.description || ''); }
     if (input.isActive !== undefined) { updates.push(`is_active = $${p++}`); values.push(input.isActive); }
+    if (input.attributeKeys !== undefined) {
+      updates.push(`attribute_keys = $${p++}::text[]`);
+      values.push(input.attributeKeys.filter(isKnownAttributeKey));
+    }
     updates.push('updated_at = NOW()');
     if (scope.isAdmin) {
       await queryOne(`UPDATE ims.categories SET ${updates.join(', ')} WHERE cat_id = $1`, values);
@@ -461,8 +581,62 @@ export const productsService = {
   },
 
   async deleteCategory(id: number, scope: BranchScope): Promise<void> {
+    // Delete-protection audit (Phase 10 Batch 1, Finding F3): items.category_id
+    // is ON DELETE SET NULL, so this used to succeed silently and orphan
+    // every product in the category (no error, no history destroyed, but a
+    // real data-integrity surprise). Block instead, same pattern as products'
+    // own delete-block check.
+    const inUse = await queryOne<{ total: string }>(
+      `SELECT COUNT(*)::text AS total FROM ims.items WHERE category_id = $1`,
+      [id]
+    );
+    const productCount = Number(inUse?.total || 0);
+    if (productCount > 0) {
+      throw ApiError.conflict('Cannot delete category with products assigned to it.', {
+        code: 'RECORD_HAS_TRANSACTIONS',
+        dependencies: { products: productCount },
+      });
+    }
     if (scope.isAdmin) await queryOne(`DELETE FROM ims.categories WHERE cat_id = $1`, [id]);
     else await queryOne(`DELETE FROM ims.categories WHERE cat_id = $1 AND branch_id = ANY($2::bigint[])`, [id, scope.branchIds]);
+  },
+
+  // Phase 9: on-demand starter categories for a business type (electronics,
+  // supermarket, clothing, pharmacy, perfume, cosmetics - see
+  // DEFAULT_CATEGORIES_BY_BUSINESS_TYPE; general/other have none). Additive
+  // and idempotent (ON CONFLICT on the existing branch+name unique
+  // constraint), never runs automatically on a business-type switch - the
+  // user triggers it explicitly from Settings/Products.
+  //
+  // A few starter-category names are reused across business types (e.g.
+  // "Accessories" appears under both Electronics and Clothing, with
+  // different attribute_keys). ON CONFLICT resyncs the existing row's
+  // attribute_keys/description to the ACTIVE business type's definition
+  // instead of leaving it silently stuck on whichever type created it
+  // first - so switching business type and re-seeding correctly reclaims
+  // a colliding name for the new type.
+  async seedDefaultCategories(businessType: string, scope: BranchScope, branchId?: number): Promise<Category[]> {
+    const defaults = DEFAULT_CATEGORIES_BY_BUSINESS_TYPE[businessType];
+    if (!defaults?.length) return [];
+    const targetBranchId = pickBranchForWrite(scope, branchId);
+    const touched: Category[] = [];
+    for (const def of defaults) {
+      const row = await queryOne<{ cat_id: number }>(
+        `INSERT INTO ims.categories (branch_id, cat_name, description, is_active, attribute_keys)
+         VALUES ($1, $2, $3, TRUE, $4::text[])
+         ON CONFLICT (branch_id, cat_name) DO UPDATE
+           SET attribute_keys = EXCLUDED.attribute_keys,
+               description = EXCLUDED.description,
+               is_active = TRUE
+         RETURNING cat_id`,
+        [targetBranchId, def.name, `${businessType} starter category`, def.attributeKeys]
+      );
+      if (row?.cat_id) {
+        const category = await this.getCategory(Number(row.cat_id), scope);
+        if (category) touched.push(category);
+      }
+    }
+    return touched;
   },
 
   async listUnits(scope: BranchScope, filters: MasterFilters): Promise<Paged<Unit>> {
@@ -533,6 +707,19 @@ export const productsService = {
   },
 
   async deleteUnit(id: number, scope: BranchScope): Promise<void> {
+    // Delete-protection audit (Phase 10 Batch 1, Finding F3): items.unit_id
+    // is ON DELETE SET NULL - same silent-orphan risk as deleteCategory above.
+    const inUse = await queryOne<{ total: string }>(
+      `SELECT COUNT(*)::text AS total FROM ims.items WHERE unit_id = $1`,
+      [id]
+    );
+    const productCount = Number(inUse?.total || 0);
+    if (productCount > 0) {
+      throw ApiError.conflict('Cannot delete unit with products assigned to it.', {
+        code: 'RECORD_HAS_TRANSACTIONS',
+        dependencies: { products: productCount },
+      });
+    }
     if (scope.isAdmin) await queryOne(`DELETE FROM ims.units WHERE unit_id = $1`, [id]);
     else await queryOne(`DELETE FROM ims.units WHERE unit_id = $1 AND branch_id = ANY($2::bigint[])`, [id, scope.branchIds]);
   },
@@ -606,8 +793,69 @@ export const productsService = {
   },
 
   async deleteTax(id: number, scope: BranchScope): Promise<void> {
+    // Delete-protection audit (Phase 10 Batch 1, Finding F3): sales.tax_id is
+    // ON DELETE SET NULL - would silently detach the tax used on historical
+    // sales. Block instead.
+    const inUse = await queryOne<{ total: string }>(
+      `SELECT COUNT(*)::text AS total FROM ims.sales WHERE tax_id = $1`,
+      [id]
+    );
+    const salesCount = Number(inUse?.total || 0);
+    if (salesCount > 0) {
+      throw ApiError.conflict('Cannot delete tax used on existing sales.', {
+        code: 'RECORD_HAS_TRANSACTIONS',
+        dependencies: { sales: salesCount },
+      });
+    }
     if (scope.isAdmin) await queryOne(`DELETE FROM ims.taxes WHERE tax_id = $1`, [id]);
     else await queryOne(`DELETE FROM ims.taxes WHERE tax_id = $1 AND branch_id = ANY($2::bigint[])`, [id, scope.branchIds]);
+  },
+
+  // Powers the Items page's summary cards (Total/In Stock/Low Stock/No Stock). Current
+  // quantity per item mirrors the same store_items-with-opening-balance-fallback logic
+  // getProductSql uses, so these counts stay consistent with what the list itself shows.
+  async getProductsSummary(
+    scope: BranchScope,
+    branchId?: number
+  ): Promise<{ total: number; inStock: number; lowStock: number; noStock: number }> {
+    const stockAlertExpr = (await hasItemsStockAlertColumn()) ? 'i.stock_alert' : 'COALESCE(i.reorder_level, 5)';
+    const params: unknown[] = [];
+    const where = scopeClause(scope, params, 'i', branchId);
+    const row = await queryOne<{ total: string; in_stock: string; low_stock: string; no_stock: string }>(
+      `WITH item_stock AS (
+         SELECT
+           ${stockAlertExpr}::numeric AS stock_alert,
+           CASE
+             WHEN COALESCE(sq.row_count, 0) = 0 THEN COALESCE(i.opening_balance, 0)
+             ELSE COALESCE(sq.qty, 0)
+           END::numeric AS quantity
+           FROM ims.items i
+           LEFT JOIN LATERAL (
+             SELECT
+               COALESCE(SUM(si.quantity), 0)::numeric AS qty,
+               COUNT(*)::int AS row_count
+               FROM ims.store_items si
+               JOIN ims.stores s2 ON s2.store_id = si.store_id
+              WHERE si.product_id = i.item_id
+                AND s2.branch_id = i.branch_id
+           ) sq ON TRUE
+          WHERE ${where}
+            AND i.is_active = TRUE
+       )
+       SELECT
+         COUNT(*)::text AS total,
+         COUNT(*) FILTER (WHERE quantity > stock_alert)::text AS in_stock,
+         COUNT(*) FILTER (WHERE quantity > 0 AND quantity <= stock_alert)::text AS low_stock,
+         COUNT(*) FILTER (WHERE quantity <= 0)::text AS no_stock
+         FROM item_stock`,
+      params
+    );
+    return {
+      total: Number(row?.total || 0),
+      inStock: Number(row?.in_stock || 0),
+      lowStock: Number(row?.low_stock || 0),
+      noStock: Number(row?.no_stock || 0),
+    };
   },
 
   async listProducts(scope: BranchScope, filters: ProductFilters): Promise<Paged<Product>> {
@@ -620,6 +868,14 @@ export const productsService = {
       where.push(`(i.name ILIKE $${params.length} OR COALESCE(i.barcode, '') ILIKE $${params.length})`);
     }
     if (!filters.includeInactive) where.push('i.is_active = TRUE');
+    if (filters.categoryId) {
+      params.push(filters.categoryId);
+      where.push(`i.category_id = $${params.length}`);
+    }
+    if (filters.unitId) {
+      params.push(filters.unitId);
+      where.push(`i.unit_id = $${params.length}`);
+    }
     if (filters.fromDate) {
       params.push(filters.fromDate);
       where.push(`i.created_at::date >= $${params.length}::date`);
@@ -629,8 +885,34 @@ export const productsService = {
       where.push(`i.created_at::date <= $${params.length}::date`);
     }
 
+    // Stock-status filter (Total/In Stock/Low Stock/No Stock summary cards,
+    // made clickable): reuses the exact same quantity computation as
+    // getProductsSummary above and as getProductSql's own `sq` LATERAL join
+    // below, so the count always agrees with what those two already show.
+    // The count query has no `sq` of its own, so it gets an identically-
+    // aliased join added only when this filter is active.
+    let stockJoinForCount = '';
+    if (filters.stockStatus) {
+      stockJoinForCount = `
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(SUM(si.quantity), 0)::int AS qty, COUNT(*)::int AS row_count
+            FROM ims.store_items si
+            JOIN ims.stores s2 ON s2.store_id = si.store_id
+           WHERE si.product_id = i.item_id
+             AND s2.branch_id = i.branch_id
+        ) sq ON TRUE`;
+      const qtyExpr = `CASE WHEN COALESCE(sq.row_count, 0) = 0 THEN COALESCE(i.opening_balance, 0) ELSE COALESCE(sq.qty, 0) END`;
+      if (filters.stockStatus === 'no_stock') {
+        where.push(`(${qtyExpr}) <= 0`);
+      } else if (filters.stockStatus === 'low_stock') {
+        where.push(`(${qtyExpr}) > 0 AND (${qtyExpr}) <= ${stockAlertExpr}`);
+      } else {
+        where.push(`(${qtyExpr}) > ${stockAlertExpr}`);
+      }
+    }
+
     const count = await queryOne<{ total: string }>(
-      `SELECT COUNT(*)::text AS total FROM ims.items i WHERE ${where.join(' AND ')}`,
+      `SELECT COUNT(*)::text AS total FROM ims.items i ${stockJoinForCount} WHERE ${where.join(' AND ')}`,
       params
     );
 
@@ -661,12 +943,41 @@ export const productsService = {
     );
   },
 
+  // Phase 12 blocker fix: exact barcode lookup for scanner/POS use. Deliberately
+  // separate from listProducts' ILIKE search (which is a substring match meant
+  // for typing partial text) - a scan must never resolve to the wrong item just
+  // because the scanned code happens to be a substring of another item's
+  // barcode. Barcode uniqueness (uq_items_branch_barcode) is only enforced per
+  // branch, so unlike getProduct(id, ...) this cannot skip branch scoping for
+  // admins - the same barcode text can legitimately belong to two different
+  // items in two different branches.
+  async getProductByBarcode(barcode: string, scope: BranchScope, branchId?: number): Promise<Product | null> {
+    const trimmed = barcode.trim();
+    if (!trimmed) return null;
+    const stockAlertExpr = (await hasItemsStockAlertColumn()) ? 'i.stock_alert' : 'COALESCE(i.reorder_level, 5)';
+    const params: unknown[] = [trimmed];
+    const branchWhere = scopeClause(scope, params, 'i', branchId);
+    return queryOne<Product>(
+      `${getProductSql(stockAlertExpr)}
+        WHERE i.barcode = $1
+          AND i.is_active = TRUE
+          AND (${branchWhere})`,
+      params
+    );
+  },
+
   async createProduct(input: ProductCreateInput, scope: BranchScope): Promise<Product> {
     const catIdRequired = await isItemsCatIdRequired();
     const stockAlertColumn = (await hasItemsStockAlertColumn()) ? 'stock_alert' : 'reorder_level';
     const branchId = pickBranchForWrite(scope, input.branchId);
     if (input.storeId) await ensureInBranch('stores', 'store_id', input.storeId, branchId, 'Store');
-    const categoryId = catIdRequired ? await ensureDefaultCategory(branchId) : null;
+    if (input.categoryId) await ensureInBranch('categories', 'cat_id', input.categoryId, branchId, 'Category');
+    if (input.unitId) await ensureInBranch('units', 'unit_id', input.unitId, branchId, 'Unit');
+    if (input.supplierId) await ensureInBranch('suppliers', 'supplier_id', input.supplierId, branchId, 'Supplier');
+    // Legacy compat: some older deployments still have a NOT NULL ims.items.cat_id column
+    // from before the current categories/units design - keep it satisfied with a default
+    // row when present, independent of the real category_id selection below.
+    const legacyCatId = catIdRequired ? await ensureDefaultCategory(branchId) : null;
 
     const openingBalance = input.openingBalance ?? 0;
     const active = isActiveValue(input, true);
@@ -677,15 +988,15 @@ export const productsService = {
           : await getOrCreateDefaultStoreId(client, branchId);
       const created = await client.query<{ item_id: number }>(
         `INSERT INTO ims.items (
-           branch_id, ${catIdRequired ? 'cat_id, ' : ''}store_id, name, barcode, ${stockAlertColumn}, opening_balance, cost_price, sell_price, is_active
+           branch_id, ${catIdRequired ? 'cat_id, ' : ''}store_id, name, barcode, ${stockAlertColumn}, opening_balance, cost_price, sell_price, is_active, category_id, unit_id, brand
          ) VALUES (
-           $1, ${catIdRequired ? '$2, ' : ''}$${catIdRequired ? 3 : 2}, $${catIdRequired ? 4 : 3}, NULLIF($${catIdRequired ? 5 : 4}, ''), $${catIdRequired ? 6 : 5}, $${catIdRequired ? 7 : 6}, $${catIdRequired ? 8 : 7}, $${catIdRequired ? 9 : 8}, $${catIdRequired ? 10 : 9}
+           $1, ${catIdRequired ? '$2, ' : ''}$${catIdRequired ? 3 : 2}, $${catIdRequired ? 4 : 3}, NULLIF($${catIdRequired ? 5 : 4}, ''), $${catIdRequired ? 6 : 5}, $${catIdRequired ? 7 : 6}, $${catIdRequired ? 8 : 7}, $${catIdRequired ? 9 : 8}, $${catIdRequired ? 10 : 9}, $${catIdRequired ? 11 : 10}, $${catIdRequired ? 12 : 11}, $${catIdRequired ? 13 : 12}
          )
          RETURNING item_id`,
         catIdRequired
           ? [
               branchId,
-              categoryId,
+              legacyCatId,
               resolvedStoreId,
               input.name,
               input.barcode || '',
@@ -694,6 +1005,9 @@ export const productsService = {
               input.costPrice ?? 0,
               input.sellPrice ?? 0,
               active,
+              input.categoryId ?? null,
+              input.unitId ?? null,
+              input.brand || null,
             ]
           : [
               branchId,
@@ -705,6 +1019,9 @@ export const productsService = {
               input.costPrice ?? 0,
               input.sellPrice ?? 0,
               active,
+              input.categoryId ?? null,
+              input.unitId ?? null,
+              input.brand || null,
             ]
       );
       const itemId = Number(created.rows[0]?.item_id || 0);
@@ -712,8 +1029,55 @@ export const productsService = {
         throw ApiError.internal('Failed to create item');
       }
 
+      // Phase 11/9: set separately, deliberately outside the INSERT above.
+      // That INSERT's column/placeholder list already branches on
+      // catIdRequired via hand-counted $N positions - adding more columns
+      // there risks an off-by-one in either branch. A follow-up UPDATE is
+      // just as correct here since nothing downstream in this transaction
+      // reads these columns before it runs.
+      const { columns: attrColumns, jsonb: attrJsonb } = splitAttributes(input.attributes);
+      const finalSerialNumber = input.serialNumber || attrColumns.serial_number || null;
+      const finalBrand = attrColumns.brand || null; // input.brand already set in the INSERT above
+      if (
+        input.size !== undefined ||
+        input.color !== undefined ||
+        input.genericName !== undefined ||
+        input.strength !== undefined ||
+        finalSerialNumber ||
+        finalBrand ||
+        attrColumns.size ||
+        attrColumns.color ||
+        Object.keys(attrJsonb).length
+      ) {
+        await client.query(
+          `UPDATE ims.items
+              SET size = COALESCE(NULLIF($1, ''), NULLIF($2, ''), size),
+                  color = COALESCE(NULLIF($3, ''), NULLIF($4, ''), color),
+                  generic_name = COALESCE(NULLIF($5, ''), generic_name),
+                  strength = COALESCE(NULLIF($6, ''), strength),
+                  serial_number = COALESCE(NULLIF($7, ''), serial_number),
+                  brand = COALESCE(NULLIF($8, ''), brand),
+                  attributes = attributes || $9::jsonb
+            WHERE item_id = $10`,
+          [
+            input.size || null,
+            attrColumns.size || null,
+            input.color || null,
+            attrColumns.color || null,
+            input.genericName || null,
+            input.strength || null,
+            finalSerialNumber,
+            finalBrand,
+            JSON.stringify(attrJsonb),
+            itemId,
+          ]
+        );
+      }
+
       const quantity = Number(input.quantity ?? input.openingBalance ?? 0);
       await upsertStoreItemQuantity(client, branchId, resolvedStoreId, itemId, quantity);
+
+      await setDefaultSupplier(client, branchId, itemId, input.supplierId);
 
       await rewriteItemOpeningStockGl(client, {
         branchId,
@@ -743,6 +1107,9 @@ export const productsService = {
     if (!current) return null;
 
     if (input.storeId !== undefined && input.storeId !== null) await ensureInBranch('stores', 'store_id', input.storeId, current.branch_id, 'Store');
+    if (input.categoryId !== undefined && input.categoryId !== null) await ensureInBranch('categories', 'cat_id', input.categoryId, current.branch_id, 'Category');
+    if (input.unitId !== undefined && input.unitId !== null) await ensureInBranch('units', 'unit_id', input.unitId, current.branch_id, 'Unit');
+    if (input.supplierId !== undefined && input.supplierId !== null) await ensureInBranch('suppliers', 'supplier_id', input.supplierId, current.branch_id, 'Supplier');
 
     const updates: string[] = [];
     const values: unknown[] = [id];
@@ -750,13 +1117,36 @@ export const productsService = {
     if (input.name !== undefined) { updates.push(`name = $${p++}`); values.push(input.name); }
     if (input.barcode !== undefined) { updates.push(`barcode = NULLIF($${p++}, '')`); values.push(input.barcode || ''); }
     if (input.storeId !== undefined) { updates.push(`store_id = $${p++}`); values.push(input.storeId ?? null); }
+    if (input.categoryId !== undefined) { updates.push(`category_id = $${p++}`); values.push(input.categoryId ?? null); }
+    if (input.unitId !== undefined) { updates.push(`unit_id = $${p++}`); values.push(input.unitId ?? null); }
+    if (input.brand !== undefined) { updates.push(`brand = NULLIF($${p++}, '')`); values.push(input.brand || ''); }
+    if (input.size !== undefined) { updates.push(`size = NULLIF($${p++}, '')`); values.push(input.size || ''); }
+    if (input.color !== undefined) { updates.push(`color = NULLIF($${p++}, '')`); values.push(input.color || ''); }
+    if (input.genericName !== undefined) { updates.push(`generic_name = NULLIF($${p++}, '')`); values.push(input.genericName || ''); }
+    if (input.strength !== undefined) { updates.push(`strength = NULLIF($${p++}, '')`); values.push(input.strength || ''); }
+    if (input.serialNumber !== undefined) { updates.push(`serial_number = NULLIF($${p++}, '')`); values.push(input.serialNumber || ''); }
+    if (input.attributes !== undefined) {
+      const { columns: attrColumns, jsonb: attrJsonb } = splitAttributes(input.attributes);
+      if (attrColumns.brand) { updates.push(`brand = $${p++}`); values.push(attrColumns.brand); }
+      if (attrColumns.color) { updates.push(`color = $${p++}`); values.push(attrColumns.color); }
+      if (attrColumns.size) { updates.push(`size = $${p++}`); values.push(attrColumns.size); }
+      if (attrColumns.generic_name) { updates.push(`generic_name = $${p++}`); values.push(attrColumns.generic_name); }
+      if (attrColumns.strength) { updates.push(`strength = $${p++}`); values.push(attrColumns.strength); }
+      if (attrColumns.serial_number) { updates.push(`serial_number = $${p++}`); values.push(attrColumns.serial_number); }
+      // Full replace, not merge: the product form always sends the complete
+      // set of dynamic fields for the item's current category, so a stale
+      // key from a prior (different) category never lingers.
+      updates.push(`attributes = $${p++}::jsonb`);
+      values.push(JSON.stringify(attrJsonb));
+    }
     if (input.stockAlert !== undefined) { updates.push(`${stockAlertColumn} = $${p++}`); values.push(input.stockAlert); }
     if (input.sellPrice !== undefined) { updates.push(`sell_price = $${p++}`); values.push(input.sellPrice); }
     if (input.costPrice !== undefined) { updates.push(`cost_price = $${p++}`); values.push(input.costPrice); }
     if (input.openingBalance !== undefined) { updates.push(`opening_balance = $${p++}`); values.push(input.openingBalance); }
     if (input.isActive !== undefined || input.status !== undefined) { updates.push(`is_active = $${p++}`); values.push(isActiveValue(input, true)); }
     const hasQuantityUpdate = input.quantity !== undefined;
-    if (!updates.length && !hasQuantityUpdate) return this.getProduct(id, scope, current.store_id ?? undefined);
+    const hasSupplierUpdate = input.supplierId !== undefined;
+    if (!updates.length && !hasQuantityUpdate && !hasSupplierUpdate) return this.getProduct(id, scope, current.store_id ?? undefined);
 
     await withTransaction(async (client) => {
       if (updates.length) {
@@ -769,6 +1159,10 @@ export const productsService = {
             values
           );
         }
+      }
+
+      if (hasSupplierUpdate) {
+        await setDefaultSupplier(client, current.branch_id, id, input.supplierId);
       }
 
       const targetStoreId = input.storeId !== undefined ? input.storeId : current.store_id;
@@ -804,7 +1198,253 @@ export const productsService = {
   },
 
   async deleteProduct(id: number, scope: BranchScope): Promise<void> {
-    if (scope.isAdmin) await queryOne(`DELETE FROM ims.items WHERE item_id = $1`, [id]);
-    else await queryOne(`DELETE FROM ims.items WHERE item_id = $1 AND branch_id = ANY($2::bigint[])`, [id, scope.branchIds]);
+    await withTransaction(async (client) => {
+      // Phase 3 (Central Delete Architecture): this now soft-deletes via
+      // ims.sp_soft_delete instead of a hard DELETE, so a product with real
+      // sale/purchase/return/stock-adjustment/transfer history can be
+      // archived - that history is 'preserve'd (left completely untouched),
+      // see server/sql/20260922b_product_delete_policy.sql. GL/accounts.balance
+      // are deliberately NOT touched here (no reverseAccountBalanceForRef/
+      // deleteGlByRef) - soft-delete must stay non-destructive and reversible
+      // via Trash; reversing the opening-stock GL entry is a permanent-delete
+      // concern, out of scope until Phase 8.
+      const found = scope.isAdmin
+        ? await client.query<{ item_id: number; branch_id: number }>(
+            `SELECT item_id, branch_id FROM ims.items WHERE item_id = $1`,
+            [id]
+          )
+        : await client.query<{ item_id: number; branch_id: number }>(
+            `SELECT item_id, branch_id FROM ims.items WHERE item_id = $1 AND branch_id = ANY($2::bigint[])`,
+            [id, scope.branchIds]
+          );
+      const row = found.rows[0];
+      if (!row) return;
+
+      const stockOnHand = await getProductStockOnHand(client, id);
+      if (stockOnHand > 0) {
+        throw ApiError.badRequest(
+          `Cannot delete: ${stockOnHand} unit(s) of stock remain across store(s)/warehouse(s). Adjust stock to zero first.`
+        );
+      }
+
+      await softDeleteById('items', id, { runner: client });
+    });
+  },
+
+  // Phase 6: consolidates two "duplicate" items (near-identical products that
+  // each accumulated real history before anyone noticed they're the same
+  // thing) into one. Every historical/reference table is repointed from
+  // fromItemId to toItemId; store_items/warehouse_stock/item_suppliers have
+  // real unique keys that could collide once both point at the same target,
+  // so those three are merged (quantities summed, conflicting rows dropped)
+  // rather than blindly reassigned. The source item ends the transaction
+  // with provably zero stock everywhere, so it's archived via the same
+  // softDeleteById('items', ...) deleteProduct itself uses (called inline,
+  // not via deleteProduct(), to stay on this same transaction/connection -
+  // Phase 5 found a real cross-connection self-deadlock risk from mixing
+  // connections within one logical operation).
+  async mergeItems(fromItemId: number, toItemId: number, scope: BranchScope): Promise<void> {
+    if (fromItemId === toItemId) {
+      throw ApiError.badRequest('Cannot merge an item into itself');
+    }
+
+    await withTransaction(async (client) => {
+      // The rls_soft_delete policy on is_deleted-bearing tables only allows a
+      // row to be written into a soft-deleted state when this session has
+      // explicitly set app.include_deleted='1' first (same as
+      // ims.sp_soft_delete/restoreAdjustment do internally) - without it,
+      // any direct UPDATE ... SET is_deleted = 1 is rejected outright.
+      await client.query(`SET LOCAL app.include_deleted = '1'`);
+
+      const rows = await client.query<{ item_id: number; branch_id: number; is_active: boolean }>(
+        `SELECT item_id, branch_id, is_active FROM ims.items WHERE item_id = ANY($1::bigint[])`,
+        [[fromItemId, toItemId]]
+      );
+      const fromItem = rows.rows.find((r) => Number(r.item_id) === fromItemId);
+      const toItem = rows.rows.find((r) => Number(r.item_id) === toItemId);
+      if (!fromItem || !toItem) {
+        throw ApiError.notFound('Item not found');
+      }
+      if (
+        !scope.isAdmin &&
+        (!scope.branchIds.includes(Number(fromItem.branch_id)) || !scope.branchIds.includes(Number(toItem.branch_id)))
+      ) {
+        throw ApiError.forbidden('You can only merge items in your branch');
+      }
+      // Mirrors the same branch-scoping caution already documented on
+      // transfer()'s CRIT-02 fix: the schema has no concept of "this item in
+      // branch A is the same item as that one in branch B" yet.
+      if (Number(fromItem.branch_id) !== Number(toItem.branch_id)) {
+        throw ApiError.badRequest('Cannot merge items across different branches');
+      }
+      if (!toItem.is_active) {
+        throw ApiError.badRequest('Cannot merge into an inactive item');
+      }
+
+      // 1. Purely-referential tables: no unique key on item_id, safe to
+      // reassign directly. inventory_transaction has two item-referencing
+      // columns (item_id, product_id) - both are reassigned.
+      const simpleReassignTables: Array<{ table: string; column: string }> = [
+        { table: 'sale_items', column: 'item_id' },
+        { table: 'purchase_items', column: 'item_id' },
+        { table: 'sales_return_items', column: 'item_id' },
+        { table: 'purchase_return_items', column: 'item_id' },
+        { table: 'stock_adjustment', column: 'item_id' },
+        { table: 'transfer_items', column: 'item_id' },
+        { table: 'warehouse_transfer_items', column: 'item_id' },
+        { table: 'inventory_transaction', column: 'item_id' },
+        { table: 'inventory_transaction', column: 'product_id' },
+        { table: 'inventory_movements', column: 'item_id' },
+      ];
+      for (const { table, column } of simpleReassignTables) {
+        await client.query(`UPDATE ims.${table} SET ${column} = $1 WHERE ${column} = $2`, [toItemId, fromItemId]);
+      }
+
+      // 2. store_items: unique on (store_id, product_id). Where the target
+      // already has a row for a store, fold the source's quantity into it
+      // and archive the source's row; otherwise just repoint it.
+      await client.query(
+        `UPDATE ims.store_items tgt
+            SET quantity = tgt.quantity + src.quantity,
+                updated_at = NOW()
+           FROM ims.store_items src
+          WHERE tgt.product_id = $1
+            AND src.product_id = $2
+            AND tgt.store_id = src.store_id
+            AND COALESCE(tgt.is_deleted, 0) = 0
+            AND COALESCE(src.is_deleted, 0) = 0`,
+        [toItemId, fromItemId]
+      );
+      await client.query(
+        `UPDATE ims.store_items
+            SET is_deleted = 1, deleted_at = NOW(), quantity = 0, updated_at = NOW()
+          WHERE product_id = $1
+            AND COALESCE(is_deleted, 0) = 0
+            AND EXISTS (
+              SELECT 1 FROM ims.store_items t2
+               WHERE t2.product_id = $2
+                 AND t2.store_id = ims.store_items.store_id
+                 AND COALESCE(t2.is_deleted, 0) = 0
+            )`,
+        [fromItemId, toItemId]
+      );
+      await client.query(
+        `UPDATE ims.store_items
+            SET product_id = $1, updated_at = NOW()
+          WHERE product_id = $2
+            AND COALESCE(is_deleted, 0) = 0`,
+        [toItemId, fromItemId]
+      );
+
+      // 3. warehouse_stock: PK (wh_id, item_id). Same sum-then-archive /
+      // repoint pattern as store_items, per warehouse instead of per store.
+      await client.query(
+        `UPDATE ims.warehouse_stock tgt
+            SET quantity = tgt.quantity + src.quantity
+           FROM ims.warehouse_stock src
+          WHERE tgt.item_id = $1
+            AND src.item_id = $2
+            AND tgt.wh_id = src.wh_id
+            AND COALESCE(tgt.is_deleted, 0) = 0
+            AND COALESCE(src.is_deleted, 0) = 0`,
+        [toItemId, fromItemId]
+      );
+      await client.query(
+        `UPDATE ims.warehouse_stock
+            SET is_deleted = 1, deleted_at = NOW(), quantity = 0
+          WHERE item_id = $1
+            AND COALESCE(is_deleted, 0) = 0
+            AND EXISTS (
+              SELECT 1 FROM ims.warehouse_stock t2
+               WHERE t2.item_id = $2
+                 AND t2.wh_id = ims.warehouse_stock.wh_id
+                 AND COALESCE(t2.is_deleted, 0) = 0
+            )`,
+        [fromItemId, toItemId]
+      );
+      await client.query(
+        `UPDATE ims.warehouse_stock
+            SET item_id = $1
+          WHERE item_id = $2
+            AND COALESCE(is_deleted, 0) = 0`,
+        [toItemId, fromItemId]
+      );
+
+      // 4. item_suppliers: PK (branch_id, item_id, supplier_id) - no
+      // quantity to sum, just dedupe: keep the target's existing supplier
+      // link where one exists, otherwise repoint the source's.
+      await client.query(
+        `UPDATE ims.item_suppliers
+            SET is_deleted = 1, deleted_at = NOW()
+          WHERE item_id = $1
+            AND branch_id = $2
+            AND COALESCE(is_deleted, 0) = 0
+            AND EXISTS (
+              SELECT 1 FROM ims.item_suppliers t2
+               WHERE t2.item_id = $3
+                 AND t2.branch_id = ims.item_suppliers.branch_id
+                 AND t2.supplier_id = ims.item_suppliers.supplier_id
+                 AND COALESCE(t2.is_deleted, 0) = 0
+            )`,
+        [fromItemId, fromItem.branch_id, toItemId]
+      );
+      // If the target already has its own default supplier, the source's
+      // default (a different supplier_id, since a same-supplier row was just
+      // deleted above) must not become a second default row once repointed
+      // below - the target's own default wins.
+      await client.query(
+        `UPDATE ims.item_suppliers
+            SET is_default = FALSE
+          WHERE item_id = $1
+            AND branch_id = $2
+            AND is_default = TRUE
+            AND COALESCE(is_deleted, 0) = 0
+            AND EXISTS (
+              SELECT 1 FROM ims.item_suppliers t2
+               WHERE t2.item_id = $3
+                 AND t2.branch_id = ims.item_suppliers.branch_id
+                 AND t2.is_default = TRUE
+                 AND COALESCE(t2.is_deleted, 0) = 0
+            )`,
+        [fromItemId, fromItem.branch_id, toItemId]
+      );
+      await client.query(
+        `UPDATE ims.item_suppliers
+            SET item_id = $1
+          WHERE item_id = $2
+            AND branch_id = $3
+            AND COALESCE(is_deleted, 0) = 0`,
+        [toItemId, fromItemId, fromItem.branch_id]
+      );
+
+      // The source item's stock is now provably zero everywhere (folded
+      // into the target or repointed away) - archive it exactly like a
+      // normal delete, on this same connection/transaction.
+      const stockOnHand = await getProductStockOnHand(client, fromItemId);
+      if (stockOnHand > 0) {
+        throw ApiError.internal('Merge did not fully consolidate stock - aborting');
+      }
+      await softDeleteById('items', fromItemId, { runner: client });
+    });
+  },
+
+  async setProductImageUrl(id: number, imageUrl: string | null, scope: BranchScope): Promise<Product | null> {
+    const current = scope.isAdmin
+      ? await queryOne<{ item_id: number }>(`SELECT item_id FROM ims.items WHERE item_id = $1`, [id])
+      : await queryOne<{ item_id: number }>(
+          `SELECT item_id FROM ims.items WHERE item_id = $1 AND branch_id = ANY($2::bigint[])`,
+          [id, scope.branchIds]
+        );
+    if (!current) return null;
+
+    if (scope.isAdmin) {
+      await queryOne(`UPDATE ims.items SET image_url = $2 WHERE item_id = $1`, [id, imageUrl]);
+    } else {
+      await queryOne(
+        `UPDATE ims.items SET image_url = $2 WHERE item_id = $1 AND branch_id = ANY($3::bigint[])`,
+        [id, imageUrl, scope.branchIds]
+      );
+    }
+    return this.getProduct(id, scope);
   },
 };

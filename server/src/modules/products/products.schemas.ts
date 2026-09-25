@@ -74,6 +74,7 @@ export const listQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(200).default(50),
   fromDate: dateString.optional(),
   toDate: dateString.optional(),
+  stockStatus: z.enum(['in_stock', 'low_stock', 'no_stock']).optional(),
 }).superRefine((value, ctx) => {
   if (value.fromDate && value.toDate && value.fromDate > value.toDate) {
     ctx.addIssue({
@@ -89,6 +90,11 @@ export const categoryCreateSchema = z.object({
   description: textField,
   isActive: z.coerce.boolean().optional().default(true),
   branchId: optionalPositiveInt,
+  // Phase 9: which Dynamic Product Attributes catalog keys apply to items
+  // in this category - lets e.g. "Mobile Phones" and "TVs" each show only
+  // the fields they need. Validated against the catalog in the service
+  // layer (keeps this schema file free of a config import).
+  attributeKeys: z.array(z.string().trim().min(1).max(60)).max(30).optional(),
 });
 
 export const categoryUpdateSchema = categoryCreateSchema.partial();
@@ -122,6 +128,24 @@ export const productCreateSchema = z.object({
     .nullable()
     .optional(),
   storeId: nullablePositiveInt.optional(),
+  categoryId: nullablePositiveInt.optional(),
+  unitId: nullablePositiveInt.optional(),
+  supplierId: nullablePositiveInt.optional(),
+  brand: z.string().trim().max(120).or(z.literal('')).nullable().optional(),
+  // Phase 11: business-type-driven product attributes. All optional/nullable,
+  // same as barcode above - a business type that doesn't use a given field
+  // (e.g. size for a pharmacy) simply never sends it; nothing here requires
+  // any of them.
+  size: z.string().trim().max(40).or(z.literal('')).nullable().optional(),
+  color: z.string().trim().max(40).or(z.literal('')).nullable().optional(),
+  genericName: z.string().trim().max(160).or(z.literal('')).nullable().optional(),
+  strength: z.string().trim().max(40).or(z.literal('')).nullable().optional(),
+  serialNumber: z.string().trim().max(120).or(z.literal('')).nullable().optional(),
+  // Phase 9: any catalog key with no dedicated column (model, storage, ram,
+  // processor, screen_size, imei, ...) - see server/src/config/productAttributes.ts.
+  // Keys with a `column` mapping (brand/color/size/generic_name/strength/
+  // serial_number) are ignored here if also sent via their own field above.
+  attributes: z.record(z.string(), z.union([z.string(), z.number(), z.null()])).optional(),
   quantity: optionalNonnegativeRoundedInt,
   stockAlert: nonnegativeRoundedInt.default(5),
   openingBalance: optionalNonnegativeRoundedInt,

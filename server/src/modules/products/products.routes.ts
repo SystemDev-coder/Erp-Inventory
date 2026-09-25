@@ -4,14 +4,17 @@ import { requirePerm } from '../../middlewares/requirePerm';
 import { uploadProductImage as uploadProductImageMiddleware } from '../../config/cloudinary';
 import {
   listProducts,
+  getProductsSummary,
   getProduct,
   createProduct,
   updateProduct,
   deleteProduct,
+  mergeProducts,
   listCategories,
   createCategory,
   updateCategory,
   deleteCategory,
+  seedDefaultCategories,
   listUnits,
   createUnit,
   updateUnit,
@@ -22,6 +25,8 @@ import {
   deleteTax,
   uploadProductImage,
   deleteProductImage,
+  getProductByBarcode,
+  exportProducts,
 } from './products.controller';
 
 const router = Router();
@@ -31,6 +36,7 @@ router.use(requireAuth);
 // Categories
 router.get('/categories', requirePerm('items.view'), listCategories);
 router.post('/categories', requirePerm('items.create'), createCategory);
+router.post('/categories/seed-defaults', requirePerm('items.create'), seedDefaultCategories);
 router.put('/categories/:id', requirePerm('items.update'), updateCategory);
 router.delete('/categories/:id', requirePerm('items.delete'), deleteCategory);
 
@@ -48,10 +54,14 @@ router.delete('/taxes/:id', requirePerm('items.delete'), deleteTax);
 
 // Products
 router.get('/', requirePerm('items.view'), listProducts);
+router.get('/export', requirePerm('items.view'), exportProducts);
+router.get('/summary', requirePerm('items.view'), getProductsSummary);
+router.get('/barcode/:barcode', requirePerm('items.view'), getProductByBarcode);
 router.get('/:id', requirePerm('items.view'), getProduct);
 router.post('/', requirePerm('items.create'), createProduct);
 router.put('/:id', requirePerm('items.update'), updateProduct);
 router.delete('/:id', requirePerm('items.delete'), deleteProduct);
+router.post('/:id/merge-into/:targetId', requirePerm('items.update'), requirePerm('items.delete'), mergeProducts);
 
 // Product Image Upload
 router.post(

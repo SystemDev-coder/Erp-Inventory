@@ -608,87 +608,21 @@ BEGIN
 END;
 \$\$;
 
-CREATE OR REPLACE FUNCTION ims.sp_soft_delete(p_table TEXT, p_id BIGINT, p_user BIGINT DEFAULT NULL)
-RETURNS TABLE(success BOOLEAN, message TEXT)
-LANGUAGE plpgsql
-AS \$\$
-DECLARE
-  v_pk TEXT;
-  v_has_deleted_at BOOLEAN;
-  v_has_updated_at BOOLEAN;
-  v_exists INT;
-  v_ref RECORD;
-  v_sql TEXT;
-  v_set TEXT;
-BEGIN
-  PERFORM set_config('app.include_deleted', '1', true);
-
-  IF to_regclass(format('${DB_SCHEMA}.%I', p_table)) IS NULL THEN
-    RETURN QUERY SELECT FALSE, format('Table not found: %s', p_table);
-    RETURN;
-  END IF;
-
-  IF NOT ims.fn_table_has_column(p_table, 'is_deleted') THEN
-    RETURN QUERY SELECT FALSE, format('Soft delete not enabled for table: %s', p_table);
-    RETURN;
-  END IF;
-
-  v_pk := ims.fn_table_pk_column(p_table);
-  IF v_pk IS NULL THEN
-    RAISE EXCEPTION 'Primary key not found for table %', p_table;
-  END IF;
-
-  v_sql := format('SELECT 1 FROM ${DB_SCHEMA}.%I WHERE %I = \$1 LIMIT 1', p_table, v_pk);
-  EXECUTE v_sql INTO v_exists USING p_id;
-  IF v_exists IS NULL THEN
-    RETURN QUERY SELECT FALSE, 'Record not found';
-    RETURN;
-  END IF;
-
-  FOR v_ref IN
-    SELECT
-      c.conrelid::regclass::text AS ref_table,
-      a.attname AS ref_column
-    FROM pg_constraint c
-    JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
-    JOIN pg_class t ON t.oid = c.confrelid
-    JOIN pg_namespace n ON n.oid = t.relnamespace
-    WHERE c.contype = 'f'
-      AND n.nspname = '${DB_SCHEMA}'
-      AND t.relname = p_table
-  LOOP
-    v_sql := format(
-      'SELECT 1 FROM %s WHERE %I = \$1 AND COALESCE(is_deleted, 0) = 0 LIMIT 1',
-      v_ref.ref_table,
-      v_ref.ref_column
-    );
-    EXECUTE v_sql INTO v_exists USING p_id;
-    IF v_exists IS NOT NULL THEN
-      RETURN QUERY SELECT FALSE, format(
-        'Cannot delete: this record is already used in %s.',
-        replace(v_ref.ref_table, '${DB_SCHEMA}.', '')
-      );
-      RETURN;
-    END IF;
-  END LOOP;
-
-  v_has_deleted_at := ims.fn_table_has_column(p_table, 'deleted_at');
-  v_has_updated_at := ims.fn_table_has_column(p_table, 'updated_at');
-
-  v_set := 'is_deleted = 1';
-  IF v_has_deleted_at THEN
-    v_set := v_set || ', deleted_at = NOW()';
-  END IF;
-  IF v_has_updated_at THEN
-    v_set := v_set || ', updated_at = NOW()';
-  END IF;
-
-  v_sql := format('UPDATE ${DB_SCHEMA}.%I SET %s WHERE %I = \$1', p_table, v_set, v_pk);
-  EXECUTE v_sql USING p_id;
-
-  RETURN QUERY SELECT TRUE, 'Deleted';
-END;
-\$\$;
+-- ims.sp_soft_delete is deliberately NOT (re)defined here. It used to be
+-- created right here with a blunt "block if ANY FK reference exists
+-- anywhere" body - and because apply_incremental_migrations (called above,
+-- before this block) already applies 20260922_central_delete_architecture.sql
+-- first, every deploy was silently overwriting that migration's real,
+-- policy-table-aware version with this old one via CREATE OR REPLACE
+-- immediately afterwards. That meant every delete-dependency policy row
+-- added in Phases 3-7 (products/customers/suppliers/sales/purchases/stock/
+-- expenses/employees/accounts/branches) was quietly inert in any
+-- environment that had ever run this script after that migration existed -
+-- confirmed against production, which was still running this old body.
+-- ims.sp_soft_delete now lives ONLY in
+-- server/sql/20260922_central_delete_architecture.sql, applied by
+-- apply_incremental_migrations like any other migration - do not add a
+-- CREATE OR REPLACE for it here again.
 
 CREATE OR REPLACE FUNCTION ims.sp_restore(p_table TEXT, p_id BIGINT, p_user BIGINT DEFAULT NULL)
 RETURNS TABLE(success BOOLEAN, message TEXT)

@@ -5,7 +5,8 @@ import { BranchScope } from '../../utils/branchScope';
 import { ApiError } from '../../utils/ApiError';
 import { AccountInput } from './accounts.schemas';
 import { postGl } from '../../utils/glPosting';
-import { ensureCoaAccounts } from '../../utils/coaDefaults';
+import { ensureCoaAccounts, isProtectedAccountName } from '../../utils/coaDefaults';
+import { softDeleteById } from '../../db/softDelete';
 
 export interface Account {
   acc_id: number;
@@ -294,6 +295,20 @@ export const accountsService = {
             { accId: coa.openingBalanceEquity, debit: equityDebit, credit: equityCredit, note: 'Offset (Opening Balance Equity)' },
           ],
         });
+
+        // H4 fix: the new account's own balance is already set directly in
+        // its INSERT above, but the Opening Balance Equity offset was never
+        // mirrored into accounts.balance. Equity - credit increases it, debit
+        // decreases it. No reversal needed: row.acc_id is a brand-new row, so
+        // this can never run twice for the same ref.
+        const obeDelta = equityCredit - equityDebit;
+        if (obeDelta) {
+          await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+            obeDelta,
+            coa.openingBalanceEquity,
+            ctx.branchId,
+          ]);
+        }
       }
 
       return mapAccount(row);
@@ -362,6 +377,29 @@ export const accountsService = {
       if (input.institution !== undefined) {
         updates.push(`institution = $${p++}`);
         values.push(input.institution || null);
+      }
+      // M08 fix: deactivating an account used to be unconditional, letting an
+      // account with a live balance or posting history disappear from every
+      // account picker with no warning while account_transactions/GL still
+      // referenced it. postGl already refuses new postings to an inactive
+      // account (see glPosting.ts) - this is the other half, refusing the
+      // deactivation itself while the account still has relevant balance or
+      // history, mirroring the existing "balance edit blocked when
+      // transactions exist" guard just below.
+      if (input.isActive === false && existing.is_active) {
+        const hasBalance = Math.abs(Number(existing.balance || 0)) > 0.000001;
+        const hasHistory = await client.query<{ exists: boolean }>(
+          `SELECT EXISTS (
+             SELECT 1 FROM ims.account_transactions
+              WHERE acc_id = $1 AND branch_id = $2
+           ) AS exists`,
+          [id, existing.branch_id]
+        );
+        if (hasBalance || Boolean(hasHistory.rows[0]?.exists)) {
+          throw ApiError.badRequest(
+            'Cannot deactivate an account with a non-zero balance or posting history. Clear the balance and archive it only once it is no longer in use.'
+          );
+        }
       }
       if (input.isActive !== undefined) {
         updates.push(`is_active = $${p++}`);
@@ -444,6 +482,21 @@ export const accountsService = {
             },
           ],
         });
+
+        // H4 fix: existing.acc_id's own balance is already set directly in
+        // the primary UPDATE above, but the Opening Balance Equity offset was
+        // never mirrored into accounts.balance. Equity - credit increases it,
+        // debit decreases it. No reversal needed: the txnExists guard above
+        // means this block can only ever run once per account, ever (further
+        // balance edits are blocked once GL history exists for it).
+        const obeDelta = accountDebit - accountCredit;
+        if (obeDelta) {
+          await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+            obeDelta,
+            coa.openingBalanceEquity,
+            Number(existing.branch_id),
+          ]);
+        }
       }
 
       return mapAccount(updatedRow);
@@ -489,6 +542,10 @@ export const accountsService = {
       throw ApiError.notFound('Account not found');
     }
 
+    if (isProtectedAccountName(target.name)) {
+      throw ApiError.badRequest('This is a core system account and cannot be deleted.');
+    }
+
     if ((target.account_type || 'asset') !== 'asset') {
       throw ApiError.badRequest('Only current asset accounts can be deleted.');
     }
@@ -498,22 +555,12 @@ export const accountsService = {
       throw ApiError.badRequest('Only zero-balance accounts can be deleted.');
     }
 
-    try {
-      if (scope.isAdmin) {
-        await queryOne(`DELETE FROM ims.accounts WHERE acc_id = $1`, [id]);
-        return;
-      }
-      await queryOne(`DELETE FROM ims.accounts WHERE acc_id = $1 AND branch_id = ANY($2)`, [
-        id,
-        scope.branchIds,
-      ]);
-    } catch (error: any) {
-      if (String(error?.code || '') === '23503') {
-        throw ApiError.badRequest(
-          'Account cannot be deleted because it is linked to existing transactions.'
-        );
-      }
-      throw error;
-    }
+    // Central Delete Architecture (Phase 7): archives the account instead of
+    // a hard delete. Its ledger/GL/receipt history is preserved untouched,
+    // hidden alongside it (policy rows in
+    // 20260923d_phase7_delete_policy.sql); an account still in active use by
+    // a profit-share rule/partner stays blocked (deliberately left
+    // unclassified - see that migration's comment).
+    await softDeleteById('accounts', id);
   },
 };

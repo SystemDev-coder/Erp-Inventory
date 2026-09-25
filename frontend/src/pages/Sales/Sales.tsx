@@ -11,8 +11,10 @@ import Badge from '../../components/ui/badge/Badge';
 import { Tabs } from '../../components/ui/tabs/Tabs';
 import { useToast } from '../../components/ui/toast/Toast';
 import { Sale, SaleItem, salesService } from '../../services/sales.service';
+import { deletePreviewService, DeleteImpactPreview } from '../../services/deletePreview.service';
 import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
+import { usePermissions } from '../../hooks/usePermissions';
 
 const formatMoney = (value: number) => `$${Number(value || 0).toFixed(2)}`;
 
@@ -25,6 +27,7 @@ const getDocRef = (sale: Pick<Sale, 'sale_id' | 'doc_type'>) => {
 
 const Sales = () => {
   const { showToast } = useToast();
+  const { can } = usePermissions();
   const navigate = useNavigate();
   const { activeBranchId } = useBranch();
   const [loading, setLoading] = useState(false);
@@ -37,31 +40,64 @@ const Sales = () => {
   const [saleToConvert, setSaleToConvert] = useState<Sale | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [saleToDelete, setSaleToDelete] = useState<Sale | null>(null);
+  const [saleDeleteImpact, setSaleDeleteImpact] = useState<DeleteImpactPreview | null>(null);
   const [viewOpen, setViewOpen] = useState(false);
   const [viewLoading, setViewLoading] = useState(false);
   const [viewSale, setViewSale] = useState<Sale | null>(null);
   const [viewItems, setViewItems] = useState<SaleItem[]>([]);
+  // Server-side pagination: fetch one small page at a time instead of up to 500 docs.
+  // Sales/Quotations tabs both filter within the current page (see Customers.tsx for the
+  // same trade-off) rather than issuing separate fetches per tab.
+  const SALES_PAGE_SIZE = 20;
+  const [salesPageIndex, setSalesPageIndex] = useState(0); // 0-based
+  const [salesTotalPages, setSalesTotalPages] = useState(0);
+  const [salesTotalRows, setSalesTotalRows] = useState(0);
+  const [salesSearch, setSalesSearch] = useState('');
 
-  const loadSales = useCallback(async () => {
+  const loadSales = useCallback(async (nextPageIndex = salesPageIndex, search = salesSearch) => {
     setLoading(true);
     const res = await salesService.list({
       includeVoided: true,
       fromDate: optionalDateParam(dateRange.fromDate),
       toDate: optionalDateParam(dateRange.toDate),
       branchId: activeBranchId ?? undefined,
-      limit: 500,
+      page: nextPageIndex + 1,
+      limit: SALES_PAGE_SIZE,
+      search: search || undefined,
     });
     if (res.success && res.data?.sales) {
       setSales(res.data.sales);
       setHasLoaded(true);
+      setSalesTotalPages(res.data.pagination?.totalPages ?? 0);
+      setSalesTotalRows(res.data.pagination?.total ?? res.data.sales.length);
     } else {
       showToast('error', 'Sales', res.error || 'Failed to load sales');
     }
     setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showToast, dateRange.fromDate, dateRange.toDate, activeBranchId]);
 
+  const handleSalesPageChange = (next: number) => {
+    setSalesPageIndex(next);
+    void loadSales(next, salesSearch);
+  };
+
+  const handleSalesServerSearch = (value: string) => {
+    setSalesSearch(value);
+    setSalesPageIndex(0);
+    void loadSales(0, value);
+  };
+
+  const handleSalesDisplay = () => {
+    setSalesPageIndex(0);
+    void loadSales(0, salesSearch);
+  };
+
   useEffect(() => {
-    if (hasLoaded) void loadSales();
+    if (hasLoaded) {
+      setSalesPageIndex(0);
+      void loadSales(0, salesSearch);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeBranchId]);
 
@@ -166,11 +202,16 @@ const Sales = () => {
     }
     setSaleToDelete(null);
     setDeleteOpen(false);
+    setSaleDeleteImpact(null);
   }, [loadSales, saleToDelete, showToast]);
 
   const handleDelete = useCallback((sale: Sale) => {
     setSaleToDelete(sale);
     setDeleteOpen(true);
+    setSaleDeleteImpact(null);
+    void deletePreviewService.preview('sales', sale.sale_id).then((res) => {
+      if (res.success && res.data?.preview) setSaleDeleteImpact(res.data.preview);
+    });
   }, []);
 
   const handleView = useCallback(
@@ -251,22 +292,27 @@ const Sales = () => {
         header: 'Actions',
         cell: ({ row }) => {
           const sale = row.original;
+          const isInvoice = (sale.doc_type || 'sale') === 'invoice';
           const printLabel =
             (sale.doc_type || 'sale') === 'quotation'
               ? 'Print quotation'
-              : (sale.doc_type || 'sale') === 'invoice'
+              : isInvoice
               ? 'Print invoice'
               : 'Print sale';
+          // Invoices get their own "Invoice Display" label per the same View action, so the
+          // ability to see/print an invoice right here on the Sales tab (no separate tab) is
+          // explicit rather than buried under a generic "View".
+          const viewLabel = isInvoice ? 'Invoice Display' : 'View';
           const menuItems = [
-            { label: 'View', icon: <Eye className="h-4 w-4" />, onClick: () => void handleView(sale) },
+            { label: viewLabel, icon: <Eye className="h-4 w-4" />, onClick: () => void handleView(sale) },
             { label: printLabel, icon: <Printer className="h-4 w-4" />, onClick: () => void printSaleInvoice(sale) },
-            ...(sale.status !== 'void'
+            ...(sale.status !== 'void' && can('sales.update')
               ? [{ label: 'Edit', icon: <Edit3 className="h-4 w-4" />, onClick: () => navigate(`/sales/${sale.sale_id}/edit`) }]
               : []),
-            ...(sale.doc_type === 'quotation' && sale.status !== 'void'
+            ...(sale.doc_type === 'quotation' && sale.status !== 'void' && can('sales.update')
               ? [{ label: 'Convert to invoice', icon: <FileCheck2 className="h-4 w-4" />, onClick: () => void handleConvertQuotation(sale) }]
               : []),
-            ...(sale.status !== 'void'
+            ...(sale.status !== 'void' && can('sales.void')
               ? [{
                   label: 'Void',
                   icon: <Ban className="h-4 w-4" />,
@@ -276,7 +322,7 @@ const Sales = () => {
                   },
                 }]
               : []),
-            ...(sale.status === 'void' || sale.doc_type === 'quotation'
+            ...((sale.status === 'void' || sale.doc_type === 'quotation') && can('sales.delete')
               ? [{
                   label: 'Delete',
                   icon: <Trash2 className="h-4 w-4" />,
@@ -289,27 +335,27 @@ const Sales = () => {
           return (
             <div className="flex items-center justify-end">
               <div className="hidden lg:flex items-center gap-2 flex-wrap">
-                <button type="button" onClick={() => void handleView(sale)} className={`${btn} border-blue-200 text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-900/30`} aria-label={`View ${getDocRef(sale)}`}>
+                <button type="button" onClick={() => void handleView(sale)} className={`${btn} border-blue-200 text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-900/30`} aria-label={`${viewLabel} ${getDocRef(sale)}`}>
                   <Eye className="h-4 w-4" aria-hidden="true" />
-                  View
+                  {viewLabel}
                 </button>
                 <button type="button" onClick={() => void printSaleInvoice(sale)} className={`${btn} border-indigo-200 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-300 dark:hover:bg-indigo-900/30`} aria-label={printLabel}>
                   <Printer className="h-4 w-4" aria-hidden="true" />
                   Print
                 </button>
-                {sale.status !== 'void' && (
+                {sale.status !== 'void' && can('sales.update') && (
                   <button type="button" onClick={() => navigate(`/sales/${sale.sale_id}/edit`)} className={`${btn} border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800`} aria-label={`Edit ${getDocRef(sale)}`}>
                     <Edit3 className="h-4 w-4" aria-hidden="true" />
                     Edit
                   </button>
                 )}
-                {sale.doc_type === 'quotation' && sale.status !== 'void' && (
+                {sale.doc_type === 'quotation' && sale.status !== 'void' && can('sales.update') && (
                   <button type="button" onClick={() => void handleConvertQuotation(sale)} className={`${btn} border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-900/30`} aria-label="Convert to invoice">
                     <FileCheck2 className="h-4 w-4" aria-hidden="true" />
                     Convert
                   </button>
                 )}
-                {sale.status !== 'void' && (
+                {sale.status !== 'void' && can('sales.void') && (
                   <button
                     type="button"
                     onClick={() => {
@@ -323,7 +369,7 @@ const Sales = () => {
                     Void
                   </button>
                 )}
-                {(sale.status === 'void' || sale.doc_type === 'quotation') && (
+                {(sale.status === 'void' || sale.doc_type === 'quotation') && can('sales.delete') && (
                   <button type="button" onClick={() => void handleDelete(sale)} className={`${btn} border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-900/30`} aria-label={`Delete ${getDocRef(sale)}`}>
                     <Trash2 className="h-4 w-4" aria-hidden="true" />
                     Delete
@@ -379,9 +425,9 @@ const Sales = () => {
               <div className="space-y-2">
                 <TabActionToolbar
                   title="Sales Documents"
-                  primaryAction={{ label: 'New Sale', onClick: () => navigate('/sales/new?docType=sale') }}
-                  secondaryAction={{ label: 'New Invoice', onClick: () => navigate('/sales/new?docType=invoice') }}
-                  onDisplay={() => void loadSales()}
+                  primaryAction={can('sales.create') ? { label: 'New Sale', onClick: () => navigate('/sales/new?docType=sale') } : undefined}
+                  secondaryAction={can('sales.create') ? { label: 'New Invoice', onClick: () => navigate('/sales/new?docType=invoice') } : undefined}
+                  onDisplay={handleSalesDisplay}
                   displayLoading={loading}
                   dateRange={{
                     fromDate: dateRange.fromDate,
@@ -399,6 +445,15 @@ const Sales = () => {
                   columns={columns}
                   isLoading={loading}
                   searchPlaceholder="Search by customer or note..."
+                  serverPagination={{
+                    pageIndex: salesPageIndex,
+                    pageSize: SALES_PAGE_SIZE,
+                    pageCount: Math.max(salesTotalPages, 1),
+                    totalRows: salesTotalRows,
+                    onPageChange: handleSalesPageChange,
+                    onPageSizeChange: () => {},
+                  }}
+                  onServerSearch={handleSalesServerSearch}
                 />
                 {!loading && !hasLoaded && <div className="text-sm text-slate-500 px-1">Click Display to load data.</div>}
                 {!loading && hasLoaded && salesDocs.length === 0 && (
@@ -416,8 +471,8 @@ const Sales = () => {
               <div className="space-y-2">
                 <TabActionToolbar
                   title="Quotations"
-                  primaryAction={{ label: 'New Quotation', onClick: () => navigate('/sales/new?docType=quotation') }}
-                  onDisplay={() => void loadSales()}
+                  primaryAction={can('sales.create') ? { label: 'New Quotation', onClick: () => navigate('/sales/new?docType=quotation') } : undefined}
+                  onDisplay={handleSalesDisplay}
                   displayLoading={loading}
                   dateRange={{
                     fromDate: dateRange.fromDate,
@@ -435,6 +490,15 @@ const Sales = () => {
                   columns={columns}
                   isLoading={loading}
                   searchPlaceholder="Search quotations by customer or note..."
+                  serverPagination={{
+                    pageIndex: salesPageIndex,
+                    pageSize: SALES_PAGE_SIZE,
+                    pageCount: Math.max(salesTotalPages, 1),
+                    totalRows: salesTotalRows,
+                    onPageChange: handleSalesPageChange,
+                    onPageSizeChange: () => {},
+                  }}
+                  onServerSearch={handleSalesServerSearch}
                 />
                 {!loading && !hasLoaded && <div className="text-sm text-slate-500 px-1">Click Display to load data.</div>}
                 {!loading && hasLoaded && quotationDocs.length === 0 && (
@@ -499,6 +563,7 @@ const Sales = () => {
         onClose={() => {
           setDeleteOpen(false);
           setSaleToDelete(null);
+          setSaleDeleteImpact(null);
         }}
         onConfirm={(reason) => {
           void confirmDelete(reason || '');
@@ -513,6 +578,7 @@ const Sales = () => {
         confirmText="Delete"
         cancelText="Cancel"
         variant="danger"
+        impact={saleDeleteImpact}
         isLoading={loading}
       />
 
@@ -576,7 +642,7 @@ const Sales = () => {
               <table className="min-w-full text-sm">
                 <thead className="bg-slate-100 text-left text-slate-600 dark:bg-slate-800 dark:text-slate-200">
                   <tr>
-                    <th className="px-3 py-2">Item</th>
+                    <th className="px-3 py-2">Product</th>
                     <th className="px-3 py-2 text-right">Qty</th>
                     <th className="px-3 py-2 text-right">Unit Price</th>
                     <th className="px-3 py-2 text-right">Line Total</th>
@@ -586,13 +652,13 @@ const Sales = () => {
                   {viewItems.length === 0 ? (
                     <tr>
                       <td colSpan={4} className="px-3 py-6 text-center text-slate-500 dark:text-slate-400">
-                        No items found.
+                        No products found.
                       </td>
                     </tr>
                   ) : (
                     viewItems.map((item, index) => (
                       <tr key={`${item.sale_item_id || item.item_id || index}`} className="border-t border-slate-200 dark:border-slate-700">
-                        <td className="px-3 py-2 text-slate-900 dark:text-slate-100">{item.item_name || `Item #${item.item_id}`}</td>
+                        <td className="px-3 py-2 text-slate-900 dark:text-slate-100">{item.item_name || `Product #${item.item_id}`}</td>
                         <td className="px-3 py-2 text-right text-slate-900 dark:text-slate-100">{Number(item.quantity || 0)}</td>
                         <td className="px-3 py-2 text-right text-slate-900 dark:text-slate-100">{formatMoney(Number(item.unit_price || 0))}</td>
                         <td className="px-3 py-2 text-right font-medium text-slate-900 dark:text-slate-100">

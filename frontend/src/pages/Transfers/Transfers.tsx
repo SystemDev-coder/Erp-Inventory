@@ -10,6 +10,7 @@ import {
   InventoryItem,
   InventoryWarehouse,
 } from '../../services/inventory.service';
+import { storeService, Store } from '../../services/store.service';
 import { itemLabelWithAvailability } from '../../utils/itemAvailability';
 import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
@@ -27,12 +28,14 @@ type MovementRow = {
 };
 
 type TransferForm = {
-  fromType: 'warehouse' | 'branch';
-  toType: 'warehouse' | 'branch';
+  fromType: 'warehouse' | 'branch' | 'store';
+  toType: 'warehouse' | 'branch' | 'store';
   fromWhId: string;
   toWhId: string;
   fromBranchId: string;
   toBranchId: string;
+  fromStoreId: string;
+  toStoreId: string;
   itemId: string;
   qty: number;
   unitCost: number;
@@ -52,6 +55,8 @@ const initialForm: TransferForm = {
   toWhId: '',
   fromBranchId: '',
   toBranchId: '',
+  fromStoreId: '',
+  toStoreId: '',
   itemId: '',
   qty: 0,
   unitCost: 0,
@@ -65,6 +70,7 @@ const Transfers = () => {
   const [submitting, setSubmitting] = useState(false);
   const [branches, setBranches] = useState<InventoryBranch[]>([]);
   const [warehouses, setWarehouses] = useState<InventoryWarehouse[]>([]);
+  const [stores, setStores] = useState<Store[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [itemAvailableQty, setItemAvailableQty] = useState<Record<number, number>>({});
   const [movements, setMovements] = useState<MovementRow[]>([]);
@@ -73,12 +79,17 @@ const Transfers = () => {
 
   const activeBranches = useMemo(() => branches.filter((row) => row.is_active), [branches]);
   const activeWarehouses = useMemo(() => warehouses.filter((row) => row.is_active), [warehouses]);
+  const activeStores = useMemo(() => stores.filter((row) => row.is_active), [stores]);
 
   const fromBranchId = useMemo(() => {
     if (form.fromType === 'branch') return form.fromBranchId;
+    if (form.fromType === 'store') {
+      const sourceStore = activeStores.find((row) => row.store_id === Number(form.fromStoreId));
+      return sourceStore ? String(sourceStore.branch_id) : '';
+    }
     const sourceWarehouse = activeWarehouses.find((row) => row.wh_id === Number(form.fromWhId));
     return sourceWarehouse ? String(sourceWarehouse.branch_id) : '';
-  }, [activeWarehouses, form.fromBranchId, form.fromType, form.fromWhId]);
+  }, [activeStores, activeWarehouses, form.fromBranchId, form.fromStoreId, form.fromType, form.fromWhId]);
 
   const fromWarehouses = useMemo(() => {
     if (!form.fromBranchId) return activeWarehouses;
@@ -109,7 +120,7 @@ const Transfers = () => {
     () => [
       { accessorKey: 'move_date', header: 'Date', cell: ({ row }) => new Date(row.original.move_date).toLocaleString() },
       { accessorKey: 'move_type', header: 'Type' },
-      { accessorKey: 'product_name', header: 'Item' },
+      { accessorKey: 'product_name', header: 'Product' },
       { accessorKey: 'branch_name', header: 'Branch' },
       { accessorKey: 'wh_name', header: 'Warehouse', cell: ({ row }) => row.original.wh_name || '-' },
       { accessorKey: 'qty_in', header: 'In', cell: ({ row }) => Number(row.original.qty_in || 0).toFixed(0) },
@@ -125,9 +136,10 @@ const Transfers = () => {
       return;
     }
     setLoading(true);
-    const [branchRes, warehouseRes, itemRes, stockRes, movementRes] = await Promise.all([
+    const [branchRes, warehouseRes, storeRes, itemRes, stockRes, movementRes] = await Promise.all([
       inventoryService.listBranches(),
       inventoryService.listWarehouses(),
+      storeService.list({ includeInactive: false }),
       inventoryService.listItems({}),
       inventoryService.listStock({ page: 1, limit: 5000 }),
       inventoryService.listMovements({
@@ -151,10 +163,16 @@ const Transfers = () => {
       showToast('error', 'Transfers', warehouseRes.error || 'Failed to load warehouses');
     }
 
+    if (storeRes.success && storeRes.data?.stores) {
+      setStores(storeRes.data.stores);
+    } else {
+      showToast('error', 'Transfers', storeRes.error || 'Failed to load stores');
+    }
+
     if (itemRes.success && itemRes.data?.items) {
       setItems(itemRes.data.items);
     } else {
-      showToast('error', 'Transfers', itemRes.error || 'Failed to load items');
+      showToast('error', 'Transfers', itemRes.error || 'Failed to load products');
     }
     if (stockRes.success && stockRes.data?.rows) {
       const nextMap: Record<number, number> = {};
@@ -189,7 +207,7 @@ const Transfers = () => {
 
   const submitTransfer = async () => {
     if (!form.itemId || Number(form.qty) <= 0) {
-      showToast('error', 'Transfers', 'Item and quantity are required');
+      showToast('error', 'Transfers', 'Product and quantity are required');
       return;
     }
     if (form.fromType === 'warehouse' && !form.fromWhId) {
@@ -200,12 +218,20 @@ const Transfers = () => {
       showToast('error', 'Transfers', 'Source branch is required');
       return;
     }
+    if (form.fromType === 'store' && !form.fromStoreId) {
+      showToast('error', 'Transfers', 'Source store is required');
+      return;
+    }
     if (form.toType === 'warehouse' && !form.toWhId) {
       showToast('error', 'Transfers', 'Destination warehouse is required');
       return;
     }
     if (form.toType === 'branch' && !form.toBranchId) {
       showToast('error', 'Transfers', 'Destination branch is required');
+      return;
+    }
+    if (form.toType === 'store' && !form.toStoreId) {
+      showToast('error', 'Transfers', 'Destination store is required');
       return;
     }
 
@@ -217,6 +243,8 @@ const Transfers = () => {
       toWhId: form.toType === 'warehouse' ? Number(form.toWhId) : undefined,
       fromBranchId: form.fromType === 'branch' ? Number(form.fromBranchId) : undefined,
       toBranchId: form.toType === 'branch' ? Number(form.toBranchId) : undefined,
+      fromStoreId: form.fromType === 'store' ? Number(form.fromStoreId) : undefined,
+      toStoreId: form.toType === 'store' ? Number(form.toStoreId) : undefined,
       productId: Number(form.itemId),
       qty: Number(form.qty),
       unitCost: Number(form.unitCost || 0),
@@ -269,15 +297,17 @@ const Transfers = () => {
               onChange={(e) =>
                 setForm((prev) => ({
                   ...prev,
-                  fromType: e.target.value as 'warehouse' | 'branch',
+                  fromType: e.target.value as 'warehouse' | 'branch' | 'store',
                   fromWhId: '',
                   fromBranchId: '',
+                  fromStoreId: '',
                   itemId: '',
                 }))
               }
             >
               <option value="warehouse">Warehouse</option>
               <option value="branch">Branch</option>
+              <option value="store">Store</option>
             </select>
           </div>
 
@@ -289,14 +319,16 @@ const Transfers = () => {
               onChange={(e) =>
                 setForm((prev) => ({
                   ...prev,
-                  toType: e.target.value as 'warehouse' | 'branch',
+                  toType: e.target.value as 'warehouse' | 'branch' | 'store',
                   toWhId: '',
                   toBranchId: '',
+                  toStoreId: '',
                 }))
               }
             >
               <option value="warehouse">Warehouse</option>
               <option value="branch">Branch</option>
+              <option value="store">Store</option>
             </select>
           </div>
 
@@ -312,6 +344,22 @@ const Transfers = () => {
                 {activeWarehouses.map((row) => (
                   <option key={row.wh_id} value={row.wh_id}>
                     {row.wh_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : form.fromType === 'store' ? (
+            <div>
+              <label className={labelClass}>From Store *</label>
+              <select
+                className={inputClass}
+                value={form.fromStoreId}
+                onChange={(e) => setForm((prev) => ({ ...prev, fromStoreId: e.target.value, itemId: '' }))}
+              >
+                <option value="">Select source store</option>
+                {activeStores.map((row) => (
+                  <option key={row.store_id} value={row.store_id}>
+                    {row.store_name}
                   </option>
                 ))}
               </select>
@@ -348,6 +396,24 @@ const Transfers = () => {
                   .map((row) => (
                     <option key={row.wh_id} value={row.wh_id}>
                       {row.wh_name}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          ) : form.toType === 'store' ? (
+            <div>
+              <label className={labelClass}>To Store *</label>
+              <select
+                className={inputClass}
+                value={form.toStoreId}
+                onChange={(e) => setForm((prev) => ({ ...prev, toStoreId: e.target.value }))}
+              >
+                <option value="">Select destination store</option>
+                {activeStores
+                  .filter((row) => !(form.fromType === 'store' && row.store_id === Number(form.fromStoreId)))
+                  .map((row) => (
+                    <option key={row.store_id} value={row.store_id}>
+                      {row.store_name}
                     </option>
                   ))}
               </select>
@@ -409,9 +475,9 @@ const Transfers = () => {
           )}
 
           <div>
-            <label className={labelClass}>Item *</label>
+            <label className={labelClass}>Product *</label>
             <select className={inputClass} value={form.itemId} onChange={(e) => onItemChange(e.target.value)}>
-              <option value="">Select item</option>
+              <option value="">Select product</option>
               {availableItems.map((row) => (
                 <option key={row.item_id} value={row.item_id}>
                   {itemLabelWithAvailability(row.item_name, itemAvailableQty[row.item_id])}

@@ -1,10 +1,13 @@
 ﻿import { useEffect, useState } from 'react';
-import { Store, Package, Plus, Trash2, ChevronDown, ChevronRight, Pencil, Eye } from 'lucide-react';
+import { Store, Package, Plus, Trash2, ChevronDown, ChevronRight, Pencil, Eye, ArrowLeftRight } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
 import { useToast } from '../../components/ui/toast/Toast';
 import { storeService, Store as StoreType, StoreItem } from '../../services/store.service';
 import { productService, Product } from '../../services/product.service';
+import { inventoryService } from '../../services/inventory.service';
 import { Modal } from '../../components/ui/modal/Modal';
+import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
+import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
 import { itemLabelWithAvailability } from '../../utils/itemAvailability';
 import { useBranch } from '../../context/BranchContext';
 
@@ -26,6 +29,27 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const [storeModalOpen, setStoreModalOpen] = useState(false);
   const [editingStoreId, setEditingStoreId] = useState<number | null>(null);
   const [formStore, setFormStore] = useState({ storeName: '', storeCode: '', address: '', phone: '' });
+
+  // removeItem requires a delete reason (same rule as every other delete in
+  // this app) but the button used to call it with none, which always failed
+  // server-side with no explanation shown to the user - prompt for it instead.
+  const [removeTarget, setRemoveTarget] = useState<{ storeId: number; itemId: number; productName: string } | null>(null);
+  const [removing, setRemoving] = useState(false);
+
+  // Store Transfer: a focused store-to-store variant of the existing generic
+  // Transfers page/API (frontend/src/pages/Transfers/Transfers.tsx already
+  // supports fromType/toType='store', added in the Central Delete
+  // Architecture's Phase 6) - no new backend endpoint, just a simpler modal
+  // scoped to store<->store so it doesn't need to leave this tab.
+  const [transferModalOpen, setTransferModalOpen] = useState(false);
+  const [transferSubmitting, setTransferSubmitting] = useState(false);
+  const [transferForm, setTransferForm] = useState({
+    fromStoreId: '' as number | '',
+    toStoreId: '' as number | '',
+    productId: '' as number | '',
+    qty: 1,
+    note: '',
+  });
 
   const loadStores = async () => {
     setLoading(true);
@@ -58,7 +82,7 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
         return next;
       });
     } else {
-      showToast('error', 'Store Items', res.error || 'Could not load store items');
+      showToast('error', 'Store Products', res.error || 'Could not load store products');
     }
   };
 
@@ -125,7 +149,7 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!itemModalStore || !addProductId) {
-      showToast('error', 'Select item', 'Choose an item and quantity');
+      showToast('error', 'Select product', 'Choose a product and quantity');
       return;
     }
     setLoading(true);
@@ -136,24 +160,27 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
     setLoading(false);
 
     if (res.success) {
-      showToast('success', 'Item added');
+      showToast('success', 'Product added');
       setAddProductId('');
       setAddQty(1);
       loadStoreItems(itemModalStore.store_id);
     } else {
-      showToast('error', 'Add failed', res.error || 'Could not add item');
+      showToast('error', 'Add failed', res.error || 'Could not add product');
     }
   };
 
-  const handleRemoveItem = async (storeId: number, itemId: number) => {
-    setLoading(true);
-    const res = await storeService.removeItem(storeId, itemId);
-    setLoading(false);
+  const handleRemoveItem = async (reason: string) => {
+    if (!removeTarget) return;
+    const { storeId, itemId } = removeTarget;
+    setRemoving(true);
+    const res = await storeService.removeItem(storeId, itemId, reason);
+    setRemoving(false);
     if (res.success) {
-      showToast('success', 'Item removed');
+      showToast('success', 'Product removed');
+      setRemoveTarget(null);
       loadStoreItems(storeId);
     } else {
-      showToast('error', 'Remove failed', res.error || 'Could not remove item');
+      showToast('error', 'Remove failed', res.error || 'Could not remove product');
     }
   };
 
@@ -167,10 +194,54 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
     const res = await storeService.updateItem(storeId, itemId, qty);
     setLoading(false);
     if (res.success) {
-      showToast('success', 'Store Items', 'Quantity updated');
+      showToast('success', 'Store Products', 'Quantity updated');
       await loadStoreItems(storeId);
     } else {
-      showToast('error', 'Store Items', res.error || 'Could not update quantity');
+      showToast('error', 'Store Products', res.error || 'Could not update quantity');
+    }
+  };
+
+  const openTransferModal = () => {
+    // Load stores/products independently of whether "Display" was already
+    // clicked on the Store list - the transfer modal must not depend on it.
+    if (!products.length) void loadProducts();
+    if (!stores.length) void loadStores();
+    setTransferForm({ fromStoreId: '', toStoreId: '', productId: '', qty: 1, note: '' });
+    setTransferModalOpen(true);
+  };
+
+  const handleSubmitTransfer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!transferForm.fromStoreId || !transferForm.toStoreId) {
+      showToast('error', 'Store Transfer', 'Choose both a source and destination store');
+      return;
+    }
+    if (transferForm.fromStoreId === transferForm.toStoreId) {
+      showToast('error', 'Store Transfer', 'Source and destination stores must be different');
+      return;
+    }
+    if (!transferForm.productId || Number(transferForm.qty) <= 0) {
+      showToast('error', 'Store Transfer', 'Choose a product and a quantity greater than zero');
+      return;
+    }
+    setTransferSubmitting(true);
+    const res = await inventoryService.transfer({
+      fromType: 'store',
+      toType: 'store',
+      fromStoreId: Number(transferForm.fromStoreId),
+      toStoreId: Number(transferForm.toStoreId),
+      productId: Number(transferForm.productId),
+      qty: Number(transferForm.qty),
+      note: transferForm.note || undefined,
+    });
+    setTransferSubmitting(false);
+    if (res.success) {
+      showToast('success', 'Store Transfer', 'Stock transferred');
+      setTransferModalOpen(false);
+      if (expandedId === Number(transferForm.fromStoreId)) await loadStoreItems(Number(transferForm.fromStoreId));
+      if (expandedId === Number(transferForm.toStoreId)) await loadStoreItems(Number(transferForm.toStoreId));
+    } else {
+      showToast('error', 'Store Transfer', res.error || 'Transfer failed');
     }
   };
 
@@ -184,14 +255,27 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
 
   const fieldCls = 'w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 dark:bg-slate-800 text-slate-900 dark:text-slate-100';
 
+  const storeOptions = stores.map((s) => ({ value: s.store_id, label: s.store_name }));
+  const toStoreOptions = storeOptions.filter((o) => o.value !== transferForm.fromStoreId);
+  const productOptions = products.map((p) => ({
+    value: p.product_id,
+    label: itemLabelWithAvailability(p.name, p.stock ?? p.quantity ?? p.opening_balance),
+  }));
+
   return (
     <div className="space-y-6">
       {!embedded && (
         <PageHeader
           title="Store"
-          description="Manage stores and store item allocations."
+          description="Manage stores and store product allocations."
           actions={
             <div className="flex items-center gap-2">
+              <button
+                onClick={() => void openTransferModal()}
+                className="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-xl text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+              >
+                <ArrowLeftRight className="w-4 h-4" /> Store Transfer
+              </button>
               <button
                 onClick={openCreateStore}
                 className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-xl hover:bg-primary-700"
@@ -205,6 +289,12 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
 
       {embedded && (
         <div className="flex items-center justify-end gap-2">
+          <button
+            onClick={() => void openTransferModal()}
+            className="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-xl text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+          >
+            <ArrowLeftRight className="w-4 h-4" /> Store Transfer
+          </button>
           <button
             onClick={openCreateStore}
             className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-xl hover:bg-primary-700"
@@ -263,19 +353,19 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
                 {expandedId === store.store_id && (
                   <div className="px-4 pb-4 pt-0 bg-slate-50/50 dark:bg-slate-800/30">
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-slate-600 dark:text-slate-400">Items in this store</span>
+                      <span className="text-sm font-medium text-slate-600 dark:text-slate-400">Products in this store</span>
                       <button
                         onClick={() => openAddItemModal(store)}
                         className="inline-flex items-center gap-1 text-sm px-2 py-1 rounded-lg bg-primary-600 text-white hover:bg-primary-700"
                       >
-                        <Package className="w-4 h-4" /> Add item
+                        <Package className="w-4 h-4" /> Add product
                       </button>
                     </div>
                     <div className="rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
                       <table className="min-w-full text-sm">
                         <thead className="bg-slate-100 dark:bg-slate-800">
                           <tr>
-                            <th className="px-3 py-2 text-left">Item</th>
+                            <th className="px-3 py-2 text-left">Product</th>
                             <th className="px-3 py-2 text-right">Quantity</th>
                             <th className="px-3 py-2 w-48">Action</th>
                           </tr>
@@ -283,7 +373,7 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
                         <tbody>
                           {(storeItems[store.store_id] || []).map((item) => (
                             <tr key={item.store_item_id} className="border-t border-slate-200 dark:border-slate-700">
-                              <td className="px-3 py-2">{item.product_name || `Item #${item.product_id}`}</td>
+                              <td className="px-3 py-2">{item.product_name || `Product #${item.product_id}`}</td>
                               <td className="px-3 py-2 text-right">
                                 <input
                                   type="number"
@@ -305,7 +395,13 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
                                   </button>
                                   <button
                                     type="button"
-                                    onClick={() => handleRemoveItem(store.store_id, item.store_item_id)}
+                                    onClick={() =>
+                                      setRemoveTarget({
+                                        storeId: store.store_id,
+                                        itemId: item.store_item_id,
+                                        productName: item.product_name || `Product #${item.product_id}`,
+                                      })
+                                    }
                                     className="text-red-500 hover:text-red-600 p-1"
                                     title="Remove"
                                   >
@@ -318,7 +414,7 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
                         </tbody>
                       </table>
                       {(!storeItems[store.store_id] || storeItems[store.store_id].length === 0) && (
-                        <div className="px-3 py-4 text-center text-slate-500 text-sm">No items yet.</div>
+                        <div className="px-3 py-4 text-center text-slate-500 text-sm">No products yet.</div>
                       )}
                     </div>
                   </div>
@@ -346,18 +442,17 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
         </form>
       </Modal>
 
-      <Modal isOpen={!!itemModalStore} onClose={() => setItemModalStore(null)} title={itemModalStore ? `Add item to ${itemModalStore.store_name}` : 'Add item'} size="sm">
+      <Modal isOpen={!!itemModalStore} onClose={() => setItemModalStore(null)} title={itemModalStore ? `Add product to ${itemModalStore.store_name}` : 'Add product'} size="sm">
         {itemModalStore && (
           <form onSubmit={handleAddItem} className="space-y-3">
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Item</label>
-            <select className={fieldCls} value={addProductId} onChange={(e) => setAddProductId(e.target.value ? Number(e.target.value) : '')}>
-              <option value="">Select item</option>
-              {products.map((p) => (
-                <option key={p.product_id} value={p.product_id}>
-                  {itemLabelWithAvailability(p.name, p.stock ?? p.quantity ?? p.opening_balance)}
-                </option>
-              ))}
-            </select>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Product</label>
+            <SearchableCombobox
+              id="store-add-item-product"
+              value={addProductId}
+              options={productOptions}
+              onChange={setAddProductId}
+              placeholder="Select product"
+            />
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Quantity</label>
             <input type="number" min={0} step={1} className={fieldCls} value={addQty} onChange={(e) => setAddQty(Number(e.target.value) || 0)} />
             <div className="flex justify-end gap-2 pt-2">
@@ -368,6 +463,71 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
         )}
       </Modal>
 
+      <Modal isOpen={transferModalOpen} onClose={() => setTransferModalOpen(false)} title="Store Transfer" size="md">
+        <form onSubmit={handleSubmitTransfer} className="space-y-3">
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">From store *</label>
+          <SearchableCombobox
+            id="store-transfer-from"
+            value={transferForm.fromStoreId}
+            options={storeOptions}
+            onChange={(v) => setTransferForm((p) => ({ ...p, fromStoreId: v }))}
+            placeholder="Select source store"
+          />
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">To store *</label>
+          <SearchableCombobox
+            id="store-transfer-to"
+            value={transferForm.toStoreId}
+            options={toStoreOptions}
+            onChange={(v) => setTransferForm((p) => ({ ...p, toStoreId: v }))}
+            placeholder="Select destination store"
+          />
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Product *</label>
+          <SearchableCombobox
+            id="store-transfer-product"
+            value={transferForm.productId}
+            options={productOptions}
+            onChange={(v) => setTransferForm((p) => ({ ...p, productId: v }))}
+            placeholder="Select product"
+          />
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Quantity *</label>
+          <input
+            type="number"
+            min={1}
+            step={1}
+            className={fieldCls}
+            value={transferForm.qty}
+            onChange={(e) => setTransferForm((p) => ({ ...p, qty: Number(e.target.value) || 0 }))}
+            required
+          />
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Note</label>
+          <input
+            className={fieldCls}
+            value={transferForm.note}
+            onChange={(e) => setTransferForm((p) => ({ ...p, note: e.target.value }))}
+            placeholder="Optional"
+          />
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={() => setTransferModalOpen(false)} className="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600">Cancel</button>
+            <button type="submit" disabled={transferSubmitting} className="px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60">
+              {transferSubmitting ? 'Transferring...' : 'Transfer'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <ConfirmDialog
+        isOpen={!!removeTarget}
+        onClose={() => setRemoveTarget(null)}
+        onConfirm={(reason) => void handleRemoveItem(reason || '')}
+        requireReason
+        title="Remove Product from Store?"
+        highlightedName={removeTarget?.productName}
+        message="This removes the product's stock record from this store. Provide a reason for the audit log."
+        confirmText="Remove"
+        cancelText="Cancel"
+        variant="danger"
+        isLoading={removing}
+      />
     </div>
   );
 };

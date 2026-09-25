@@ -74,6 +74,29 @@ export const supplierPaymentsCteSql = (branchRef: string) => `
     GROUP BY purchase_id
   )`;
 
+/**
+ * H2 fix: per-supplier total of supplier_receipts that were intentionally left
+ * unlinked to any purchase (purchase_id IS NULL) - i.e. pooled payments applied
+ * against the supplier's overall balance rather than one invoice. Per-invoice
+ * reports (purchase outstanding, credit-overdue, payment status) can only ever
+ * reduce a purchase's own balance by payments explicitly linked to it - they
+ * must never guess that an unlinked payment belongs to a particular invoice.
+ * This CTE lets those reports surface the unlinked amount as its own figure
+ * instead of silently omitting it, so "invoice outstanding" + "unallocated"
+ * still reconciles to the supplier's true pooled balance.
+ */
+export const supplierUnallocatedPaymentsCteSql = (branchRef: string) => `
+  unallocated_supplier_payments AS (
+    SELECT
+      sr.supplier_id,
+      COALESCE(SUM(sr.amount), 0)::double precision AS unallocated_amount
+    FROM ims.supplier_receipts sr
+    WHERE sr.branch_id = ${branchRef}
+      AND sr.purchase_id IS NULL
+      AND COALESCE(sr.is_deleted, 0) = 0
+    GROUP BY sr.supplier_id
+  )`;
+
 /** Customer invoice payments from sale_payments and customer_receipts */
 export const customerInvoicePaymentsCteSql = (branchRef: string, asOfDateRef: string) => `
   pay_sum AS (

@@ -1,4 +1,5 @@
 import { query, queryMany, queryOne } from '../../db/query';
+import { withTransaction } from '../../db/withTx';
 import { ensureCreditDueNotifications } from '../../utils/creditDueNotifications';
 
 export interface NotificationRow {
@@ -19,7 +20,16 @@ export interface NotificationRow {
 
 interface NotificationListInput {
   userId: number;
+  /** Single branch to run low-stock/credit-due generation against, if applicable (unchanged behavior). */
   branchId?: number;
+  /**
+   * H11 fix: the caller's currently authorized branch(es) the returned list
+   * must be scoped to - always resolved/validated by the controller via the
+   * same resolveActiveBranchIds()/assertBranchAccess() mechanism every other
+   * branch-scoped endpoint uses (single branch for a normal user, every
+   * active branch for an Administrator with no explicit ?branchId=).
+   */
+  branchIds: number[];
   limit: number;
   offset: number;
   unreadOnly?: boolean;
@@ -100,22 +110,32 @@ const ensureLowStockNotifications = async (branchId: number, userId: number) => 
     [branchId, userId]
   );
 
-  await query(
-    `WITH low_stock AS (${lowStockRowsSql})
-     UPDATE ims.notifications n
-        SET is_deleted = TRUE,
-            deleted_at = NOW()
-      WHERE n.user_id = $2
-        AND n.branch_id = $1
-        AND COALESCE(n.is_deleted, FALSE) = FALSE
-        AND COALESCE(n.meta->>'type', '') = 'low_stock'
-        AND NOT EXISTS (
-          SELECT 1
-          FROM low_stock ls
-          WHERE ls.product_id::text = COALESCE(n.meta->>'product_id', '')
-        )`,
-    [branchId, userId]
-  );
+  // The rls_soft_delete policy on is_deleted-bearing tables gates writing a
+  // row into a soft-deleted state on this session var (same root cause
+  // diagnosed and fixed for sales/purchase returns in returns.service.ts) -
+  // without it, this UPDATE fails with "new row violates row-level security
+  // policy for table notifications" and the whole notification list request
+  // 500s. Scoped to its own short transaction since this fix must not affect
+  // any other query sharing this pooled connection.
+  await withTransaction(async (client) => {
+    await client.query(`SET LOCAL app.include_deleted = '1'`);
+    await client.query(
+      `WITH low_stock AS (${lowStockRowsSql})
+       UPDATE ims.notifications n
+          SET is_deleted = TRUE,
+              deleted_at = NOW()
+        WHERE n.user_id = $2
+          AND n.branch_id = $1
+          AND COALESCE(n.is_deleted, FALSE) = FALSE
+          AND COALESCE(n.meta->>'type', '') = 'low_stock'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM low_stock ls
+            WHERE ls.product_id::text = COALESCE(n.meta->>'product_id', '')
+          )`,
+      [branchId, userId]
+    );
+  });
 };
 
 export const notificationsService = {
@@ -125,12 +145,22 @@ export const notificationsService = {
       await ensureCreditDueNotifications(input.branchId);
     }
 
-    const whereClauses = ['n.user_id = $1', 'COALESCE(n.is_deleted, FALSE) = FALSE'];
+    // H11 fix: scope to the caller's authorized branch(es) as well as their
+    // own user_id - a notification row with a NULL branch_id (none exist
+    // today, but the column is nullable) is treated as branch-independent
+    // and stays visible to everyone it's addressed to, rather than being
+    // hidden by this filter.
+    const whereClauses = [
+      'n.user_id = $1',
+      'COALESCE(n.is_deleted, FALSE) = FALSE',
+      '(n.branch_id = ANY($2) OR n.branch_id IS NULL)',
+    ];
     if (input.unreadOnly) {
       whereClauses.push('n.is_read = FALSE');
     }
 
     const whereSql = whereClauses.join(' AND ');
+    const scopeParams: unknown[] = [input.userId, input.branchIds];
 
     const notifications = await queryMany<NotificationRow>(
       `SELECT
@@ -151,24 +181,25 @@ export const notificationsService = {
        LEFT JOIN ims.users cb ON cb.user_id = n.created_by
        WHERE ${whereSql}
        ORDER BY n.created_at DESC
-       LIMIT $2 OFFSET $3`,
-      [input.userId, input.limit, input.offset]
+       LIMIT $3 OFFSET $4`,
+      [...scopeParams, input.limit, input.offset]
     );
 
     const filteredCountRow = await queryOne<{ total: string }>(
       `SELECT COUNT(*)::text AS total
        FROM ims.notifications n
        WHERE ${whereSql}`,
-      [input.userId]
+      scopeParams
     );
 
     const unreadCountRow = await queryOne<{ unread_count: string }>(
       `SELECT COUNT(*)::text AS unread_count
        FROM ims.notifications n
        WHERE n.user_id = $1
+         AND (n.branch_id = ANY($2) OR n.branch_id IS NULL)
          AND COALESCE(n.is_deleted, FALSE) = FALSE
          AND n.is_read = FALSE`,
-      [input.userId]
+      scopeParams
     );
 
     return {

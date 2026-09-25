@@ -7,10 +7,13 @@ const router = Router();
 
 router.use(requireAuth);
 
-router.get('/', requireAnyPerm(['employees.view', 'sales.view']), listShifts);
-router.post('/', requireAnyPerm(['employees.view', 'sales.view']), openShift);
-router.patch('/:id/close', requireAnyPerm(['employees.view', 'sales.view']), closeShift);
-router.patch('/:id/void', requireAnyPerm(['employees.view', 'sales.view']), voidShift);
+// Also used as the POS Register: opening/closing a shift while checking out sales is
+// exactly opening/closing a cash drawer, so sales.pos.access/close are accepted here
+// too (widening access, not replacing the existing Employees > Shifts permissions).
+router.get('/', requireAnyPerm(['employees.view', 'sales.view', 'sales.pos.access']), listShifts);
+router.post('/', requireAnyPerm(['employees.view', 'sales.view', 'sales.pos.access']), openShift);
+router.patch('/:id/close', requireAnyPerm(['employees.view', 'sales.view', 'sales.pos.close']), closeShift);
+router.patch('/:id/void', requireAnyPerm(['employees.view', 'sales.view', 'sales.pos.close']), voidShift);
 
 export default router;
 

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router';
 import { ColumnDef } from '@tanstack/react-table';
-import { Users, UserPlus, UserCheck, CheckCircle2 } from 'lucide-react';
+import { Users, UserPlus, UserCheck } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
 import { PageHeader, TabActionToolbar } from '../../components/ui/layout';
 import { DataTable } from '../../components/ui/table/DataTable';
@@ -10,8 +10,10 @@ import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { useToast } from '../../components/ui/toast/Toast';
 import Badge from '../../components/ui/badge/Badge';
 import { customerService, Customer } from '../../services/customer.service';
+import { deletePreviewService, DeleteImpactPreview } from '../../services/deletePreview.service';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
 import { useBranch } from '../../context/BranchContext';
+import { usePermissions } from '../../hooks/usePermissions';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 type CustomerForm = {
@@ -24,14 +26,16 @@ type CustomerForm = {
     is_active: boolean;
     credit_allowed: boolean;
     credit_days: number;
+    // Kept as a string, same reasoning as remaining_balance below: an empty
+    // string means "no limit" (persisted as NULL), and coercing on every
+    // keystroke would turn that into "0" and fight the caret.
+    credit_limit: string;
     // Kept as a string so the input never rewrites what is being typed. Coercing on
     // every keystroke turns "" into "0" and drops a trailing ".", which moves the
     // caret and makes the field (and the reason field below it) flicker.
     remaining_balance: string;
     edit_reason: string;
 };
-
-type FieldErrors = Partial<Record<keyof CustomerForm, string>>;
 
 const emptyForm: CustomerForm = {
     full_name: '',
@@ -42,6 +46,7 @@ const emptyForm: CustomerForm = {
     is_active: true,
     credit_allowed: true,
     credit_days: 30,
+    credit_limit: '',
     remaining_balance: '',
     edit_reason: '',
 };
@@ -56,71 +61,29 @@ const hasOpeningBalanceChanged = (f: CustomerForm, original: number | null) =>
     original !== null &&
     parseBalance(f.remaining_balance) !== original;
 
-// ── Field-level validation ───────────────────────────────────────────────────
-function validateForm(f: CustomerForm): FieldErrors {
-    const e: FieldErrors = {};
-    if (!f.full_name.trim())
-        e.full_name = 'Customer name is required';
-    else if (f.full_name.trim().length < 2)
-        e.full_name = 'Name must be at least 2 characters';
-
-    if (f.phone.trim()) {
-        const digits = f.phone.replace(/\D/g, '');
-        if (digits.length < 2)
-            e.phone = 'Please add at least 2 numbers';
-    }
-
-    if (f.remaining_balance.trim() && !Number.isFinite(Number(f.remaining_balance.trim())))
-        e.remaining_balance = 'Balance must be a number';
-    else if (parseBalance(f.remaining_balance) < 0)
-        e.remaining_balance = 'Balance cannot be negative';
-
-    return e;
-}
-
-// ── Shared field component ────────────────────────────────────────────────────
+// ── Shared field component ─────────────────────────────────────────────────
+// Deliberately has no error/touched/success state: the form relies on native
+// HTML5 validation (required/minLength/min on the inputs themselves) instead
+// of custom red-border flashing, matching the Employee modal's behavior. The
+// browser blocks submission and shows its own message for invalid fields.
 type FieldProps = {
     label: string;
-    error?: string;
-    touched?: boolean;
-    success?: boolean;
+    required?: boolean;
     children: React.ReactNode;
     hint?: string;
     colSpan?: boolean;
 };
 
-function Field({ label, error, touched, success, children, hint, colSpan }: FieldProps) {
-    const showError = touched && error;
-    const showSuccess = touched && !error && success;
+function Field({ label, required, children, hint, colSpan }: FieldProps) {
     return (
         <div className={`flex flex-col gap-1 ${colSpan ? 'md:col-span-2' : ''}`}>
-            <div className="flex items-center gap-2">
-                <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                    {label}
-                </label>
-                {showSuccess && (
-                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-                )}
-            </div>
+            <label>
+                <span>{label}{required ? ' *' : ''}</span>
+            </label>
             {children}
-            {showError ? (
-                <p className="text-xs font-medium text-red-500 dark:text-red-400">{error}</p>
-            ) : hint ? (
-                <p className="text-xs text-slate-400 dark:text-slate-500">{hint}</p>
-            ) : null}
+            {hint && <p className="text-xs text-slate-400 dark:text-slate-500">{hint}</p>}
         </div>
     );
-}
-
-// ── Input class helper ────────────────────────────────────────────────────────
-function getInputCls(error?: string, touched?: boolean) {
-    const base =
-        'h-11 w-full rounded-lg border bg-white px-3 text-sm text-slate-900 shadow-sm outline-none transition-all duration-150 placeholder:text-slate-400 focus:ring-2 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:opacity-70 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500';
-    if (touched && error)
-        return `${base} border-red-400 bg-red-50/40 focus:border-red-500 focus:ring-red-500/20 dark:border-red-500 dark:bg-red-900/10`;
-    if (touched && !error)
-        return `${base} border-emerald-400 focus:border-emerald-500 focus:ring-emerald-500/20 dark:border-emerald-600`;
-    return `${base} border-slate-200 focus:border-primary-500 focus:ring-primary-500/20 dark:border-slate-700 dark:focus:border-primary-400`;
 }
 
 // ── Main component ───────────────────────────────────────────────────────────
@@ -128,94 +91,99 @@ const Customers = () => {
     const { tab } = useParams();
     const { showToast } = useToast();
     const { activeBranchId } = useBranch();
+    const { can } = usePermissions();
 
     const [isAddOpen, setIsAddOpen] = useState(false);
     const [customers, setCustomers] = useState<Customer[]>([]);
     const [hasDisplayed, setHasDisplayed] = useState(false);
     const [loading, setLoading] = useState(false);
+    // Server-side pagination: fetch one small page (PAGE_SIZE rows) at a time instead of
+    // pulling the whole customer list into the browser on every Display click.
+    const PAGE_SIZE = 20;
+    const [pageIndex, setPageIndex] = useState(0); // 0-based
+    const [totalPages, setTotalPages] = useState(0);
+    const [totalRows, setTotalRows] = useState(0);
+    const [searchTerm, setSearchTerm] = useState('');
     const [form, setForm] = useState<CustomerForm>(emptyForm);
     const [originalOpeningBalance, setOriginalOpeningBalance] = useState<number | null>(null);
+    const [openingBalanceLocked, setOpeningBalanceLocked] = useState(false);
     const [reasonRevealed, setReasonRevealed] = useState(false);
-    const [errors, setErrors] = useState<FieldErrors>({});
-    const [touched, setTouched] = useState<Partial<Record<keyof CustomerForm, boolean>>>({});
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+    const [deleteImpact, setDeleteImpact] = useState<DeleteImpactPreview | null>(null);
     const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null);
     const [importModalOpen, setImportModalOpen] = useState(false);
 
-    const validateCurrentForm = (candidate: CustomerForm): FieldErrors => {
-        const nextErrors = validateForm(candidate);
-        if (hasOpeningBalanceChanged(candidate, originalOpeningBalance) && !candidate.edit_reason.trim()) {
-            nextErrors.edit_reason = 'Reason is required when changing the opening balance';
-        }
-        return nextErrors;
-    };
-
-    // touch a field on blur and validate immediately
-    const touch = (field: keyof CustomerForm) => {
-        setTouched((prev) => ({ ...prev, [field]: true }));
-        setErrors(validateCurrentForm({ ...form }));
-    };
-
-    // update form + re-validate touched field live
+    // update form state; latch the reason field open once the balance has actually diverged
+    // (see hasOpeningBalanceChanged) so it doesn't mount/unmount while the user is still typing
     const set = <K extends keyof CustomerForm>(field: K, value: CustomerForm[K]) => {
         const next = { ...form, [field]: value };
         setForm(next);
-        // Latch the reason field open. Toggling it on the live comparison unmounts it
-        // whenever the typed balance passes back through the saved value, which shifts
-        // everything below it up and down while the user is still typing.
         if (hasOpeningBalanceChanged(next, originalOpeningBalance)) setReasonRevealed(true);
-        if (touched[field]) setErrors(validateCurrentForm(next));
     };
 
-    const openModal = (preset?: CustomerForm, openingBalance: number | null = null) => {
+    const openModal = (preset?: CustomerForm, openingBalance: number | null = null, balanceLocked = false) => {
         setForm(preset ?? emptyForm);
         setOriginalOpeningBalance(openingBalance);
+        setOpeningBalanceLocked(balanceLocked);
         setReasonRevealed(false);
-        setErrors({});
-        setTouched({});
         setIsAddOpen(true);
     };
 
     const closeModal = () => {
         setIsAddOpen(false);
         setOriginalOpeningBalance(null);
+        setOpeningBalanceLocked(false);
         setReasonRevealed(false);
-        setErrors({});
-        setTouched({});
     };
 
-    const fetchCustomers = async () => {
+    const fetchCustomers = async (nextPageIndex = pageIndex, search = searchTerm) => {
         setLoading(true);
         const res = await customerService.list({
             branchId: activeBranchId ?? undefined,
-            limit: 500,
+            page: nextPageIndex + 1,
+            limit: PAGE_SIZE,
+            search: search || undefined,
         });
-        if (res.success && res.data?.customers) setCustomers(res.data.customers);
-        else showToast('error', 'Load failed', res.error || 'Could not load customers');
+        if (res.success && res.data?.customers) {
+            setCustomers(res.data.customers);
+            setTotalPages(res.data.pagination?.totalPages ?? 0);
+            setTotalRows(res.data.pagination?.total ?? res.data.customers.length);
+        } else {
+            showToast('error', 'Load failed', res.error || 'Could not load customers');
+        }
         setLoading(false);
     };
 
-    const handleDisplay = async () => { setHasDisplayed(true); await fetchCustomers(); };
+    const handleDisplay = async () => {
+        setHasDisplayed(true);
+        setPageIndex(0);
+        await fetchCustomers(0, searchTerm);
+    };
+
+    const handlePageChange = (next: number) => {
+        setPageIndex(next);
+        void fetchCustomers(next, searchTerm);
+    };
+
+    const handleServerSearch = (value: string) => {
+        setSearchTerm(value);
+        setPageIndex(0);
+        void fetchCustomers(0, value);
+    };
 
     useEffect(() => {
-        if (hasDisplayed) void fetchCustomers();
+        if (hasDisplayed) {
+            setPageIndex(0);
+            void fetchCustomers(0, searchTerm);
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeBranchId]);
 
     const handleSave = async () => {
-        // mark all fields as touched so all errors surface
+        // Required/minLength/min are enforced natively on the inputs (see the form's
+        // required attributes below), so the browser blocks submission before this
+        // ever runs when a field is invalid - no manual check needed here.
         const balanceChanged = hasOpeningBalanceChanged(form, originalOpeningBalance);
-        const errs = validateCurrentForm(form);
-        const allTouched: Partial<Record<keyof CustomerForm, boolean>> = {
-            full_name: true,
-            phone: true,
-            remaining_balance: true,
-            ...(balanceChanged ? { edit_reason: true } : {}),
-        };
-        setTouched(allTouched);
-        setErrors(errs);
-        if (Object.keys(errs).length > 0) return;
-
         setLoading(true);
         const payload = {
             full_name: form.full_name.trim(),
@@ -227,6 +195,10 @@ const Customers = () => {
             is_active: form.is_active,
             credit_allowed: form.customer_type === 'regular' ? form.credit_allowed : false,
             credit_days: form.customer_type === 'regular' && form.credit_allowed ? form.credit_days : 0,
+            credit_limit:
+                form.customer_type === 'regular' && form.credit_allowed && form.credit_limit.trim() !== ''
+                    ? parseBalance(form.credit_limit)
+                    : null,
             remaining_balance: parseBalance(form.remaining_balance),
             edit_reason: balanceChanged ? form.edit_reason.trim() : undefined,
         };
@@ -255,12 +227,20 @@ const Customers = () => {
             is_active: row.is_active,
             credit_allowed: row.credit_allowed !== false,
             credit_days: Number(row.credit_days ?? 30),
+            credit_limit: row.credit_limit == null ? '' : String(row.credit_limit),
             remaining_balance: String(openingBalance),
             edit_reason: '',
-        }, openingBalance);
+        }, openingBalance, Boolean(row.has_transactions));
     };
 
-    const onDelete = (row: Customer) => { setCustomerToDelete(row); setDeleteConfirmOpen(true); };
+    const onDelete = (row: Customer) => {
+        setCustomerToDelete(row);
+        setDeleteConfirmOpen(true);
+        setDeleteImpact(null);
+        void deletePreviewService.preview('customers', row.customer_id).then((res) => {
+            if (res.success && res.data?.preview) setDeleteImpact(res.data.preview);
+        });
+    };
 
     const confirmDelete = async (reason: string) => {
         if (!customerToDelete) return;
@@ -275,7 +255,28 @@ const Customers = () => {
         setLoading(false);
         setCustomerToDelete(null);
         setDeleteConfirmOpen(false);
+        setDeleteImpact(null);
     };
+
+    // The generic Impact Preview has no concept of value - it only knows
+    // whether a dependent row exists - so the outstanding-balance block
+    // (which deleteCustomer requires to be zero) is checked here
+    // client-side, from data already on the row, and merged into the same
+    // impact summary the dialog renders (mirrors Products.tsx, Phase 3).
+    const customerOutstandingBalance = Math.abs(Number(customerToDelete?.balance || 0));
+    const deleteConfirmImpact: DeleteImpactPreview | null = customerToDelete
+        ? {
+            blocked: Boolean(deleteImpact?.blocked) || customerOutstandingBalance > 0.005,
+            blockedBy: [
+                ...(customerOutstandingBalance > 0.005
+                    ? [{ table: 'balance', label: 'Outstanding balance', count: Math.round(customerOutstandingBalance * 100) / 100 }]
+                    : []),
+                ...(deleteImpact?.blockedBy || []),
+            ],
+            cascaded: deleteImpact?.cascaded || [],
+            preserved: deleteImpact?.preserved || [],
+        }
+        : null;
 
     const columns: ColumnDef<Customer>[] = useMemo(() => [
         { accessorKey: 'full_name', header: 'Customer Name' },
@@ -314,10 +315,28 @@ const Customers = () => {
     );
 
     const sharedToolbar = {
-        primaryAction: { label: 'New Customer', onClick: () => openModal() },
-        secondaryAction: { label: 'Upload Data', onClick: () => setImportModalOpen(true) },
+        primaryAction: can('customers.create') ? { label: 'New Customer', onClick: () => openModal() } : undefined,
+        secondaryAction: can('customers.create') ? { label: 'Upload Data', onClick: () => setImportModalOpen(true) } : undefined,
         onDisplay: handleDisplay,
         displayLoading: loading,
+    };
+
+    // Real server-side pagination: `customers` is already just the current PAGE_SIZE-row
+    // page from the API (see fetchCustomers), not the whole customer list. The Regular/
+    // Walking tabs filter within that same page rather than issuing their own fetch, so
+    // they may show fewer than a full page when types are mixed on the current page - a
+    // deliberate trade-off to keep one shared fetch/pagination path across all three tabs
+    // instead of tripling the state.
+    const serverPaginationProps = {
+        serverPagination: {
+            pageIndex,
+            pageSize: PAGE_SIZE,
+            pageCount: Math.max(totalPages, 1),
+            totalRows,
+            onPageChange: handlePageChange,
+            onPageSizeChange: () => {}, // fixed page size for now; server enforces PAGE_SIZE
+        },
+        onServerSearch: handleServerSearch,
     };
 
     const tabs = [
@@ -331,7 +350,7 @@ const Customers = () => {
                     {hasDisplayed && !loading && !visibleCustomers.length && noData}
                     <DataTable data={visibleCustomers} columns={columns}
                         searchPlaceholder="Search by name or phone…" isLoading={loading}
-                        onEdit={onEdit} onDelete={onDelete} />
+                        onEdit={can('customers.update') ? onEdit : undefined} onDelete={can('customers.delete') ? onDelete : undefined} {...serverPaginationProps} />
                 </div>
             )
         },
@@ -343,7 +362,7 @@ const Customers = () => {
                     {!hasDisplayed && emptyHint}
                     {hasDisplayed && !loading && !visibleCustomers.filter(c => c.customer_type !== 'one-time').length && noData}
                     <DataTable data={visibleCustomers.filter(c => c.customer_type !== 'one-time')}
-                        columns={columns} isLoading={loading} onEdit={onEdit} onDelete={onDelete} />
+                        columns={columns} isLoading={loading} onEdit={can('customers.update') ? onEdit : undefined} onDelete={can('customers.delete') ? onDelete : undefined} {...serverPaginationProps} />
                 </div>
             )
         },
@@ -355,15 +374,13 @@ const Customers = () => {
                     {!hasDisplayed && emptyHint}
                     {hasDisplayed && !loading && !visibleCustomers.filter(c => c.customer_type === 'one-time').length && noData}
                     <DataTable data={visibleCustomers.filter(c => c.customer_type === 'one-time')}
-                        columns={columns} isLoading={loading} onEdit={onEdit} onDelete={onDelete} />
+                        columns={columns} isLoading={loading} onEdit={can('customers.update') ? onEdit : undefined} onDelete={can('customers.delete') ? onDelete : undefined} {...serverPaginationProps} />
                 </div>
             )
         },
     ];
 
     // derived
-    const t = touched;
-    const e = errors;
     const balanceChanged = hasOpeningBalanceChanged(form, originalOpeningBalance);
 
     return (
@@ -380,32 +397,29 @@ const Customers = () => {
             >
                 <form
                     onSubmit={(ev) => { ev.preventDefault(); handleSave(); }}
-                    noValidate
                     className="space-y-5"
                 >
                     {/* Row 1 – Name / Phone */}
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                        <Field label="Customer Name" error={e.full_name} touched={t.full_name} success={!!form.full_name.trim()}>
+                        <Field label="Customer Name" required>
                             <input
                                 type="text"
+                                required
+                                minLength={2}
                                 placeholder="e.g. Ahmed Hassan"
                                 value={form.full_name}
                                 onChange={(ev) => set('full_name', ev.target.value)}
-                                onBlur={() => touch('full_name')}
-                                className={getInputCls(e.full_name, t.full_name)}
                                 disabled={loading}
                                 autoComplete="name"
                             />
                         </Field>
 
-                        <Field label="Phone Number" error={e.phone} touched={t.phone} success={!!form.phone.trim() && !e.phone}>
+                        <Field label="Phone Number">
                             <input
                                 type="tel"
                                 placeholder="e.g. +252 61 123 4567"
                                 value={form.phone}
                                 onChange={(ev) => set('phone', ev.target.value)}
-                                onBlur={() => touch('phone')}
-                                className={getInputCls(e.phone, t.phone)}
                                 disabled={loading}
                                 autoComplete="tel"
                             />
@@ -416,7 +430,6 @@ const Customers = () => {
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                         <Field label="Customer Type">
                             <select
-                                className={getInputCls()}
                                 value={form.customer_type}
                                 onChange={(ev) => {
                                     const nextType = ev.target.value as 'regular' | 'one-time';
@@ -435,7 +448,6 @@ const Customers = () => {
 
                         <Field label="Gender">
                             <select
-                                className={getInputCls()}
                                 value={form.gender}
                                 onChange={(ev) => set('gender', ev.target.value as 'male' | 'female')}
                                 disabled={loading}
@@ -453,7 +465,6 @@ const Customers = () => {
                             placeholder="City / Street (optional)"
                             value={form.address}
                             onChange={(ev) => set('address', ev.target.value)}
-                            className={getInputCls()}
                             disabled={loading}
                             autoComplete="street-address"
                         />
@@ -463,9 +474,11 @@ const Customers = () => {
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                         <Field
                             label="Opening Balance"
-                            error={e.remaining_balance}
-                            touched={t.remaining_balance}
-                            hint="Amount the customer already owes (go-live balance)"
+                            hint={
+                                openingBalanceLocked
+                                    ? 'Cannot change — this customer already has transactions'
+                                    : 'Amount the customer already owes (go-live balance)'
+                            }
                         >
                             <input
                                 type="number"
@@ -474,9 +487,7 @@ const Customers = () => {
                                 placeholder="0.00"
                                 value={form.remaining_balance}
                                 onChange={(ev) => set('remaining_balance', ev.target.value)}
-                                onBlur={() => touch('remaining_balance')}
-                                className={getInputCls(e.remaining_balance, t.remaining_balance)}
-                                disabled={loading}
+                                disabled={loading || openingBalanceLocked}
                             />
                         </Field>
 
@@ -504,7 +515,20 @@ const Customers = () => {
                                     step={1}
                                     value={form.credit_days}
                                     onChange={(ev) => set('credit_days', Number(ev.target.value || 0))}
-                                    className={getInputCls()}
+                                    disabled={loading}
+                                />
+                            </Field>
+                        )}
+
+                        {form.customer_type === 'regular' && form.credit_allowed && (
+                            <Field label="Credit Limit" hint="Maximum outstanding credit balance - leave blank for no limit">
+                                <input
+                                    type="number"
+                                    min={0}
+                                    step="0.01"
+                                    placeholder="No limit"
+                                    value={form.credit_limit}
+                                    onChange={(ev) => set('credit_limit', ev.target.value)}
                                     disabled={loading}
                                 />
                             </Field>
@@ -512,7 +536,9 @@ const Customers = () => {
 
                         {form.customer_id && (
                             <div className="flex items-center self-end pb-2">
-                                <label className="relative inline-flex cursor-pointer items-center gap-3">
+                                {/* The shared modal CSS forces every <label> into a column layout; this
+                                    toggle needs its switch and text side by side, so override it inline. */}
+                                <label className="relative inline-flex cursor-pointer items-center gap-3" style={{ flexDirection: 'row' }}>
                                     <div className="relative">
                                         <input
                                             type="checkbox"
@@ -535,8 +561,7 @@ const Customers = () => {
                     {reasonRevealed && (
                         <Field
                             label="Reason for Balance Change"
-                            error={e.edit_reason}
-                            touched={t.edit_reason}
+                            required={balanceChanged}
                             hint={
                                 balanceChanged
                                     ? 'Required to keep the customer balance audit trail.'
@@ -545,11 +570,10 @@ const Customers = () => {
                         >
                             <textarea
                                 rows={3}
+                                required={balanceChanged}
                                 value={form.edit_reason}
                                 onChange={(ev) => set('edit_reason', ev.target.value)}
-                                onBlur={() => touch('edit_reason')}
                                 placeholder="Explain why the opening balance is being changed"
-                                className={`${getInputCls(e.edit_reason, t.edit_reason)} h-auto min-h-20 py-2.5`}
                                 disabled={loading}
                             />
                         </Field>
@@ -582,20 +606,21 @@ const Customers = () => {
             {/* ══ Delete confirm ══════════════════════════════════════════════ */}
             <ConfirmDialog
                 isOpen={deleteConfirmOpen}
-                onClose={() => { setDeleteConfirmOpen(false); setCustomerToDelete(null); }}
+                onClose={() => { setDeleteConfirmOpen(false); setCustomerToDelete(null); setDeleteImpact(null); }}
                 onConfirm={(reason) => void confirmDelete(reason || '')}
                 requireReason
                 title="Delete Customer?"
                 highlightedName={customerToDelete?.full_name}
                 message={
-                    customerToDelete
-                        ? `Cannot delete if outstanding balance exists. Current balance: $${Number(customerToDelete.balance || 0).toFixed(2)}`
+                    customerOutstandingBalance > 0.005
+                        ? `Cannot delete — outstanding balance of $${customerOutstandingBalance.toFixed(2)} exists. Settle to zero first.`
                         : 'Are you sure you want to delete this customer?'
                 }
                 confirmText="Delete"
                 cancelText="Cancel"
                 variant="danger"
                 isLoading={loading}
+                impact={deleteConfirmImpact}
             />
 
             {/* ══ Import ══════════════════════════════════════════════════════ */}

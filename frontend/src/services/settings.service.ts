@@ -12,6 +12,56 @@ export interface CompanyInfo {
   updated_at?: string;
 }
 
+export interface ProductConfig {
+  barcode: boolean;
+  variants: boolean;
+  size: boolean;
+  color: boolean;
+  brand: boolean;
+  batchTracking: boolean;
+  expiryTracking: boolean;
+  serialNumber: boolean;
+  multipleUnits: boolean;
+  genericName: boolean;
+  strength: boolean;
+}
+
+export interface SalesConfig {
+  retail: boolean;
+  wholesale: boolean;
+  credit: boolean;
+  creditDays: number;
+  discount: boolean;
+  tax: boolean;
+  pos: boolean;
+  customerDisplay: boolean;
+}
+
+export interface PurchaseConfig {
+  supplierManagement: boolean;
+  purchaseOrders: boolean;
+  purchasePayments: boolean;
+  creditPurchases: boolean;
+  supplierCreditDays: number;
+}
+
+export type BusinessType = 'general' | 'supermarket' | 'clothing' | 'pharmacy' | 'perfume' | 'cosmetics' | 'electronics' | 'other';
+
+export interface BusinessProfile {
+  businessType: string | null;
+  email: string | null;
+  website: string | null;
+  currency: string | null;
+  country: string | null;
+  timezone: string | null;
+  productConfig: ProductConfig;
+  salesConfig: SalesConfig;
+  purchaseConfig: PurchaseConfig;
+  // accountingConfig/branchConfig/receiptConfig/notificationConfig also come
+  // back from the backend but aren't consumed by the frontend yet - left
+  // untyped here rather than duplicating shapes nothing reads.
+}
+
 export interface Branch {
   branch_id: number;
   branch_name: string;
@@ -193,6 +243,19 @@ export const settingsService = {
   },
   async deleteCompany(reason: string): Promise<ApiResponse> {
     return apiClient.delete('/api/settings/company', reason);
+  },
+
+  async getBusinessProfile(): Promise<ApiResponse<{ profile: BusinessProfile }>> {
+    return apiClient.get('/api/settings/business-profile');
+  },
+  async updateBusinessProfile(
+    input: Partial<Omit<BusinessProfile, 'productConfig' | 'salesConfig' | 'purchaseConfig'>> & {
+      productConfig?: Partial<ProductConfig>;
+      salesConfig?: Partial<SalesConfig>;
+      purchaseConfig?: Partial<PurchaseConfig>;
+    }
+  ): Promise<ApiResponse<{ profile: BusinessProfile }>> {
+    return apiClient.put('/api/settings/business-profile', input);
   },
 
   async listBranches(): Promise<ApiResponse<{ branches: Branch[] }>> {

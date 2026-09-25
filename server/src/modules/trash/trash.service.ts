@@ -2,6 +2,7 @@ import { pool } from '../../db/pool';
 import { queryMany, queryOne } from '../../db/query';
 import { ApiError } from '../../utils/ApiError';
 import { inventoryService } from '../inventory/inventory.service';
+import { previewDelete as previewDeleteImpact, DeleteImpactEntry } from '../../db/softDelete';
 
 const SCHEMA = 'ims';
 
@@ -556,6 +557,26 @@ export const trashService = {
     } finally {
       client.release();
     }
+  },
+
+  async previewDelete(table: string, id: number) {
+    const module = resolveModule(table);
+    await ensureTrashTable(module.table);
+
+    const impact = await previewDeleteImpact(module.table, id);
+    const withLabel = (entries: DeleteImpactEntry[]) =>
+      entries.map((entry) => ({
+        table: entry.table,
+        label: MODULES.find((m) => m.table === entry.table)?.label || entry.table,
+        count: entry.count,
+      }));
+
+    return {
+      blocked: impact.blocked,
+      blockedBy: withLabel(impact.blockedBy),
+      cascaded: withLabel(impact.cascaded),
+      preserved: withLabel(impact.preserved),
+    };
   },
 
   async restore(table: string, id: number, userId?: number | null) {

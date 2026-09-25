@@ -3,6 +3,7 @@ import { Outlet } from "react-router";
 import AppHeader from "./AppHeader";
 import Backdrop from "./Backdrop";
 import AppSidebar from "./AppSidebar";
+import Footer from "./Footer";
 
 const LayoutContent: React.FC = () => {
   const { isExpanded, isHovered, isMobileOpen } = useSidebar();
@@ -29,6 +30,7 @@ const LayoutContent: React.FC = () => {
         <main id="main-content" className="erp-main-content p-4 mx-auto max-w-(--breakpoint-2xl) md:p-6" tabIndex={-1}>
           <Outlet />
         </main>
+        <Footer />
       </div>
     </div>
   );

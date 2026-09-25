@@ -1,5 +1,12 @@
 import { z } from 'zod';
 
+// CRIT-01 fix: role_id/branch_id were previously accepted here and trusted
+// directly by ensureRole()/ensureBranch() with no restriction - a public,
+// unauthenticated endpoint must never let the caller choose its own
+// privilege level or branch. They are intentionally not fields on this
+// schema at all (not merely validated away) so there is nothing for a
+// client to influence; every self-registered account always gets the same
+// fixed, safe default role and branch, decided entirely server-side.
 export const registerSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters').max(120),
   username: z
@@ -12,8 +19,6 @@ export const registerSchema = z.object({
     .min(1)
     .optional(),
   password: z.string().min(6, 'Password must be at least 6 characters').max(100),
-  branch_id: z.coerce.number().int().positive().optional(),
-  role_id: z.coerce.number().int().positive().optional(),
 }).refine((data) => data.username || data.phone, {
   message: 'Either username or phone must be provided',
   path: ['username'],

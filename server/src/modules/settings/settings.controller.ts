@@ -23,6 +23,7 @@ import {
   settingsProfitOwnerUpsertSchema,
   settingsAssetPrepareSchema,
   openingBalanceCleanupSchema,
+  businessProfileSchema,
 } from './settings.schemas';
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { logAudit } from '../../utils/audit';
@@ -238,6 +239,17 @@ export const updateCompanyInfo = asyncHandler(async (req: AuthRequest, res: Resp
     console.error('Cloudinary upload skipped/failed:', err);
   }
 
+  // M12 fix: capture the previous logo/banner before overwriting them, so the
+  // old Cloudinary/local asset can be removed once the new one is safely
+  // persisted - never before, matching the same ordering used for product
+  // images (uploadProductImage in products.controller.ts). A failed upsert
+  // leaves the previous row untouched (it's a single UPDATE ... ON CONFLICT),
+  // so there is nothing to roll back on that side; this only ever deletes an
+  // old asset after its replacement has already been committed.
+  const previous = await settingsService.getCompanyInfo();
+  const previousLogo = previous?.logo_img || null;
+  const previousBanner = previous?.banner_img || null;
+
   const company = await settingsService.upsertCompanyInfo({
     companyName: input.companyName.trim(),
     phone: normalizeNullable(input.phone),
@@ -246,6 +258,23 @@ export const updateCompanyInfo = asyncHandler(async (req: AuthRequest, res: Resp
     bannerImg: normalizeNullable(bannerUrl),
     capitalAmount: input.capitalAmount ?? 0,
   });
+
+  const nextLogo = normalizeNullable(logoUrl);
+  const nextBanner = normalizeNullable(bannerUrl);
+  try {
+    const { deleteCloudinaryImage } = await import('../../config/cloudinary');
+    if (previousLogo && previousLogo !== nextLogo) {
+      await deleteCloudinaryImage(previousLogo);
+    }
+    if (previousBanner && previousBanner !== nextBanner) {
+      await deleteCloudinaryImage(previousBanner);
+    }
+  } catch (err) {
+    // Never let old-asset cleanup fail the request - the new logo/banner is
+    // already saved at this point, which is what matters.
+    console.error('Old company image cleanup skipped/failed:', err);
+  }
+
   await logAudit({
     userId: req.user?.userId ?? null,
     action: 'update',
@@ -274,6 +303,45 @@ export const deleteCompanyInfo = asyncHandler(async (req: AuthRequest, res: Resp
     userAgent: req.get('user-agent') || null,
   });
   return ApiResponse.success(res, null, 'Company info deleted');
+});
+
+// Part 5/12: read is available to any authenticated user (frontend
+// resolves UI behavior from this on every session), write is gated to the
+// same company-management permissions as company info elsewhere in this
+// file - Business Profile answers "what type of business is this," which
+// is exactly the kind of client-identity setting company.update already
+// protects, not a separate permission system (Part 12).
+export const getBusinessProfile = asyncHandler(async (_req: AuthRequest, res: Response) => {
+  const profile = await settingsService.getBusinessProfile();
+  return ApiResponse.success(res, { profile });
+});
+
+export const updateBusinessProfile = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const input = businessProfileSchema.parse(req.body);
+  const profile = await settingsService.updateBusinessProfile({
+    businessType: input.businessType,
+    email: input.email,
+    website: input.website,
+    currency: input.currency,
+    country: input.country,
+    timezone: input.timezone,
+    productConfig: input.productConfig,
+    salesConfig: input.salesConfig,
+    purchaseConfig: input.purchaseConfig,
+    accountingConfig: input.accountingConfig,
+    branchConfig: input.branchConfig,
+    receiptConfig: input.receiptConfig,
+    notificationConfig: input.notificationConfig,
+  });
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'update',
+    entity: 'business_profile',
+    entityId: 1,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
+  return ApiResponse.success(res, { profile }, 'Business profile updated');
 });
 
 export const getAssetOverview = asyncHandler(async (req: AuthRequest, res: Response) => {

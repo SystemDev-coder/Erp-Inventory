@@ -89,7 +89,7 @@ const StockRecountPage = () => {
         header: 'Warehouse',
         cell: ({ row }) => row.original.wh_name || '-',
       },
-      { accessorKey: 'item_names', header: 'Items' },
+      { accessorKey: 'item_names', header: 'Products' },
       {
         accessorKey: 'qty_delta',
         header: 'Difference',
@@ -134,7 +134,7 @@ const StockRecountPage = () => {
     if (itemRes.success && itemRes.data?.items) {
       setItems(itemRes.data.items);
     } else {
-      showToast('error', 'Stock Recount', itemRes.error || 'Failed to load purchased items');
+      showToast('error', 'Stock Recount', itemRes.error || 'Failed to load purchased products');
     }
     if (stockRes.success && stockRes.data?.rows) {
       const nextMap: Record<number, number> = {};
@@ -188,7 +188,7 @@ const StockRecountPage = () => {
 
   const handleSave = async () => {
     if (!form.branchId || !form.itemId) {
-      showToast('error', 'Stock Recount', 'Branch and item are required');
+      showToast('error', 'Stock Recount', 'Branch and product are required');
       return;
     }
 
@@ -233,7 +233,7 @@ const StockRecountPage = () => {
     <div>
       <PageHeader
         title="Stock Recount"
-        description="Record physical count and automatically adjust item stock differences."
+        description="Record physical count and automatically adjust product stock differences."
         actions={
           <div className="flex items-center gap-2">
             <button
@@ -299,13 +299,13 @@ const StockRecountPage = () => {
             </select>
           </div>
           <div>
-            <label className={labelClass}>Purchased Item</label>
+            <label className={labelClass}>Purchased Product</label>
             <select
               className={inputClass}
               value={filters.itemId}
               onChange={(e) => setFilters((prev) => ({ ...prev, itemId: e.target.value }))}
             >
-              <option value="">All purchased items</option>
+              <option value="">All purchased products</option>
               {filterItems.map((item) => (
                 <option key={item.item_id} value={item.item_id}>
                   {itemLabelWithAvailability(item.item_name, itemAvailableQty[item.item_id])}
@@ -415,14 +415,14 @@ const StockRecountPage = () => {
             </select>
           </div>
           <div>
-            <label className={labelClass}>Purchased Item *</label>
+            <label className={labelClass}>Purchased Product *</label>
             <select
               className={inputClass}
               value={form.itemId}
               onChange={(e) => handleSelectFormItem(e.target.value)}
               disabled={!form.branchId}
             >
-              <option value="">Select purchased item</option>
+              <option value="">Select purchased product</option>
               {formItems.map((item) => (
                 <option key={item.item_id} value={item.item_id}>
                   {itemLabelWithAvailability(item.item_name, itemAvailableQty[item.item_id])}

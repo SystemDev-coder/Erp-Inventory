@@ -40,6 +40,8 @@ export interface Sale {
   is_stock_applied?: boolean;
   voided_at?: string | null;
   void_reason?: string | null;
+  pos_shift_id?: number | null;
+  cashier_name?: string | null;
 }
 
 export interface SaleCreateInput {
@@ -65,6 +67,7 @@ export interface SaleCreateInput {
   payFromAccId?: number;
   paidAmount?: number;
   dueDate?: string | null;
+  posShiftId?: number;
 }
 
 export type SaleUpdateInput = Partial<Omit<SaleCreateInput, 'items'>> & {
@@ -81,6 +84,8 @@ export interface SalesListFilters {
   toDate?: string;
   page?: number;
   limit?: number;
+  posOnly?: boolean;
+  posShiftId?: number;
 }
 
 export interface PaginationMeta {
@@ -88,6 +93,23 @@ export interface PaginationMeta {
   page: number;
   limit: number;
   totalPages: number;
+}
+
+export interface PosOrderItemRow extends SaleItem {
+  sale_id: number;
+  sale_date: string;
+  cashier_name: string | null;
+}
+
+export interface PosPaymentRow {
+  sale_payment_id: number;
+  sale_id: number;
+  acc_id: number;
+  account_name: string | null;
+  pay_date: string;
+  amount_paid: number;
+  reference_no: string | null;
+  cashier_name: string | null;
 }
 
 const makeQueryString = (filters: SalesListFilters = {}) => {
@@ -101,6 +123,8 @@ const makeQueryString = (filters: SalesListFilters = {}) => {
   if (filters.toDate) params.set('toDate', filters.toDate);
   if (filters.page) params.set('page', String(filters.page));
   if (filters.limit) params.set('limit', String(filters.limit));
+  if (filters.posOnly) params.set('posOnly', 'true');
+  if (filters.posShiftId) params.set('posShiftId', String(filters.posShiftId));
   const qs = params.toString();
   return qs ? `?${qs}` : '';
 };
@@ -114,6 +138,34 @@ export const salesService = {
 
   async get(id: number) {
     return apiClient.get<{ sale: Sale; items: SaleItem[] }>(API.SALES.ITEM(id));
+  },
+
+  async listPosOrderItems(filters: { branchId?: number; fromDate?: string; toDate?: string; posShiftId?: number; page?: number; limit?: number } = {}) {
+    const params = new URLSearchParams();
+    if (filters.branchId) params.set('branchId', String(filters.branchId));
+    if (filters.fromDate) params.set('fromDate', filters.fromDate);
+    if (filters.toDate) params.set('toDate', filters.toDate);
+    if (filters.posShiftId) params.set('posShiftId', String(filters.posShiftId));
+    if (filters.page) params.set('page', String(filters.page));
+    if (filters.limit) params.set('limit', String(filters.limit));
+    const qs = params.toString();
+    return apiClient.get<{ items: PosOrderItemRow[]; pagination?: PaginationMeta }>(
+      `${API.SALES.LIST}/pos/items${qs ? `?${qs}` : ''}`
+    );
+  },
+
+  async listPosPayments(filters: { branchId?: number; fromDate?: string; toDate?: string; posShiftId?: number; page?: number; limit?: number } = {}) {
+    const params = new URLSearchParams();
+    if (filters.branchId) params.set('branchId', String(filters.branchId));
+    if (filters.fromDate) params.set('fromDate', filters.fromDate);
+    if (filters.toDate) params.set('toDate', filters.toDate);
+    if (filters.posShiftId) params.set('posShiftId', String(filters.posShiftId));
+    if (filters.page) params.set('page', String(filters.page));
+    if (filters.limit) params.set('limit', String(filters.limit));
+    const qs = params.toString();
+    return apiClient.get<{ payments: PosPaymentRow[]; pagination?: PaginationMeta }>(
+      `${API.SALES.LIST}/pos/payments${qs ? `?${qs}` : ''}`
+    );
   },
 
   async create(data: SaleCreateInput) {

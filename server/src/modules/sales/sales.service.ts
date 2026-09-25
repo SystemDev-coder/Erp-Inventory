@@ -13,6 +13,7 @@ import { assertCustomerCreditAllowed } from '../../utils/creditRules';
 import { resolveSaleDueDate } from '../../utils/creditDueHelpers';
 import { syncCustomerOutstandingFromLedger } from '../../utils/customerOutstanding';
 import { requireDeleteReason } from '../../utils/refundRules';
+import { softDeleteById } from '../../db/softDelete';
 import {
   QuotationConvertInput,
   SaleInput,
@@ -49,6 +50,8 @@ export interface Sale {
   is_stock_applied?: boolean;
   voided_at?: string | null;
   void_reason?: string | null;
+  pos_shift_id?: number | null;
+  cashier_name?: string | null;
 }
 
 export interface SaleItem {
@@ -74,6 +77,8 @@ interface SalesListFilters {
   toDate?: string;
   page?: number;
   limit?: number;
+  posOnly?: boolean;
+  posShiftId?: number;
 }
 
 interface UpdateSaleContext {
@@ -580,6 +585,38 @@ const listSalePaymentSummary = async (
 const sumSalePayments = (rows: Array<{ amount: number }>) =>
   roundMoney(rows.reduce((sum, row) => sum + Number(row.amount || 0), 0));
 
+// HIGH-04 fix: shared by rewriteSaleGl (create/update path) and voidSale
+// (void path) so both reverse this sale's Inventory/COGS accounts.balance
+// contribution the same way before their respective account_transactions
+// rows are deleted. Previously only rewriteSaleGl did this - voidSale called
+// clearSaleFinancialEntries directly, which deletes the GL rows without ever
+// reversing the cached balance, permanently understating Inventory and
+// overstating COGS by the voided sale's cost on every void.
+const reverseSaleInventoryCogsBalance = async (
+  client: PoolClient,
+  params: { branchId: number; saleId: number }
+) => {
+  const priorCoa = await ensureCoaAccounts(client, params.branchId, ['inventory', 'cogs']);
+  const priorLines = (
+    await client.query<{ acc_id: number; debit: string; credit: string }>(
+      `SELECT acc_id, debit, credit FROM ims.account_transactions
+        WHERE branch_id = $1 AND ref_table = 'sales' AND ref_id = $2
+          AND acc_id IN ($3, $4)`,
+      [params.branchId, params.saleId, priorCoa.inventory, priorCoa.cogs]
+    )
+  ).rows;
+  for (const row of priorLines) {
+    const delta = -(Number(row.debit) - Number(row.credit));
+    if (delta) {
+      await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+        delta,
+        Number(row.acc_id),
+        params.branchId,
+      ]);
+    }
+  }
+};
+
 const rewriteSaleGl = async (
   client: PoolClient,
   params: { branchId: number; saleId: number }
@@ -613,6 +650,16 @@ const rewriteSaleGl = async (
   );
   const sale = saleRes.rows[0];
   if (!sale) return;
+
+  // H4 fix: reverse this sale's previous Inventory/COGS contribution to
+  // accounts.balance before the old GL rows are deleted below. Only
+  // Inventory (asset) and COGS (cost) are tracked here - the other accounts
+  // this function posts to (AR, cash/bank, Sales Revenue, Sales Tax Payable,
+  // Customer Advances) are either already kept in sync elsewhere (AR via
+  // adjustCustomerBalance, cash/bank via adjustAccountBalance, both called by
+  // createSale/updateSale) or are revenue/liability accounts intentionally
+  // left at $0, matching the same rule applied throughout this fix.
+  await reverseSaleInventoryCogsBalance(client, params);
 
   // Remove legacy single-sided rows + any prior GL rewrite for this sale.
   await client.query(
@@ -708,6 +755,17 @@ const rewriteSaleGl = async (
         { accId: coa.inventory, debit: 0, credit: costTotal, note: 'Inventory issued' },
       ],
     });
+    // H4 fix: apply the new amounts (asset/cost accounts - debit increases).
+    await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+      costTotal,
+      coa.cogs,
+      params.branchId,
+    ]);
+    await client.query(`UPDATE ims.accounts SET balance = balance - $1 WHERE acc_id = $2 AND branch_id = $3`, [
+      costTotal,
+      coa.inventory,
+      params.branchId,
+    ]);
   }
 };
 
@@ -819,7 +877,7 @@ const listScopeCondition = (scope: BranchScope, branchId?: number) => {
 export const salesService = {
   async listSales(scope: BranchScope, filters: SalesListFilters): Promise<Paged<Sale>> {
     const schema = await getSalesSchemaMeta();
-    const { search, status, branchId, docType, includeVoided, fromDate, toDate } = filters;
+    const { search, status, branchId, docType, includeVoided, fromDate, toDate, posOnly, posShiftId } = filters;
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 100;
     const scoped = listScopeCondition(scope, branchId);
@@ -850,6 +908,12 @@ export const salesService = {
       params.push(toDate);
       clauses.push(`s.sale_date::date <= $${params.length}::date`);
     }
+    if (schema.salesColumns.has('pos_shift_id') && posShiftId) {
+      params.push(posShiftId);
+      clauses.push(`s.pos_shift_id = $${params.length}`);
+    } else if (schema.salesColumns.has('pos_shift_id') && posOnly) {
+      clauses.push(`s.pos_shift_id IS NOT NULL`);
+    }
 
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 
@@ -862,9 +926,10 @@ export const salesService = {
     );
 
     const rows = await queryMany<Sale>(
-      `SELECT s.*, c.full_name AS customer_name
+      `SELECT s.*, c.full_name AS customer_name, u.username AS cashier_name
          FROM ims.sales s
          LEFT JOIN ims.customers c ON c.customer_id = s.customer_id
+         LEFT JOIN ims.users u ON u.user_id = s.user_id
          ${where}
         ORDER BY s.sale_date DESC, s.sale_id DESC
         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
@@ -877,6 +942,116 @@ export const salesService = {
       page,
       limit,
     };
+  },
+
+  // Read-only listings for the POS Orders "Order Items" / "Payments" tabs - every POS
+  // sale already exists as a normal ims.sales row (see createSale's posShiftId), so
+  // these just flatten sale_items/sale_payments across POS-originated sales rather than
+  // introducing a separate POS-specific write path.
+  async listPosOrderItems(
+    scope: BranchScope,
+    filters: { branchId?: number; fromDate?: string; toDate?: string; posShiftId?: number; page?: number; limit?: number }
+  ): Promise<Paged<SaleItem & { sale_date: string; cashier_name: string | null }>> {
+    const schema = await getSalesSchemaMeta();
+    const page = filters.page ?? 1;
+    const limit = filters.limit ?? 100;
+    const scoped = listScopeCondition(scope, filters.branchId);
+    const params = scoped.params;
+    const clauses = [...scoped.clauses, `s.pos_shift_id IS NOT NULL`];
+
+    if (filters.posShiftId) {
+      params.push(filters.posShiftId);
+      clauses.push(`s.pos_shift_id = $${params.length}`);
+    }
+    if (filters.fromDate) {
+      params.push(filters.fromDate);
+      clauses.push(`s.sale_date::date >= $${params.length}::date`);
+    }
+    if (filters.toDate) {
+      params.push(filters.toDate);
+      clauses.push(`s.sale_date::date <= $${params.length}::date`);
+    }
+    const where = `WHERE ${clauses.join(' AND ')}`;
+
+    const countRow = await queryOne<{ total: string }>(
+      `SELECT COUNT(*)::text AS total
+         FROM ims.sale_items si
+         JOIN ims.sales s ON s.sale_id = si.sale_id
+         ${where}`,
+      params
+    );
+
+    const rows = await queryMany<SaleItem & { sale_date: string; cashier_name: string | null }>(
+      `SELECT
+          si.sale_item_id, si.sale_id, si.${schema.saleItemIdColumn} AS item_id,
+          si.quantity, si.unit_price, si.line_total,
+          p.name AS item_name, s.sale_date, u.username AS cashier_name
+         FROM ims.sale_items si
+         JOIN ims.sales s ON s.sale_id = si.sale_id
+         JOIN ims.items p ON p.item_id = si.${schema.saleItemIdColumn}
+         LEFT JOIN ims.users u ON u.user_id = s.user_id
+         ${where}
+        ORDER BY s.sale_date DESC, si.sale_item_id DESC
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offsetOf(page, limit)]
+    );
+
+    return { rows, total: Number(countRow?.total || 0), page, limit };
+  },
+
+  async listPosPayments(
+    scope: BranchScope,
+    filters: { branchId?: number; fromDate?: string; toDate?: string; posShiftId?: number; page?: number; limit?: number }
+  ): Promise<Paged<{
+    sale_payment_id: number; sale_id: number; acc_id: number; account_name: string | null;
+    pay_date: string; amount_paid: number; reference_no: string | null; cashier_name: string | null;
+  }>> {
+    const page = filters.page ?? 1;
+    const limit = filters.limit ?? 100;
+    const scoped = listScopeCondition(scope, filters.branchId);
+    const params = scoped.params;
+    const clauses = [...scoped.clauses, `s.pos_shift_id IS NOT NULL`];
+
+    if (filters.posShiftId) {
+      params.push(filters.posShiftId);
+      clauses.push(`s.pos_shift_id = $${params.length}`);
+    }
+    if (filters.fromDate) {
+      params.push(filters.fromDate);
+      clauses.push(`sp.pay_date::date >= $${params.length}::date`);
+    }
+    if (filters.toDate) {
+      params.push(filters.toDate);
+      clauses.push(`sp.pay_date::date <= $${params.length}::date`);
+    }
+    const where = `WHERE ${clauses.join(' AND ')}`;
+
+    const countRow = await queryOne<{ total: string }>(
+      `SELECT COUNT(*)::text AS total
+         FROM ims.sale_payments sp
+         JOIN ims.sales s ON s.sale_id = sp.sale_id
+         ${where}`,
+      params
+    );
+
+    const rows = await queryMany<{
+      sale_payment_id: number; sale_id: number; acc_id: number; account_name: string | null;
+      pay_date: string; amount_paid: number; reference_no: string | null; cashier_name: string | null;
+    }>(
+      `SELECT
+          sp.sale_payment_id, sp.sale_id, sp.acc_id, a.name AS account_name,
+          sp.pay_date::text, sp.amount_paid, sp.reference_no, u.username AS cashier_name
+         FROM ims.sale_payments sp
+         JOIN ims.sales s ON s.sale_id = sp.sale_id
+         LEFT JOIN ims.accounts a ON a.acc_id = sp.acc_id
+         LEFT JOIN ims.users u ON u.user_id = sp.user_id
+         ${where}
+        ORDER BY sp.pay_date DESC, sp.sale_payment_id DESC
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offsetOf(page, limit)]
+    );
+
+    return { rows, total: Number(countRow?.total || 0), page, limit };
   },
 
   async getSale(id: number, scope: BranchScope): Promise<Sale | null> {
@@ -994,8 +1169,10 @@ export const salesService = {
       await assertCustomerCreditAllowed(client, {
         customerId: input.customerId ?? null,
         docType,
+        branchId: context.branchId,
         saleType,
         status,
+        outstandingChange: Math.max(totalWithTax - Number(payment.paidAmount || 0), 0),
       });
 
       const shouldApplyStock = canApplyStock(docType, status);
@@ -1039,6 +1216,7 @@ export const salesService = {
         dueDateInput: input.dueDate ?? null,
       });
       pushColumn('due_date', dueDate);
+      pushColumn('pos_shift_id', input.posShiftId ?? null);
 
       const placeholders = insertValues.map((_, idx) => `$${idx + 1}`).join(', ');
 
@@ -1154,6 +1332,12 @@ export const salesService = {
           'Paid invoices cannot be edited. Use a sales return or void instead.'
         );
       }
+      if (current.status === 'void') {
+        throw ApiError.badRequest('Voided sales cannot be edited');
+      }
+      if (input.status === 'void') {
+        throw ApiError.badRequest('Use the void endpoint to void a sale');
+      }
 
       await financeClosingService.autoUnlockPeriodForDate(
         client,
@@ -1195,7 +1379,7 @@ export const salesService = {
       const previousApplyStock =
         current.is_stock_applied ?? canApplyStock(current.doc_type || 'sale', current.status);
       const previousFinancialApplied =
-        current.status !== 'void' && (current.doc_type || 'sale') !== 'quotation';
+        (current.doc_type || 'sale') !== 'quotation';
       // Reverse any prior payments recorded for this sale (table-based first; fallback to inline fields for legacy schemas).
       const previousPaymentRows = await listSalePaymentSummary(client, { branchId: current.branch_id, saleId: current.sale_id });
       const legacyInlinePayment =
@@ -1203,7 +1387,6 @@ export const salesService = {
         previousPaymentRows.length === 0 &&
         Number((current as any).paid_amount || 0) > 0 &&
         Number((current as any).pay_acc_id || 0) > 0 &&
-        current.status !== 'void' &&
         current.doc_type !== 'quotation'
           ? [{ accId: Number((current as any).pay_acc_id), amount: roundMoney((current as any).paid_amount) }]
           : [];
@@ -1231,8 +1414,14 @@ export const salesService = {
       await assertCustomerCreditAllowed(client, {
         customerId: input.customerId ?? current.customer_id ?? null,
         docType: nextDocType,
+        branchId: current.branch_id,
         saleType: nextSaleType,
         status: finalNextStatus,
+        outstandingChange:
+          (input.customerId ?? current.customer_id ?? null) === (current.customer_id ?? null)
+            ? Math.max(totalWithTax - Number(payment.paidAmount || 0), 0) -
+              (previousFinancialApplied ? Math.max(Number(current.total || 0) - Number(previousPaidAmount || 0), 0) : 0)
+            : Math.max(totalWithTax - Number(payment.paidAmount || 0), 0),
       });
 
       const nextApplyStock = canApplyStock(nextDocType, finalNextStatus);
@@ -1326,6 +1515,22 @@ export const salesService = {
           mode: 'add',
         });
       }
+
+      // HIGH-04 fix: reverse this sale's prior Inventory/COGS cache
+      // contribution before clearSaleFinancialEntries deletes the
+      // account_transactions rows below. rewriteSaleGl (called further down
+      // to post the new amounts) also contains this same reversal step, but
+      // by the time it runs here the rows it needs are already gone, so its
+      // reversal was silently a no-op - meaning every item/quantity edit to
+      // a sale was applying the new Inventory/COGS amounts on top of the old
+      // ones instead of replacing them. Doing it here first, while the prior
+      // rows still exist, fixes that without changing rewriteSaleGl's
+      // already-correct behavior on the create path (nothing to reverse
+      // there since no prior rows exist yet).
+      await reverseSaleInventoryCogsBalance(client, {
+        branchId: current.branch_id,
+        saleId: current.sale_id,
+      });
 
       await clearSaleFinancialEntries(client, {
         branchId: current.branch_id,
@@ -1459,6 +1664,13 @@ export const salesService = {
         return null;
       }
 
+      // A void is a one-way accounting transition. Reject a repeat request
+      // before any period, GL, balance, inventory, or notification work so it
+      // cannot be reported as a second successful void or change any state.
+      if (current.status === 'void') {
+        throw ApiError.badRequest('Sale is already voided');
+      }
+
       await financeClosingService.autoUnlockPeriodForDate(
         client,
         Number(current.branch_id),
@@ -1466,11 +1678,6 @@ export const salesService = {
         context.userId ?? null,
         `Auto reopen for sale void #${current.sale_id}`
       );
-      if (current.status === 'void') {
-        await client.query('COMMIT');
-        return current;
-      }
-
       const currentItems = await listSaleItemsTx(client, id);
       const previouslyApplied =
         current.is_stock_applied ?? canApplyStock(current.doc_type || 'sale', current.status);
@@ -1523,6 +1730,16 @@ export const salesService = {
           mode: 'subtract',
         });
       }
+
+      // HIGH-04 fix: reverse this sale's Inventory/COGS cache contribution
+      // before clearSaleFinancialEntries deletes the account_transactions
+      // rows it reads from - previously this step was missing entirely on
+      // the void path, leaving Inventory permanently understated and COGS
+      // permanently overstated by the voided sale's cost.
+      await reverseSaleInventoryCogsBalance(client, {
+        branchId: current.branch_id,
+        saleId: current.sale_id,
+      });
 
       await clearSaleFinancialEntries(client, {
         branchId: current.branch_id,
@@ -1659,8 +1876,12 @@ export const salesService = {
         `Auto reopen for sale delete #${current.sale_id}`
       );
 
-      await client.query(`DELETE FROM ims.sale_items WHERE sale_id = $1`, [id]);
-      await client.query(`DELETE FROM ims.sales WHERE sale_id = $1`, [id]);
+      // Phase 5 (Central Delete Architecture): soft-deletes via sp_soft_delete
+      // instead of a hard DELETE. sale_items are 'preserve'd (see
+      // server/sql/20260923b_sales_purchases_delete_policy.sql), so they stay
+      // fully intact; a sale that still has an active sales_returns row
+      // against it is blocked (unclassified FK defaults to 'block').
+      await softDeleteById('sales', id, { runner: client });
 
       await client.query('COMMIT');
     } catch (error) {

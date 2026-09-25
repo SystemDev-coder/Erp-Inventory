@@ -8,6 +8,71 @@ import { softDeleteById } from '../../db/softDelete';
 
 type AuthContext = { userId?: number | null } | undefined;
 
+// H4 fix: stock-adjustment GL postings (below) never kept accounts.balance in
+// sync with account_transactions. Apply (or, with invert:true, reverse) a set
+// of GL lines' effect on balance, but only for the account kinds this fix
+// extends tracking to - Inventory (asset) and Inventory Loss/Shrinkage
+// (expense), plus Opening Balance Equity (equity) where a caller passes it.
+// Inventory Gain (revenue) is deliberately excluded from `lines` by every
+// caller below - it, like several liability accounts elsewhere in this
+// codebase, is relied on to stay at $0 so the Balance Sheet's ledger-sum
+// fallback keeps working (see the comment above createLiabilityAccount in
+// finance.service.ts for the fuller explanation of why).
+const applyInventoryAdjustmentGlBalance = async (
+  client: PoolClient,
+  params: {
+    branchId: number;
+    lines: Array<{ accId: number; debit?: number; credit?: number }>;
+    inventoryAccId: number;
+    shrinkageAccId: number;
+    openingBalanceEquityAccId?: number;
+    invert?: boolean;
+  }
+) => {
+  const sign = params.invert ? -1 : 1;
+  for (const line of params.lines) {
+    const debit = Number(line.debit || 0);
+    const credit = Number(line.credit || 0);
+    let delta = 0;
+    if (line.accId === params.inventoryAccId || line.accId === params.shrinkageAccId) {
+      delta = sign * (debit - credit); // asset/expense: debit increases
+    } else if (params.openingBalanceEquityAccId && line.accId === params.openingBalanceEquityAccId) {
+      delta = sign * (credit - debit); // equity: credit increases
+    } else {
+      continue; // e.g. Inventory Gain (revenue) - intentionally untouched
+    }
+    if (delta) {
+      await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+        delta,
+        line.accId,
+        params.branchId,
+      ]);
+    }
+  }
+};
+
+const reverseInventoryAdjustmentGlBalance = async (
+  client: PoolClient,
+  params: {
+    branchId: number;
+    refTable: string;
+    refId: number;
+    inventoryAccId: number;
+    shrinkageAccId: number;
+    openingBalanceEquityAccId?: number;
+  }
+) => {
+  const oldLines = (
+    await client.query<{ acc_id: number; debit: string; credit: string }>(
+      `SELECT acc_id, debit, credit FROM ims.account_transactions
+        WHERE branch_id = $1 AND ref_table = $2 AND ref_id = $3`,
+      [params.branchId, params.refTable, params.refId]
+    )
+  ).rows.map((r) => ({ accId: Number(r.acc_id), debit: Number(r.debit), credit: Number(r.credit) }));
+  if (!oldLines.length) return;
+  await applyInventoryAdjustmentGlBalance(client, { ...params, lines: oldLines, invert: true });
+};
+
 const ensureItemBranchWarehouse = async (
   client: PoolClient,
   productId: number,
@@ -96,12 +161,17 @@ const resolveStoreForItem = async (
 
 const applyStoreItemDelta = async (
   client: PoolClient,
-  params: { branchId: number; itemId: number; delta: number }
+  params: { branchId: number; itemId: number; delta: number; storeId?: number | null }
 ) => {
   const delta = Math.round(params.delta);
   if (!delta) return;
 
-  const storeId = await resolveStoreForItem(client, params.branchId, params.itemId);
+  // Phase 6 (store-to-store transfer): callers that need to move quantity
+  // between two SPECIFIC stores (not just "the" item's home store) pass an
+  // explicit storeId to override the auto-resolve below - every existing
+  // caller (sales, purchases, adjustments, warehouse/branch transfers)
+  // leaves it unset and keeps today's behavior exactly.
+  const storeId = params.storeId ?? (await resolveStoreForItem(client, params.branchId, params.itemId));
   const existing = await client.query<{ quantity: string }>(
     `SELECT quantity::text AS quantity
        FROM ims.store_items
@@ -650,18 +720,25 @@ const createAdjustmentEntry = async (
   // Accounting logic (QuickBooks-style):
   // - DECREASE: Dr Inventory Loss, Cr Inventory
   // - INCREASE: Dr Inventory, Cr Inventory Gain (or Opening Balance Equity)
+  const coa = await ensureCoreCoa(client, payload.branchId, [
+    'inventory',
+    'inventoryGain',
+    'inventoryShrinkage',
+    'openingBalanceEquity',
+  ]);
+  await reverseInventoryAdjustmentGlBalance(client, {
+    branchId: payload.branchId,
+    refTable: 'stock_adjustment',
+    refId: adjId,
+    inventoryAccId: coa.inventory,
+    shrinkageAccId: coa.inventoryShrinkage,
+    openingBalanceEquityAccId: coa.openingBalanceEquity,
+  });
   await deleteGlByRef(client, { branchId: payload.branchId, refTable: 'stock_adjustment', refId: adjId });
   if (status === 'POSTED') {
     const unitCost = Number(payload.unitCost || 0) > 0 ? Number(payload.unitCost || 0) : fallbackUnitCost;
     const value = Math.round(Math.abs(Number(payload.qty || 0)) * unitCost * 100) / 100;
     if (value > 0) {
-      const coa = await ensureCoreCoa(client, payload.branchId, [
-        'inventory',
-        'inventoryGain',
-        'inventoryShrinkage',
-        'openingBalanceEquity',
-      ]);
-
       const offsetAccId =
         Number(payload.qty || 0) > 0 && String(payload.increaseOffset || 'gain') === 'opening'
           ? coa.openingBalanceEquity
@@ -688,6 +765,13 @@ const createAdjustmentEntry = async (
           Number(payload.qty || 0)
         )})`,
         lines,
+      });
+      await applyInventoryAdjustmentGlBalance(client, {
+        branchId: payload.branchId,
+        lines,
+        inventoryAccId: coa.inventory,
+        shrinkageAccId: coa.inventoryShrinkage,
+        openingBalanceEquityAccId: coa.openingBalanceEquity,
       });
     }
   }
@@ -766,7 +850,8 @@ export const inventoryService = {
             0
           )::numeric(14,2) AS weighted_unit_cost,
           COALESCE(${alertExpr}, 0)::numeric(14,3) AS min_stock_threshold,
-          pc.last_purchase_date
+          pc.last_purchase_date,
+          COALESCE(i.attributes, '{}'::jsonb) AS attributes
        FROM ims.items i
        LEFT JOIN purchase_cost pc ON pc.item_id = i.item_id
       WHERE ${where.join(' AND ')}
@@ -1441,6 +1526,24 @@ export const inventoryService = {
       throw ApiError.forbidden('You can only delete warehouses in your branch');
     }
 
+    // Phase 6: mirrors getProductStockOnHand (Phase 3) - on-hand quantity
+    // must be zero before this warehouse can be archived, so its
+    // warehouse_stock rows (preserved, not cascaded - composite PK) never
+    // silently hide real stock.
+    const stockRow = await queryOne<{ total: string }>(
+      `SELECT COALESCE(SUM(quantity), 0)::text AS total
+         FROM ims.warehouse_stock
+        WHERE wh_id = $1
+          AND COALESCE(is_deleted, 0) = 0`,
+      [id]
+    );
+    const stockOnHand = Number(stockRow?.total || 0);
+    if (stockOnHand > 0) {
+      throw ApiError.badRequest(
+        `Cannot delete: ${stockOnHand} unit(s) of stock remain in this warehouse. Adjust stock to zero first.`
+      );
+    }
+
     // UPDATED: Soft-delete via DB function so this doesn't break when triggers cancel hard deletes.
     await softDeleteById('warehouses', id);
   },
@@ -2082,6 +2185,14 @@ export const inventoryService = {
       const applied = String(row.status || 'POSTED').toUpperCase() === 'POSTED' ? qtyDelta : 0;
 
       // Rewrite GL for this adjustment based on current DB values.
+      const coa = await ensureCoreCoa(client, branchId, ['inventory', 'inventoryGain', 'inventoryShrinkage']);
+      await reverseInventoryAdjustmentGlBalance(client, {
+        branchId,
+        refTable: 'stock_adjustment',
+        refId: Number(row.adjustment_id),
+        inventoryAccId: coa.inventory,
+        shrinkageAccId: coa.inventoryShrinkage,
+      });
       await deleteGlByRef(client, { branchId, refTable: 'stock_adjustment', refId: Number(row.adjustment_id) });
       const value = Math.round(Math.abs(applied) * unitCost * 100) / 100;
       if (value > 0 && applied !== 0) {
@@ -2090,7 +2201,6 @@ export const inventoryService = {
           [row.item_id]
         );
         const itemName = String(itemNameRes.rows[0]?.name || 'Item');
-        const coa = await ensureCoreCoa(client, branchId, ['inventory', 'inventoryGain', 'inventoryShrinkage']);
         const lines =
           applied > 0
             ? [
@@ -2109,6 +2219,12 @@ export const inventoryService = {
           refId: Number(row.adjustment_id),
           note: `Stock adjustment: ${itemName} (${applied >= 0 ? 'INCREASE' : 'DECREASE'} ${Math.abs(applied)})`,
           lines,
+        });
+        await applyInventoryAdjustmentGlBalance(client, {
+          branchId,
+          lines,
+          inventoryAccId: coa.inventory,
+          shrinkageAccId: coa.inventoryShrinkage,
         });
       }
 
@@ -2258,9 +2374,16 @@ export const inventoryService = {
 
       const unitCost = Number(row.cost_price || '0');
       const value = Math.round(Math.abs(qtyDelta) * unitCost * 100) / 100;
+      const coa = await ensureCoreCoa(client, Number(row.branch_id), ['inventory', 'inventoryGain', 'inventoryShrinkage']);
+      await reverseInventoryAdjustmentGlBalance(client, {
+        branchId: Number(row.branch_id),
+        refTable: 'stock_adjustment',
+        refId: id,
+        inventoryAccId: coa.inventory,
+        shrinkageAccId: coa.inventoryShrinkage,
+      });
       await deleteGlByRef(client, { branchId: Number(row.branch_id), refTable: 'stock_adjustment', refId: id });
       if (value > 0 && qtyDelta !== 0) {
-        const coa = await ensureCoreCoa(client, Number(row.branch_id), ['inventory', 'inventoryGain', 'inventoryShrinkage']);
         const lines =
           qtyDelta > 0
             ? [
@@ -2279,6 +2402,12 @@ export const inventoryService = {
           refId: id,
           note: `Stock adjustment restored: ${row.item_name} (${qtyDelta >= 0 ? 'INCREASE' : 'DECREASE'} ${Math.abs(qtyDelta)})`,
           lines,
+        });
+        await applyInventoryAdjustmentGlBalance(client, {
+          branchId: Number(row.branch_id),
+          lines,
+          inventoryAccId: coa.inventory,
+          shrinkageAccId: coa.inventoryShrinkage,
         });
       }
 
@@ -2376,13 +2505,13 @@ export const inventoryService = {
       }
 
       const resolveLocation = async (
-        kind: 'warehouse' | 'branch',
+        kind: 'warehouse' | 'branch' | 'store',
         locationId?: number,
         overrideWarehouseId?: number
-      ) => {
+      ): Promise<{ branchId: number; whId: number | null; storeId: number | null }> => {
         if (!locationId) {
           throw ApiError.badRequest(
-            kind === 'warehouse' ? 'Warehouse is required for transfer' : 'Branch is required for transfer'
+            kind === 'warehouse' ? 'Warehouse is required for transfer' : kind === 'store' ? 'Store is required for transfer' : 'Branch is required for transfer'
           );
         }
 
@@ -2398,7 +2527,26 @@ export const inventoryService = {
           if (!row) {
             throw ApiError.badRequest('Warehouse missing or inactive');
           }
-          return { branchId: Number(row.branch_id), whId: Number(row.wh_id) };
+          return { branchId: Number(row.branch_id), whId: Number(row.wh_id), storeId: null };
+        }
+
+        // Phase 6 (store-to-store transfer): 'store' resolves the store's own
+        // branch_id and threads the store_id through untouched, so the
+        // applyStoreItemDelta calls below can target it explicitly instead
+        // of falling back to the item's auto-resolved home store.
+        if (kind === 'store') {
+          const store = await client.query<{ store_id: number; branch_id: number }>(
+            `SELECT store_id, branch_id
+               FROM ims.stores
+              WHERE store_id = $1
+                AND is_active = TRUE`,
+            [locationId]
+          );
+          const row = store.rows[0];
+          if (!row) {
+            throw ApiError.badRequest('Store missing or inactive');
+          }
+          return { branchId: Number(row.branch_id), whId: null, storeId: Number(row.store_id) };
         }
 
         const branch = await client.query<{ branch_id: number }>(
@@ -2428,19 +2576,23 @@ export const inventoryService = {
           return {
             branchId: Number(branchWarehouseRow.branch_id),
             whId: Number(branchWarehouseRow.wh_id),
+            storeId: null,
           };
         }
-        return { branchId: Number(row.branch_id), whId: null };
+        return { branchId: Number(row.branch_id), whId: null, storeId: null };
       };
+
+      const locationIdFor = (type: 'warehouse' | 'branch' | 'store', whId?: number, branchId?: number, storeId?: number) =>
+        type === 'warehouse' ? whId : type === 'store' ? storeId : branchId;
 
       const fromLocation = await resolveLocation(
         input.fromType,
-        input.fromType === 'warehouse' ? input.fromWhId : input.fromBranchId,
+        locationIdFor(input.fromType, input.fromWhId, input.fromBranchId, input.fromStoreId),
         input.fromType === 'branch' ? input.fromWhId : undefined
       );
       const toLocation = await resolveLocation(
         input.toType,
-        input.toType === 'warehouse' ? input.toWhId : input.toBranchId,
+        locationIdFor(input.toType, input.toWhId, input.toBranchId, input.toStoreId),
         input.toType === 'branch' ? input.toWhId : undefined
       );
 
@@ -2448,6 +2600,7 @@ export const inventoryService = {
         input.fromType === input.toType
         && fromLocation.branchId === toLocation.branchId
         && Number(fromLocation.whId || 0) === Number(toLocation.whId || 0)
+        && Number(fromLocation.storeId || 0) === Number(toLocation.storeId || 0)
       ) {
         throw ApiError.badRequest('Source and destination locations must differ');
       }
@@ -2460,28 +2613,86 @@ export const inventoryService = {
 
       const fromMoveType = input.fromType === 'warehouse' ? 'wh_transfer_out' : 'transfer_out';
       const toMoveType = input.toType === 'warehouse' ? 'wh_transfer_in' : 'transfer_in';
+      const unitCost = Number(input.unitCost || 0);
 
-      await client.query(
-        `SELECT ims.fn_apply_stock_move($1, $2, $3, $4, $5::ims.movement_type_enum, 'manual_transfer', NULL, $6, TRUE)`,
-        [
+      // CRIT-02 fix: ims.fn_apply_stock_move() does not exist in the current
+      // schema (confirmed via pg_proc - it was defined against an older
+      // ims.products/ims.branch_stock schema and never re-created after the
+      // refactor to ims.items/ims.store_items). Replaced with the same
+      // stock-mutation building blocks already proven correct elsewhere in
+      // this file (createAdjustmentEntry): ensureItemBranchWarehouse for
+      // validation, applyStoreItemDelta + applyItemQuantityDelta for the
+      // branch/store-level totals every stock-affecting operation keeps in
+      // sync, and fn_stock_add/fn_stock_sub (which DO exist) layered on top
+      // for the more granular per-warehouse ims.warehouse_stock breakdown
+      // when a warehouse is actually involved.
+      //
+      // Items belong to exactly one branch (every lookup here is scoped by
+      // branch_id) - ensureItemBranchWarehouse against the destination
+      // branch will correctly and honestly reject a cross-branch transfer
+      // with "Item not found or inactive" rather than silently creating a
+      // store_items row with no real relationship to the source item, which
+      // is what would otherwise happen (resolveStoreForItem falls back to
+      // "the destination branch's own default store" when it can't find the
+      // item there). This is a genuine current architectural limit, not an
+      // oversight introduced by this fix: the schema has no mechanism today
+      // to say "this item in branch A is the same item as that one in
+      // branch B," so a same-item cross-branch transfer is not a decision
+      // this fix can safely make on its own.
+      await ensureItemBranchWarehouse(client, input.productId, fromLocation.branchId, fromLocation.whId);
+      await ensureItemBranchWarehouse(client, input.productId, toLocation.branchId, toLocation.whId);
+
+      await applyStoreItemDelta(client, {
+        branchId: fromLocation.branchId,
+        itemId: input.productId,
+        delta: -qty,
+        storeId: fromLocation.storeId,
+      });
+      await applyItemQuantityDelta(client, {
+        branchId: fromLocation.branchId,
+        itemId: input.productId,
+        delta: -qty,
+      });
+      if (fromLocation.whId) {
+        await client.query(`SELECT ims.fn_stock_sub($1, $2, $3, $4)`, [
           fromLocation.branchId,
           fromLocation.whId,
           input.productId,
-          -qty,
-          fromMoveType,
-          input.unitCost || 0,
-        ]
-      );
-      await client.query(
-        `SELECT ims.fn_apply_stock_move($1, $2, $3, $4, $5::ims.movement_type_enum, 'manual_transfer', NULL, $6, FALSE)`,
-        [
+          qty,
+        ]);
+      }
+
+      await applyStoreItemDelta(client, {
+        branchId: toLocation.branchId,
+        itemId: input.productId,
+        delta: qty,
+        storeId: toLocation.storeId,
+      });
+      await applyItemQuantityDelta(client, {
+        branchId: toLocation.branchId,
+        itemId: input.productId,
+        delta: qty,
+      });
+      if (toLocation.whId) {
+        await client.query(`SELECT ims.fn_stock_add($1, $2, $3, $4)`, [
           toLocation.branchId,
           toLocation.whId,
           input.productId,
           qty,
-          toMoveType,
-          input.unitCost || 0,
-        ]
+        ]);
+      }
+
+      await client.query(
+        `INSERT INTO ims.inventory_movements
+           (branch_id, wh_id, item_id, move_type, ref_table, ref_id, qty_in, qty_out, unit_cost, note)
+         VALUES ($1, $2, $3, $4::ims.movement_type_enum, 'manual_transfer', NULL, 0, $5, $6, $7)`,
+        [fromLocation.branchId, fromLocation.whId, input.productId, fromMoveType, qty, unitCost, input.note || null]
+      );
+      await client.query(
+        `INSERT INTO ims.inventory_movements
+           (branch_id, wh_id, item_id, move_type, ref_table, ref_id, qty_in, qty_out, unit_cost, note)
+         VALUES ($1, $2, $3, $4::ims.movement_type_enum, 'manual_transfer', NULL, $5, 0, $6, $7)`,
+        [toLocation.branchId, toLocation.whId, input.productId, toMoveType, qty, unitCost, input.note || null]
       );
 
       return {

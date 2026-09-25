@@ -4,6 +4,9 @@ import { withTransaction } from '../../db/withTx';
 import { ApiError } from '../../utils/ApiError';
 import { BranchScope } from '../../utils/branchScope';
 import { offsetOf, type Paged } from '../../utils/pagination';
+import { deleteGlByRef, ensureCoreCoa, postGl } from '../../utils/glPosting';
+import { syncSystemAccountBalancesWithClient } from '../../utils/systemAccounts';
+import { softDeleteById } from '../../db/softDelete';
 
 export interface Supplier {
   supplier_id: number;
@@ -18,6 +21,7 @@ export interface Supplier {
   is_active: boolean;
   created_at: string;
   updated_at: string | null;
+  has_transactions: boolean;
 }
 
 export interface SupplierInput {
@@ -65,6 +69,16 @@ const detectSupplierShape = async (): Promise<SupplierSchemaShape> => {
   return supplierShape;
 };
 
+// Mirrors hasSupplierNonOpeningLedger's predicate exactly, so the UI's
+// disabled state and the server-side save-time guard never disagree
+// (see customers.service.ts#HAS_TRANSACTIONS_SELECT, Phase 1).
+const HAS_TRANSACTIONS_SELECT = `EXISTS (
+  SELECT 1 FROM ims.supplier_ledger sl
+   WHERE sl.branch_id = suppliers.branch_id
+     AND sl.supplier_id = suppliers.supplier_id
+     AND NOT (sl.entry_type = 'opening' AND sl.ref_table = 'opening_balance')
+) AS has_transactions`;
+
 const hasSupplierNonOpeningLedger = async (
   client: PoolClient,
   branchId: number,
@@ -83,42 +97,27 @@ const hasSupplierNonOpeningLedger = async (
   return Boolean(result.rows[0]?.exists);
 };
 
-const findSupplierDeleteBlockReason = async (
+// Phase 4 (Central Delete Architecture): deleteSupplier below now soft-deletes
+// via ims.sp_soft_delete, which lets a supplier with real purchase/return/
+// ledger history be archived (that history is 'preserve'd, untouched - see
+// server/sql/20260923_customer_supplier_delete_policy.sql). The one thing the
+// generic policy engine can't express is "outstanding balance must be zero" -
+// mirrors getCustomerOutstandingBalance from Phase 4 / getProductStockOnHand
+// from Phase 3.
+const getSupplierOutstandingBalance = async (
   client: PoolClient,
   branchId: number,
   supplierId: number
-): Promise<string | null> => {
-  const purchaseLinked = await client.query<{ exists: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1
-         FROM ims.purchases
-        WHERE branch_id = $1
-          AND supplier_id = $2
-     ) AS exists`,
-    [branchId, supplierId]
+): Promise<number> => {
+  const shape = await detectSupplierShape();
+  const balanceRow = await client.query<{ balance: string }>(
+    `SELECT COALESCE(${shape.balanceColumn}, 0)::text AS balance
+       FROM ims.suppliers
+      WHERE supplier_id = $1
+        AND branch_id = $2`,
+    [supplierId, branchId]
   );
-  if (Boolean(purchaseLinked.rows[0]?.exists)) {
-    return 'Cannot delete supplier because it has purchase transactions';
-  }
-
-  const purchaseReturnLinked = await client.query<{ exists: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1
-         FROM ims.purchase_returns
-        WHERE branch_id = $1
-          AND supplier_id = $2
-     ) AS exists`,
-    [branchId, supplierId]
-  );
-  if (Boolean(purchaseReturnLinked.rows[0]?.exists)) {
-    return 'Cannot delete supplier because it has purchase return transactions';
-  }
-
-  if (await hasSupplierNonOpeningLedger(client, branchId, supplierId)) {
-    return 'Cannot delete supplier because it has supplier ledger transactions';
-  }
-
-  return null;
+  return Math.abs(Number(balanceRow.rows[0]?.balance || 0));
 };
 
 const upsertSupplierOpeningLedger = async (
@@ -136,15 +135,70 @@ const upsertSupplierOpeningLedger = async (
     [branchId, supplierId]
   );
 
-  if (!amount) return;
-
-  await client.query(
-    `INSERT INTO ims.supplier_ledger
-      (branch_id, supplier_id, entry_type, ref_table, ref_id, acc_id, debit, credit, entry_date, note)
-     VALUES
-      ($1, $2, 'opening', 'opening_balance', $2, NULL, 0, $3, NOW() - INTERVAL '1 second', $4)`,
-    [branchId, supplierId, amount, '[OPENING BALANCE] Set from supplier form']
+  const coa = await ensureCoreCoa(client, branchId, ['accountsPayable', 'openingBalanceEquity']);
+  // H4 fix: reverse this ref's previous Opening Balance Equity contribution
+  // to accounts.balance before the old GL rows are deleted below - it was
+  // never mirrored into accounts.balance at all, so re-edits accumulated
+  // stale GL-only value. Accounts Payable is deliberately left out here;
+  // it's resynced from the ledger at the end of this function.
+  const priorObeRows = await client.query<{ debit: string; credit: string }>(
+    `SELECT debit, credit FROM ims.account_transactions
+      WHERE branch_id = $1 AND ref_table = 'opening_balance' AND ref_id = $2
+        AND acc_id = $3 AND COALESCE(is_deleted, 0) = 0`,
+    [branchId, supplierId, coa.openingBalanceEquity]
   );
+  for (const row of priorObeRows.rows) {
+    const delta = -(Number(row.credit) - Number(row.debit));
+    if (delta) {
+      await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+        delta,
+        coa.openingBalanceEquity,
+        branchId,
+      ]);
+    }
+  }
+
+  // Keep the real GL in sync with the subsidiary ledger: replace any prior
+  // opening-balance journal entry for this supplier, then re-post it if the
+  // new amount is non-zero, so Accounts Payable never drifts from what the
+  // supplier's balance edit form shows.
+  await deleteGlByRef(client, { branchId, refTable: 'opening_balance', refId: supplierId });
+
+  if (amount) {
+    await client.query(
+      `INSERT INTO ims.supplier_ledger
+        (branch_id, supplier_id, entry_type, ref_table, ref_id, acc_id, debit, credit, entry_date, note)
+       VALUES
+        ($1, $2, 'opening', 'opening_balance', $2, NULL, 0, $3, NOW() - INTERVAL '1 second', $4)`,
+      [branchId, supplierId, amount, '[OPENING BALANCE] Set from supplier form']
+    );
+
+    await postGl(client, {
+      branchId,
+      refTable: 'opening_balance',
+      refId: supplierId,
+      note: 'Supplier opening/adjusted balance',
+      lines: [
+        { accId: coa.openingBalanceEquity, debit: amount, credit: 0, note: 'Opening balance equity' },
+        { accId: coa.accountsPayable, debit: 0, credit: amount, note: 'Supplier payable (opening/adjusted)' },
+      ],
+    });
+    // H4 fix: Opening Balance Equity debit above was never mirrored into
+    // accounts.balance. Equity - debit decreases it.
+    await client.query(`UPDATE ims.accounts SET balance = balance - $1 WHERE acc_id = $2 AND branch_id = $3`, [
+      amount,
+      coa.openingBalanceEquity,
+      branchId,
+    ]);
+  }
+
+  // The Balance Sheet reads the "Accounts Payable" system account's stored
+  // balance directly (it doesn't re-derive it from account_transactions), and
+  // that balance is otherwise only kept current by a periodic background
+  // sync. Resync it synchronously, in this same transaction, so the Balance
+  // Sheet never shows a stale figure between the ledger edit and the next
+  // scheduled sync.
+  await syncSystemAccountBalancesWithClient(client, branchId);
 };
 
 const mapSupplier = (row: {
@@ -155,6 +209,7 @@ const mapSupplier = (row: {
   supplier_balance_value: string | number;
   is_active: boolean;
   created_at: string;
+  has_transactions?: boolean | null;
 }): Supplier => ({
   supplier_id: Number(row.supplier_id),
   supplier_name: row.supplier_name_value,
@@ -168,6 +223,7 @@ const mapSupplier = (row: {
   is_active: Boolean(row.is_active),
   created_at: row.created_at,
   updated_at: null,
+  has_transactions: Boolean(row.has_transactions),
 });
 
 const scopedSupplier = async (
@@ -184,6 +240,7 @@ const scopedSupplier = async (
         supplier_balance_value: string;
         is_active: boolean;
         created_at: string;
+        has_transactions: boolean;
       }>(
         `SELECT
             supplier_id,
@@ -192,7 +249,8 @@ const scopedSupplier = async (
             phone,
             ${shape.balanceColumn}::text AS supplier_balance_value,
             is_active,
-            created_at::text
+            created_at::text,
+            ${HAS_TRANSACTIONS_SELECT}
            FROM ims.suppliers
           WHERE supplier_id = $1`,
         [id]
@@ -205,6 +263,7 @@ const scopedSupplier = async (
         supplier_balance_value: string;
         is_active: boolean;
         created_at: string;
+        has_transactions: boolean;
       }>(
         `SELECT
             supplier_id,
@@ -213,7 +272,8 @@ const scopedSupplier = async (
             phone,
             ${shape.balanceColumn}::text AS supplier_balance_value,
             is_active,
-            created_at::text
+            created_at::text,
+            ${HAS_TRANSACTIONS_SELECT}
            FROM ims.suppliers
           WHERE supplier_id = $1
             AND branch_id = ANY($2)`,
@@ -273,6 +333,7 @@ export const suppliersService = {
       supplier_balance_value: string;
       is_active: boolean;
       created_at: string;
+      has_transactions: boolean;
     }>(
       `SELECT
           supplier_id,
@@ -281,7 +342,8 @@ export const suppliersService = {
           phone,
           ${shape.balanceColumn}::text AS supplier_balance_value,
           is_active,
-          created_at::text
+          created_at::text,
+          ${HAS_TRANSACTIONS_SELECT}
          FROM ims.suppliers
          ${whereSql}
         ORDER BY ${shape.nameColumn}
@@ -451,25 +513,30 @@ export const suppliersService = {
     }
 
     return withTransaction(async (client) => {
-      const branchRow = await client.query<{ branch_id: number }>(
+      const branchRow = await client.query<{ branch_id: number; current_balance: string | null }>(
         scope.isAdmin
-          ? `SELECT branch_id FROM ims.suppliers WHERE supplier_id = $1`
-          : `SELECT branch_id FROM ims.suppliers WHERE supplier_id = $1 AND branch_id = ANY($2)`,
+          ? `SELECT branch_id, ${shape.balanceColumn}::text AS current_balance FROM ims.suppliers WHERE supplier_id = $1`
+          : `SELECT branch_id, ${shape.balanceColumn}::text AS current_balance FROM ims.suppliers WHERE supplier_id = $1 AND branch_id = ANY($2)`,
         scope.isAdmin ? [id] : [id, scope.branchIds]
       );
       const branchId = Number(branchRow.rows[0]?.branch_id || 0);
       if (!branchId) return null;
 
-      if (wantsOpeningUpdate) {
+      // Phase 4 fix: mirrors customers.service.ts#updateCustomer (Phase 1) -
+      // the frontend submits remainingBalance on every save regardless of
+      // whether the user touched it, so gating on "was it present" instead of
+      // "did it actually change" blocked ALL edits to any supplier with
+      // ledger history. Compare against the supplier's current balance so an
+      // unchanged value never triggers the guard or the ledger rewrite below.
+      const currentBalance = Number(branchRow.rows[0]?.current_balance ?? 0);
+      const openingAmount = Math.max(0, Number(input.remainingBalance ?? 0));
+      const balanceActuallyChanged = wantsOpeningUpdate && Math.abs(openingAmount - currentBalance) > 0.005;
+
+      if (balanceActuallyChanged) {
         if (await hasSupplierNonOpeningLedger(client, branchId, id)) {
           throw ApiError.badRequest('Supplier has transactions; cannot change opening balance');
         }
-        await upsertSupplierOpeningLedger(
-          client,
-          branchId,
-          id,
-          Math.max(0, Number(input.remainingBalance ?? 0))
-        );
+        await upsertSupplierOpeningLedger(client, branchId, id, openingAmount);
       }
 
       const rowRes = await client.query<{
@@ -521,36 +588,12 @@ export const suppliersService = {
       if (!supplier) return;
 
       const branchId = Number(supplier.branch_id || 0);
-      const reason = await findSupplierDeleteBlockReason(client, branchId, id);
-      if (reason) {
-        throw ApiError.badRequest(reason);
+      const balance = await getSupplierOutstandingBalance(client, branchId, id);
+      if (balance > 0.005) {
+        throw ApiError.badRequest(`Cannot delete — outstanding balance of ${balance.toFixed(2)} exists. Settle to zero first.`);
       }
 
-      await client.query(
-        `DELETE FROM ims.item_suppliers
-          WHERE branch_id = $1
-            AND supplier_id = $2`,
-        [branchId, id]
-      );
-
-      await client.query(
-        `DELETE FROM ims.supplier_ledger
-          WHERE branch_id = $1
-            AND supplier_id = $2`,
-        [branchId, id]
-      );
-
-      if (scope.isAdmin) {
-        await client.query(`DELETE FROM ims.suppliers WHERE supplier_id = $1`, [id]);
-        return;
-      }
-
-      await client.query(
-        `DELETE FROM ims.suppliers
-          WHERE supplier_id = $1
-            AND branch_id = ANY($2)`,
-        [id, scope.branchIds]
-      );
+      await softDeleteById('suppliers', id, { runner: client });
     });
   },
 };

@@ -24,6 +24,8 @@ export const listSales = asyncHandler(async (req: AuthRequest, res: Response) =>
   const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
   const fromDate = (req.query.fromDate as string) || undefined;
   const toDate = (req.query.toDate as string) || undefined;
+  const posOnly = String(req.query.posOnly || '').toLowerCase() === 'true';
+  const posShiftId = req.query.posShiftId ? Number(req.query.posShiftId) : undefined;
   if (fromDate && toDate && fromDate > toDate) {
     throw ApiError.badRequest('fromDate cannot be after toDate');
   }
@@ -39,11 +41,57 @@ export const listSales = asyncHandler(async (req: AuthRequest, res: Response) =>
     branchId,
     fromDate,
     toDate,
+    posOnly,
+    posShiftId,
     page: pagination.page,
     limit: pagination.limit,
   });
   return ApiResponse.success(res, {
     sales: result.rows,
+    pagination: paginationMeta(result.total, result.page, result.limit),
+  });
+});
+
+export const listPosOrderItems = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
+  const fromDate = (req.query.fromDate as string) || undefined;
+  const toDate = (req.query.toDate as string) || undefined;
+  const posShiftId = req.query.posShiftId ? Number(req.query.posShiftId) : undefined;
+  if (branchId) assertBranchAccess(scope, branchId);
+  const pagination = listPaginationSchema.parse(req.query);
+  const result = await salesService.listPosOrderItems(scope, {
+    branchId,
+    fromDate,
+    toDate,
+    posShiftId,
+    page: pagination.page,
+    limit: pagination.limit,
+  });
+  return ApiResponse.success(res, {
+    items: result.rows,
+    pagination: paginationMeta(result.total, result.page, result.limit),
+  });
+});
+
+export const listPosPayments = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
+  const fromDate = (req.query.fromDate as string) || undefined;
+  const toDate = (req.query.toDate as string) || undefined;
+  const posShiftId = req.query.posShiftId ? Number(req.query.posShiftId) : undefined;
+  if (branchId) assertBranchAccess(scope, branchId);
+  const pagination = listPaginationSchema.parse(req.query);
+  const result = await salesService.listPosPayments(scope, {
+    branchId,
+    fromDate,
+    toDate,
+    posShiftId,
+    page: pagination.page,
+    limit: pagination.limit,
+  });
+  return ApiResponse.success(res, {
+    payments: result.rows,
     pagination: paginationMeta(result.total, result.page, result.limit),
   });
 });

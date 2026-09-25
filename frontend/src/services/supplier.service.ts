@@ -11,6 +11,7 @@ export interface Supplier {
   location?: string | null;
   remaining_balance?: number | null;
   is_active?: boolean;
+  has_transactions?: boolean;
 }
 
 export const supplierService = {

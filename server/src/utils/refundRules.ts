@@ -48,16 +48,9 @@ const loadOriginalSale = async (
   branchId: number,
   saleId: number
 ): Promise<OriginalTxn | null> => {
-  const res = await client.query<{
-    sale_type: string;
-    status: string;
-    paid_amount: string;
-    pay_acc_id: number | null;
-  }>(
+  const res = await client.query<{ sale_type: string; status: string }>(
     `SELECT sale_type::text AS sale_type,
-            status::text AS status,
-            COALESCE(paid_amount, 0)::text AS paid_amount,
-            pay_acc_id
+            status::text AS status
        FROM ims.sales
       WHERE sale_id = $1
         AND branch_id = $2
@@ -66,12 +59,28 @@ const loadOriginalSale = async (
   );
   const row = res.rows[0];
   if (!row) return null;
-  const paid = Number(row.paid_amount || 0);
+
+  // Payment amount/account live in ims.sale_payments, not on ims.sales itself.
+  const paymentRows = await client.query<{ acc_id: number; amount_paid: string }>(
+    `SELECT acc_id, COALESCE(SUM(amount_paid), 0)::text AS amount_paid
+       FROM ims.sale_payments
+      WHERE branch_id = $1
+        AND sale_id = $2
+      GROUP BY acc_id
+     HAVING COALESCE(SUM(amount_paid), 0) > 0.005
+      ORDER BY acc_id ASC`,
+    [branchId, saleId]
+  );
+  const paid = paymentRows.rows.reduce((sum, r) => sum + Number(r.amount_paid || 0), 0);
   const isCredit =
     row.sale_type === 'credit' || (row.status === 'unpaid' && paid <= 0.005);
+  // Only "lock" a refund account when the sale was paid through exactly one
+  // account - if it was split across multiple, don't guess, require the
+  // caller to pick one explicitly.
+  const lockedAccId = paymentRows.rows.length === 1 ? Number(paymentRows.rows[0].acc_id) : null;
   return {
     txnType: isCredit ? 'credit' : 'cash',
-    lockedAccId: row.pay_acc_id ? Number(row.pay_acc_id) : null,
+    lockedAccId,
   };
 };
 
@@ -80,16 +89,9 @@ const loadOriginalPurchase = async (
   branchId: number,
   purchaseId: number
 ): Promise<OriginalTxn | null> => {
-  const res = await client.query<{
-    purchase_type: string;
-    status: string;
-    paid_amount: string;
-    pay_acc_id: number | null;
-  }>(
+  const res = await client.query<{ purchase_type: string; status: string }>(
     `SELECT purchase_type::text AS purchase_type,
-            status::text AS status,
-            COALESCE(paid_amount, 0)::text AS paid_amount,
-            pay_acc_id
+            status::text AS status
        FROM ims.purchases
       WHERE purchase_id = $1
         AND branch_id = $2
@@ -98,14 +100,27 @@ const loadOriginalPurchase = async (
   );
   const row = res.rows[0];
   if (!row) return null;
-  const paid = Number(row.paid_amount || 0);
+
+  // Payment amount/account live in ims.supplier_payments, not on ims.purchases itself.
+  const paymentRows = await client.query<{ acc_id: number; amount_paid: string }>(
+    `SELECT acc_id, COALESCE(SUM(amount_paid), 0)::text AS amount_paid
+       FROM ims.supplier_payments
+      WHERE branch_id = $1
+        AND purchase_id = $2
+      GROUP BY acc_id
+     HAVING COALESCE(SUM(amount_paid), 0) > 0.005
+      ORDER BY acc_id ASC`,
+    [branchId, purchaseId]
+  );
+  const paid = paymentRows.rows.reduce((sum, r) => sum + Number(r.amount_paid || 0), 0);
   const isCredit =
     row.purchase_type === 'credit' ||
     row.status === 'unpaid' ||
     (row.status === 'partial' && paid <= 0.005);
+  const lockedAccId = paymentRows.rows.length === 1 ? Number(paymentRows.rows[0].acc_id) : null;
   return {
     txnType: isCredit ? 'credit' : 'cash',
-    lockedAccId: row.pay_acc_id ? Number(row.pay_acc_id) : null,
+    lockedAccId,
   };
 };
 
@@ -144,16 +159,20 @@ export const resolveSalesReturnRefund = async (
   const outstanding = Math.max(Number(params.partyOutstanding || 0), 0);
 
   if (outstanding + 0.005 < total) {
+    // The return value exceeds what the customer owes: apply as much as possible
+    // to the outstanding debt first, and only cash-refund whatever's left over -
+    // don't hand back cash while debt could still absorb it.
+    const cashPortion = roundMoney(total - outstanding);
     const accId = lockedRefundAccId || Number(params.refundAccIdInput || 0);
     if (!accId) {
       throw ApiError.badRequest(
         'Customer balance is less than return total. Refund account from the original sale is required.'
       );
     }
-    await assertAccountHasBalance(client, params.branchId, accId, total);
+    await assertAccountHasBalance(client, params.branchId, accId, cashPortion);
     return {
-      refundAmount: total,
-      balanceAdjustment: 0,
+      refundAmount: cashPortion,
+      balanceAdjustment: outstanding,
       refundAccId: accId,
       canChooseMethod: false,
       originalWasCredit: false,
@@ -220,6 +239,9 @@ export const resolvePurchaseReturnRefund = async (
   const outstanding = Math.max(Number(params.partyOutstanding || 0), 0);
 
   if (outstanding + 0.005 < total) {
+    // The return value exceeds what's owed to the supplier: apply as much as
+    // possible to the payable first, and only cash-refund whatever's left over.
+    const cashPortion = roundMoney(total - outstanding);
     const accId = lockedRefundAccId || Number(params.refundAccIdInput || 0);
     if (!accId) {
       throw ApiError.badRequest(
@@ -227,8 +249,8 @@ export const resolvePurchaseReturnRefund = async (
       );
     }
     return {
-      refundAmount: total,
-      balanceAdjustment: 0,
+      refundAmount: cashPortion,
+      balanceAdjustment: outstanding,
       refundAccId: accId,
       canChooseMethod: false,
       originalWasCredit: false,

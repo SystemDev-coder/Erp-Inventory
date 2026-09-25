@@ -11,6 +11,42 @@ const notifyBranchUsers = async (
     meta: Record<string, unknown>;
   }
 ) => {
+  // C9 fix: when called with a shared `client` (i.e. embedded in a caller's own
+  // business transaction, e.g. a future purchase/sale save that also wants to
+  // refresh due-date notifications inline), a failed INSERT here would abort
+  // that whole transaction the same way an unprotected low-stock notification
+  // write once did (see stockAlerts.ts#syncLowStockNotifications and the H4/C9
+  // fix history). No current caller passes a client - notifications.service.ts
+  // always calls this standalone - but the parameter exists specifically to
+  // support that usage, so it needs the same savepoint isolation now rather
+  // than waiting for it to actually break something. The standalone path
+  // (client is null) doesn't need a savepoint: query() is its own independent,
+  // auto-committing statement with nothing shared to poison.
+  if (client) {
+    await client.query('SAVEPOINT sp_credit_due_notify');
+    try {
+      await insertCreditDueNotification(client, params);
+      await client.query('RELEASE SAVEPOINT sp_credit_due_notify');
+    } catch (error) {
+      await client.query('ROLLBACK TO SAVEPOINT sp_credit_due_notify');
+      console.error('ensureCreditDueNotifications failed to write a notification:', (error as Error)?.message);
+    }
+    return;
+  }
+
+  await insertCreditDueNotification(null, params);
+};
+
+const insertCreditDueNotification = async (
+  client: PoolClient | null,
+  params: {
+    branchId: number;
+    title: string;
+    message: string;
+    link: string;
+    meta: Record<string, unknown>;
+  }
+) => {
   const exec = client
     ? (sql: string, values: unknown[]) => client.query(sql, values)
     : (sql: string, values: unknown[]) => query(sql, values);
@@ -116,7 +152,7 @@ export const ensureCreditDueNotifications = async (
   }>(
     `SELECT
         p.purchase_id,
-        COALESCE(s.supplier_name, s.name) AS supplier_name,
+        s.name AS supplier_name,
         p.due_date::text AS due_date,
         p.total::text AS total,
         (CURRENT_DATE - p.due_date)::int AS days_overdue

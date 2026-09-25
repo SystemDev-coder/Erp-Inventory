@@ -6,6 +6,8 @@ import { AuthRequest } from '../../middlewares/requireAuth';
 import { resolveBranchScope } from '../../utils/branchScope';
 import {
   accountTransferSchema,
+  liabilityAccountCreateSchema,
+  liabilityPaymentSchema,
   customerReceiptSchema,
   supplierReceiptSchema,
   otherIncomeSchema,
@@ -100,6 +102,52 @@ export const updateAccountTransfer = asyncHandler(async (req: AuthRequest, res: 
   if (!Number.isFinite(id)) throw ApiError.badRequest('Invalid transfer id');
   const transfer = await financeService.updateTransfer(id, req.body, scope);
   return ApiResponse.success(res, { transfer }, 'Transfer updated');
+});
+
+// ─── Liability Payments ──────────────────────────────────────────────────────
+
+export const listLiabilityAccounts = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
+  const onlyOutstanding = req.query.onlyOutstanding !== 'false';
+  const accounts = await financeService.listLiabilityAccounts(scope, branchId, onlyOutstanding);
+  return ApiResponse.success(res, { accounts });
+});
+
+export const createLiabilityAccount = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const input = liabilityAccountCreateSchema.parse(req.body);
+  const account = await financeService.createLiabilityAccount(input.name, scope, input.branchId);
+  return ApiResponse.created(res, { account }, 'Liability account created');
+});
+
+export const listLiabilityPayments = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
+  const fromDate = (req.query.fromDate as string) || undefined;
+  const toDate = (req.query.toDate as string) || undefined;
+  if (fromDate && toDate && fromDate > toDate) {
+    throw ApiError.badRequest('fromDate cannot be after toDate');
+  }
+  const payments = await financeService.listLiabilityPayments(scope, branchId, { fromDate, toDate });
+  return ApiResponse.success(res, { payments });
+});
+
+export const createLiabilityPayment = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const input = liabilityPaymentSchema.parse(req.body);
+  const userId = req.user?.userId;
+  if (!userId) throw ApiError.unauthorized('User required');
+  const payment = await financeService.createLiabilityPayment(input, scope, userId);
+  return ApiResponse.created(res, { payment }, 'Liability payment recorded');
+});
+
+export const deleteLiabilityPayment = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id) || id <= 0) throw ApiError.badRequest('Invalid payment id');
+  await financeService.deleteLiabilityPayment(id, scope);
+  return ApiResponse.success(res, null, 'Liability payment deleted');
 });
 
 // ─── Customer Receipts ───────────────────────────────────────────────────────

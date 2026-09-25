@@ -20,6 +20,7 @@ const StockAdjustmentsPage = lazy(() => import("./pages/Stock/StockAdjustmentsPa
 const StockAdjustmentCreatePage = lazy(() => import("./pages/Stock/StockAdjustmentCreatePage"));
 const Purchases = lazy(() => import("./pages/Purchases/Purchases"));
 const PurchaseEditor = lazy(() => import("./pages/Purchases/PurchaseEditor"));
+const ProductEditor = lazy(() => import("./pages/Products/ProductEditor"));
 const Returns = lazy(() => import("./pages/Returns/Returns"));
 const SalesReturns = lazy(() => import("./pages/Returns/SalesReturns"));
 const PurchaseReturns = lazy(() => import("./pages/Returns/PurchaseReturns"));
@@ -35,8 +36,9 @@ const AccountsReceivableReportPage = lazy(() => import("./pages/Reports/financia
 const AccountsPayableReportPage = lazy(() => import("./pages/Reports/financial/AccountsPayableReportPage"));
 const Settings = lazy(() => import("./pages/Settings/Settings"));
 const System = lazy(() => import("./pages/System/System"));
-const Support = lazy(() => import("./pages/Support/Support"));
 const Trash = lazy(() => import("./pages/Trash/Trash"));
+const POSTab = lazy(() => import("./pages/Sales/POSTab"));
+const POSOrders = lazy(() => import("./pages/Sales/POSOrders"));
 
 const PageLoader = () => (
   <div className="flex min-h-[40vh] items-center justify-center">
@@ -46,13 +48,6 @@ const PageLoader = () => (
 
 const Lazy = ({ children }: { children: ReactNode }) => (
   <Suspense fallback={<PageLoader />}>{children}</Suspense>
-);
-
-const ComingSoonPage = ({ title }: { title: string }) => (
-  <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-    <h1 className="text-xl font-semibold text-slate-900 dark:text-white">{title}</h1>
-    <p className="text-sm text-slate-600 dark:text-slate-300">Coming soon</p>
-  </div>
 );
 
 function AppRoutes() {
@@ -78,11 +73,13 @@ function AppRoutes() {
           <Route path="/stock-management/adjust-items/new" element={<ProtectedRoute><Lazy><StockAdjustmentCreatePage /></Lazy></ProtectedRoute>} />
           <Route path="/return" element={<ProtectedRoute permission="sales_returns.view"><Lazy><Returns /></Lazy></ProtectedRoute>} />
           <Route path="/items" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
+          <Route path="/items/new" element={<ProtectedRoute permission="items.create"><Lazy><ProductEditor /></Lazy></ProtectedRoute>} />
+          <Route path="/items/:id/edit" element={<ProtectedRoute permission="items.update"><Lazy><ProductEditor /></Lazy></ProtectedRoute>} />
           <Route path="/stock/adjustments" element={<ProtectedRoute><Lazy><StockAdjustmentsPage /></Lazy></ProtectedRoute>} />
           <Route path="/stock/adjustments/new" element={<ProtectedRoute><Lazy><StockAdjustmentCreatePage /></Lazy></ProtectedRoute>} />
           <Route path="/sales" element={<ProtectedRoute permission="sales.view"><Sales /></ProtectedRoute>} />
           <Route path="/sales/transactions" element={<ProtectedRoute permission="sales.view"><Sales /></ProtectedRoute>} />
-          <Route path="/sales/pos" element={<ProtectedRoute permission="sales.view"><ComingSoonPage title="POS" /></ProtectedRoute>} />
+          <Route path="/sales/pos/orders" element={<ProtectedRoute permission="sales.pos.access"><Lazy><POSOrders /></Lazy></ProtectedRoute>} />
           <Route path="/sales/new" element={<ProtectedRoute permission="sales.create"><SaleCreate /></ProtectedRoute>} />
           <Route path="/sales/:id/edit" element={<ProtectedRoute permission="sales.update"><SaleCreate /></ProtectedRoute>} />
           <Route path="/purchases" element={<ProtectedRoute><Lazy><Purchases /></Lazy></ProtectedRoute>} />
@@ -199,7 +196,6 @@ function AppRoutes() {
             }
           />
           <Route path="/system" element={<ProtectedRoute permission="system.settings"><Lazy><Settings /></Lazy></ProtectedRoute>} />
-          <Route path="/support" element={<ProtectedRoute><Lazy><Support /></Lazy></ProtectedRoute>} />
           <Route path="/trash" element={<ProtectedRoute permission="trash.view" roleAny={['developer']}><Lazy><Trash /></Lazy></ProtectedRoute>} />
         </Route>
 
@@ -207,6 +203,10 @@ function AppRoutes() {
         <Route path="/signin" element={<SignIn />} />
         <Route path="/signup" element={<SignUp />} />
         <Route path="/lock" element={<Lazy><Lock /></Lazy>} />
+
+        {/* POS: a dedicated full-screen checkout terminal, deliberately outside
+            AppLayout - no sidebar, its own minimal header, like a real till screen. */}
+        <Route path="/sales/pos" element={<ProtectedRoute permission="sales.pos.access"><Lazy><POSTab /></Lazy></ProtectedRoute>} />
 
         {/* Fallback Route */}
         <Route path="*" element={<NotFound />} />

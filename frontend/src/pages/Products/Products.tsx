@@ -1,62 +1,54 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router';
 import { ColumnDef } from '@tanstack/react-table';
-import { BadgeAlert, Boxes, CheckCircle2, RefreshCw, Store } from 'lucide-react';
+import { BadgeAlert, Boxes, Edit3, GitMerge, MoreVertical, PackageCheck, PackageSearch, PackageX, RefreshCw, Ruler, Store, Tags, Trash2 } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
 import { DataTable } from '../../components/ui/table/DataTable';
+import { ActionDropdown } from '../../components/ui/dropdown/ActionDropdown';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { Modal } from '../../components/ui/modal/Modal';
 import { PageHeader } from '../../components/ui/layout';
 import { useToast } from '../../components/ui/toast/Toast';
-import { Product, productService } from '../../services/product.service';
+import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
+import { Category, Product, Unit, productService } from '../../services/product.service';
+import { deletePreviewService, DeleteImpactPreview } from '../../services/deletePreview.service';
 import { InventoryTransactionRow, inventoryService } from '../../services/inventory.service';
 import { storeService, Store as StoreType } from '../../services/store.service';
 import StoresPage from '../Stock/StoresPage';
 import ImportUploadModal from '../../components/import/ImportUploadModal';
 import { useBranch } from '../../context/BranchContext';
+import { useBusinessConfig } from '../../context/BusinessConfigContext';
+import { usePermissions } from '../../hooks/usePermissions';
+import { attributeSummary, DEFAULT_CATEGORIES_BY_BUSINESS_TYPE, PRODUCT_ATTRIBUTE_CATALOG } from '../../config/productAttributes';
 
-type ProductForm = Partial<Product>;
 type TxCategory = 'adjustment' | 'paid' | 'sales' | 'cancelled';
-type ItemFieldErrors = Partial<Record<string, string>>;
 
+// Deliberately has no error/touched/success state: the form relies on native HTML5
+// validation (required/minLength/min on the inputs themselves) instead of custom
+// red-border flashing, matching the Employee modal's behavior. The browser blocks
+// submission and shows its own message for invalid fields.
 function ItemField({
   label,
-  error,
-  touched,
-  success,
+  required,
   children,
 }: {
   label: string;
-  error?: string;
-  touched?: boolean;
-  success?: boolean;
+  required?: boolean;
   children: React.ReactNode;
 }) {
-  const showError = touched && error;
-  const showSuccess = touched && !error && success;
   return (
     <div className="flex flex-col gap-1">
-      <div className="flex items-center gap-2">
-        <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">{label}</label>
-        {showSuccess && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />}
-      </div>
+      <label className="text-xs font-semibold uppercase tracking-wide">
+        <span>{label}{required ? ' *' : ''}</span>
+      </label>
       {children}
-      {showError && (
-        <p className="text-xs font-medium text-red-500 dark:text-red-400">{error}</p>
-      )}
     </div>
   );
 }
 
-const defaultProductForm: ProductForm = {
-  name: '',
-  barcode: '',
-  stock_alert: 5,
-  opening_balance: 0,
-  quantity: 0,
-  cost_price: 0,
-  sell_price: 0,
-  is_active: true,
-};
+
+const defaultCategoryForm: Partial<Category> = { name: '', description: '', is_active: true };
+const defaultUnitForm: Partial<Unit> = { unit_name: '', symbol: '', is_active: true };
 
 const fieldCls =
   'mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900';
@@ -64,18 +56,38 @@ const txLabel: Record<TxCategory, string> = {
   adjustment: 'Adjustment',
   paid: 'Paid',
   sales: 'Sales',
-  cancelled: 'Canceled Items',
+  cancelled: 'Canceled Products',
 };
 
 const Products = () => {
+  const navigate = useNavigate();
   const { showToast } = useToast();
   const { activeBranchId } = useBranch();
+  const { can } = usePermissions();
+  const { profile: businessProfile } = useBusinessConfig();
+  const productConfig = businessProfile.productConfig;
+  // Part 7: relabel generic fields per business type instead of adding new
+  // ones - perfume's "volume" and cosmetics' "shade" are the same underlying
+  // size/color columns as clothing's, just meaningful under a different name.
+  const sizeLabel = businessProfile.businessType === 'perfume' ? 'Volume' : 'Size';
+  const colorLabel = businessProfile.businessType === 'cosmetics' ? 'Shade' : 'Color';
 
   const [loading, setLoading] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
+  const [itemsSummary, setItemsSummary] = useState({ total: 0, inStock: 0, lowStock: 0, noStock: 0 });
   const [stateProducts, setStateProducts] = useState<Product[]>([]);
   const [transactions, setTransactions] = useState<InventoryTransactionRow[]>([]);
   const [itemsDisplayed, setItemsDisplayed] = useState(false);
+  // Server-side pagination for the Items tab: fetch one small page at a time.
+  const [itemsPageSize, setItemsPageSize] = useState(20);
+  const [itemsPageIndex, setItemsPageIndex] = useState(0); // 0-based
+  const [itemsTotalPages, setItemsTotalPages] = useState(0);
+  const [itemsTotalRows, setItemsTotalRows] = useState(0);
+  const [itemsSearch, setItemsSearch] = useState('');
+  // Made clickable (Total/In Stock/Low Stock/No Stock summary cards): filters
+  // the server-side query, not just the currently-loaded page, so every
+  // matching item shows up regardless of which page it would otherwise fall on.
+  const [itemsStockFilter, setItemsStockFilter] = useState<'in_stock' | 'low_stock' | 'no_stock' | null>(null);
   const [txDisplayed, setTxDisplayed] = useState(false);
   const [inactiveDisplayed, setInactiveDisplayed] = useState(false);
   const [txCategory, setTxCategory] = useState<TxCategory>('adjustment');
@@ -86,13 +98,13 @@ const Products = () => {
   });
   const [txToDate, setTxToDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
 
-  const [itemModalOpen, setItemModalOpen] = useState(false);
   const [stateModalOpen, setStateModalOpen] = useState(false);
   const [itemImportOpen, setItemImportOpen] = useState(false);
+  const [exportingItems, setExportingItems] = useState(false);
 
-  const [itemForm, setItemForm] = useState<ProductForm>(defaultProductForm);
-  const [itemErrors, setItemErrors] = useState<ItemFieldErrors>({});
-  const [itemTouched, setItemTouched] = useState<Partial<Record<string, boolean>>>({});
+  // itemStoreId/stores stay here (not moved to ProductEditor.tsx) because
+  // resolveStores()/loadInactiveStateItems() below still use them - New/Edit
+  // Product itself now lives on its own page/route (see ProductEditor.tsx).
   const [itemStoreId, setItemStoreId] = useState<number | ''>('');
   const [stores, setStores] = useState<StoreType[]>([]);
   const [stateForm, setStateForm] = useState<{ product_id?: number; status: 'active' | 'inactive' }>({
@@ -100,7 +112,87 @@ const Products = () => {
     status: 'inactive',
   });
 
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [categoriesDisplayed, setCategoriesDisplayed] = useState(false);
+  const [categoryModalOpen, setCategoryModalOpen] = useState(false);
+  const [categoryForm, setCategoryForm] = useState<Partial<Category>>(defaultCategoryForm);
+  const [categoryToDelete, setCategoryToDelete] = useState<Category | null>(null);
+
+  const [units, setUnits] = useState<Unit[]>([]);
+  const [unitsDisplayed, setUnitsDisplayed] = useState(false);
+  const [unitModalOpen, setUnitModalOpen] = useState(false);
+  const [unitForm, setUnitForm] = useState<Partial<Unit>>(defaultUnitForm);
+  const [unitToDelete, setUnitToDelete] = useState<Unit | null>(null);
+
   const [itemToDelete, setItemToDelete] = useState<Product | null>(null);
+  const [deleteImpact, setDeleteImpact] = useState<DeleteImpactPreview | null>(null);
+
+  // Phase 3 (Central Delete Architecture): fetch the Impact Preview as soon as
+  // the delete confirm dialog opens, so the user sees what's blocked/kept
+  // before confirming rather than after a failed save.
+  const openDeleteConfirm = (item: Product) => {
+    setItemToDelete(item);
+    setDeleteImpact(null);
+    void deletePreviewService.preview('items', item.product_id).then((res) => {
+      if (res.success && res.data?.preview) setDeleteImpact(res.data.preview);
+    });
+  };
+
+  const closeDeleteConfirm = () => {
+    setItemToDelete(null);
+    setDeleteImpact(null);
+  };
+
+  // Phase 6: consolidates a "duplicate" product's history/stock into another
+  // product, then archives the duplicate - see products.service.ts#mergeItems.
+  const [itemToMerge, setItemToMerge] = useState<Product | null>(null);
+  const [mergeTargetId, setMergeTargetId] = useState<number | ''>('');
+  const [mergeTargetQuery, setMergeTargetQuery] = useState('');
+  const [merging, setMerging] = useState(false);
+
+  const openMergeModal = (item: Product) => {
+    setItemToMerge(item);
+    setMergeTargetId('');
+    setMergeTargetQuery('');
+  };
+
+  const closeMergeModal = () => {
+    setItemToMerge(null);
+    setMergeTargetId('');
+    setMergeTargetQuery('');
+  };
+
+  const confirmMerge = async () => {
+    if (!itemToMerge || !mergeTargetId) return;
+    setMerging(true);
+    const res = await productService.merge(itemToMerge.product_id, Number(mergeTargetId));
+    setMerging(false);
+    if (res.success) {
+      showToast('success', 'Products', 'Products merged');
+      closeMergeModal();
+      if (itemsDisplayed) await loadProducts();
+    } else {
+      showToast('error', 'Merge failed', res.error || 'Could not merge products');
+    }
+  };
+
+  // The generic Impact Preview has no concept of quantity - it only knows
+  // whether a dependent row exists - so on-hand stock (which deleteProduct
+  // requires to be zero) is checked here client-side, from data already on
+  // the row, and merged into the same impact summary the dialog renders.
+  const deleteStockOnHand = itemToDelete ? Number(itemToDelete.stock ?? itemToDelete.quantity ?? 0) : 0;
+  const deleteConfirmImpact: DeleteImpactPreview | null = itemToDelete
+    ? {
+        blocked: Boolean(deleteImpact?.blocked) || deleteStockOnHand > 0,
+        blockedBy: [
+          ...(deleteStockOnHand > 0 ? [{ table: 'stock', label: 'On-hand stock', count: deleteStockOnHand }] : []),
+          ...(deleteImpact?.blockedBy || []),
+        ],
+        cascaded: deleteImpact?.cascaded || [],
+        preserved: deleteImpact?.preserved || [],
+      }
+    : null;
+
 
   const resolveStores = async () => {
     const storeRes = await storeService.list({ branchId: activeBranchId ?? undefined });
@@ -124,16 +216,196 @@ const Products = () => {
     return loaded;
   };
 
-  const loadProducts = async () => {
+  const resolveCategories = async () => {
+    const res = await productService.listCategories({ branchId: activeBranchId ?? undefined });
+    const loaded = res.success && res.data?.categories ? res.data.categories : [];
+    setCategories(loaded);
+    return loaded;
+  };
+
+  const resolveUnits = async () => {
+    const res = await productService.listUnits({ branchId: activeBranchId ?? undefined });
+    const loaded = res.success && res.data?.units ? res.data.units : [];
+    setUnits(loaded);
+    return loaded;
+  };
+
+  const loadCategories = async () => {
     setLoading(true);
-    await resolveStores();
-    const res = await productService.list({
-      limit: 200,
+    await resolveCategories();
+    setLoading(false);
+  };
+
+  const loadUnits = async () => {
+    setLoading(true);
+    await resolveUnits();
+    setLoading(false);
+  };
+
+  const saveCategory = async () => {
+    setLoading(true);
+    const res = categoryForm.category_id
+      ? await productService.updateCategory(categoryForm.category_id, categoryForm)
+      : await productService.createCategory({ ...categoryForm, branchId: activeBranchId ?? undefined } as Partial<Category> & { branchId?: number });
+    setLoading(false);
+    if (res.success) {
+      showToast('success', 'Categories', categoryForm.category_id ? 'Category updated' : 'Category created');
+      setCategoryModalOpen(false);
+      setCategoryForm(defaultCategoryForm);
+      await resolveCategories();
+    } else {
+      showToast('error', 'Categories', res.error || 'Failed to save category');
+    }
+  };
+
+  const handleExportProducts = async () => {
+    setExportingItems(true);
+    const res = await productService.exportXlsx({
+      search: itemsSearch || undefined,
+      stockStatus: itemsStockFilter || undefined,
       branchId: activeBranchId ?? undefined,
     });
-    if (res.success && res.data?.products) setProducts(res.data.products);
-    else showToast('error', 'Items', res.error || 'Failed to load items');
+    setExportingItems(false);
+    if (!res.success || !res.blob) {
+      showToast('error', 'Export failed', res.success ? 'No file returned from server.' : res.error || 'Could not export products');
+      return;
+    }
+    const url = window.URL.createObjectURL(res.blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = res.filename || 'products.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  };
+
+  const [seedingCategories, setSeedingCategories] = useState(false);
+  const handleSeedDefaultCategories = async () => {
+    setSeedingCategories(true);
+    const res = await productService.seedDefaultCategories(activeBranchId ?? undefined);
+    setSeedingCategories(false);
+    if (res.success) {
+      const count = res.data?.categories?.length ?? 0;
+      showToast(
+        'success',
+        'Categories',
+        count > 0 ? `${count} starter categor${count === 1 ? 'y' : 'ies'} ready` : 'Starter categories already exist'
+      );
+      setCategoriesDisplayed(true);
+      await resolveCategories();
+    } else {
+      showToast('error', 'Categories', res.error || 'Failed to seed starter categories');
+    }
+  };
+
+  // Whether every starter category name for the active business type already
+  // exists in this branch - by name only, not by attribute_keys, because
+  // seedDefaultCategories now resyncs attribute_keys on every click (fixing
+  // names that collide across business types, e.g. "Accessories" under both
+  // Electronics and Clothing) - so name-presence alone means "up to date".
+  const starterCategoryDefs = businessProfile.businessType
+    ? DEFAULT_CATEGORIES_BY_BUSINESS_TYPE[businessProfile.businessType]
+    : undefined;
+  const starterCategoriesSeeded = useMemo(() => {
+    if (!starterCategoryDefs?.length) return true;
+    const existingNames = new Set(categories.map((c) => c.name.trim().toLowerCase()));
+    return starterCategoryDefs.every((def) => existingNames.has(def.name.trim().toLowerCase()));
+  }, [categories, starterCategoryDefs]);
+
+  const removeCategory = async (reason: string) => {
+    if (!categoryToDelete) return;
+    const res = await productService.removeCategory(categoryToDelete.category_id, reason);
+    if (res.success) {
+      showToast('success', 'Categories', 'Category deleted');
+      setCategoryToDelete(null);
+      await resolveCategories();
+    } else {
+      showToast('error', 'Categories', res.error || 'Failed to delete category');
+    }
+  };
+
+  const saveUnit = async () => {
+    setLoading(true);
+    const res = unitForm.unit_id
+      ? await productService.updateUnit(unitForm.unit_id, unitForm)
+      : await productService.createUnit({ ...unitForm, branchId: activeBranchId ?? undefined } as Partial<Unit> & { branchId?: number });
     setLoading(false);
+    if (res.success) {
+      showToast('success', 'Units', unitForm.unit_id ? 'Unit updated' : 'Unit created');
+      setUnitModalOpen(false);
+      setUnitForm(defaultUnitForm);
+      await resolveUnits();
+    } else {
+      showToast('error', 'Units', res.error || 'Failed to save unit');
+    }
+  };
+
+  const removeUnit = async (reason: string) => {
+    if (!unitToDelete) return;
+    const res = await productService.removeUnit(unitToDelete.unit_id, reason);
+    if (res.success) {
+      showToast('success', 'Units', 'Unit deleted');
+      setUnitToDelete(null);
+      await resolveUnits();
+    } else {
+      showToast('error', 'Units', res.error || 'Failed to delete unit');
+    }
+  };
+
+  const loadSummary = async () => {
+    const res = await productService.getSummary(activeBranchId ?? undefined);
+    if (res.success && res.data?.summary) setItemsSummary(res.data.summary);
+  };
+
+  const loadProducts = async (
+    nextPageIndex = itemsPageIndex,
+    search = itemsSearch,
+    pageSize = itemsPageSize,
+    stockFilter = itemsStockFilter
+  ) => {
+    setLoading(true);
+    await Promise.all([resolveStores(), resolveCategories(), resolveUnits(), loadSummary()]);
+    const res = await productService.list({
+      page: nextPageIndex + 1,
+      limit: pageSize,
+      search: search || undefined,
+      branchId: activeBranchId ?? undefined,
+      stockStatus: stockFilter ?? undefined,
+    });
+    if (res.success && res.data?.products) {
+      setProducts(res.data.products);
+      setItemsTotalPages(res.data.pagination?.totalPages ?? 0);
+      setItemsTotalRows(res.data.pagination?.total ?? res.data.products.length);
+    } else {
+      showToast('error', 'Products', res.error || 'Failed to load products');
+    }
+    setLoading(false);
+  };
+
+  const handleItemsPageChange = (next: number) => {
+    setItemsPageIndex(next);
+    void loadProducts(next, itemsSearch);
+  };
+
+  const handleItemsPageSizeChange = (nextSize: number) => {
+    setItemsPageSize(nextSize);
+    setItemsPageIndex(0);
+    void loadProducts(0, itemsSearch, nextSize);
+  };
+
+  const handleItemsServerSearch = (value: string) => {
+    setItemsSearch(value);
+    setItemsPageIndex(0);
+    void loadProducts(0, value);
+  };
+
+  const handleItemsStockFilterClick = (status: 'in_stock' | 'low_stock' | 'no_stock') => {
+    const next = itemsStockFilter === status ? null : status;
+    setItemsStockFilter(next);
+    setItemsDisplayed(true);
+    setItemsPageIndex(0);
+    void loadProducts(0, itemsSearch, itemsPageSize, next);
   };
 
   const loadTransactions = async (category: TxCategory = txCategory) => {
@@ -170,13 +442,17 @@ const Products = () => {
       const onlyInactive = res.data.products.filter((item) => !item.is_active || String(item.status).toLowerCase() === 'inactive');
       setStateProducts(onlyInactive);
     } else {
-      showToast('error', 'Items State', res.error || 'Failed to load inactive items');
+      showToast('error', 'Products State', res.error || 'Failed to load inactive products');
     }
     setLoading(false);
   };
 
   useEffect(() => {
-    if (itemsDisplayed) void loadProducts();
+    void loadSummary();
+    if (itemsDisplayed) {
+      setItemsPageIndex(0);
+      void loadProducts(0, itemsSearch);
+    }
     if (txDisplayed) void loadTransactions();
     if (inactiveDisplayed) void loadInactiveStateItems();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -186,30 +462,129 @@ const Products = () => {
     return transactions;
   }, [transactions]);
 
+  const openEditItem = (row: Product) => navigate(`/items/${row.product_id}/edit`);
+
   const itemColumns: ColumnDef<Product>[] = useMemo(
     () => [
-      { accessorKey: 'name', header: 'Item' },
-      { accessorKey: 'quantity', header: 'Quantity', cell: ({ row }) => Number(row.original.quantity ?? row.original.stock ?? 0).toFixed(0) },
-      { accessorKey: 'cost_price', header: 'Cost Price', cell: ({ row }) => `$${Number(row.original.cost_price || 0).toFixed(2)}` },
       {
-        accessorKey: 'amount',
-        header: 'Amount',
+        id: 'code',
+        header: 'Code',
+        cell: ({ row }) => `#PRD${String(row.original.product_id).padStart(4, '0')}`,
+      },
+      {
+        accessorKey: 'name',
+        header: 'Product',
+        // Phase 9: the DataTable is also part of the centralized Dynamic
+        // Product Attributes config - a light caption of up to 2 of the
+        // product's own attribute values (e.g. "Model: iPhone 15 - Storage:
+        // 128GB") instead of a fixed extra column, since different
+        // categories under the same profile use different keys.
         cell: ({ row }) => {
-          const qty = Number(row.original.quantity ?? row.original.stock ?? 0);
-          const cost = Number(row.original.cost_price || 0);
-          return `$${(qty * cost).toFixed(2)}`;
+          const summary = attributeSummary(row.original.attributes);
+          return (
+            <div>
+              <div>{row.original.name}</div>
+              {summary && <div className="text-xs text-slate-400">{summary}</div>}
+            </div>
+          );
         },
       },
-      { accessorKey: 'sell_price', header: 'Sell Price', cell: ({ row }) => `$${Number(row.original.sell_price || 0).toFixed(2)}` },
+      { accessorKey: 'category_name', header: 'Category', cell: ({ row }) => row.original.category_name || '-' },
+      { accessorKey: 'brand', header: 'Brand', cell: ({ row }) => row.original.brand || '-' },
+      {
+        accessorKey: 'unit_name',
+        header: 'Unit',
+        cell: ({ row }) => row.original.unit_symbol || row.original.unit_name || '-',
+      },
+      { accessorKey: 'supplier_name', header: 'Supplier', cell: ({ row }) => row.original.supplier_name || '-' },
+      { accessorKey: 'quantity', header: 'Quantity', cell: ({ row }) => Number(row.original.quantity ?? row.original.stock ?? 0).toFixed(0) },
+      {
+        id: 'status',
+        header: 'Status',
+        cell: ({ row }) => {
+          const qty = Number(row.original.quantity ?? row.original.stock ?? 0);
+          const alert = Number(row.original.stock_alert ?? 0);
+          const state =
+            qty <= 0 ? { label: 'No Stock', cls: 'bg-rose-100 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300' }
+            : qty <= alert ? { label: 'Low Stock', cls: 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300' }
+            : { label: 'In Stock', cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300' };
+          return (
+            <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${state.cls}`}>
+              {state.label}
+            </span>
+          );
+        },
+      },
+      { accessorKey: 'cost_price', header: 'Purchase Price', cell: ({ row }) => `$${Number(row.original.cost_price || 0).toFixed(2)}` },
+      { accessorKey: 'sell_price', header: 'Selling Price', cell: ({ row }) => `$${Number(row.original.sell_price || 0).toFixed(2)}` },
+      {
+        id: 'actions',
+        header: 'Action',
+        cell: ({ row }) => {
+          const item = row.original;
+          const menuItems = [
+            can('items.update') && {
+              label: 'Edit',
+              icon: <Edit3 className="h-4 w-4" aria-hidden="true" />,
+              onClick: () => void openEditItem(item),
+            },
+            can('items.update') && can('items.delete') && {
+              label: 'Merge into...',
+              icon: <GitMerge className="h-4 w-4" aria-hidden="true" />,
+              onClick: () => openMergeModal(item),
+            },
+            can('items.delete') && {
+              label: 'Delete',
+              icon: <Trash2 className="h-4 w-4" aria-hidden="true" />,
+              variant: 'danger' as const,
+              onClick: () => openDeleteConfirm(item),
+            },
+          ].filter(Boolean) as { label: string; icon: React.ReactNode; onClick: () => void; variant?: 'danger' }[];
+          if (!menuItems.length) return null;
+          return (
+            <ActionDropdown
+              trigger={
+                <button
+                  type="button"
+                  aria-label={`Actions for ${item.name}`}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                >
+                  <MoreVertical className="h-4 w-4" aria-hidden="true" />
+                </button>
+              }
+              items={menuItems}
+            />
+          );
+        },
+      },
     ],
-    []
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [can]
   );
 
   const stateColumns: ColumnDef<Product>[] = useMemo(
     () => [
-      { accessorKey: 'name', header: 'Item' },
+      { accessorKey: 'name', header: 'Product' },
       { accessorKey: 'status', header: 'State' },
       { accessorKey: 'stock', header: 'Stock' },
+    ],
+    []
+  );
+
+  const categoryColumns: ColumnDef<Category>[] = useMemo(
+    () => [
+      { accessorKey: 'name', header: 'Category' },
+      { accessorKey: 'description', header: 'Description', cell: ({ row }) => row.original.description || '-' },
+      { accessorKey: 'is_active', header: 'Status', cell: ({ row }) => (row.original.is_active ? 'Active' : 'Inactive') },
+    ],
+    []
+  );
+
+  const unitColumns: ColumnDef<Unit>[] = useMemo(
+    () => [
+      { accessorKey: 'unit_name', header: 'Unit' },
+      { accessorKey: 'symbol', header: 'Symbol', cell: ({ row }) => row.original.symbol || '-' },
+      { accessorKey: 'is_active', header: 'Status', cell: ({ row }) => (row.original.is_active ? 'Active' : 'Inactive') },
     ],
     []
   );
@@ -218,7 +593,7 @@ const Products = () => {
     () => [
       { accessorKey: 'transaction_date', header: 'Date', cell: ({ row }) => new Date(row.original.transaction_date).toLocaleString() },
       { accessorKey: 'transaction_type', header: 'Type' },
-      { accessorKey: 'item_name', header: 'Item', cell: ({ row }) => row.original.item_name || '-' },
+      { accessorKey: 'item_name', header: 'Product', cell: ({ row }) => row.original.item_name || '-' },
       { accessorKey: 'direction', header: 'Dir' },
       { accessorKey: 'quantity', header: 'Qty', cell: ({ row }) => Number(row.original.quantity || 0).toFixed(0) },
       { accessorKey: 'store_name', header: 'Store', cell: ({ row }) => row.original.store_name || '-' },
@@ -226,80 +601,6 @@ const Products = () => {
     ],
     []
   );
-
-  const validateItem = (f: ProductForm, storeId: number | '' = itemStoreId): ItemFieldErrors => {
-    const errs: ItemFieldErrors = {};
-    if (!f.name?.trim()) errs.name = 'Item name is required';
-    else if (f.name.trim().length < 2) errs.name = 'Name must be at least 2 characters';
-    if (!f.cost_price || Number(f.cost_price) <= 0) errs.cost_price = 'Cost price is required';
-    if (!f.sell_price || Number(f.sell_price) <= 0) errs.sell_price = 'Sell price is required';
-    if ((f.stock_alert ?? 0) < 0) errs.stock_alert = 'Stock alert cannot be negative';
-    if ((f.opening_balance ?? 0) < 0) errs.opening_balance = 'Opening balance cannot be negative';
-    if ((f.quantity ?? 0) < 0) errs.quantity = 'Quantity cannot be negative';
-    if (!storeId) errs.store_id = 'Store is required';
-    return errs;
-  };
-
-  const getItemInputCls = (field: string) => {
-    const base = 'h-12 w-full rounded-md border px-3 text-sm text-slate-900 shadow-sm outline-none transition-all placeholder:text-slate-400 focus:ring-2 dark:text-slate-100 dark:placeholder:text-slate-400 bg-white dark:bg-slate-800/80';
-    if (!itemTouched[field]) return `${base} border-slate-300 dark:border-slate-600 focus:border-primary-500 focus:ring-primary-500/20`;
-    if (itemErrors[field]) return `${base} border-red-400 bg-red-50/40 dark:border-red-500 dark:bg-red-900/10 focus:border-red-500 focus:ring-red-500/20`;
-    return `${base} border-emerald-500 focus:border-emerald-500 focus:ring-emerald-500/20`;
-  };
-
-  const touchItem = (field: string) => {
-    setItemTouched(t => ({ ...t, [field]: true }));
-    setItemErrors(validateItem(itemForm));
-  };
-
-  const setItemField = (field: string, value: unknown) => {
-    const next = { ...itemForm, [field]: value } as ProductForm;
-    setItemForm(next);
-    if (itemTouched[field]) setItemErrors(validateItem(next));
-  };
-
-  const closeItemModal = () => {
-    setItemModalOpen(false);
-    setItemErrors({});
-    setItemTouched({});
-  };
-
-  const saveItem = async () => {
-    const errs = validateItem(itemForm, itemStoreId);
-    if (Object.keys(errs).length > 0) {
-      setItemErrors(errs);
-      setItemTouched({
-        name: true,
-        cost_price: true,
-        sell_price: true,
-        stock_alert: true,
-        opening_balance: true,
-        quantity: true,
-        store_id: true,
-      });
-      return;
-    }
-    setLoading(true);
-    const payload = {
-      ...itemForm,
-      is_active: true,
-      storeId: Number(itemStoreId),
-      quantity: Number(itemForm.quantity ?? 0),
-    };
-    const res = itemForm.product_id
-      ? await productService.update(itemForm.product_id, payload)
-      : await productService.create(payload);
-    setLoading(false);
-    if (res.success) {
-      showToast('success', 'Items', itemForm.product_id ? 'Item updated' : 'Item created');
-      closeItemModal();
-      setItemForm(defaultProductForm);
-      setItemStoreId('');
-      await loadProducts();
-    } else {
-      showToast('error', 'Items', res.error || 'Failed to save item');
-    }
-  };
 
   const saveState = async () => {
     if (!stateForm.product_id) return;
@@ -310,12 +611,12 @@ const Products = () => {
     });
     setLoading(false);
     if (res.success) {
-      showToast('success', 'Item State', 'Item state updated');
+      showToast('success', 'Product State', 'Product state updated');
       setStateModalOpen(false);
       await loadInactiveStateItems();
       await loadProducts();
     } else {
-      showToast('error', 'Item State', res.error || 'Failed to update item state');
+      showToast('error', 'Product State', res.error || 'Failed to update product state');
     }
   };
 
@@ -323,55 +624,151 @@ const Products = () => {
     if (!itemToDelete) return;
     const res = await productService.remove(itemToDelete.product_id, reason);
     if (res.success) {
-      showToast('success', 'Items', 'Item deleted');
-      setItemToDelete(null);
+      showToast('success', 'Products', 'Product deleted');
+      closeDeleteConfirm();
       if (itemsDisplayed) await loadProducts();
     } else {
-      showToast('error', 'Items', res.error || 'Failed to delete item');
+      showToast('error', 'Products', res.error || 'Failed to delete product');
     }
   };
+
+  // Phase 9: Excel Import's optional attribute columns - scoped to the
+  // ACTIVE Business Profile, not every category that merely exists in this
+  // branch. A branch that has switched business type before (or been used
+  // to demo more than one) can have leftover categories from a different
+  // profile sitting in the same table - those must not leak Electronics-only
+  // columns (IMEI, RAM, ...) into a Clothing business's Excel template.
+  // A category only counts here if it's either (a) a starter category of the
+  // CURRENT business type, or (b) not a starter category of any OTHER
+  // business type either - i.e. a genuinely custom category the user made
+  // for their own business, not a leftover from switching profiles.
+  const otherOnlyBusinessStarterNames = useMemo(() => {
+    const currentNames = new Set(
+      (starterCategoryDefs || []).map((def) => def.name.trim().toLowerCase())
+    );
+    const names = new Set<string>();
+    for (const [type, defs] of Object.entries(DEFAULT_CATEGORIES_BY_BUSINESS_TYPE)) {
+      if (type === businessProfile.businessType) continue;
+      for (const def of defs) {
+        const key = def.name.trim().toLowerCase();
+        // A name shared with the CURRENT type's own starter list (e.g.
+        // "Accessories" under both Electronics and Clothing) must not be
+        // excluded just because it also appears elsewhere.
+        if (!currentNames.has(key)) names.add(key);
+      }
+    }
+    return names;
+  }, [businessProfile.businessType, starterCategoryDefs]);
+  const activeAttributeKeys = useMemo(() => {
+    const relevant = categories.filter((c) => !otherOnlyBusinessStarterNames.has(c.name.trim().toLowerCase()));
+    return Array.from(new Set(relevant.flatMap((c) => c.attribute_keys || [])));
+  }, [categories, otherOnlyBusinessStarterNames]);
 
   const storeTabs = [
     {
       id: 'items',
-      label: 'Items',
+      label: 'Products',
       icon: Boxes,
       content: (
         <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {[
+              { label: 'Total Products', value: itemsSummary.total, icon: Boxes, cls: 'text-primary-600 dark:text-primary-300 bg-primary-50 dark:bg-primary-500/10', status: null as const },
+              { label: 'In Stock', value: itemsSummary.inStock, icon: PackageCheck, cls: 'text-emerald-600 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/10', status: 'in_stock' as const },
+              { label: 'Low Stock', value: itemsSummary.lowStock, icon: PackageSearch, cls: 'text-amber-600 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10', status: 'low_stock' as const },
+              { label: 'No Stock', value: itemsSummary.noStock, icon: PackageX, cls: 'text-rose-600 dark:text-rose-300 bg-rose-50 dark:bg-rose-500/10', status: 'no_stock' as const },
+            ].map(({ label, value, icon: Icon, cls, status }) => {
+              const isActive = itemsStockFilter === status;
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => {
+                    if (status === null) {
+                      setItemsStockFilter(null);
+                      setItemsDisplayed(true);
+                      setItemsPageIndex(0);
+                      void loadProducts(0, itemsSearch, itemsPageSize, null);
+                    } else {
+                      handleItemsStockFilterClick(status);
+                    }
+                  }}
+                  title={status === null ? 'Show all products' : `Filter to ${label.toLowerCase()}`}
+                  className={`flex items-center gap-3 rounded-2xl border p-4 text-left shadow-sm transition-colors ${
+                    isActive
+                      ? 'border-primary-500 bg-primary-50/60 ring-2 ring-primary-500/30 dark:border-primary-400 dark:bg-primary-500/10'
+                      : 'border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800/60'
+                  }`}
+                >
+                  <div className={`flex h-11 w-11 items-center justify-center rounded-xl ${cls}`}>
+                    <Icon className="h-5 w-5" aria-hidden="true" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</p>
+                    <p className="text-xl font-bold text-slate-900 dark:text-white">{value}</p>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          {itemsStockFilter && (
+            <p className="text-xs font-medium text-primary-700 dark:text-primary-300">
+              Showing only "{itemsStockFilter.replace('_', ' ')}" products.{' '}
+              <button
+                type="button"
+                onClick={() => {
+                  setItemsStockFilter(null);
+                  setItemsPageIndex(0);
+                  void loadProducts(0, itemsSearch, itemsPageSize, null);
+                }}
+                className="underline hover:no-underline"
+              >
+                Clear filter
+              </button>
+            </p>
+          )}
           <div className="flex flex-wrap items-center justify-end gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
             <button
               type="button"
               disabled={loading}
               onClick={() => {
                 setItemsDisplayed(true);
-                void loadProducts();
+                setItemsPageIndex(0);
+                void loadProducts(0, itemsSearch);
               }}
               className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
             >
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
               {loading ? 'Loading...' : 'Display'}
             </button>
-            <button
-              type="button"
-              onClick={() => setItemImportOpen(true)}
-              className="rounded-lg border border-primary-300 px-3 py-2 text-sm font-medium text-primary-700 hover:bg-primary-50 dark:border-primary-500/40 dark:text-primary-300 dark:hover:bg-primary-500/10"
-            >
-              Upload Data
-            </button>
-            <button
-              type="button"
-              onClick={async () => {
-                setItemForm(defaultProductForm);
-                setItemErrors({});
-                setItemTouched({});
-                setItemStoreId('');
-                await resolveStores();
-                setItemModalOpen(true);
-              }}
-              className="rounded-lg bg-primary-600 px-3 py-2 text-sm text-white"
-            >
-              New Item
-            </button>
+            {can('items.create') && (
+              <button
+                type="button"
+                onClick={() => setItemImportOpen(true)}
+                className="rounded-lg border border-primary-300 px-3 py-2 text-sm font-medium text-primary-700 hover:bg-primary-50 dark:border-primary-500/40 dark:text-primary-300 dark:hover:bg-primary-500/10"
+              >
+                Upload Data
+              </button>
+            )}
+            {can('items.view') && (
+              <button
+                type="button"
+                disabled={exportingItems}
+                onClick={() => void handleExportProducts()}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                {exportingItems ? 'Exporting...' : 'Export Excel'}
+              </button>
+            )}
+            {can('items.create') && (
+              <button
+                type="button"
+                onClick={() => navigate('/items/new')}
+                className="rounded-lg bg-primary-600 px-3 py-2 text-sm text-white"
+              >
+                New Product
+              </button>
+            )}
           </div>
           {!itemsDisplayed && !loading && (
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
@@ -387,16 +784,16 @@ const Products = () => {
             data={itemsDisplayed ? products : []}
             columns={itemColumns}
             isLoading={loading}
-            onEdit={async (row) => {
-              setItemForm({ ...row, quantity: Number(row.quantity ?? row.stock ?? 0) });
-              setItemErrors({});
-              setItemTouched({});
-              const loaded = await resolveStores();
-              setItemStoreId(row.store_id || loaded[0]?.store_id || '');
-              setItemModalOpen(true);
+            searchPlaceholder="Search products..."
+            serverPagination={{
+              pageIndex: itemsPageIndex,
+              pageSize: itemsPageSize,
+              pageCount: Math.max(itemsTotalPages, 1),
+              totalRows: itemsTotalRows,
+              onPageChange: handleItemsPageChange,
+              onPageSizeChange: handleItemsPageSizeChange,
             }}
-            onDelete={(row) => setItemToDelete(row)}
-            searchPlaceholder="Search items..."
+            onServerSearch={handleItemsServerSearch}
           />
         </div>
       ),
@@ -496,7 +893,7 @@ const Products = () => {
     },
     {
       id: 'state',
-      label: 'Items State',
+      label: 'Products State',
       icon: BadgeAlert,
       content: (
         <div className="space-y-2">
@@ -538,7 +935,131 @@ const Products = () => {
             data={inactiveDisplayed ? stateProducts : []}
             columns={stateColumns}
             isLoading={loading}
-            searchPlaceholder="Search inactive item..."
+            searchPlaceholder="Search inactive product..."
+          />
+        </div>
+      ),
+    },
+    {
+      id: 'categories',
+      label: 'Categories',
+      icon: Tags,
+      content: (
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center justify-end gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => {
+                setCategoriesDisplayed(true);
+                void loadCategories();
+              }}
+              className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              {loading ? 'Loading...' : 'Display'}
+            </button>
+            {can('items.create') && starterCategoryDefs && !starterCategoriesSeeded && (
+              <button
+                type="button"
+                disabled={seedingCategories}
+                onClick={() => void handleSeedDefaultCategories()}
+                className="inline-flex items-center gap-2 rounded-lg border border-primary-300 px-3 py-2 text-sm text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-primary-700 dark:text-primary-300 dark:hover:bg-primary-900/20"
+              >
+                {seedingCategories
+                  ? 'Adding...'
+                  : `Add ${businessProfile.businessType.charAt(0).toUpperCase()}${businessProfile.businessType.slice(1)} Starter Categories`}
+              </button>
+            )}
+            {can('items.create') && (
+              <button
+                type="button"
+                onClick={() => {
+                  setCategoryForm(defaultCategoryForm);
+                  setCategoryModalOpen(true);
+                }}
+                className="rounded-lg bg-primary-600 px-3 py-2 text-sm text-white"
+              >
+                New Category
+              </button>
+            )}
+          </div>
+          {!categoriesDisplayed && !loading && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+              Click <span className="font-semibold">Display</span> to load data.
+            </div>
+          )}
+          {categoriesDisplayed && !loading && categories.length === 0 && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+              No data found.
+            </div>
+          )}
+          <DataTable
+            data={categoriesDisplayed ? categories : []}
+            columns={categoryColumns}
+            isLoading={loading}
+            onEdit={can('items.update') ? (row) => {
+              setCategoryForm(row);
+              setCategoryModalOpen(true);
+            } : undefined}
+            onDelete={can('items.delete') ? (row) => setCategoryToDelete(row) : undefined}
+            searchPlaceholder="Search categories..."
+          />
+        </div>
+      ),
+    },
+    {
+      id: 'units',
+      label: 'Units',
+      icon: Ruler,
+      content: (
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center justify-end gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => {
+                setUnitsDisplayed(true);
+                void loadUnits();
+              }}
+              className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              {loading ? 'Loading...' : 'Display'}
+            </button>
+            {can('items.create') && (
+              <button
+                type="button"
+                onClick={() => {
+                  setUnitForm(defaultUnitForm);
+                  setUnitModalOpen(true);
+                }}
+                className="rounded-lg bg-primary-600 px-3 py-2 text-sm text-white"
+              >
+                New Unit
+              </button>
+            )}
+          </div>
+          {!unitsDisplayed && !loading && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+              Click <span className="font-semibold">Display</span> to load data.
+            </div>
+          )}
+          {unitsDisplayed && !loading && units.length === 0 && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
+              No data found.
+            </div>
+          )}
+          <DataTable
+            data={unitsDisplayed ? units : []}
+            columns={unitColumns}
+            isLoading={loading}
+            onEdit={can('items.update') ? (row) => {
+              setUnitForm(row);
+              setUnitModalOpen(true);
+            } : undefined}
+            onDelete={can('items.delete') ? (row) => setUnitToDelete(row) : undefined}
+            searchPlaceholder="Search units..."
           />
         </div>
       ),
@@ -547,198 +1068,175 @@ const Products = () => {
 
   return (
     <div>
-      <PageHeader title="Stock Management" description="Manage items, stores, inventory transactions, and item states." />
+      <PageHeader title="Stock Management" description="Manage products, categories, units, stores, inventory transactions, and product states." />
       <Tabs tabs={storeTabs} defaultTab="items" />
 
-      <Modal isOpen={itemModalOpen} onClose={closeItemModal} title={itemForm.product_id ? 'Edit Item' : 'New Item'} size="lg">
-        <form
-          noValidate
-          onSubmit={(e) => { e.preventDefault(); void saveItem(); }}
-          className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-4 p-2"
-        >
-          {/* Item Name — full width, required */}
-          <div className="md:col-span-2">
-            <ItemField
-              label="Item Name"
-              error={itemErrors.name}
-              touched={itemTouched.name}
-              success={!!itemForm.name?.trim() && itemForm.name.trim().length >= 2}
-            >
-              <input
-                className={getItemInputCls('name')}
-                placeholder="Enter item name"
-                value={itemForm.name || ''}
-                onBlur={() => touchItem('name')}
-                onChange={(e) => setItemField('name', e.target.value)}
-              />
-            </ItemField>
-          </div>
-
-          <ItemField
-            label="Cost Price"
-            error={itemErrors.cost_price}
-            touched={itemTouched.cost_price}
-            success={Number(itemForm.cost_price ?? 0) > 0}
-          >
-            <input
-              type="number"
-              step="0.01"
-              min={0}
-              className={getItemInputCls('cost_price')}
-              placeholder="0.00"
-              value={itemForm.cost_price ?? 0}
-              onBlur={() => touchItem('cost_price')}
-              onChange={(e) => setItemField('cost_price', Number(e.target.value || 0))}
-            />
-          </ItemField>
-
-          <ItemField
-            label="Sell Price"
-            error={itemErrors.sell_price}
-            touched={itemTouched.sell_price}
-            success={Number(itemForm.sell_price ?? 0) > 0}
-          >
-            <input
-              type="number"
-              step="0.01"
-              min={0}
-              className={getItemInputCls('sell_price')}
-              placeholder="0.00"
-              value={itemForm.sell_price ?? 0}
-              onBlur={() => touchItem('sell_price')}
-              onChange={(e) => setItemField('sell_price', Number(e.target.value || 0))}
-            />
-          </ItemField>
-
-          <ItemField
-            label="Barcode"
-            error={itemErrors.barcode}
-            touched={itemTouched.barcode}
-            success={!!(itemForm.barcode?.trim())}
-          >
-            <input
-              className={getItemInputCls('barcode')}
-              placeholder="Scan or enter barcode"
-              value={itemForm.barcode || ''}
-              onBlur={() => touchItem('barcode')}
-              onChange={(e) => setItemField('barcode', e.target.value)}
-            />
-          </ItemField>
-
-          <ItemField
-            label="Stock Alert"
-            error={itemErrors.stock_alert}
-            touched={itemTouched.stock_alert}
-            success={(itemForm.stock_alert ?? 0) >= 0}
-          >
-            <input
-              type="number"
-              min={0}
-              step="1"
-              className={getItemInputCls('stock_alert')}
-              placeholder="5"
-              value={itemForm.stock_alert ?? 5}
-              onBlur={() => touchItem('stock_alert')}
-              onChange={(e) => setItemField('stock_alert', Number(e.target.value || 0))}
-            />
-          </ItemField>
-
-          <ItemField
-            label="Opening Balance"
-            error={itemErrors.opening_balance}
-            touched={itemTouched.opening_balance}
-            success={(itemForm.opening_balance ?? 0) >= 0}
-          >
-            <input
-              type="number"
-              min={0}
-              step="1"
-              className={getItemInputCls('opening_balance')}
-              placeholder="0"
-              value={itemForm.opening_balance ?? 0}
-              onBlur={() => touchItem('opening_balance')}
-              onChange={(e) => setItemField('opening_balance', Number(e.target.value || 0))}
-            />
-          </ItemField>
-
-          <ItemField
-            label="Quantity"
-            error={itemErrors.quantity}
-            touched={itemTouched.quantity}
-            success={(itemForm.quantity ?? 0) >= 0}
-          >
-            <input
-              type="number"
-              step="1"
-              min={0}
-              className={getItemInputCls('quantity')}
-              placeholder="0"
-              value={itemForm.quantity ?? 0}
-              onBlur={() => touchItem('quantity')}
-              onChange={(e) => setItemField('quantity', Number(e.target.value || 0))}
-            />
-          </ItemField>
-
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">Store *</label>
-            <select
-              className={`h-12 w-full rounded-md border px-3 text-sm text-slate-900 dark:text-slate-100 outline-none focus:ring-2 bg-white dark:bg-slate-800/80 ${
-                itemTouched.store_id && itemErrors.store_id
-                  ? 'border-red-400 bg-red-50/40 focus:border-red-500 focus:ring-red-500/20'
-                  : 'border-slate-300 dark:border-slate-600 focus:border-primary-500 focus:ring-primary-500/20'
-              }`}
-              value={itemStoreId}
-              onBlur={() => setItemTouched((t) => ({ ...t, store_id: true }))}
-              onChange={(e) => {
-                const next = e.target.value ? Number(e.target.value) : '';
-                setItemStoreId(next);
-                if (itemTouched.store_id) setItemErrors(validateItem(itemForm, next));
-              }}
-            >
-              <option value="">Select store</option>
-              {stores.map((s) => <option key={s.store_id} value={s.store_id}>{s.store_name}</option>)}
-            </select>
-            {itemTouched.store_id && itemErrors.store_id ? (
-              <span className="text-xs font-medium text-red-600">{itemErrors.store_id}</span>
-            ) : null}
-          </div>
-
-          <div className="md:col-span-2 flex justify-end gap-2 pt-1 border-t border-slate-100 dark:border-slate-700 mt-1">
-            <button
-              type="button"
-              onClick={closeItemModal}
-              className="px-3 py-1.5 text-sm rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-1.5 text-sm rounded-lg bg-primary-600 text-white hover:bg-primary-700"
-            >
-              {itemForm.product_id ? 'Update Item' : 'Save Item'}
-            </button>
-          </div>
-        </form>
-      </Modal>
-
-      <Modal isOpen={stateModalOpen} onClose={() => setStateModalOpen(false)} title="Set Item State" size="sm">
+      <Modal isOpen={stateModalOpen} onClose={() => setStateModalOpen(false)} title="Set Product State" size="sm">
         <div className="space-y-3">
-          <label className="text-sm font-medium">Select Item<select className={fieldCls} value={stateForm.product_id ?? ''} onChange={(e) => setStateForm({ ...stateForm, product_id: e.target.value ? Number(e.target.value) : undefined })}><option value="">Select item</option>{products.map((item) => <option key={item.product_id} value={item.product_id}>{item.name}</option>)}</select></label>
+          <label className="text-sm font-medium">Select Product<select className={fieldCls} value={stateForm.product_id ?? ''} onChange={(e) => setStateForm({ ...stateForm, product_id: e.target.value ? Number(e.target.value) : undefined })}><option value="">Select product</option>{products.map((item) => <option key={item.product_id} value={item.product_id}>{item.name}</option>)}</select></label>
           <label className="text-sm font-medium">Select State<select className={fieldCls} value={stateForm.status} onChange={(e) => setStateForm({ ...stateForm, status: e.target.value as 'active' | 'inactive' })}><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
           <div className="flex justify-end gap-2"><button type="button" onClick={() => setStateModalOpen(false)} className="rounded-lg border px-4 py-2">Cancel</button><button type="button" onClick={() => void saveState()} className="rounded-lg bg-primary-600 px-4 py-2 text-white">Save</button></div>
         </div>
       </Modal>
 
-      <ConfirmDialog isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={(reason) => void removeItem(reason || '')} requireReason title="Delete Item" message={`Delete "${itemToDelete?.name || ''}"?`} confirmText="Delete" variant="danger" isLoading={loading} />
+      <ConfirmDialog
+        isOpen={!!itemToDelete}
+        onClose={closeDeleteConfirm}
+        onConfirm={(reason) => void removeItem(reason || '')}
+        requireReason
+        title="Delete Product"
+        message={
+          deleteStockOnHand > 0
+            ? `Delete "${itemToDelete?.name || ''}"? ${deleteStockOnHand} unit(s) of stock remain — reduce to zero first.`
+            : `Delete "${itemToDelete?.name || ''}"?`
+        }
+        confirmText="Delete"
+        variant="danger"
+        isLoading={loading}
+        impact={deleteConfirmImpact}
+      />
+
+      <Modal isOpen={!!itemToMerge} onClose={closeMergeModal} title="Merge Product" size="sm">
+        <div className="space-y-3">
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            Move all history and stock from <strong>{itemToMerge?.name}</strong> into another product, then archive{' '}
+            <strong>{itemToMerge?.name}</strong>. This cannot be undone.
+          </p>
+          <label className="text-sm font-medium">
+            Merge into
+            <select
+              className={fieldCls}
+              value={mergeTargetId}
+              onChange={(e) => setMergeTargetId(e.target.value ? Number(e.target.value) : '')}
+            >
+              <option value="">Select target product</option>
+              {products
+                .filter((p) => p.product_id !== itemToMerge?.product_id)
+                .filter((p) => !mergeTargetQuery.trim() || p.name.toLowerCase().includes(mergeTargetQuery.trim().toLowerCase()))
+                .map((p) => (
+                  <option key={p.product_id} value={p.product_id}>
+                    {p.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <input
+            className={fieldCls}
+            placeholder="Type to filter products..."
+            value={mergeTargetQuery}
+            onChange={(e) => setMergeTargetQuery(e.target.value)}
+          />
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={closeMergeModal} className="rounded-lg border px-4 py-2" disabled={merging}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void confirmMerge()}
+              disabled={!mergeTargetId || merging}
+              className="rounded-lg bg-primary-600 px-4 py-2 text-white disabled:opacity-50"
+            >
+              {merging ? 'Merging...' : 'Merge'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={categoryModalOpen} onClose={() => setCategoryModalOpen(false)} title={categoryForm.category_id ? 'Edit Category' : 'New Category'} size="sm">
+        <form onSubmit={(e) => { e.preventDefault(); void saveCategory(); }} className="space-y-3">
+          <ItemField label="Category Name" required>
+            <input
+              required
+              minLength={2}
+              placeholder="e.g. Electronics"
+              value={categoryForm.name || ''}
+              onChange={(e) => setCategoryForm({ ...categoryForm, name: e.target.value })}
+            />
+          </ItemField>
+          <ItemField label="Description">
+            <input
+              placeholder="Optional description"
+              value={categoryForm.description || ''}
+              onChange={(e) => setCategoryForm({ ...categoryForm, description: e.target.value })}
+            />
+          </ItemField>
+          <ItemField label="Attributes">
+            <p className="text-xs text-slate-500 dark:text-slate-400 -mt-0.5 mb-1">
+              Which fields do products in this category need? (e.g. Model, Storage, RAM for phones)
+            </p>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 max-h-48 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 p-2">
+              {Object.values(PRODUCT_ATTRIBUTE_CATALOG).map((def) => {
+                const checked = (categoryForm.attribute_keys || []).includes(def.key);
+                return (
+                  <label key={def.key} className="flex items-center gap-1.5 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => {
+                        const current = categoryForm.attribute_keys || [];
+                        const next = e.target.checked ? [...current, def.key] : current.filter((k) => k !== def.key);
+                        setCategoryForm({ ...categoryForm, attribute_keys: next });
+                      }}
+                    />
+                    {def.label}
+                  </label>
+                );
+              })}
+            </div>
+          </ItemField>
+          <div className="flex justify-end gap-2 pt-1 border-t border-slate-100 dark:border-slate-700 mt-1">
+            <button type="button" onClick={() => setCategoryModalOpen(false)} className="px-3 py-1.5 text-sm rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
+            <button type="submit" className="px-4 py-1.5 text-sm rounded-lg bg-primary-600 text-white hover:bg-primary-700">{categoryForm.category_id ? 'Update' : 'Save'}</button>
+          </div>
+        </form>
+      </Modal>
+
+      <ConfirmDialog isOpen={!!categoryToDelete} onClose={() => setCategoryToDelete(null)} onConfirm={(reason) => void removeCategory(reason || '')} requireReason title="Delete Category" message={`Delete "${categoryToDelete?.name || ''}"?`} confirmText="Delete" variant="danger" isLoading={loading} />
+
+      <Modal isOpen={unitModalOpen} onClose={() => setUnitModalOpen(false)} title={unitForm.unit_id ? 'Edit Unit' : 'New Unit'} size="sm">
+        <form onSubmit={(e) => { e.preventDefault(); void saveUnit(); }} className="space-y-3">
+          <ItemField label="Unit Name" required>
+            <input
+              required
+              minLength={1}
+              placeholder="e.g. Kilogram"
+              value={unitForm.unit_name || ''}
+              onChange={(e) => setUnitForm({ ...unitForm, unit_name: e.target.value })}
+            />
+          </ItemField>
+          <ItemField label="Symbol">
+            <input
+              placeholder="e.g. kg"
+              value={unitForm.symbol || ''}
+              onChange={(e) => setUnitForm({ ...unitForm, symbol: e.target.value })}
+            />
+          </ItemField>
+          <div className="flex justify-end gap-2 pt-1 border-t border-slate-100 dark:border-slate-700 mt-1">
+            <button type="button" onClick={() => setUnitModalOpen(false)} className="px-3 py-1.5 text-sm rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
+            <button type="submit" className="px-4 py-1.5 text-sm rounded-lg bg-primary-600 text-white hover:bg-primary-700">{unitForm.unit_id ? 'Update' : 'Save'}</button>
+          </div>
+        </form>
+      </Modal>
+
+      <ConfirmDialog isOpen={!!unitToDelete} onClose={() => setUnitToDelete(null)} onConfirm={(reason) => void removeUnit(reason || '')} requireReason title="Delete Unit" message={`Delete "${unitToDelete?.unit_name || ''}"?`} confirmText="Delete" variant="danger" isLoading={loading} />
 
       <ImportUploadModal
         isOpen={itemImportOpen}
         onClose={() => setItemImportOpen(false)}
         importType="items"
-        title="Upload Items"
-        columns={['item', 'quantity', 'cost_price', 'amount', 'sell_price']}
-        templateHeaders={['item', 'quantity', 'cost_price', 'sell_price', 'store_id', 'barcode', 'stock_alert', 'is_active']}
-        hint="store_id is recommended. If omitted, the system assigns Main Store (creates it when missing)."
+        title="Upload Products"
+        columns={['item', 'quantity', 'cost_price', 'amount', 'sell_price', 'category', 'unit', 'supplier', ...activeAttributeKeys]}
+        templateHeaders={[
+          'item', 'quantity', 'cost_price', 'sell_price', 'store_id', 'barcode', 'stock_alert', 'is_active', 'category', 'unit', 'supplier',
+          ...activeAttributeKeys,
+        ]}
+        hint={
+          activeAttributeKeys.length
+            ? `store_id, category, unit, and supplier are all optional. If left blank, the system assigns Main Store / the default category / the default unit / no default supplier. The remaining columns (${activeAttributeKeys
+                .map((k) => PRODUCT_ATTRIBUTE_CATALOG[k]?.label || k)
+                .join(', ')}) are also optional - based on your categories' current Attributes settings - only fill in the ones relevant to each row.`
+            : "store_id, category, unit, and supplier are all optional. If left blank, the system assigns Main Store / the default category / the default unit / no default supplier - and creates a new category, unit, or supplier automatically if you type a name that doesn't exist yet."
+        }
         onImported={async () => {
           if (itemsDisplayed) await loadProducts();
         }}

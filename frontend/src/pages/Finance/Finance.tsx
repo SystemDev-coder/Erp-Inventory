@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router';
 import { ColumnDef } from '@tanstack/react-table';
-import { Plus, RefreshCw, SquarePen, Trash, History, CalendarClock } from 'lucide-react';
+import { Plus, RefreshCw, SquarePen, Trash, History, CalendarClock, ArrowDownCircle, ArrowUpCircle, Landmark, Wallet } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
 import { PageHeader } from '../../components/ui/layout';
 import { DataTable } from '../../components/ui/table/DataTable';
+import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
 import { useToast } from '../../components/ui/toast/Toast';
 import { accountService, Account } from '../../services/account.service';
 import {
@@ -19,6 +20,8 @@ import {
   UnpaidSupplier,
   ExpensePayment,
   PayrollRow,
+  LiabilityAccount,
+  LiabilityPayment,
 } from '../../services/finance.service';
 import { Modal } from '../../components/ui/modal/Modal';
 import DeleteConfirmModal from '../../components/ui/modal/DeleteConfirmModal';
@@ -79,6 +82,24 @@ const [transferForm, setTransferForm] = useState<{
   note?: string;
 }>({});
 const [transferErrors, setTransferErrors] = useState<{ from?: string; to?: string; amount?: string }>({});
+
+const [liabilityAccounts, setLiabilityAccounts] = useState<LiabilityAccount[]>([]);
+const [liabilityPayments, setLiabilityPayments] = useState<LiabilityPayment[]>([]);
+const [isLiabilityPaymentModalOpen, setIsLiabilityPaymentModalOpen] = useState(false);
+const [liabilityPaymentForm, setLiabilityPaymentForm] = useState<{
+  direction: 'payment' | 'borrow';
+  liability_acc_id?: number;
+  pay_from_acc_id?: number;
+  amount?: number;
+  pay_date?: string;
+  reference_no?: string;
+  note?: string;
+}>({ direction: 'payment' });
+const [liabilityPaymentErrors, setLiabilityPaymentErrors] = useState<{ liability?: string; payFrom?: string; amount?: string }>({});
+const [creatingLiabilityAccount, setCreatingLiabilityAccount] = useState(false);
+const [pendingDeleteLiabilityPayment, setPendingDeleteLiabilityPayment] = useState<LiabilityPayment | null>(null);
+const [deletingLiabilityPayment, setDeletingLiabilityPayment] = useState(false);
+
  const [isCustReceiptModalOpen, setIsCustReceiptModalOpen] = useState(false);
  const [isSupReceiptModalOpen, setIsSupReceiptModalOpen] = useState(false);
  const [receiptForm, setReceiptForm] = useState<{
@@ -115,6 +136,11 @@ const [isBudgetModalOpen, setIsBudgetModalOpen] = useState(false);
 const [editingBudget, setEditingBudget] = useState<ExpenseBudget | null>(null);
 const [budgetForm, setBudgetForm] = useState<{ exp_id?: number; fixed_amount?: number; note?: string }>({});
 const [budgetErrors, setBudgetErrors] = useState<{ exp?: string; amount?: string }>({});
+// Expense categories that already have a budget - fetched fresh whenever the
+// New Budget modal opens (not trusted from `expenseBudgets`, which is only
+// populated after clicking "Display"), so the picker doesn't offer to create
+// a second budget for the same category.
+const [budgetedExpIds, setBudgetedExpIds] = useState<Set<number>>(new Set());
 
 const [isChargeModalOpen, setIsChargeModalOpen] = useState(false);
 const [editingChargeId, setEditingChargeId] = useState<number | null>(null);
@@ -259,6 +285,50 @@ const [deletingBudget, setDeletingBudget] = useState(false);
       { accessorKey: 'amount', header: 'Amount', cell: ({ row }) => `$${Number(row.original.amount || 0).toFixed(2)}` },
       { accessorKey: 'reference_no', header: 'Reference' },
       { accessorKey: 'status', header: 'Status' },
+    ],
+    []
+  );
+
+  const liabilityPaymentColumns: ColumnDef<LiabilityPayment>[] = useMemo(
+    () => [
+      { accessorKey: 'pay_date', header: 'Date', cell: ({ row }) => formatDate(row.original.pay_date) },
+      {
+        accessorKey: 'direction',
+        header: 'Type',
+        cell: ({ row }) =>
+          row.original.direction === 'borrow' ? (
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+              Borrow
+            </span>
+          ) : (
+            <span className="rounded-full bg-primary-100 px-2 py-0.5 text-xs font-medium text-primary-700 dark:bg-primary-900/30 dark:text-primary-300">
+              Payment
+            </span>
+          ),
+      },
+      { accessorKey: 'liability_account_name', header: 'Liability Account' },
+      {
+        accessorKey: 'pay_from_account_name',
+        header: 'Account',
+        cell: ({ row }) => (row.original.direction === 'borrow' ? 'Received into ' : 'Paid from ') + (row.original.pay_from_account_name || ''),
+      },
+      { accessorKey: 'amount', header: 'Amount', cell: ({ row }) => `$${Number(row.original.amount || 0).toFixed(2)}` },
+      { accessorKey: 'reference_no', header: 'Reference', cell: ({ row }) => row.original.reference_no || '-' },
+      {
+        id: 'actions',
+        header: 'Actions',
+        cell: ({ row }) => (
+          <div className="flex items-center gap-2">
+            <button
+              className="p-2 text-slate-600 hover:text-red-600"
+              aria-label="Delete liability payment"
+              onClick={() => setPendingDeleteLiabilityPayment(row.original)}
+            >
+              <Trash className="h-5 w-5" />
+            </button>
+          </div>
+        ),
+      },
     ],
     []
   );
@@ -449,6 +519,26 @@ const [deletingBudget, setDeletingBudget] = useState(false);
         header: 'Amount',
         cell: ({ row }) => `$${Number(row.original.fixed_amount || row.original.amount_limit || 0).toFixed(2)}`,
       },
+      {
+        id: 'spent',
+        header: 'Spent (this month)',
+        cell: ({ row }) => `$${Number(row.original.spent_amount || 0).toFixed(2)}`,
+      },
+      {
+        id: 'remaining',
+        header: 'Remaining',
+        cell: ({ row }) => {
+          const limit = Number(row.original.fixed_amount || row.original.amount_limit || 0);
+          const spent = Number(row.original.spent_amount || 0);
+          const remaining = row.original.remaining_amount ?? Math.max(limit - spent, 0);
+          const overBudget = spent > limit;
+          return (
+            <span className={overBudget ? 'font-semibold text-red-600 dark:text-red-400' : undefined}>
+              {overBudget ? `-$${(spent - limit).toFixed(2)} over` : `$${Number(remaining).toFixed(2)}`}
+            </span>
+          );
+        },
+      },
       { accessorKey: 'note', header: 'Note', cell: ({ row }) => row.original.note || '-' },
       { accessorKey: 'created_by', header: 'By', cell: ({ row }) => row.original.created_by || '-' },
       {
@@ -583,9 +673,10 @@ const [deletingBudget, setDeletingBudget] = useState(false);
 
   const loadAll = async () => {
     setLoading(true);
-    const [acc, tr, cr, sr, oi, ch, bd, ex, unpaidC, unpaidS, pr] = await Promise.all([
+    const [acc, tr, lp, cr, sr, oi, ch, bd, ex, unpaidC, unpaidS, pr] = await Promise.all([
       accountService.list({ branchId: activeBranchId ?? undefined }),
       financeService.listTransfers({ fromDate: optionalDateParam(dateRange.fromDate), toDate: optionalDateParam(dateRange.toDate), branchId: activeBranchId ?? undefined }),
+      financeService.listLiabilityPayments({ fromDate: optionalDateParam(dateRange.fromDate), toDate: optionalDateParam(dateRange.toDate), branchId: activeBranchId ?? undefined }),
       financeService.listCustomerReceipts({ fromDate: optionalDateParam(dateRange.fromDate), toDate: optionalDateParam(dateRange.toDate), branchId: activeBranchId ?? undefined }),
       financeService.listSupplierReceipts({ fromDate: optionalDateParam(dateRange.fromDate), toDate: optionalDateParam(dateRange.toDate), branchId: activeBranchId ?? undefined }),
       financeService.listOtherIncome({ fromDate: optionalDateParam(dateRange.fromDate), toDate: optionalDateParam(dateRange.toDate), branchId: activeBranchId ?? undefined }),
@@ -598,6 +689,7 @@ const [deletingBudget, setDeletingBudget] = useState(false);
     ]);
     if (acc.success && acc.data?.accounts) setAccounts(acc.data.accounts);
     if (tr.success && tr.data?.transfers) setTransfers(tr.data.transfers);
+    if (lp.success && lp.data?.payments) setLiabilityPayments(lp.data.payments);
     if (cr.success && cr.data?.receipts) setCustomerReceipts(cr.data.receipts);
     if (sr.success && sr.data?.receipts) setSupplierReceipts(sr.data.receipts);
     if (oi.success && oi.data?.otherIncomes) setOtherIncomes(oi.data.otherIncomes);
@@ -877,6 +969,109 @@ const [deletingBudget, setDeletingBudget] = useState(false);
     } else quickError(res.error || 'Transfer failed');
   };
 
+  const loadLiabilityAccountsFor = async (direction: 'payment' | 'borrow') => {
+    // Fetched fresh (not trusted from state loaded by "Display", which may be stale or
+    // never loaded) so the outstanding-balance figures shown are current. Paying down
+    // only offers liabilities that currently have money owed; borrowing needs the full
+    // list since a brand-new liability (e.g. Note Payable) starts at zero.
+    const res = await financeService.listLiabilityAccounts({
+      branchId: activeBranchId ?? undefined,
+      onlyOutstanding: direction === 'payment',
+    });
+    if (res.success && res.data?.accounts) setLiabilityAccounts(res.data.accounts);
+  };
+
+  const openLiabilityPaymentModal = async () => {
+    setLiabilityPaymentForm({ direction: 'payment' });
+    setLiabilityPaymentErrors({});
+    setIsLiabilityPaymentModalOpen(true);
+    await loadLiabilityAccountsFor('payment');
+  };
+
+  const switchLiabilityPaymentDirection = async (direction: 'payment' | 'borrow') => {
+    setLiabilityPaymentForm((prev) => ({ ...prev, direction, liability_acc_id: undefined }));
+    setLiabilityPaymentErrors({});
+    await loadLiabilityAccountsFor(direction);
+  };
+
+  // Lets the Liability Account field create a brand-new liability (e.g. a specific
+  // bank loan) on the spot instead of being limited to the standing list - mirrors
+  // handleAutoCreateCustomer in SaleCreate.tsx (type a name not in the list, it's
+  // registered and attached automatically on blur).
+  const handleAutoCreateLiabilityAccount = async (typedName: string) => {
+    const name = typedName.trim();
+    if (!name) return;
+    const existing = liabilityAccounts.find((a) => a.name.trim().toLowerCase() === name.toLowerCase());
+    if (existing) {
+      setLiabilityPaymentForm((prev) => ({ ...prev, liability_acc_id: existing.acc_id }));
+      return;
+    }
+    setCreatingLiabilityAccount(true);
+    const res = await financeService.createLiabilityAccount({ name, branch_id: activeBranchId ?? undefined });
+    setCreatingLiabilityAccount(false);
+    if (res.success && res.data?.account) {
+      const created = res.data.account;
+      setLiabilityAccounts((prev) => [...prev, created]);
+      setLiabilityPaymentForm((prev) => ({ ...prev, liability_acc_id: created.acc_id }));
+      showToast('success', 'Finance', `"${created.name}" was added as a new liability account.`);
+    } else {
+      showToast('error', 'Finance', res.error || 'Could not create this liability account.');
+    }
+  };
+
+  const submitLiabilityPayment = async () => {
+    const direction = liabilityPaymentForm.direction;
+    const errs: typeof liabilityPaymentErrors = {};
+    if (!liabilityPaymentForm.liability_acc_id) errs.liability = 'Liability account required';
+    if (!liabilityPaymentForm.pay_from_acc_id) errs.payFrom = 'Account required';
+    if (
+      liabilityPaymentForm.liability_acc_id &&
+      liabilityPaymentForm.pay_from_acc_id &&
+      liabilityPaymentForm.liability_acc_id === liabilityPaymentForm.pay_from_acc_id
+    ) {
+      errs.payFrom = 'Liability and cash accounts must differ';
+    }
+    const counterpartAcc = accounts.find((a) => a.acc_id === liabilityPaymentForm.pay_from_acc_id);
+    if (!counterpartAcc) errs.payFrom = errs.payFrom || 'Select a valid account';
+    const amt = Number(liabilityPaymentForm.amount);
+    if (amt <= 0 || Number.isNaN(amt)) errs.amount = 'Amount must be > 0';
+    setLiabilityPaymentErrors(errs);
+    if (Object.keys(errs).length) return;
+    if (!counterpartAcc) return;
+    if (direction === 'payment' && amt > Number(counterpartAcc.balance || 0)) {
+      return quickError(`Insufficient balance in ${counterpartAcc.name} (available $${Number(counterpartAcc.balance || 0).toFixed(2)})`);
+    }
+
+    const res = await financeService.createLiabilityPayment({
+      liability_acc_id: liabilityPaymentForm.liability_acc_id!,
+      pay_from_acc_id: liabilityPaymentForm.pay_from_acc_id!,
+      amount: amt,
+      pay_date: liabilityPaymentForm.pay_date,
+      reference_no: liabilityPaymentForm.reference_no,
+      note: liabilityPaymentForm.note,
+      direction,
+    });
+    if (res.success) {
+      showToast('success', 'Finance', direction === 'borrow' ? 'New liability recorded' : 'Liability payment recorded');
+      setIsLiabilityPaymentModalOpen(false);
+      setLiabilityPaymentForm({ direction: 'payment' });
+      setLiabilityPaymentErrors({});
+      reloadIfDisplayed();
+    } else quickError(res.error || 'Save failed');
+  };
+
+  const confirmDeleteLiabilityPayment = async () => {
+    if (!pendingDeleteLiabilityPayment) return;
+    setDeletingLiabilityPayment(true);
+    const res = await financeService.deleteLiabilityPayment(pendingDeleteLiabilityPayment.liability_payment_id);
+    setDeletingLiabilityPayment(false);
+    if (res.success) {
+      showToast('success', 'Finance', 'Liability payment deleted');
+      setPendingDeleteLiabilityPayment(null);
+      reloadIfDisplayed();
+    } else quickError(res.error || 'Delete failed');
+  };
+
   const submitCustReceipt = async () => {
     const errs: typeof custReceiptErrors = {};
     if (!receiptForm.acc_id) errs.acc = 'Account required';
@@ -1064,7 +1259,13 @@ const submitBudgetCharge = async () => {
     setBudgetChargeError('Date is required to charge budgets');
     return;
   }
-  if (!expenseBudgets.length) {
+  // Don't trust local `expenseBudgets` state here - it's only populated after
+  // clicking "Display" on this page, and even then it's filtered by the
+  // current date-range picker, which has nothing to do with whether a budget
+  // exists. "Charge Budget" is reachable without either of those, so check
+  // the server directly instead of reporting a false "no budgets available".
+  const budgetsCheck = await financeService.listExpenseBudgets({ branchId: activeBranchId ?? undefined });
+  if (!budgetsCheck.success || !budgetsCheck.data?.budgets?.length) {
     setBudgetChargeError('No expense budgets available. Create one first.');
     return;
   }
@@ -1238,6 +1439,45 @@ const submitBudgetCharge = async () => {
             isLoading={loading}
             searchPlaceholder="Search transfers..."
             onEdit={(row) => openTransferModal(row as AccountTransfer)}
+          />
+        </div>
+      ),
+    },
+    {
+      id: 'liability-payments',
+      label: 'Liability Payments',
+      content: (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {renderDateRange()}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => void displayFinanceData()}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
+              </button>
+              <button
+                onClick={() => void openLiabilityPaymentModal()}
+                className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm text-white"
+              >
+                <Plus className="h-4 w-4" /> New Payment
+              </button>
+            </div>
+          </div>
+          <p className="text-sm text-slate-600 dark:text-slate-400">
+            Pay down any liability account - Sales Tax Payable, Expense Payable, Payroll Payable,
+            Customer Advances, etc.
+          </p>
+          {!financeDisplayed && !loading && emptyHint('Click Display to load data.')}
+          {financeDisplayed && !loading && liabilityPayments.length === 0 && emptyHint('No data found for the selected filters.')}
+          <DataTable
+            data={financeDisplayed ? liabilityPayments : []}
+            columns={liabilityPaymentColumns}
+            isLoading={loading}
+            searchPlaceholder="Search liability payments..."
           />
         </div>
       ),
@@ -1597,10 +1837,16 @@ const submitBudgetCharge = async () => {
                 <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
               </button>
               <button
-                onClick={() => {
+                onClick={async () => {
                   setEditingBudget(null);
+                  const res = await financeService.listExpenseBudgets({ branchId: activeBranchId ?? undefined });
+                  const taken = new Set(
+                    (res.success && res.data?.budgets ? res.data.budgets : []).map((b) => Number(b.exp_id))
+                  );
+                  setBudgetedExpIds(taken);
+                  const firstAvailable = expenses.find((ex) => !taken.has(Number(ex.exp_id)));
                   setBudgetForm({
-                    exp_id: expenses[0]?.exp_id,
+                    exp_id: firstAvailable?.exp_id,
                     fixed_amount: undefined,
                     note: '',
                   });
@@ -1847,6 +2093,204 @@ const submitBudgetCharge = async () => {
               className="rounded bg-primary-600 px-4 py-2 text-white"
             >
               Save
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={isLiabilityPaymentModalOpen}
+        onClose={() => setIsLiabilityPaymentModalOpen(false)}
+        title={liabilityPaymentForm.direction === 'borrow' ? 'Record New Liability' : 'New Liability Payment'}
+        size="md"
+      >
+        <div className="space-y-5 text-slate-900 dark:text-slate-100">
+          <div className="grid grid-cols-2 gap-1.5 rounded-xl bg-slate-100 p-1.5 dark:bg-slate-800">
+            <button
+              type="button"
+              onClick={() => void switchLiabilityPaymentDirection('payment')}
+              className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold transition-all ${
+                liabilityPaymentForm.direction === 'payment'
+                  ? 'bg-white text-primary-700 shadow-sm dark:bg-slate-900 dark:text-primary-300'
+                  : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
+              }`}
+            >
+              <ArrowDownCircle className="h-4 w-4" aria-hidden="true" /> Pay Down
+            </button>
+            <button
+              type="button"
+              onClick={() => void switchLiabilityPaymentDirection('borrow')}
+              className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold transition-all ${
+                liabilityPaymentForm.direction === 'borrow'
+                  ? 'bg-white text-amber-700 shadow-sm dark:bg-slate-900 dark:text-amber-300'
+                  : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
+              }`}
+            >
+              <ArrowUpCircle className="h-4 w-4" aria-hidden="true" /> Borrow (New Liability)
+            </button>
+          </div>
+
+          <div>
+            <label htmlFor="liability-account" className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-200">
+              <span className="inline-flex items-center gap-1.5">
+                <Landmark className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" /> Liability Account
+              </span>
+            </label>
+            <SearchableCombobox<number>
+              id="liability-account"
+              value={liabilityPaymentForm.liability_acc_id ?? ''}
+              options={liabilityAccounts.map((a) => ({
+                value: a.acc_id,
+                label:
+                  liabilityPaymentForm.direction === 'payment'
+                    ? `${a.name} — $${Number(a.outstanding_balance || 0).toFixed(2)} owed`
+                    : a.name,
+              }))}
+              placeholder={creatingLiabilityAccount ? 'Adding…' : 'Select or type a new liability name'}
+              disabled={creatingLiabilityAccount}
+              hasError={!!liabilityPaymentErrors.liability}
+              allowCustom
+              onCustomCommit={(text) => void handleAutoCreateLiabilityAccount(text)}
+              onChange={(nextValue) =>
+                setLiabilityPaymentForm({
+                  ...liabilityPaymentForm,
+                  liability_acc_id: nextValue === '' ? undefined : Number(nextValue),
+                })
+              }
+            />
+            <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+              Type a name not in the list to create a new liability account, e.g. a specific loan.
+            </p>
+            {liabilityPaymentErrors.liability && (
+              <p className="mt-1 text-xs text-red-500">{liabilityPaymentErrors.liability}</p>
+            )}
+          </div>
+
+          <div>
+            <label htmlFor="liability-pay-from" className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-200">
+              <span className="inline-flex items-center gap-1.5">
+                <Wallet className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
+                {liabilityPaymentForm.direction === 'borrow' ? 'Receive Into Account' : 'Pay From Account'}
+              </span>
+            </label>
+            <SearchableCombobox<number>
+              id="liability-pay-from"
+              value={liabilityPaymentForm.pay_from_acc_id ?? ''}
+              options={accounts.map((a) => ({ value: a.acc_id, label: `${a.name} ($${Number(a.balance || 0).toFixed(2)})` }))}
+              placeholder="Select account"
+              hasError={!!liabilityPaymentErrors.payFrom}
+              onChange={(nextValue) =>
+                setLiabilityPaymentForm({
+                  ...liabilityPaymentForm,
+                  pay_from_acc_id: nextValue === '' ? undefined : Number(nextValue),
+                })
+              }
+            />
+            {liabilityPaymentErrors.payFrom && (
+              <p className="mt-1 text-xs text-red-500">{liabilityPaymentErrors.payFrom}</p>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label htmlFor="liability-amount" className="text-sm block">
+              <span className="mb-1.5 block font-semibold text-slate-700 dark:text-slate-200">Amount</span>
+              <input
+                id="liability-amount"
+                type="number"
+                step="0.01"
+                className={fieldClass}
+                value={liabilityPaymentForm.amount ?? ''}
+                onChange={(e) => setLiabilityPaymentForm({ ...liabilityPaymentForm, amount: Number(e.target.value) })}
+              />
+              {liabilityPaymentErrors.amount && (
+                <p className="mt-1 text-xs text-red-500">{liabilityPaymentErrors.amount}</p>
+              )}
+            </label>
+            <label htmlFor="liability-pay-date" className="text-sm block">
+              <span className="mb-1.5 block font-semibold text-slate-700 dark:text-slate-200">Date</span>
+              <input
+                id="liability-pay-date"
+                type="date"
+                className={fieldClass}
+                value={liabilityPaymentForm.pay_date ?? ''}
+                onChange={(e) => setLiabilityPaymentForm({ ...liabilityPaymentForm, pay_date: e.target.value })}
+              />
+            </label>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label className="text-sm block">
+              <span className="mb-1.5 block font-semibold text-slate-700 dark:text-slate-200">Reference</span>
+              <input
+                className={fieldClass}
+                value={liabilityPaymentForm.reference_no || ''}
+                onChange={(e) => setLiabilityPaymentForm({ ...liabilityPaymentForm, reference_no: e.target.value })}
+              />
+            </label>
+            <label className="text-sm block">
+              <span className="mb-1.5 block font-semibold text-slate-700 dark:text-slate-200">Note</span>
+              <input
+                className={fieldClass}
+                value={liabilityPaymentForm.note || ''}
+                onChange={(e) => setLiabilityPaymentForm({ ...liabilityPaymentForm, note: e.target.value })}
+              />
+            </label>
+          </div>
+
+          {(() => {
+            const liabName = liabilityAccounts.find((a) => a.acc_id === liabilityPaymentForm.liability_acc_id)?.name;
+            const cashName = accounts.find((a) => a.acc_id === liabilityPaymentForm.pay_from_acc_id)?.name;
+            const amt = Number(liabilityPaymentForm.amount || 0);
+            if (!liabName || !cashName || amt <= 0) return null;
+            const isBorrow = liabilityPaymentForm.direction === 'borrow';
+            return (
+              <div
+                className={`flex items-start gap-2 rounded-lg border px-3 py-2.5 text-xs ${
+                  isBorrow
+                    ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200'
+                    : 'border-primary-200 bg-primary-50 text-primary-800 dark:border-primary-900/40 dark:bg-primary-900/20 dark:text-primary-200'
+                }`}
+              >
+                {isBorrow ? (
+                  <ArrowUpCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                ) : (
+                  <ArrowDownCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                )}
+                <span>
+                  {isBorrow ? (
+                    <>
+                      ${amt.toFixed(2)} will be added to <strong>{cashName}</strong>, and{' '}
+                      <strong>{liabName}</strong> will increase by the same amount.
+                    </>
+                  ) : (
+                    <>
+                      ${amt.toFixed(2)} will be paid from <strong>{cashName}</strong>, and{' '}
+                      <strong>{liabName}</strong> will decrease by the same amount.
+                    </>
+                  )}
+                </span>
+              </div>
+            );
+          })()}
+
+          <div className="flex justify-end gap-2 border-t border-slate-200 pt-4 dark:border-slate-700">
+            <button
+              type="button"
+              onClick={() => setIsLiabilityPaymentModalOpen(false)}
+              className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={submitLiabilityPayment}
+              className={`rounded-lg px-4 py-2 text-sm font-semibold text-white ${
+                liabilityPaymentForm.direction === 'borrow'
+                  ? 'bg-amber-600 hover:bg-amber-700'
+                  : 'bg-primary-600 hover:bg-primary-700'
+              }`}
+            >
+              {liabilityPaymentForm.direction === 'borrow' ? 'Record Liability' : 'Save Payment'}
             </button>
           </div>
         </div>
@@ -2224,12 +2668,19 @@ const submitBudgetCharge = async () => {
               onChange={(e) => setBudgetForm({ ...budgetForm, exp_id: Number(e.target.value) })}
             >
               <option value="">Select</option>
-              {expenses.map((ex) => (
-                <option key={ex.exp_id} value={ex.exp_id}>
-                  {ex.name}
-                </option>
-              ))}
+              {expenses
+                .filter((ex) => !budgetedExpIds.has(Number(ex.exp_id)) || Number(ex.exp_id) === Number(budgetForm.exp_id))
+                .map((ex) => (
+                  <option key={ex.exp_id} value={ex.exp_id}>
+                    {ex.name}
+                  </option>
+                ))}
             </select>
+            {!editingBudget && expenses.length > 0 && expenses.every((ex) => budgetedExpIds.has(Number(ex.exp_id))) && (
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                Every expense category already has a budget.
+              </p>
+            )}
             {budgetErrors.exp && <p className="mt-1 text-xs text-red-500">{budgetErrors.exp}</p>}
           </label>
           <label className="text-sm">
@@ -2638,6 +3089,19 @@ const submitBudgetCharge = async () => {
         title="Delete Expense Charge?"
         message="This expense charge will be deleted permanently."
         isDeleting={deletingCharge}
+      />
+
+      <DeleteConfirmModal
+        isOpen={!!pendingDeleteLiabilityPayment}
+        onClose={() => {
+          if (!deletingLiabilityPayment) setPendingDeleteLiabilityPayment(null);
+        }}
+        onConfirm={() => void confirmDeleteLiabilityPayment()}
+        title="Delete Liability Payment?"
+        message="This payment will be deleted and the paying account's balance will be adjusted."
+        itemName={pendingDeleteLiabilityPayment?.liability_account_name}
+        isDeleting={deletingLiabilityPayment}
+        requireReason={false}
       />
 
       <DeleteConfirmModal

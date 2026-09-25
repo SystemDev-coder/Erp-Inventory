@@ -18,6 +18,28 @@ export const syncLowStockNotifications = async (
   if (!branchId || !productIds.length) return;
 
   for (const productId of productIds) {
+    // Notifications are a best-effort side effect, not part of the caller's real
+    // business transaction (a purchase/sale save). A savepoint means a failure here
+    // (e.g. a transient RLS/session hiccup) can never abort the caller's transaction -
+    // without it, one failed INSERT leaves the whole Postgres transaction aborted, so
+    // even the caller's own COMMIT would fail even though the JS exception was caught.
+    await client.query('SAVEPOINT sp_low_stock_notify');
+    try {
+      await syncOneProductLowStockNotification(client, input, branchId, productId);
+      await client.query('RELEASE SAVEPOINT sp_low_stock_notify');
+    } catch (error) {
+      await client.query('ROLLBACK TO SAVEPOINT sp_low_stock_notify');
+      console.error(`syncLowStockNotifications failed for product ${productId}:`, (error as Error)?.message);
+    }
+  }
+};
+
+const syncOneProductLowStockNotification = async (
+  client: PoolClient,
+  input: SyncLowStockInput,
+  branchId: number,
+  productId: number
+) => {
     const stockResult = await client.query<{
       product_id: number;
       item_name: string;
@@ -53,7 +75,7 @@ export const syncLowStockNotifications = async (
     );
 
     const current = stockResult.rows[0];
-    if (!current) continue;
+    if (!current) return;
 
     const currentQty = Number(current.qty || '0');
     const threshold = Number(current.threshold || '5');
@@ -133,5 +155,4 @@ export const syncLowStockNotifications = async (
         [branchId, productId]
       );
     }
-  }
 };
