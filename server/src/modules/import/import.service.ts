@@ -71,9 +71,6 @@ type CustomerImportRow = {
 
 type SupplierImportRow = {
   supplier_name: string;
-  company_name: string | null;
-  contact_person: string | null;
-  contact_phone: string | null;
   phone: string | null;
   location: string | null;
   remaining_balance: number;
@@ -588,18 +585,13 @@ const parseCustomerRow = (raw: Record<string, unknown>): ParseResult<CustomerImp
 
 const parseSupplierRow = (raw: Record<string, unknown>): ParseResult<SupplierImportRow> => {
   const errors: string[] = [];
-  // A bare "Name" column is ambiguous between the business name and a contact's
-  // name - most uploads that have it alongside a "Company" column mean the
-  // latter, so "name" is a contact_person alias, not a supplier_name one.
-  // "Company"/"Company Name" still fall back to supplier_name (checked last)
-  // when there's no more specific business-name column, since that's the most
-  // common header for it in practice.
+  // "Company"/"Company Name" are accepted as aliases for the supplier's own
+  // name (the only name ims.suppliers actually has a column for) - not a
+  // separate field. Same for "Contact"/"Contact Person": there's no column
+  // to store a contact name separately, so it's not collected at all.
   const supplierName =
     readString(raw, ['supplier_name', 'supplier', 'business_name', 'company', 'company_name']) || '';
-  const companyName = readString(raw, ['company_name', 'company']);
-  const contactPerson = readString(raw, ['contact_person', 'contact_name', 'contact', 'name']);
-  const contactPhone = readString(raw, ['contact_phone']);
-  const phone = readString(raw, ['phone', 'mobile']);
+  const phone = readString(raw, ['phone', 'mobile', 'contact_phone']);
   const location = readString(raw, ['location', 'country']);
   const remainingBalanceRaw = readRawValue(raw, [
     'remaining_balance',
@@ -612,18 +604,6 @@ const parseSupplierRow = (raw: Record<string, unknown>): ParseResult<SupplierImp
     errors.push('supplier_name is required');
   } else if (supplierName.length > 140) {
     errors.push('supplier_name must be at most 140 characters');
-  }
-
-  if (companyName && companyName.length > 80) {
-    errors.push('company_name must be at most 80 characters');
-  }
-
-  if (contactPerson && contactPerson.length > 140) {
-    errors.push('contact_person must be at most 140 characters');
-  }
-
-  if (contactPhone && contactPhone.length > 30) {
-    errors.push('contact_phone must be at most 30 characters');
   }
 
   if (phone && phone.length > 30) {
@@ -648,9 +628,6 @@ const parseSupplierRow = (raw: Record<string, unknown>): ParseResult<SupplierImp
 
   const data: SupplierImportRow = {
     supplier_name: supplierName,
-    company_name: companyName || null,
-    contact_person: contactPerson || null,
-    contact_phone: contactPhone || null,
     phone: phone || null,
     location: location || null,
     remaining_balance: remainingBalance,
@@ -1298,10 +1275,7 @@ const insertSupplier = async (
   options: ImportExecutionOptions
 ): Promise<'inserted' | 'updated'> => {
   const shape = await detectSupplierShape();
-  const locationValue =
-    shape.locationColumn === 'company_name'
-      ? row.company_name ?? row.location ?? null
-      : row.location ?? row.company_name ?? null;
+  const locationValue = row.location ?? null;
 
   const existing = await client.query<{ supplier_id: number }>(
     `SELECT supplier_id

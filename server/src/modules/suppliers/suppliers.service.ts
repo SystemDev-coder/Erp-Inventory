@@ -11,11 +11,7 @@ import { softDeleteById } from '../../db/softDelete';
 export interface Supplier {
   supplier_id: number;
   supplier_name: string;
-  company_name: string | null;
-  contact_person: string | null;
-  contact_phone: string | null;
   phone: string | null;
-  address: string | null;
   location: string | null;
   remaining_balance: number;
   is_active: boolean;
@@ -26,11 +22,7 @@ export interface Supplier {
 
 export interface SupplierInput {
   supplierName: string;
-  companyName?: string;
-  contactPerson?: string;
-  contactPhone?: string;
   phone?: string;
-  address?: string;
   location?: string;
   remainingBalance?: number;
   isActive?: boolean;
@@ -213,11 +205,7 @@ const mapSupplier = (row: {
 }): Supplier => ({
   supplier_id: Number(row.supplier_id),
   supplier_name: row.supplier_name_value,
-  company_name: row.supplier_location_value,
-  contact_person: null,
-  contact_phone: null,
   phone: row.phone,
-  address: null,
   location: row.supplier_location_value,
   remaining_balance: Number(row.supplier_balance_value || 0),
   is_active: Boolean(row.is_active),
@@ -452,8 +440,8 @@ export const suppliersService = {
         [
           context.branchId,
           input.supplierName,
-          input.companyName ?? input.location ?? null,
-          input.phone ?? input.contactPhone ?? null,
+          input.location ?? null,
+          input.phone ?? null,
           opening,
           input.isActive ?? true,
         ]
@@ -483,13 +471,13 @@ export const suppliersService = {
       updates.push(`${shape.nameColumn} = $${parameter++}`);
       values.push(input.supplierName);
     }
-    if (input.companyName !== undefined || input.location !== undefined) {
+    if (input.location !== undefined) {
       updates.push(`${shape.locationColumn} = $${parameter++}`);
-      values.push(input.companyName ?? input.location ?? null);
+      values.push(input.location ?? null);
     }
-    if (input.phone !== undefined || input.contactPhone !== undefined) {
+    if (input.phone !== undefined) {
       updates.push(`phone = $${parameter++}`);
-      values.push(input.phone ?? input.contactPhone ?? null);
+      values.push(input.phone ?? null);
     }
     const wantsOpeningUpdate = input.remainingBalance !== undefined;
     if (wantsOpeningUpdate) {

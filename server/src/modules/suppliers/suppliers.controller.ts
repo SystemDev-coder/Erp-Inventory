@@ -11,11 +11,7 @@ import { listPaginationSchema, paginationMeta } from '../../utils/pagination';
 
 const supplierSchema = z.object({
   supplierName: z.string().min(1, 'Supplier name is required'),
-  companyName: z.string().optional().nullable(),
-  contactPerson: z.string().optional().nullable(),
-  contactPhone: z.string().optional().nullable(),
   phone: z.string().optional().nullable(),
-  address: z.string().optional().nullable(),
   location: z.string().optional().nullable(),
   remainingBalance: z.number().nonnegative().optional(),
   isActive: z.boolean().optional(),
@@ -26,11 +22,7 @@ type SupplierFormUpdateInput = Partial<SupplierFormInput>;
 
 const normalizeSupplierInput = (input: SupplierFormInput): SupplierServiceInput => ({
   supplierName: input.supplierName,
-  companyName: input.companyName ?? undefined,
-  contactPerson: input.contactPerson ?? undefined,
-  contactPhone: input.contactPhone ?? undefined,
   phone: input.phone ?? undefined,
-  address: input.address ?? undefined,
   location: input.location ?? undefined,
   remainingBalance: input.remainingBalance,
   isActive: input.isActive,
@@ -40,11 +32,7 @@ const normalizeSupplierUpdateInput = (
   input: SupplierFormUpdateInput
 ): Partial<SupplierServiceInput> => ({
   supplierName: input.supplierName,
-  companyName: input.companyName ?? undefined,
-  contactPerson: input.contactPerson ?? undefined,
-  contactPhone: input.contactPhone ?? undefined,
   phone: input.phone ?? undefined,
-  address: input.address ?? undefined,
   location: input.location ?? undefined,
   remainingBalance: input.remainingBalance,
   isActive: input.isActive,
