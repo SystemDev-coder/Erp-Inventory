@@ -61,9 +61,6 @@ const PurchaseEditor = () => {
   const [newSupplier, setNewSupplier] = useState<Supplier>({
     supplier_id: 0,
     supplier_name: '',
-    company_name: '',
-    contact_person: '',
-    contact_phone: '',
     phone: '',
     location: '',
     remaining_balance: 0,
@@ -627,9 +624,6 @@ const PurchaseEditor = () => {
       setLoading(true);
       const res = await supplierService.create({
         supplier_name: newSupplier.supplier_name,
-        company_name: newSupplier.company_name,
-        contact_person: newSupplier.contact_person,
-        contact_phone: newSupplier.contact_phone,
         phone: newSupplier.phone,
         location: newSupplier.location,
         remaining_balance: newSupplier.remaining_balance ?? 0,
@@ -777,33 +771,6 @@ const PurchaseEditor = () => {
                     value={newSupplier.supplier_name}
                     onChange={(e) => setNewSupplier({ ...newSupplier, supplier_name: e.target.value })}
                     placeholder="Supplier name"
-                  />
-                </label>
-                <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-                  Company
-                  <input
-                    className={fieldCls}
-                    value={newSupplier.company_name || ''}
-                    onChange={(e) => setNewSupplier({ ...newSupplier, company_name: e.target.value })}
-                    placeholder="Company"
-                  />
-                </label>
-                <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-                  Contact Person
-                  <input
-                    className={fieldCls}
-                    value={newSupplier.contact_person || ''}
-                    onChange={(e) => setNewSupplier({ ...newSupplier, contact_person: e.target.value })}
-                    placeholder="Contact person"
-                  />
-                </label>
-                <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-                  Contact Phone
-                  <input
-                    className={fieldCls}
-                    value={newSupplier.contact_phone || ''}
-                    onChange={(e) => setNewSupplier({ ...newSupplier, contact_phone: e.target.value })}
-                    placeholder="+1 555 000 1234"
                   />
                 </label>
                 <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">

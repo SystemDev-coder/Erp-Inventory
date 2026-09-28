@@ -100,9 +100,6 @@ const Purchases = () => {
   const [supplierForm, setSupplierForm] = useState<Supplier>({
     supplier_id: 0,
     supplier_name: '',
-    company_name: '',
-    contact_person: '',
-    contact_phone: '',
     phone: '',
     location: '',
     remaining_balance: 0,
@@ -280,9 +277,6 @@ const Purchases = () => {
     setSupplierForm(preset ?? {
       supplier_id: 0,
       supplier_name: '',
-      company_name: '',
-      contact_person: '',
-      contact_phone: '',
       phone: '',
       location: '',
       remaining_balance: 0,
@@ -497,10 +491,7 @@ const Purchases = () => {
 
   const supplierColumns: ColumnDef<Supplier>[] = [
     { accessorKey: 'supplier_name', header: 'Supplier' },
-    { accessorKey: 'company_name', header: 'Company', cell: ({ row }) => row.original.company_name || '-' },
-    { accessorKey: 'contact_person', header: 'Contact' },
-    { accessorKey: 'contact_phone', header: 'Contact Phone', cell: ({ row }) => row.original.contact_phone || '-' },
-    { accessorKey: 'phone', header: 'Phone' },
+    { accessorKey: 'phone', header: 'Phone', cell: ({ row }) => row.original.phone || '-' },
     { accessorKey: 'location', header: 'Location', cell: ({ row }) => row.original.location || '-' },
     {
       accessorKey: 'remaining_balance',
@@ -1012,51 +1003,17 @@ const Purchases = () => {
             </SupplierField>
           </div>
 
-          <SupplierField label="Company" required>
-            <input
-              required
-              placeholder="Company name"
-              value={supplierForm.company_name || ''}
-              onChange={(e) => setSupplierField('company_name', e.target.value)}
-            />
-          </SupplierField>
-
-          <SupplierField label="Contact Person" required>
-            <input
-              required
-              placeholder="Contact person name"
-              value={supplierForm.contact_person || ''}
-              onChange={(e) => setSupplierField('contact_person', e.target.value)}
-            />
-          </SupplierField>
-
-          <SupplierField label="Contact Phone" required>
+          <SupplierField label="Phone">
             <input
               type="tel"
-              required
-              pattern=".*\d.*\d.*"
-              title="Please add at least 2 numbers"
-              placeholder="+1 555 000 1234"
-              value={supplierForm.contact_phone || ''}
-              onChange={(e) => setSupplierField('contact_phone', e.target.value)}
-            />
-          </SupplierField>
-
-          <SupplierField label="Phone" required>
-            <input
-              type="tel"
-              required
-              pattern=".*\d.*\d.*"
-              title="Please add at least 2 numbers"
               placeholder="+1 555 123 4567"
               value={supplierForm.phone || ''}
               onChange={(e) => setSupplierField('phone', e.target.value)}
             />
           </SupplierField>
 
-          <SupplierField label="Location" required>
+          <SupplierField label="Location">
             <input
-              required
               placeholder="City / area"
               value={supplierForm.location || ''}
               onChange={(e) => setSupplierField('location', e.target.value)}
@@ -1106,9 +1063,6 @@ const Purchases = () => {
         title="Upload Suppliers"
         columns={[
           'supplier_name',
-          'company_name',
-          'contact_person',
-          'contact_phone',
           'phone',
           'location',
           'remaining_balance',
@@ -1116,9 +1070,6 @@ const Purchases = () => {
         ]}
         templateHeaders={[
           'supplier_name',
-          'company_name',
-          'contact_person',
-          'contact_phone',
           'phone',
           'location',
           'remaining_balance',
