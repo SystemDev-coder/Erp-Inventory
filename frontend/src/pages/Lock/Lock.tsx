@@ -5,6 +5,7 @@ import {
   Lock as LockIcon,
   LogOut,
   ArrowLeft,
+  ArrowRight,
   Eye,
   EyeOff,
   Loader2,
@@ -14,9 +15,9 @@ import {
   Check,
   AlertTriangle,
   X,
+  KeyRound,
 } from 'lucide-react';
 import { authService } from '../../services/auth.service';
-import Footer from '../../layout/Footer';
 
 // ─────────────────────────────────────────────────────────────────────────
 // Bilingual support (English / Somali)
@@ -61,9 +62,28 @@ const translations = {
     confirmSwitchBody: 'You will leave this locked session and return to the sign-in page.',
     confirmContinue: 'Continue',
     cancel: 'Cancel',
-    confirmGenericTitle: 'Are you sure?',
-    confirmGenericBody: 'Do you want to continue?',
     close: 'Close',
+
+    // ── Forgot / Reset flow ──────────────────────────────────────────
+    forgotLockPassword: 'Forgot lock password?',
+    resetTitle: 'Reset Lock Password',
+    resetStepVerifyHint: 'Enter your account password to verify it\'s you.',
+    resetStepNewHint: 'Verified. Choose a new lock password.',
+    accountPassword: 'Account Password',
+    accountPasswordPlaceholder: 'Enter your account password',
+    newLockPassword: 'New Lock Password',
+    newLockPasswordPlaceholder: 'Choose a new lock password',
+    confirmNewLockPassword: 'Confirm New Lock Password',
+    confirmNewLockPlaceholder: 'Re-enter the new lock password',
+    verify: 'Verify',
+    verifying: 'Verifying…',
+    saveNewLock: 'Save & Unlock',
+    savingNewLock: 'Saving…',
+    back: 'Back',
+    step: 'Step',
+    of: 'of',
+    errLoginRequired: 'Account password is required.',
+    errLoginInvalid: 'Incorrect account password. Please try again.',
   },
   so: {
     sessionLocked: 'Sesshanka Waa La Xidhay',
@@ -102,9 +122,28 @@ const translations = {
     confirmSwitchBody: 'Waxaad ka baxaysaa sesshankan xidhan oo waxaad ku noqonaysaa bogga gelitaanka.',
     confirmContinue: 'Sii wad',
     cancel: 'Jooji',
-    confirmGenericTitle: 'Ma hubtaa?',
-    confirmGenericBody: 'Ma rabtaa inaad sii wadato?',
     close: 'Xir',
+
+    // ── Forgot / Reset flow ──────────────────────────────────────────
+    forgotLockPassword: 'Ma ilaawatay furaha xidhitaanka?',
+    resetTitle: 'Dib u Deji Furaha Xidhitaanka',
+    resetStepVerifyHint: 'Geli furaha akoonkaaga si aan u xaqiijino in adiga tahay.',
+    resetStepNewHint: 'La xaqiijiyay. Dooro furaha cusub ee xidhitaanka.',
+    accountPassword: 'Furaha Akoonka',
+    accountPasswordPlaceholder: 'Geli furaha akoonkaaga',
+    newLockPassword: 'Furaha Cusub ee Xidhitaanka',
+    newLockPasswordPlaceholder: 'Dooro furaha cusub',
+    confirmNewLockPassword: 'Xaqiiji Furaha Cusub',
+    confirmNewLockPlaceholder: 'Mar kale geli furaha cusub',
+    verify: 'Xaqiiji',
+    verifying: 'Waa la xaqiijinayaa…',
+    saveNewLock: 'Kaydi & Fur',
+    savingNewLock: 'Waa la kaydinayaa…',
+    back: 'Dib u noqo',
+    step: 'Tallaabo',
+    of: 'ka mid',
+    errLoginRequired: 'Furaha akoonka waa loo baahan yahay.',
+    errLoginInvalid: 'Furaha akoonka waa qaldan yahay. Fadlan isku day mar kale.',
   },
 } as const;
 
@@ -146,35 +185,20 @@ function useTheme() {
     else root.classList.remove('dark');
     localStorage.setItem('app_theme', theme);
   }, [theme]);
-  return {
-    theme,
-    toggle: () => setTheme((v) => (v === 'dark' ? 'light' : 'dark')),
-  };
+  return { theme, toggle: () => setTheme((v) => (v === 'dark' ? 'light' : 'dark')) };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Flags — cropped to fill a circle exactly.
+// Flags
 // ─────────────────────────────────────────────────────────────────────────
 function FlagUS({ className = 'h-full w-full' }: { className?: string }) {
   return (
-    <svg
-      viewBox="0 0 40 40"
-      preserveAspectRatio="xMidYMid slice"
-      className={className}
-      aria-hidden="true"
-    >
-      {/* Caddaan background */}
+    <svg viewBox="0 0 40 40" preserveAspectRatio="xMidYMid slice" className={className} aria-hidden="true">
       <rect width="40" height="40" fill="#fff" />
-
-      {/* 13 xariiqood oo casaan ah */}
       {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((i) => (
         <rect key={i} y={i * 3.08} width="40" height="3.08" fill="#b22234" />
       ))}
-
-      {/* Blue canton (geeska bidix-sare) */}
       <rect width="20" height="16.5" fill="#3c3b6e" />
-
-      {/* Xiddigaha cad */}
       <g fill="#fff">
         {[3, 7, 11, 15, 17].map((x) =>
           [3, 7, 11, 15].map((y) => <circle key={`${x}-${y}`} cx={x} cy={y} r="1" />)
@@ -186,17 +210,9 @@ function FlagUS({ className = 'h-full w-full' }: { className?: string }) {
 
 function FlagSO({ className = 'h-full w-full' }: { className?: string }) {
   return (
-    <svg
-      viewBox="0 0 40 40"
-      preserveAspectRatio="xMidYMid slice"
-      className={className}
-      aria-hidden="true"
-    >
+    <svg viewBox="0 0 40 40" preserveAspectRatio="xMidYMid slice" className={className} aria-hidden="true">
       <rect width="40" height="40" fill="#4189dd" />
-      <polygon
-        fill="#fff"
-        points="20,7 23.5,17.5 34,17.5 25.5,24 29,34.5 20,28 11,34.5 14.5,24 6,17.5 16.5,17.5"
-      />
+      <polygon fill="#fff" points="20,7 23.5,17.5 34,17.5 25.5,24 29,34.5 20,28 11,34.5 14.5,24 6,17.5 16.5,17.5" />
     </svg>
   );
 }
@@ -250,7 +266,7 @@ function ConfirmDialog({
   kind: ConfirmKind;
   onCancel: () => void;
   onConfirm: () => void;
-  t: typeof translations['en'];
+   t: Record<string, string>; 
 }) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const isOpen = kind !== null;
@@ -329,7 +345,7 @@ function ConfirmDialog({
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Min duration — prevent spinner flash
+// Min duration helper
 // ─────────────────────────────────────────────────────────────────────────
 const MIN_ACTION_MS = 350;
 const withMinDuration = async <T,>(promise: Promise<T>, minMs = MIN_ACTION_MS): Promise<T> => {
@@ -343,10 +359,48 @@ const withMinDuration = async <T,>(promise: Promise<T>, minMs = MIN_ACTION_MS): 
 };
 
 // ─────────────────────────────────────────────────────────────────────────
+// Shared input styling
+// ─────────────────────────────────────────────────────────────────────────
+const inputBaseClass = [
+  'w-full rounded-xl border bg-white py-2.5 pl-9 pr-10 text-sm text-slate-900 shadow-sm outline-none',
+  'transition-colors placeholder:text-slate-400 focus:ring-2',
+  'dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500',
+  'disabled:cursor-not-allowed disabled:opacity-60',
+].join(' ');
+
+const inputToneClass = (hasError: boolean) =>
+  hasError
+    ? 'border-red-400 focus:border-red-500 focus:ring-red-500/25 dark:border-red-500'
+    : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500/25 dark:border-slate-700 dark:focus:border-blue-400 dark:focus:ring-blue-400/25';
+
+const labelClass =
+  'mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300';
+
+const errorBoxClass =
+  'rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-300';
+
+const primaryButtonClass =
+  'flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:bg-blue-600/50 dark:bg-blue-500 dark:hover:bg-blue-400 dark:focus-visible:ring-offset-slate-900 dark:disabled:bg-blue-500/40';
+
+const secondaryButtonClass =
+  'inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800';
+
+const circleButtonClass =
+  'group relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full ' +
+  'border border-slate-200 bg-white text-slate-600 shadow-sm transition-all ' +
+  'hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 ' +
+  'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-50 ' +
+  'dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 ' +
+  'dark:hover:border-slate-600 dark:hover:bg-slate-800 dark:hover:text-white ' +
+  'dark:focus-visible:ring-blue-400 dark:focus-visible:ring-offset-slate-950';
+
+// ─────────────────────────────────────────────────────────────────────────
 // Main component
 // ─────────────────────────────────────────────────────────────────────────
+type ResetStep = 'verify' | 'new';
+
 const Lock = () => {
-  const { lockedInfo, unlock, logout } = useAuth();
+  const { user, lockedInfo, unlock, logout } = useAuth();
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
@@ -358,8 +412,21 @@ const Lock = () => {
   const [confirmAction, setConfirmAction] = useState<ConfirmKind>(null);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
 
+  // ── Forgot / Reset flow ──────────────────────────────────────────
+  const [isResetFlow, setIsResetFlow] = useState(false);
+  const [resetStep, setResetStep] = useState<ResetStep>('verify');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [newLockPassword, setNewLockPassword] = useState('');
+  const [confirmNewLockPassword, setConfirmNewLockPassword] = useState('');
+  const [showNewLock, setShowNewLock] = useState(false);
+  const [showConfirmNewLock, setShowConfirmNewLock] = useState(false);
+  const [resetError, setResetError] = useState('');
+  const [resetBusy, setResetBusy] = useState(false);
+
   const langMenuRef = useRef<HTMLDivElement | null>(null);
   const submitLockRef = useRef(false);
+  const resetLockRef = useRef(false);
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -407,6 +474,7 @@ const Lock = () => {
     return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   }, [lockedInfo]);
 
+  // ── Normal unlock / create submit ─────────────────────────────────
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitLockRef.current || busy) return;
@@ -465,6 +533,106 @@ const Lock = () => {
     }
   };
 
+  // ── Forgot flow: step 1 — verify account password ─────────────────
+  const openResetFlow = () => {
+    setResetError('');
+    setLoginPassword('');
+    setNewLockPassword('');
+    setConfirmNewLockPassword('');
+    setResetStep('verify');
+    setIsResetFlow(true);
+  };
+
+  const closeResetFlow = () => {
+    setResetError('');
+    setLoginPassword('');
+    setNewLockPassword('');
+    setConfirmNewLockPassword('');
+    setResetStep('verify');
+    setIsResetFlow(false);
+  };
+
+  const handleForgotVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (resetLockRef.current || resetBusy) return;
+    resetLockRef.current = true;
+    setResetError('');
+
+    if (!loginPassword) {
+      setResetError(t.errLoginRequired);
+      resetLockRef.current = false;
+      return;
+    }
+
+    setResetBusy(true);
+    try {
+      // Uses the existing login endpoint to verify the account password.
+      // The backend re-issues tokens, which is harmless — the user is
+      // already authenticated.
+      const res = await withMinDuration(
+        authService.verifyLoginPassword(loginPassword)
+      );
+      if (res.success) {
+        setResetStep('new');
+        setLoginPassword('');
+      } else {
+        setResetError(res.error || t.errLoginInvalid);
+      }
+    } catch {
+      setResetError(t.errLoginInvalid);
+    } finally {
+      setResetBusy(false);
+      resetLockRef.current = false;
+    }
+  };
+
+  // ── Forgot flow: step 2 — save the new lock password ──────────────
+  const handleForgotSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (resetLockRef.current || resetBusy) return;
+    resetLockRef.current = true;
+    setResetError('');
+
+    if (!newLockPassword || newLockPassword.length < 4) {
+      setResetError(t.errShortPassword);
+      resetLockRef.current = false;
+      return;
+    }
+    if (newLockPassword !== confirmNewLockPassword) {
+      setResetError(t.errMismatch);
+      resetLockRef.current = false;
+      return;
+    }
+
+    setResetBusy(true);
+    try {
+      await withMinDuration(authService.setLockPassword(newLockPassword));
+      const payload = { ...(lockedInfo || { identifier: '' }), hasLock: true };
+      localStorage.setItem('app_lock', JSON.stringify(payload));
+      setIsSetup(true);
+
+      // Now unlock the session with the freshly-set password.
+      // AuthContext's unlock() clears lockedInfo and redirects via
+      // `lock_return_to` (or the useEffect below sends the user home).
+      const res = await unlock(newLockPassword);
+      if (res.success) {
+        const target = (location.state as any)?.from?.pathname || '/';
+        // If AuthContext didn't already hard-redirect, send them home.
+        if (window.location.pathname === '/lock') {
+          navigate(target, { replace: true });
+        }
+      } else {
+        setResetError(res.error || t.errLoginInvalid);
+      }
+    } catch {
+      setResetError(t.errSaveFailed);
+    } finally {
+      setResetBusy(false);
+      resetLockRef.current = false;
+    }
+  };
+
+  // ── Confirm dialog actions ────────────────────────────────────────
   const performLogout = async () => {
     setConfirmAction(null);
     await logout();
@@ -482,20 +650,6 @@ const Lock = () => {
     setConfirmAction('switch');
   };
 
-  // ── Shared circular button class for the top-right controls ────────
-  // Both the theme toggle and language button use the same shape, size,
-  // and border, so they read as a matched pair. The language button lets
-  // the flag fill the entire circle (no inner padding), matching the
-  // screenshot reference.
-  const circleButtonClass =
-    'group relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full ' +
-    'border border-slate-200 bg-white text-slate-600 shadow-sm transition-all ' +
-    'hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 ' +
-    'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-50 ' +
-    'dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 ' +
-    'dark:hover:border-slate-600 dark:hover:bg-slate-800 dark:hover:text-white ' +
-    'dark:focus-visible:ring-blue-400 dark:focus-visible:ring-offset-slate-950';
-
   return (
     <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-slate-50 px-4 py-16 dark:bg-slate-950">
       {/* Ambient glow */}
@@ -504,9 +658,8 @@ const Lock = () => {
         <div className="absolute -bottom-40 right-1/4 h-96 w-96 rounded-full bg-emerald-200/30 blur-3xl dark:bg-emerald-500/5" />
       </div>
 
-      {/* Top-right controls — theme toggle + language picker */}
+      {/* Top-right controls */}
       <div className="absolute right-4 top-4 z-20 flex items-center gap-2">
-        {/* Theme toggle */}
         <button
           type="button"
           onClick={toggleTheme}
@@ -514,14 +667,9 @@ const Lock = () => {
           title={theme === 'dark' ? t.switchToLight : t.switchToDark}
           className={circleButtonClass}
         >
-          {theme === 'dark' ? (
-            <Sun className="h-4 w-4" aria-hidden="true" />
-          ) : (
-            <Moon className="h-4 w-4" aria-hidden="true" />
-          )}
+          {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
         </button>
 
-        {/* Language picker */}
         <div ref={langMenuRef} className="relative">
           <button
             type="button"
@@ -530,14 +678,14 @@ const Lock = () => {
             aria-haspopup="menu"
             aria-expanded={langOpen}
             title={t.changeLanguage}
-            className={circleButtonClass + (langOpen ? ' ring-2 ring-blue-500 ring-offset-2 ring-offset-slate-50 dark:ring-blue-400 dark:ring-offset-slate-950' : '')}
+            className={
+              circleButtonClass +
+              (langOpen
+                ? ' ring-2 ring-blue-500 ring-offset-2 ring-offset-slate-50 dark:ring-blue-400 dark:ring-offset-slate-950'
+                : '')
+            }
           >
-            {/* The flag fills the entire circle — no padding, no inner ring. */}
-            {lang === 'en' ? (
-              <FlagUS className="absolute inset-0 h-full w-full" />
-            ) : (
-              <FlagSO className="absolute inset-0 h-full w-full" />
-            )}
+            {lang === 'en' ? <FlagUS className="absolute inset-0 h-full w-full" /> : <FlagSO className="absolute inset-0 h-full w-full" />}
           </button>
 
           {langOpen && (
@@ -587,10 +735,210 @@ const Lock = () => {
         </div>
       </div>
 
-      {/* Card */}
+      {/* ── Card ─────────────────────────────────────────────────────── */}
       {isBootstrapping ? (
         <LockSkeleton />
+      ) : isResetFlow ? (
+        // ══════════════════════════════════════════════════════════════
+        // RESET FLOW
+        // ══════════════════════════════════════════════════════════════
+        <div className="relative z-0 w-full max-w-md">
+          <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-xl dark:border-slate-800 dark:bg-slate-900">
+            {/* Back link */}
+            <button
+              type="button"
+              onClick={closeResetFlow}
+              className="mb-4 inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 transition-colors hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              {t.back}
+            </button>
+
+            {/* Icon */}
+            <div className="flex flex-col items-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-blue-100 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300">
+                <KeyRound className="h-6 w-6" aria-hidden="true" />
+              </div>
+            </div>
+
+            {/* Heading */}
+            <div className="mt-5 text-center">
+              <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+                {t.resetTitle}
+              </h1>
+              <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">
+                {resetStep === 'verify' ? t.resetStepVerifyHint : t.resetStepNewHint}
+              </p>
+              <p className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                {t.step} {resetStep === 'verify' ? '1' : '2'} {t.of} 2
+              </p>
+            </div>
+
+            {/* ── STEP 1: verify account password ── */}
+            {resetStep === 'verify' && (
+              <form onSubmit={handleForgotVerify} className="mt-7 space-y-4">
+                <div>
+                  <label htmlFor="reset-login-password" className={labelClass}>
+                    {t.accountPassword}
+                  </label>
+                  <div className="relative">
+                    <KeyRound
+                      className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-slate-500"
+                      aria-hidden="true"
+                    />
+                    <input
+                      id="reset-login-password"
+                      type={showLoginPassword ? 'text' : 'password'}
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      placeholder={t.accountPasswordPlaceholder}
+                      autoFocus
+                      autoComplete="current-password"
+                      required
+                      disabled={resetBusy}
+                      className={inputBaseClass + ' ' + inputToneClass(Boolean(resetError))}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowLoginPassword((v) => !v)}
+                      tabIndex={-1}
+                      aria-label={showLoginPassword ? t.hidePassword : t.showPassword}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-slate-400 transition-colors hover:text-slate-600 dark:hover:text-slate-200"
+                    >
+                      {showLoginPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                {resetError && (
+                  <div role="alert" className={errorBoxClass}>
+                    {resetError}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={resetBusy || !loginPassword}
+                  className={primaryButtonClass}
+                >
+                  {resetBusy ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                      {t.verifying}
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+                      {t.verify}
+                    </>
+                  )}
+                </button>
+              </form>
+            )}
+
+            {/* ── STEP 2: set new lock password ── */}
+            {resetStep === 'new' && (
+              <form onSubmit={handleForgotSave} className="mt-7 space-y-4">
+                <div>
+                  <label htmlFor="reset-new-lock" className={labelClass}>
+                    {t.newLockPassword}
+                  </label>
+                  <div className="relative">
+                    <LockIcon
+                      className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-slate-500"
+                      aria-hidden="true"
+                    />
+                    <input
+                      id="reset-new-lock"
+                      type={showNewLock ? 'text' : 'password'}
+                      value={newLockPassword}
+                      onChange={(e) => setNewLockPassword(e.target.value)}
+                      placeholder={t.newLockPasswordPlaceholder}
+                      autoFocus
+                      autoComplete="new-password"
+                      required
+                      disabled={resetBusy}
+                      className={inputBaseClass + ' ' + inputToneClass(Boolean(resetError))}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewLock((v) => !v)}
+                      tabIndex={-1}
+                      aria-label={showNewLock ? t.hidePassword : t.showPassword}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-slate-400 transition-colors hover:text-slate-600 dark:hover:text-slate-200"
+                    >
+                      {showNewLock ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label htmlFor="reset-confirm-new-lock" className={labelClass}>
+                    {t.confirmNewLockPassword}
+                  </label>
+                  <div className="relative">
+                    <ShieldCheck
+                      className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-slate-500"
+                      aria-hidden="true"
+                    />
+                    <input
+                      id="reset-confirm-new-lock"
+                      type={showConfirmNewLock ? 'text' : 'password'}
+                      value={confirmNewLockPassword}
+                      onChange={(e) => setConfirmNewLockPassword(e.target.value)}
+                      placeholder={t.confirmNewLockPlaceholder}
+                      autoComplete="new-password"
+                      required
+                      disabled={resetBusy}
+                      className={inputBaseClass + ' ' + inputToneClass(Boolean(resetError))}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmNewLock((v) => !v)}
+                      tabIndex={-1}
+                      aria-label={showConfirmNewLock ? t.hidePassword : t.showPassword}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-slate-400 transition-colors hover:text-slate-600 dark:hover:text-slate-200"
+                    >
+                      {showConfirmNewLock ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                {resetError && (
+                  <div role="alert" className={errorBoxClass}>
+                    {resetError}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={resetBusy || !newLockPassword || !confirmNewLockPassword}
+                  className={primaryButtonClass}
+                >
+                  {resetBusy ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                      {t.savingNewLock}
+                    </>
+                  ) : (
+                    <>
+                      <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                      {t.saveNewLock}
+                    </>
+                  )}
+                </button>
+              </form>
+            )}
+          </div>
+
+          <p className="mt-5 text-center text-[11px] text-slate-400 dark:text-slate-500">
+            {t.securityNote}
+          </p>
+        </div>
       ) : (
+        // ══════════════════════════════════════════════════════════════
+        // NORMAL UNLOCK / CREATE FLOW
+        // ══════════════════════════════════════════════════════════════
         <div className="relative z-0 w-full max-w-md">
           <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-xl dark:border-slate-800 dark:bg-slate-900">
             <div className="flex flex-col items-center">
@@ -620,10 +968,7 @@ const Lock = () => {
 
             <form onSubmit={handleSubmit} className="mt-7 space-y-4">
               <div>
-                <label
-                  htmlFor="lock-password"
-                  className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300"
-                >
+                <label htmlFor="lock-password" className={labelClass}>
                   {t.password}
                 </label>
                 <div className="relative">
@@ -641,14 +986,7 @@ const Lock = () => {
                     autoComplete="current-password"
                     required
                     disabled={busy}
-                    className={
-                      'w-full rounded-xl border bg-white py-2.5 pl-9 pr-10 text-sm text-slate-900 shadow-sm outline-none transition-colors placeholder:text-slate-400 ' +
-                      'focus:ring-2 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 ' +
-                      (error
-                        ? 'border-red-400 focus:border-red-500 focus:ring-red-500/25 dark:border-red-500'
-                        : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500/25 dark:border-slate-700 dark:focus:border-blue-400 dark:focus:ring-blue-400/25') +
-                      ' disabled:cursor-not-allowed disabled:opacity-60'
-                    }
+                    className={inputBaseClass + ' ' + inputToneClass(Boolean(error))}
                   />
                   <button
                     type="button"
@@ -664,10 +1002,7 @@ const Lock = () => {
 
               {isCreating && (
                 <div>
-                  <label
-                    htmlFor="lock-confirm"
-                    className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300"
-                  >
+                  <label htmlFor="lock-confirm" className={labelClass}>
                     {t.confirmPassword}
                   </label>
                   <div className="relative">
@@ -684,14 +1019,7 @@ const Lock = () => {
                       autoComplete="new-password"
                       required
                       disabled={busy}
-                      className={
-                        'w-full rounded-xl border bg-white py-2.5 pl-9 pr-10 text-sm text-slate-900 shadow-sm outline-none transition-colors placeholder:text-slate-400 ' +
-                        'focus:ring-2 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 ' +
-                        (error
-                          ? 'border-red-400 focus:border-red-500 focus:ring-red-500/25 dark:border-red-500'
-                          : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500/25 dark:border-slate-700 dark:focus:border-blue-400 dark:focus:ring-blue-400/25') +
-                        ' disabled:cursor-not-allowed disabled:opacity-60'
-                      }
+                      className={inputBaseClass + ' ' + inputToneClass(Boolean(error))}
                     />
                     <button
                       type="button"
@@ -707,10 +1035,7 @@ const Lock = () => {
               )}
 
               {error && (
-                <div
-                  role="alert"
-                  className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-300"
-                >
+                <div role="alert" className={errorBoxClass}>
                   {error}
                 </div>
               )}
@@ -718,7 +1043,7 @@ const Lock = () => {
               <button
                 type="submit"
                 disabled={busy || !password}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:bg-blue-600/50 dark:bg-blue-500 dark:hover:bg-blue-400 dark:focus-visible:ring-offset-slate-900 dark:disabled:bg-blue-500/40"
+                className={primaryButtonClass}
               >
                 {busy ? (
                   <>
@@ -732,6 +1057,19 @@ const Lock = () => {
                   </>
                 )}
               </button>
+
+              {/* Forgot lock password? — only in unlock mode */}
+              {!isCreating && (
+                <div className="flex justify-center pt-1">
+                  <button
+                    type="button"
+                    onClick={openResetFlow}
+                    className="text-xs font-medium text-blue-600 transition-colors hover:text-blue-700 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
+                  >
+                    {t.forgotLockPassword}
+                  </button>
+                </div>
+              )}
             </form>
 
             <div className="my-5 flex items-center gap-3">
@@ -743,11 +1081,7 @@ const Lock = () => {
             </div>
 
             <div className="grid grid-cols-2 gap-2">
-              <Link
-                to="/signin"
-                onClick={requestSwitch}
-                className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
-              >
+              <Link to="/signin" onClick={requestSwitch} className={secondaryButtonClass}>
                 <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
                 {t.switchAccount}
               </Link>
@@ -755,7 +1089,7 @@ const Lock = () => {
                 type="button"
                 onClick={requestLogout}
                 disabled={busy}
-                className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                className={secondaryButtonClass}
               >
                 <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
                 {t.logout}
@@ -770,7 +1104,11 @@ const Lock = () => {
       )}
 
       {/* Footer */}
-      <Footer />
+      <footer className="absolute bottom-0 left-0 right-0 z-10 py-4 text-center">
+        <p className="text-[11px] text-slate-400 dark:text-slate-500">
+          © {new Date().getFullYear()} Madal ERP · {t.copyright}
+        </p>
+      </footer>
 
       {/* Confirm dialog */}
       <ConfirmDialog

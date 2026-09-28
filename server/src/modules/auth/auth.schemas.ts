@@ -47,7 +47,12 @@ export const lockVerifySchema = z.object({
   password: z.string().min(1, 'Password is required'),
 });
 
+export const verifyLoginPasswordSchema = z.object({
+  password: z.string().min(1, 'Password is required'),
+});
+
 export type RegisterInput = z.infer<typeof registerSchema>;
+export type VerifyLoginPasswordInput = z.infer<typeof verifyLoginPasswordSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;

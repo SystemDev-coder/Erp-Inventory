@@ -143,6 +143,10 @@ class AuthService {
   async clearLockPassword(): Promise<ApiResponse<void>> {
     return apiClient.post<void>(API.AUTH.LOCK_CLEAR);
   }
+
+  async verifyLoginPassword(password: string): Promise<ApiResponse<{ verified: boolean }>> {
+  return apiClient.post('/auth/verify-login-password', { password });
+}
 }
 
 // Export singleton instance
