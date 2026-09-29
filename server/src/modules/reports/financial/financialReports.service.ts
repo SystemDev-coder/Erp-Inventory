@@ -1299,28 +1299,37 @@ export const buildBalanceSheetFromLedger = async (
     const accountTypeRaw = String(row.account_type || 'asset');
     const accountType = normalizeAccountName(accountTypeRaw);
 
-    // Prefer the stored account balance because it's the system's source of truth and includes
-    // opening balances + all modules' adjustments. Some legacy deployments have incomplete
-    // `account_transactions` history, which would understate balances if we used ledger rollups.
-    // If the stored balance is effectively zero but we do have ledger entries, fall back to ledger.
+    // Prefer the stored account balance when there's no reason to distrust it - it's meant to
+    // include opening balances + all modules' adjustments, and some legacy deployments have
+    // incomplete `account_transactions` history, which would understate balances if we used
+    // ledger rollups unconditionally. But when real transaction activity DISAGREES with the
+    // stored balance, the stored balance is the one that's wrong: postGl enforces debit=credit
+    // on every posting, so txnBalanceRaw is the only figure double-entry bookkeeping actually
+    // guarantees stays internally consistent, and a stored accounts.balance can go stale the
+    // moment new activity is posted without that column being updated to match.
+    //
+    // Fixed 2026-09-30: this preference-when-disagreeing rule used to apply only to cash/bank
+    // accounts (as preferTxnForCash) - every other account trusted the stored balance
+    // unconditionally whenever it was non-zero, disagreement or not. Confirmed on demomadal
+    // production: the "Opening Balance Equity" account's stored balance read $24,688, stale by
+    // exactly $2,310 against its real, Trial-Balance-matching transaction total ($26,998) - the
+    // same staleness bug already fixed for AR/AP (see effectiveAccountsReceivable/
+    // effectiveAccountsPayable below), just on a plain equity account with no reconciliation
+    // safety net to catch the gap. Generalized the cash-only rule to every account.
     const baseBalanceRaw = Number(row.base_balance || 0);
     const baseSignedDebitMinusCredit = (() => {
       const side = resolveNaturalSide(accountTypeRaw, accountName);
       return side === 'credit' ? -Math.abs(baseBalanceRaw) : Math.abs(baseBalanceRaw);
     })();
 
-    const isCashAccount = isCashOrBankAccount(accountName, row.institution);
     const txnBalanceRaw = Number(row.txn_balance || 0);
     const hasTxnBalance = Number(row.txn_count || 0) > 0 && !isApproxZero(txnBalanceRaw);
-    const preferTxnForCash =
-      isCashAccount
-      && hasTxnBalance
+    const preferTxn =
+      hasTxnBalance
       && (isApproxZero(baseBalanceRaw) || Math.abs(txnBalanceRaw - baseSignedDebitMinusCredit) > 0.005);
-    const debitMinusCredit = isCashAccount
-      ? (preferTxnForCash ? txnBalanceRaw : baseSignedDebitMinusCredit)
-      : !isApproxZero(baseBalanceRaw)
-        ? baseSignedDebitMinusCredit
-        : (hasTxnBalance ? txnBalanceRaw : 0);
+    const debitMinusCredit = preferTxn
+      ? txnBalanceRaw
+      : (!isApproxZero(baseBalanceRaw) ? baseSignedDebitMinusCredit : (hasTxnBalance ? txnBalanceRaw : 0));
 
     if (isApproxZero(debitMinusCredit)) continue;
 
