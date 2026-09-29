@@ -175,46 +175,11 @@ export interface AccountsPayableRow {
   status: string;
 }
 
-type BalanceTable = 'customers' | 'suppliers';
 const OPENING_EXPENSE_NOTE_PREFIX = '[OPENING BALANCE]';
 const openingExpensePredicate = (alias: string) =>
   `COALESCE(NULLIF(to_jsonb(${alias}) ->> 'is_opening_paid', '')::boolean, COALESCE(${alias}.note, '') ILIKE '${OPENING_EXPENSE_NOTE_PREFIX}%')`;
 
 const columnExistsCache: Record<string, boolean> = {};
-
-const resolveBalanceExpression = async (
-  table: BalanceTable,
-  alias: string
-): Promise<string> => {
-  const cols = await queryMany<{ column_name: string }>(
-    `SELECT column_name
-       FROM information_schema.columns
-      WHERE table_schema = 'ims'
-        AND table_name = $1`,
-    [table]
-  );
-  const names = new Set(cols.map((row) => row.column_name));
-  const hasRemaining = names.has('remaining_balance');
-  const hasOpen = names.has('open_balance');
-
-  if (hasRemaining && hasOpen) {
-    // Some deployments maintain balances in `open_balance` while others use `remaining_balance`.
-    // Prefer `remaining_balance` when it is populated; otherwise fall back to `open_balance`.
-    // (We only apply this heuristic for suppliers, because customer balances are expected to be
-    // maintained in a single column in this system.)
-    if (table === 'suppliers') {
-      return `COALESCE(NULLIF(${alias}.remaining_balance, 0), ${alias}.open_balance, 0)`;
-    }
-    return `COALESCE(${alias}.remaining_balance, ${alias}.open_balance, 0)`;
-  }
-  if (hasRemaining) {
-    return `COALESCE(${alias}.remaining_balance, 0)`;
-  }
-  if (hasOpen) {
-    return `COALESCE(${alias}.open_balance, 0)`;
-  }
-  return '0';
-};
 
 const resolveColumnExists = async (table: string, column: string): Promise<boolean> => {
   const cacheKey = `${table}.${column}`;
@@ -980,19 +945,18 @@ export const buildBalanceSheetFromLedger = async (
   asOfDate: string,
   netIncomeFromDate?: string
 ): Promise<BalanceSheetRow[]> => {
-  // customers' balance column is deliberately no longer resolved here -
-  // receivableFallback below now sources from ims.customer_ledger's genuine
-  // 'opening' rows, not customers.remaining_balance (see the fix comment
-  // below); supplierBalanceExpr is kept only because it's still referenced
-  // by the per-account loop further down.
-  const supplierBalanceExpr = await resolveBalanceExpression('suppliers', 's');
+  // customers'/suppliers' remaining_balance columns are deliberately never
+  // read in this function anymore (see the fix comments on receivableFallback
+  // and payableFromSupplierLedger below, and effectiveAccountsReceivable/
+  // effectiveAccountsPayable further down) - both live running balances have
+  // repeatedly proven stale/inflated relative to the real GL on this
+  // client's production data.
   const params: Array<number | string> = [branchId, asOfDate];
 
   const [
     accountRows,
     inventoryFallback,
     receivableFallback,
-    payableFallback,
     payableFromSupplierLedger,
     currentAssetRows,
     fixedAssetRows,
@@ -1122,17 +1086,6 @@ export const buildBalanceSheetFromLedger = async (
          SELECT (opening_total.amount - unallocated_total.amount)::double precision AS amount
            FROM opening_total, unallocated_total`,
         params
-      ),
-      // No longer used as a source (payableFromSupplierLedger below no longer
-      // has an unconditional-remaining_balance fallback branch) - kept only
-      // because ${supplierBalanceExpr} is still referenced elsewhere in this
-      // function's per-account loop; querying it here is now a no-op amount.
-      queryAmount(
-        `SELECT COALESCE(SUM(${supplierBalanceExpr}), 0)::double precision AS amount
-           FROM ims.suppliers s
-          WHERE s.branch_id = $1
-            AND s.is_active = TRUE`,
-        [branchId]
       ),
       // Fixed (mirrors getAccountsPayable's own H3-fixed openingRows query,
       // ~line 2873): the old opening_rows branch credited a supplier's ENTIRE
@@ -1312,19 +1265,28 @@ export const buildBalanceSheetFromLedger = async (
   const equityAccountRows: BalanceSheetRow[] = [];
   const equityRows: BalanceSheetRow[] = [];
 
-  let receivableFromAccounts = 0;
-  let accountsPayableFromAccounts = 0;
   let inventoryFromAccounts = 0;
-  // Ledger-only twins of the two accumulators above, used solely for the equity
-  // reconciliation below - accountsPayableFromAccounts/inventoryFromAccounts use
-  // naturalBalance, which (lines ~1351-1355) prefers the stored accounts.balance
-  // whenever it's non-zero, even if it's gone stale relative to real new ledger
-  // activity (postGl never updates accounts.balance for non-cash accounts, so a
-  // one-time opening balance stays frozen forever unless a fallback overrides it).
-  // The reconciliation needs to compare against what the ledger actually contains,
-  // since that's the only figure double-entry bookkeeping guarantees is internally
-  // consistent - comparing against the "preferred" (possibly stale) value would
-  // under- or over-correct, as an isolated test transaction proved during review.
+  // Pure account_transactions rollups (no stored-balance override) - used as
+  // the actual DISPLAYED Accounts Receivable/Payable figures (see
+  // effectiveAccountsReceivable/effectiveAccountsPayable below) AND for the
+  // equity reconciliation. inventoryFromAccounts (naturalBalance-based, which
+  // prefers the stored accounts.balance column whenever it's non-zero, even
+  // if that's gone stale relative to real new ledger activity - postGl never
+  // updates accounts.balance for non-cash accounts, so a one-time opening
+  // balance stays frozen forever unless a fallback overrides it) is kept
+  // only for Inventory, where inventoryValue below still prefers a
+  // non-GL source (physical items/store_items stock valuation) and only
+  // needs inventoryFromAccounts as ITS OWN fallback - the reconciliation
+  // still needs to compare against what the ledger actually contains, since
+  // that's the only figure double-entry bookkeeping guarantees is internally
+  // consistent (comparing against the "preferred", possibly-stale value
+  // would under- or over-correct, as an isolated test transaction proved
+  // during review). AR/AP went through the exact same lesson: naturalBalance
+  // was tried as their primary display value too, agreed with Trial Balance
+  // on one production check purely by coincidence (accounts.balance
+  // happened to be unset that day) and then diverged locally the moment
+  // accounts.balance held a stale, non-zero figure - see the fix comment on
+  // effectiveAccountsReceivable below for the full account.
   let inventoryLedgerTotal = 0;
   let accountsPayableLedgerTotal = 0;
   let accountsReceivableLedgerTotal = 0;
@@ -1375,7 +1337,11 @@ export const buildBalanceSheetFromLedger = async (
 
     if (kind === 'liability' || isPayableAccount(accountName)) {
       if (isAccountsPayableAccount(accountName)) {
-        accountsPayableFromAccounts += moneyPos(naturalBalance);
+        // Fixed: no longer pushed via naturalBalance (which prefers the
+        // stored accounts.balance column - see the comment on
+        // accountsPayableLedgerTotal above for why that can go stale). The
+        // displayed "Accounts Payable" row is computed once, below, from
+        // effectiveAccountsPayable, sourced from this pure-ledger total.
         accountsPayableLedgerTotal += moneyPos(toNaturalBalance(txnBalanceRaw, accountTypeRaw, accountName));
         continue;
       }
@@ -1412,14 +1378,10 @@ export const buildBalanceSheetFromLedger = async (
     }
 
     if (isReceivableAccount(accountName)) {
-      // Fixed: no longer pushed as a detail row directly using this
-      // account's own (possibly stale) naturalBalance - the actual
-      // displayed "Accounts Receivable" row is now computed once, below,
-      // from effectiveAccountsReceivable, exactly mirroring how Accounts
-      // Payable already works. accountsReceivableLedgerTotal is the
-      // ledger-only twin used solely for the equity reconciliation, same
-      // pattern as inventoryLedgerTotal/accountsPayableLedgerTotal above.
-      receivableFromAccounts += moneyPos(naturalBalance);
+      // Fixed: no longer pushed via naturalBalance (stale-balance risk, same
+      // as Accounts Payable above). The displayed "Accounts Receivable" row
+      // is computed once, below, from effectiveAccountsReceivable, sourced
+      // from this pure-ledger total.
       accountsReceivableLedgerTotal += moneyPos(toNaturalBalance(txnBalanceRaw, accountTypeRaw, accountName));
       continue;
     }
@@ -1453,15 +1415,44 @@ export const buildBalanceSheetFromLedger = async (
     }
   }
 
-  // Fixed: prefer the genuine-ledger-based receivableFallback (see the fix
-  // comment where it's queried, above) over this account's own possibly-
-  // stale naturalBalance - mirrors effectiveAccountsPayable's exact
-  // precedence below, and the resulting gap (if any) is reconciled into
-  // equity further down instead of silently displaying a stale figure.
+  // Fixed 2026-09-30 (second pass, after a production check on the first):
+  // both AR and AP now display the PURE ledger total (accountsReceivableLedgerTotal/
+  // accountsPayableLedgerTotal - built from account_transactions only, the
+  // same rows Trial Balance itself sums), not naturalBalance's "prefer
+  // stored accounts.balance" figure and not the customer_ledger/
+  // supplier_ledger sub-ledger reconstruction. Two real bugs were found and
+  // fixed in sequence to get here - both worth keeping in mind before
+  // touching this again:
+  //   1) receivableFallback/payableFromSupplierLedger (the customer_ledger/
+  //      supplier_ledger-based sums) were first tried as the primary source.
+  //      On demomadal production, receivableFallback only summed genuine
+  //      entry_type='opening' rows and silently dropped a real $218.40 open
+  //      invoice (true AR was $308.40, it read $90); payableFromSupplierLedger
+  //      summed ALL supplier_ledger activity in principle, but that table
+  //      isn't populated for most of this branch's real purchase history, so
+  //      it evaluated near-$0 and fell through to `payableFallback`
+  //      (suppliers.remaining_balance summed wholesale - the exact
+  //      stale-balance bug this fix exists to kill; that query has been
+  //      removed outright).
+  //   2) naturalBalance (accountsPayableFromAccounts/receivableFromAccounts,
+  //      now removed) was tried next - it agreed with Trial Balance on
+  //      production ($308.40 / $2,300) but NOT locally, because it prefers
+  //      the stored accounts.balance column whenever non-zero, and that
+  //      column had gone stale relative to real new ledger activity (the
+  //      exact "postGl never updates accounts.balance for non-cash accounts"
+  //      risk the accountsPayableLedgerTotal comment above already
+  //      documented for the reconciliation math - it just hadn't been
+  //      applied to the DISPLAY value until now). accountsReceivableLedgerTotal/
+  //      accountsPayableLedgerTotal are pure account_transactions rollups
+  //      with no stored-balance override, so they equal Trial Balance by
+  //      construction, always - not just when accounts.balance happens to
+  //      already agree. The customer_ledger/supplier_ledger sums remain the
+  //      final fallback, used only when the GL account itself has zero
+  //      transaction history.
   const effectiveAccountsReceivable =
-    !isApproxZero(receivableFallback)
-      ? moneyPos(receivableFallback)
-      : moneyPos(receivableFromAccounts);
+    !isApproxZero(accountsReceivableLedgerTotal)
+      ? moneyPos(accountsReceivableLedgerTotal)
+      : moneyPos(receivableFallback);
 
   if (!isApproxZero(effectiveAccountsReceivable)) {
     currentAssets.push({
@@ -1472,14 +1463,10 @@ export const buildBalanceSheetFromLedger = async (
     });
   }
 
-  const accountsPayableFromSuppliers =
-    !isApproxZero(payableFromSupplierLedger)
-      ? moneyPos(payableFromSupplierLedger)
-      : moneyPos(payableFallback);
   const effectiveAccountsPayable =
-    !isApproxZero(accountsPayableFromSuppliers)
-      ? accountsPayableFromSuppliers
-      : moneyPos(accountsPayableFromAccounts);
+    !isApproxZero(accountsPayableLedgerTotal)
+      ? moneyPos(accountsPayableLedgerTotal)
+      : moneyPos(payableFromSupplierLedger);
 
   if (!isApproxZero(effectiveAccountsPayable)) {
     currentLiabilities.push({
