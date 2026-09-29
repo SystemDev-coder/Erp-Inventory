@@ -12,6 +12,7 @@ import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombo
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { useBranch } from '../../context/BranchContext';
 import { attributeSummary } from '../../config/productAttributes';
+import { useAttributeCatalog } from '../../hooks/useAttributeCatalog';
 
 const addDaysToDate = (baseDate: string, days: number) => {
   const dt = new Date(`${baseDate}T00:00:00`);
@@ -52,6 +53,7 @@ const PurchaseEditor = () => {
   const isEdit = Boolean(id);
   const { showToast } = useToast();
   const { activeBranchId } = useBranch();
+  const attributeCatalog = useAttributeCatalog();
   const docType: 'order' | 'purchase' = new URLSearchParams(location.search).get('docType') === 'order' ? 'order' : 'purchase';
 
   const [loading, setLoading] = useState(false);
@@ -1203,24 +1205,28 @@ const PurchaseEditor = () => {
 	              <colgroup>
 	                {discountMode === 'per_item' ? (
 	                  <>
-	                    <col style={{ width: '20%' }} />
 	                    <col style={{ width: '17%' }} />
+	                    <col style={{ width: '14%' }} />
+	                    <col style={{ width: '8%' }} />
 	                    <col style={{ width: '10%' }} />
-	                    <col style={{ width: '12%' }} />
-	                    <col style={{ width: '12%' }} />
-	                    <col style={{ width: '11%' }} />
-	                    <col style={{ width: '11%' }} />
-	                    <col style={{ width: '7%' }} />
+	                    <col style={{ width: '10%' }} />
+	                    <col style={{ width: '9%' }} />
+	                    <col style={{ width: '10%' }} />
+	                    <col style={{ width: '9%' }} />
+	                    <col style={{ width: '9%' }} />
+	                    <col style={{ width: '4%' }} />
 	                  </>
 	                ) : (
 	                  <>
-	                    <col style={{ width: '22%' }} />
-	                    <col style={{ width: '20%' }} />
-	                    <col style={{ width: '12%' }} />
-	                    <col style={{ width: '13%' }} />
-	                    <col style={{ width: '13%' }} />
-	                    <col style={{ width: '12%' }} />
-	                    <col style={{ width: '8%' }} />
+	                    <col style={{ width: '19%' }} />
+	                    <col style={{ width: '16%' }} />
+	                    <col style={{ width: '9%' }} />
+	                    <col style={{ width: '11%' }} />
+	                    <col style={{ width: '11%' }} />
+	                    <col style={{ width: '10%' }} />
+	                    <col style={{ width: '10%' }} />
+	                    <col style={{ width: '9%' }} />
+	                    <col style={{ width: '5%' }} />
 	                  </>
 	                )}
 	              </colgroup>
@@ -1231,6 +1237,8 @@ const PurchaseEditor = () => {
 	                <th className="px-2 py-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Qty</th>
 	                <th className="px-2 py-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Unit Cost</th>
                 <th className="px-2 py-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Sale Price</th>
+                <th className="px-2 py-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Batch No</th>
+                <th className="px-2 py-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Expiry Date</th>
                 {discountMode === 'per_item' && <th className="px-2 py-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Discount</th>}
                 <th className="px-2 py-2 text-right text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Line Total</th>
                 <th className="px-2 py-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Action</th>
@@ -1246,7 +1254,7 @@ const PurchaseEditor = () => {
 	                      options={(() => {
 	                        const base = products.map((p) => {
 	                          const name = p.name?.trim() ? p.name : `Product #${p.product_id}`;
-	                          const summary = attributeSummary(p.attributes);
+	                          const summary = attributeSummary(p.attributes, 2, attributeCatalog);
 	                          return { value: p.product_id, label: summary ? `${name} - ${summary}` : name };
 	                        });
 	                        const q = lineSearchQuery.trim();
@@ -1379,6 +1387,22 @@ const PurchaseEditor = () => {
                         const v = Number(e.target.value || 0);
                         setLineItemValue(idx, 'sale_price', v);
                       }}
+                    />
+                  </td>
+                  <td className="px-2 py-2">
+                    <input
+                      className={`${fieldCls} w-full`}
+                      value={item.batch_no || ''}
+                      onChange={(e) => setLineItemValue(idx, 'batch_no', e.target.value)}
+                      placeholder="Batch #"
+                    />
+                  </td>
+                  <td className="px-2 py-2">
+                    <input
+                      type="date"
+                      className={`${fieldCls} w-full`}
+                      value={item.expiry_date || ''}
+                      onChange={(e) => setLineItemValue(idx, 'expiry_date', e.target.value)}
                     />
                   </td>
                   {discountMode === 'per_item' && (

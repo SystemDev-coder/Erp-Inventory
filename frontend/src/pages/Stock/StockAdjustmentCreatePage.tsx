@@ -6,6 +6,8 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { inventoryService, InventoryItem } from '../../services/inventory.service';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
 import { useBranch } from '../../context/BranchContext';
+import { itemLabelWithAvailability } from '../../utils/itemAvailability';
+import { useAttributeCatalog } from '../../hooks/useAttributeCatalog';
 
 type AdjustmentType = 'INCREASE' | 'DECREASE';
 
@@ -22,12 +24,14 @@ type ItemOption = {
   item_id: number;
   item_name: string;
   available_qty: number;
+  attributes?: Record<string, string | number>;
 };
 
 export default function StockAdjustmentCreatePage() {
   const { showToast } = useToast();
   const navigate = useNavigate();
   const { activeBranchId } = useBranch();
+  const attributeCatalog = useAttributeCatalog();
 
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -63,6 +67,7 @@ export default function StockAdjustmentCreatePage() {
             item_id: id,
             item_name: item.item_name,
             available_qty: stockMap.get(id) ?? 0,
+            attributes: item.attributes,
           };
         });
         setItemOptions(mapped);
@@ -83,8 +88,12 @@ export default function StockAdjustmentCreatePage() {
   }, [itemOptions]);
 
   const itemComboboxOptions = useMemo(
-    () => itemOptions.map((it) => ({ value: it.item_id, label: it.item_name })),
-    [itemOptions]
+    () =>
+      itemOptions.map((it) => ({
+        value: it.item_id,
+        label: itemLabelWithAvailability(it.item_name, it.available_qty, it.attributes, attributeCatalog),
+      })),
+    [itemOptions, attributeCatalog]
   );
 
   const hasInsufficientStock = useMemo(() => {

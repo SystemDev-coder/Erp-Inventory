@@ -94,6 +94,7 @@ export interface ReturnItemOption {
   returned_qty?: number;
   on_hand_qty?: number;
   available_qty?: number;
+  attributes?: Record<string, string | number>;
 }
 
 export interface CreateSalesReturnInput {
@@ -1352,7 +1353,8 @@ export const returnsService = {
                 COALESCE(price.unit_price, i.sell_price, i.cost_price, 0)::numeric(14,2) AS sell_price,
                 COALESCE(sold.sold_qty, 0)::int AS sold_qty,
                 COALESCE(returned.returned_qty, 0)::int AS returned_qty,
-                GREATEST(COALESCE(sold.sold_qty, 0) - COALESCE(returned.returned_qty, 0), 0)::int AS available_qty
+                GREATEST(COALESCE(sold.sold_qty, 0) - COALESCE(returned.returned_qty, 0), 0)::int AS available_qty,
+                COALESCE(i.attributes, '{}'::jsonb) AS attributes
              FROM sold
              JOIN ims.items i ON i.item_id = sold.item_id
              LEFT JOIN returned ON returned.item_id = sold.item_id
@@ -1482,7 +1484,8 @@ export const returnsService = {
                      ),
                      0
                    )
-                 )::int AS available_qty
+                 )::int AS available_qty,
+                 COALESCE(i.attributes, '{}'::jsonb) AS attributes
               FROM purchased
               JOIN ims.items i ON i.item_id = purchased.item_id
               LEFT JOIN LATERAL (

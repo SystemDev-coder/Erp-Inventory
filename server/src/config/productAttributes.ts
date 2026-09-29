@@ -1,16 +1,19 @@
-// Phase 9: centralized Dynamic Product Attributes catalog. This is the one
-// place new attribute keys get defined - every surface that shows or
-// validates them (product form, DataTable, Sales/Purchases lines,
-// barcode/search, Excel import/export) reads from here instead of
-// hardcoding its own field list. Mirrored at
-// frontend/src/config/productAttributes.ts (static, developer-curated
-// config, same convention already used for ProductConfig/BusinessProfile
-// being mirrored frontend+backend elsewhere in this codebase).
+// Category Configuration Engine: the product-attribute catalog lives in
+// the database (ims.attribute_definitions), not in this file - an admin
+// creates a brand-new attribute type from the Category UI with no code
+// change or deploy. This file keeps the shared TS type, the DB-backed
+// loader (loadAttributeCatalog, branch-scoped, cached), and
+// splitAttributes() - the one place that routes an attribute value to a
+// real ims.items column vs the attributes JSONB bag.
 //
-// Each category (ims.categories.attribute_keys) picks a subset of these
-// keys - that's what lets "Mobile Phones" show Storage/RAM/IMEI while "TVs"
-// shows Screen Size/Warranty under the same Electronics business profile,
-// without a fixed column (or fixed field list) per business type.
+// STARTER_ATTRIBUTE_DEFS below is NOT the runtime catalog anymore - it's
+// reference data used only by productsService.seedDefaultCategories() to
+// get-or-create the well-known starter-pack attributes (Brand, Model, ...)
+// the first time a business clicks "Add <Type> Starter Categories", so
+// that convenience feature keeps working without requiring an admin to
+// have manually pre-defined every attribute first.
+
+import { queryMany, queryOne } from '../db/query';
 
 export type ProductAttributeType = 'text' | 'number' | 'select' | 'date';
 
@@ -20,14 +23,12 @@ export type ProductAttributeDef = {
   type: ProductAttributeType;
   options?: string[];
   // When set, this attribute's value lives in this real ims.items column
-  // (the Phase 11 flat-column convention) instead of the attributes JSONB
-  // bag - keeps backward compatibility with General/Supermarket/Clothing/
-  // Pharmacy/Perfume/Cosmetics/Other, which already read/write these
-  // columns directly.
+  // instead of the attributes JSONB bag - reserved for the 6 legacy
+  // columns; never set on an admin-created attribute.
   column?: 'brand' | 'color' | 'size' | 'generic_name' | 'strength' | 'serial_number';
 };
 
-export const PRODUCT_ATTRIBUTE_CATALOG: Record<string, ProductAttributeDef> = {
+export const STARTER_ATTRIBUTE_DEFS: Record<string, ProductAttributeDef> = {
   brand: { key: 'brand', label: 'Brand', type: 'text', column: 'brand' },
   model: { key: 'model', label: 'Model', type: 'text' },
   color: { key: 'color', label: 'Color', type: 'text', column: 'color' },
@@ -47,10 +48,61 @@ export const PRODUCT_ATTRIBUTE_CATALOG: Record<string, ProductAttributeDef> = {
   strength: { key: 'strength', label: 'Strength', type: 'text', column: 'strength' },
 };
 
-export const PRODUCT_ATTRIBUTE_KEYS = Object.keys(PRODUCT_ATTRIBUTE_CATALOG);
+type AttributeDefinitionRow = {
+  attribute_id: number;
+  key: string;
+  label: string;
+  data_type: ProductAttributeType;
+  options: string[] | null;
+  column_name: ProductAttributeDef['column'] | null;
+};
 
-export const isKnownAttributeKey = (key: string): boolean =>
-  Object.prototype.hasOwnProperty.call(PRODUCT_ATTRIBUTE_CATALOG, key);
+const attributeCatalogCache = new Map<number, Record<string, ProductAttributeDef>>();
+
+// Branch-scoped, cached (invalidated by clearAttributeCatalogCache on any
+// attribute_definitions write) - the DB-backed replacement for the old
+// static PRODUCT_ATTRIBUTE_CATALOG. Every runtime consumer (product
+// create/update, Excel import/export) calls this instead of importing a
+// static object.
+export const loadAttributeCatalog = async (branchId: number): Promise<Record<string, ProductAttributeDef>> => {
+  const cached = attributeCatalogCache.get(branchId);
+  if (cached) return cached;
+
+  const rows = await queryMany<AttributeDefinitionRow>(
+    `SELECT attribute_id, key, label, data_type, options, column_name
+       FROM ims.attribute_definitions
+      WHERE branch_id = $1
+        AND is_active = TRUE
+        AND COALESCE(is_deleted, 0) = 0`,
+    [branchId]
+  );
+
+  const catalog: Record<string, ProductAttributeDef> = {};
+  for (const row of rows) {
+    catalog[row.key] = {
+      key: row.key,
+      label: row.label,
+      type: row.data_type,
+      options: row.options || undefined,
+      column: row.column_name || undefined,
+    };
+  }
+  attributeCatalogCache.set(branchId, catalog);
+  return catalog;
+};
+
+export const clearAttributeCatalogCache = (branchId?: number): void => {
+  if (branchId === undefined) {
+    attributeCatalogCache.clear();
+    return;
+  }
+  attributeCatalogCache.delete(branchId);
+};
+
+export const isKnownAttributeKey = (
+  catalog: Record<string, ProductAttributeDef>,
+  key: string
+): boolean => Object.prototype.hasOwnProperty.call(catalog, key);
 
 // Default starter categories for the Electronics business profile, each
 // with a sensible attribute-key subset. Seeded on request (not silently on
@@ -144,14 +196,15 @@ export type NativeAttributeColumn = 'brand' | 'color' | 'size' | 'generic_name' 
 // attributes JSONB bag - the one place both products.service.ts and the
 // Excel importer route a value to the right storage.
 export const splitAttributes = (
+  catalog: Record<string, ProductAttributeDef>,
   attributes: Record<string, string | number | null> | undefined
 ): { columns: Partial<Record<NativeAttributeColumn, string>>; jsonb: Record<string, string | number> } => {
   const columns: Partial<Record<NativeAttributeColumn, string>> = {};
   const jsonb: Record<string, string | number> = {};
   for (const [key, value] of Object.entries(attributes || {})) {
-    if (!isKnownAttributeKey(key)) continue;
+    if (!isKnownAttributeKey(catalog, key)) continue;
     if (value === null || value === '') continue;
-    const def = PRODUCT_ATTRIBUTE_CATALOG[key];
+    const def = catalog[key];
     if (def.column) {
       columns[def.column] = String(value);
     } else {
@@ -159,4 +212,47 @@ export const splitAttributes = (
     }
   }
   return { columns, jsonb };
+};
+
+// The 6 legacy flat columns an attribute_definitions row can map to via
+// column_name - whitelisted before being interpolated as a bare SQL
+// identifier (column names can't be bound query parameters), matching the
+// "resolve from the DB, then whitelist-interpolate" convention already used
+// elsewhere in this codebase (e.g. products.service.ts's ${shape.nameColumn}).
+const KNOWN_ATTRIBUTE_COLUMNS = new Set([
+  'brand',
+  'color',
+  'size',
+  'generic_name',
+  'strength',
+  'serial_number',
+]);
+
+// Reports "group by attribute value" (Sales by Attribute, Stock by
+// Attribute): resolves which real SQL expression holds an attribute's
+// value on ims.items, aliased `i` at every call site. Returns null if the
+// key isn't a defined attribute for this branch - callers should treat
+// that as "nothing to report" (empty result / 404), not build a query.
+export const resolveAttributeGroupExpr = async (
+  branchId: number,
+  attributeKey: string
+): Promise<{ expr: string; label: string } | null> => {
+  const row = await queryOne<{ column_name: string | null; label: string }>(
+    `SELECT column_name, label
+       FROM ims.attribute_definitions
+      WHERE branch_id = $1
+        AND key = $2
+        AND is_active = TRUE
+        AND COALESCE(is_deleted, 0) = 0`,
+    [branchId, attributeKey]
+  );
+  if (!row) return null;
+  if (row.column_name && KNOWN_ATTRIBUTE_COLUMNS.has(row.column_name)) {
+    return { expr: `i.${row.column_name}`, label: row.label };
+  }
+  // JSONB-bag attribute: the key itself came back from a parameterized
+  // lookup above (never taken raw from request input), so it's safe to
+  // embed as a literal here - same trust level as any other DB-resolved
+  // identifier used elsewhere in this file/module.
+  return { expr: `i.attributes ->> '${attributeKey.replace(/'/g, "''")}'`, label: row.label };
 };

@@ -7,7 +7,7 @@ import { resolveBranchScope } from '../../utils/branchScope';
 import { deleteCloudinaryImage, getUploadedImageUrl } from '../../config/cloudinary';
 import { productsService } from './products.service';
 import { settingsService } from '../settings/settings.service';
-import { PRODUCT_ATTRIBUTE_CATALOG, isKnownAttributeKey } from '../../config/productAttributes';
+import { loadAttributeCatalog } from '../../config/productAttributes';
 
 const loadSheetJs = () => {
   try {
@@ -18,8 +18,11 @@ const loadSheetJs = () => {
   }
 };
 import {
+  attributeDefinitionCreateSchema,
+  attributeDefinitionUpdateSchema,
   categoryCreateSchema,
   categoryUpdateSchema,
+  generateVariantsSchema,
   listQuerySchema,
   productCreateSchema,
   productUpdateSchema,
@@ -58,6 +61,10 @@ const parseListFilters = (query: Record<string, unknown>) => {
     limit: parsed.limit,
     fromDate: parsed.fromDate,
     toDate: parsed.toDate,
+    attributeKey: parsed.attributeKey ?? parsed.attribute_key,
+    attributeValue: parsed.attributeValue ?? parsed.attribute_value,
+    excludeVariantParents: parsed.excludeVariantParents ?? parsed.exclude_variant_parents,
+    parentItemId: parsed.parentItemId ?? parsed.parent_item_id,
   };
 };
 
@@ -67,6 +74,16 @@ const normalizeCategoryBody = (body: any) => ({
   isActive: body?.isActive ?? body?.is_active,
   branchId: body?.branchId ?? body?.branch_id,
   attributeKeys: body?.attributeKeys ?? body?.attribute_keys,
+  parentId: body?.parentId ?? body?.parent_id,
+});
+
+const normalizeAttributeDefinitionBody = (body: any) => ({
+  key: body?.key,
+  label: body?.label,
+  dataType: body?.dataType ?? body?.data_type,
+  options: body?.options,
+  isActive: body?.isActive ?? body?.is_active,
+  branchId: body?.branchId ?? body?.branch_id,
 });
 
 const normalizeUnitBody = (body: any) => ({
@@ -106,6 +123,7 @@ const normalizeProductBody = (body: any) => ({
   status: body?.status,
   isActive: body?.isActive ?? body?.is_active,
   branchId: body?.branchId ?? body?.branch_id,
+  parentId: body?.parentId ?? body?.parent_id,
 });
 
 export const listProducts = asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -133,10 +151,11 @@ export const exportProducts = asyncHandler(async (req: AuthRequest, res: Respons
     new Set(products.map((p) => p.category_id).filter((id): id is number => Boolean(id)))
   );
   const categories = await productsService.getCategoriesByIds(categoryIds);
+  const attributeCatalog = await loadAttributeCatalog(filters.branchId ?? scope.primaryBranchId);
   const attributeKeySet = new Set<string>();
   for (const category of categories) {
     for (const key of category.attribute_keys || []) {
-      if (isKnownAttributeKey(key)) attributeKeySet.add(key);
+      if (Object.prototype.hasOwnProperty.call(attributeCatalog, key)) attributeKeySet.add(key);
     }
   }
   const attributeKeys = Array.from(attributeKeySet);
@@ -155,7 +174,7 @@ export const exportProducts = asyncHandler(async (req: AuthRequest, res: Respons
       is_active: p.is_active ? 'active' : 'inactive',
     };
     for (const key of attributeKeys) {
-      const def = PRODUCT_ATTRIBUTE_CATALOG[key];
+      const def = attributeCatalog[key];
       const value = def.column ? (p as unknown as Record<string, unknown>)[def.column] : (p.attributes || {})[key];
       row[def.label] = value ?? '';
     }
@@ -203,6 +222,31 @@ export const createProduct = asyncHandler(async (req: AuthRequest, res: Response
   const input = productCreateSchema.parse(normalizeProductBody(req.body));
   const product = await productsService.createProduct(input, scope);
   return ApiResponse.created(res, { product }, 'Product created');
+});
+
+export const listProductVariants = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const variants = await productsService.listVariants(Number(req.params.id), scope);
+  return ApiResponse.success(res, { variants });
+});
+
+export const addProductVariant = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const input = productCreateSchema.parse({
+    ...normalizeProductBody(req.body),
+    parentId: Number(req.params.id),
+  });
+  const product = await productsService.createProduct(input, scope);
+  return ApiResponse.created(res, { product }, 'Variant created');
+});
+
+export const generateProductVariants = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const input = generateVariantsSchema.parse({
+    axisAttributeKeys: req.body?.axisAttributeKeys ?? req.body?.axis_attribute_keys,
+  });
+  const variants = await productsService.generateVariants(Number(req.params.id), input.axisAttributeKeys, scope);
+  return ApiResponse.created(res, { variants }, `${variants.length} variant(s) created`);
 });
 
 export const updateProduct = asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -290,6 +334,38 @@ export const deleteCategory = asyncHandler(async (req: AuthRequest, res: Respons
   const scope = await resolveBranchScope(req);
   await productsService.deleteCategory(Number(req.params.id), scope);
   return ApiResponse.success(res, null, 'Category deleted');
+});
+
+// Category Configuration Engine: the attribute catalog itself, editable
+// from the ERP UI - creating a new one here needs no code change or
+// deploy for it to show up in the Category modal's checklist, the New
+// Product form, and Excel import/export.
+export const listAttributeDefinitions = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
+  const attributes = await productsService.listAttributeDefinitions(scope, branchId);
+  return ApiResponse.success(res, { attributes });
+});
+
+export const createAttributeDefinition = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const input = attributeDefinitionCreateSchema.parse(normalizeAttributeDefinitionBody(req.body));
+  const attribute = await productsService.createAttributeDefinition(input, scope);
+  return ApiResponse.created(res, { attribute }, 'Attribute created');
+});
+
+export const updateAttributeDefinition = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  const input = attributeDefinitionUpdateSchema.parse(normalizeAttributeDefinitionBody(req.body));
+  const attribute = await productsService.updateAttributeDefinition(Number(req.params.id), input, scope);
+  if (!attribute) throw ApiError.notFound('Attribute not found');
+  return ApiResponse.success(res, { attribute }, 'Attribute updated');
+});
+
+export const deleteAttributeDefinition = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const scope = await resolveBranchScope(req);
+  await productsService.deleteAttributeDefinition(Number(req.params.id), scope);
+  return ApiResponse.success(res, null, 'Attribute deleted');
 });
 
 export const listUnits = asyncHandler(async (req: AuthRequest, res: Response) => {

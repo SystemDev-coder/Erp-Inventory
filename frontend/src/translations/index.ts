@@ -187,6 +187,11 @@ export const translations = {
     en: 'Date range + product selection',
     so: 'Xilli + Doorashada Alaabta',
   },
+  hint_between_dates_attribute: {
+    en: 'Between two dates + attribute dropdown',
+    so: 'Labada Taariikh + Liiska Sifada',
+  },
+  hint_attribute_dropdown: { en: 'Attribute dropdown', so: 'Liiska Sifada' },
 
   // Sales report cards
   rcard_sales_summary_title: { en: 'Sales Summary', so: 'Isku-soo-koobka Iibka' },
@@ -195,6 +200,7 @@ export const translations = {
   rcard_sales_by_customer_title: { en: 'Sales by Customer', so: 'Iibka Macmiil Kasta' },
   rcard_sales_by_product_title: { en: 'Sales by Product', so: 'Iibka Alaab Kasta' },
   rcard_sales_by_store_title: { en: 'Sales by Store', so: 'Iibka Bakhaar Kasta' },
+  rcard_sales_by_attribute_title: { en: 'Sales by Attribute', so: 'Iibka Sifo Kasta' },
   rcard_top_selling_items_title: { en: 'Most Sold Products', so: 'Alaabta ugu Iibsan Badan' },
   rcard_top_customers_title: { en: 'Top Customers', so: 'Macaamiisha ugu Sarreeya' },
   rcard_sales_returns_title: { en: 'Sales Returns Report', so: 'Warbixinta Soo Celinta Iibka' },
@@ -210,11 +216,13 @@ export const translations = {
   rcard_valuation_average_title: { en: 'Stock Value (Average)', so: 'Qiimaha Bakhaarka (Celcelis)' },
   rcard_adjustments_title: { en: 'Stock Adjustment Log', so: 'Diiwaanka Hagaajinta Bakhaarka' },
   rcard_inventory_loss_title: { en: 'Inventory Loss', so: 'Khasaaraha Bakhaarka' },
+  rcard_expiry_tracking_title: { en: 'Expiry Tracking', so: 'La Socodka Dhicitaanka' },
   rcard_inventory_found_title: { en: 'Inventory Found', so: 'Alaabta la Helay' },
   rcard_store_stock_title: { en: 'Store Stock Report', so: 'Warbixinta Bakhaarka Store-ka' },
   rcard_store_wise_title: { en: 'Store-wise Stock', so: 'Bakhaarka Store Kasta' },
   rcard_store_movement_title: { en: 'Store Movement Summary', so: 'Isku-soo-koobka Dhaqdhaqaaqa Store-ka' },
   rcard_store_movement_detail_title: { en: 'Store Movement Detail', so: 'Faahfaahinta Dhaqdhaqaaqa Store-ka' },
+  rcard_stock_by_attribute_title: { en: 'Stock by Attribute', so: 'Bakhaarka Sifo Kasta' },
 
   // Purchase report cards
   rcard_orders_summary_title: { en: 'Purchase Orders Summary', so: 'Isku-soo-koobka Dalabaadka Iibsiga' },

@@ -816,8 +816,16 @@ export const inventoryService = {
     }
 
     if (search) {
+      // Matches name, barcode (previously not checked here at all), or a
+      // dynamic attribute value - same shape as products.service.ts's
+      // listProducts search, so this picker (Sales/Stock Adjustment) finds
+      // items the same way the Products page does.
       params.push(`%${search}%`);
-      where.push(`i.name ILIKE $${params.length}`);
+      where.push(
+        `(i.name ILIKE $${params.length} OR COALESCE(i.barcode, '') ILIKE $${params.length} OR EXISTS (
+           SELECT 1 FROM jsonb_each_text(COALESCE(i.attributes, '{}'::jsonb)) av WHERE av.value ILIKE $${params.length}
+         ))`
+      );
     }
 
     const hasAlert = await hasItemsStockAlertColumn();

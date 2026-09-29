@@ -10,10 +10,12 @@ import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
 import { itemLabelWithAvailability } from '../../utils/itemAvailability';
 import { useBranch } from '../../context/BranchContext';
+import { useAttributeCatalog } from '../../hooks/useAttributeCatalog';
 
 const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const { showToast } = useToast();
   const { activeBranchId } = useBranch();
+  const attributeCatalog = useAttributeCatalog();
   const [stores, setStores] = useState<StoreType[]>([]);
   const [loading, setLoading] = useState(false);
   const [hasDisplayed, setHasDisplayed] = useState(false);
@@ -259,7 +261,7 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const toStoreOptions = storeOptions.filter((o) => o.value !== transferForm.fromStoreId);
   const productOptions = products.map((p) => ({
     value: p.product_id,
-    label: itemLabelWithAvailability(p.name, p.stock ?? p.quantity ?? p.opening_balance),
+    label: itemLabelWithAvailability(p.name, p.stock ?? p.quantity ?? p.opening_balance, p.attributes, attributeCatalog),
   }));
 
   return (

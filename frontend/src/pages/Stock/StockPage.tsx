@@ -13,6 +13,7 @@ import { itemLabelWithAvailability } from '../../utils/itemAvailability';
 import { formatAvailableQty } from '../../utils/itemAvailability';
 import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
+import { useAttributeCatalog } from '../../hooks/useAttributeCatalog';
 
 type MovementRow = {
   move_date: string;
@@ -34,6 +35,7 @@ const StockPage = () => {
   const { showToast } = useToast();
   const { user, permissions } = useAuth();
   const { activeBranchId } = useBranch();
+  const attributeCatalog = useAttributeCatalog();
   const [stock, setStock] = useState<StockLevelRow[]>([]);
   const [movements, setMovements] = useState<MovementRow[]>([]);
   const [loadingStock, setLoadingStock] = useState(false);
@@ -618,7 +620,7 @@ const StockPage = () => {
           <div><label className={labelClass}>Search</label><input className={inputClass} placeholder="Product name..." value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} /></div>
           <div><label className={labelClass}>Branch</label><select className={inputClass} value={filters.branchId} onChange={(e) => setFilters({ ...filters, branchId: e.target.value, whId: '' })}><option value="">All branches</option>{activeBranches.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>)}</select></div>
           <div><label className={labelClass}>Warehouse</label><select className={inputClass} value={filters.whId} onChange={(e) => setFilters({ ...filters, whId: e.target.value })}><option value="">All warehouses</option>{filterWarehouses.map((w) => <option key={w.wh_id} value={w.wh_id}>{w.wh_name}</option>)}</select></div>
-          <div><label className={labelClass}>Purchased Product</label><select className={inputClass} value={filters.productId} onChange={(e) => setFilters({ ...filters, productId: e.target.value })}><option value="">All purchased products</option>{filterItems.map((item) => <option key={item.item_id} value={item.item_id}>{itemLabelWithAvailability(item.item_name, itemAvailableQtyMap[item.item_id])}</option>)}</select></div>
+          <div><label className={labelClass}>Purchased Product</label><select className={inputClass} value={filters.productId} onChange={(e) => setFilters({ ...filters, productId: e.target.value })}><option value="">All purchased products</option>{filterItems.map((item) => <option key={item.item_id} value={item.item_id}>{itemLabelWithAvailability(item.item_name, itemAvailableQtyMap[item.item_id], item.attributes, attributeCatalog)}</option>)}</select></div>
           <div><label className={labelClass}>From Date</label><input type="date" className={inputClass} value={dateRange.fromDate} onChange={(e) => setDateRange((prev) => ({ ...prev, fromDate: e.target.value }))} /></div>
           <div><label className={labelClass}>To Date</label><input type="date" className={inputClass} value={dateRange.toDate} onChange={(e) => setDateRange((prev) => ({ ...prev, toDate: e.target.value }))} /></div>
         </div>
@@ -631,7 +633,7 @@ const StockPage = () => {
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div><label className={labelClass}>Branch *</label><select className={inputClass} value={adjustForm.branchId} onChange={(e) => setAdjustForm({ ...adjustForm, branchId: e.target.value, whId: '', productId: '', unitCost: 0, salePrice: 0 })}><option value="">Select branch</option>{activeBranches.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>)}</select></div>
           <div><label className={labelClass}>Warehouse</label><select className={inputClass} value={adjustForm.whId} onChange={(e) => setAdjustForm({ ...adjustForm, whId: e.target.value })}><option value="">Branch level only</option>{adjustWarehouses.map((w) => <option key={w.wh_id} value={w.wh_id}>{w.wh_name}</option>)}</select></div>
-          <div><label className={labelClass}>Purchased Product *</label><select className={inputClass} value={adjustForm.productId} onChange={(e) => handleAdjustItemChange(e.target.value)}><option value="">Select purchased product</option>{adjustItems.map((item) => <option key={item.item_id} value={item.item_id}>{itemLabelWithAvailability(item.item_name, itemAvailableQtyMap[item.item_id])}</option>)}</select><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Current Stock: <span className="font-medium text-slate-700 dark:text-slate-200">{formatAvailableQty(selectedAdjustAvailableQty)} units</span></p></div>
+          <div><label className={labelClass}>Purchased Product *</label><select className={inputClass} value={adjustForm.productId} onChange={(e) => handleAdjustItemChange(e.target.value)}><option value="">Select purchased product</option>{adjustItems.map((item) => <option key={item.item_id} value={item.item_id}>{itemLabelWithAvailability(item.item_name, itemAvailableQtyMap[item.item_id], item.attributes, attributeCatalog)}</option>)}</select><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Current Stock: <span className="font-medium text-slate-700 dark:text-slate-200">{formatAvailableQty(selectedAdjustAvailableQty)} units</span></p></div>
           <div><label className={labelClass}>Quantity * (use negative for decrease)</label><input type="number" className={inputClass} value={adjustForm.qty} onChange={(e) => setAdjustForm({ ...adjustForm, qty: Number(e.target.value) })} placeholder="0" />{isAdjustDecreaseInsufficient && <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">Cannot decrease more than current stock.</p>}</div>
           <div><label className={labelClass}>Cost Price</label><input type="number" className={inputClass} value={adjustForm.unitCost} onChange={(e) => setAdjustForm({ ...adjustForm, unitCost: Number(e.target.value) })} placeholder="0.00" /></div>
           <div><label className={labelClass}>Sale Price</label><input type="number" className={inputClass} value={adjustForm.salePrice} readOnly /></div>
@@ -673,7 +675,7 @@ const StockPage = () => {
           {transferForm.toType === 'branch' && transferForm.toBranchId && (
             <div><label className={labelClass}>To Warehouse (optional)</label><select className={inputClass} value={transferForm.toWhId} onChange={(e) => setTransferForm({ ...transferForm, toWhId: e.target.value })}><option value="">Use branch stock</option>{transferToWarehouses.map((w) => <option key={w.wh_id} value={w.wh_id}>{w.wh_name}</option>)}</select></div>
           )}
-          <div><label className={labelClass}>Purchased Product *</label><select className={inputClass} value={transferForm.productId} onChange={(e) => handleTransferItemChange(e.target.value)}><option value="">Select purchased product</option>{transferItems.map((item) => <option key={item.item_id} value={item.item_id}>{itemLabelWithAvailability(item.item_name, itemAvailableQtyMap[item.item_id])}</option>)}</select></div>
+          <div><label className={labelClass}>Purchased Product *</label><select className={inputClass} value={transferForm.productId} onChange={(e) => handleTransferItemChange(e.target.value)}><option value="">Select purchased product</option>{transferItems.map((item) => <option key={item.item_id} value={item.item_id}>{itemLabelWithAvailability(item.item_name, itemAvailableQtyMap[item.item_id], item.attributes, attributeCatalog)}</option>)}</select></div>
           <div><label className={labelClass}>Quantity *</label><input type="number" className={inputClass} value={transferForm.qty} onChange={(e) => setTransferForm({ ...transferForm, qty: Number(e.target.value) })} placeholder="0" /></div>
           <div><label className={labelClass}>Cost Price</label><input type="number" className={inputClass} value={transferForm.unitCost} onChange={(e) => setTransferForm({ ...transferForm, unitCost: Number(e.target.value) })} placeholder="0.00" /></div>
           <div><label className={labelClass}>Sale Price</label><input type="number" className={inputClass} value={transferForm.salePrice} readOnly /></div>

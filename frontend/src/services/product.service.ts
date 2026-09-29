@@ -15,11 +15,32 @@ export interface Category {
   name: string;
   description?: string | null;
   is_active: boolean;
-  // Phase 9: Dynamic Product Attributes catalog keys that apply to items in
-  // this category - see frontend/src/config/productAttributes.ts.
+  // Category Configuration Engine: which ims.attribute_definitions keys
+  // apply to items in this category - resolved server-side from
+  // ims.category_attributes, not a hardcoded list.
   attribute_keys?: string[];
+  parent_id?: number | null;
+  parent_name?: string | null;
   created_at?: string;
   updated_at?: string | null;
+}
+
+export type AttributeDataType = 'text' | 'number' | 'select' | 'date';
+
+// Category Configuration Engine: the attribute catalog itself, editable
+// from the UI - creating one here needs no code change to show up in the
+// Category modal's checklist, the New Product form, or Excel import/export.
+export interface AttributeDefinition {
+  attribute_id: number;
+  branch_id?: number;
+  key: string;
+  label: string;
+  data_type: AttributeDataType;
+  options?: string[] | null;
+  column_name?: string | null;
+  is_active: boolean;
+  in_use?: boolean;
+  created_at?: string;
 }
 
 export interface Unit {
@@ -73,6 +94,20 @@ export interface Product {
   stock: number;
   quantity?: number;
   opening_balance?: number;
+  // POS Sellability Rules: derived from the latest (max) expiry_date across
+  // all ims.purchase_items batches ever recorded for this item - true only
+  // when every known batch has already expired. Items with no recorded
+  // batches at all are never flagged. See products.service.ts#getProductSql.
+  latest_expiry_date?: string | null;
+  is_expired?: boolean;
+  // Product Variants: parent_item_id set means this row IS a variant (of a
+  // different, top-level product); has_variants true means this row is the
+  // "parent" template and can't be sold directly - sell one of its variants
+  // instead (each variant is an ordinary product with its own barcode/
+  // price/stock). See products.service.ts#getProductSql.
+  parent_item_id?: number | null;
+  has_variants?: boolean;
+  variant_count?: number;
   is_active: boolean;
   status: string;
   description?: string | null;
@@ -92,6 +127,13 @@ type ListOptions = {
   fromDate?: string;
   toDate?: string;
   stockStatus?: 'in_stock' | 'low_stock' | 'no_stock';
+  // Category Configuration Engine: exact-match "Filter by Attribute".
+  attributeKey?: string;
+  attributeValue?: string;
+  // Product Variants: hide parent-with-variants rows (POS/Sales/Purchases
+  // pickers), or scope the list to one parent's variants.
+  excludeVariantParents?: boolean;
+  parentItemId?: number;
 };
 
 type MasterListOptions = {
@@ -132,6 +174,10 @@ export const productService = {
       fromDate: options.fromDate,
       toDate: options.toDate,
       stockStatus: options.stockStatus,
+      attributeKey: options.attributeKey,
+      attributeValue: options.attributeValue,
+      excludeVariantParents: options.excludeVariantParents,
+      parentItemId: options.parentItemId,
     });
     return apiClient.get<{ products: Product[]; pagination?: PaginationMeta }>(`${API.PRODUCTS.LIST}${qs}`);
   },
@@ -215,7 +261,7 @@ export const productService = {
     );
   },
 
-  async create(data: Partial<Product>) {
+  async create(data: Partial<Product> & { parentId?: number }) {
     return apiClient.post<{ product: Product }>(API.PRODUCTS.LIST, data);
   },
 
@@ -230,6 +276,19 @@ export const productService = {
   // Phase 6: consolidates fromId's history/stock into toId, then archives fromId.
   async merge(fromId: number, toId: number) {
     return apiClient.post<{ message: string }>(`/api/products/${fromId}/merge-into/${toId}`, {});
+  },
+
+  // Product Variants
+  async listVariants(parentId: number) {
+    return apiClient.get<{ variants: Product[] }>(API.PRODUCTS.VARIANTS(parentId));
+  },
+
+  async addVariant(parentId: number, data: Partial<Product>) {
+    return apiClient.post<{ product: Product }>(API.PRODUCTS.VARIANTS(parentId), data);
+  },
+
+  async generateVariants(parentId: number, axisAttributeKeys: string[]) {
+    return apiClient.post<{ variants: Product[] }>(API.PRODUCTS.GENERATE_VARIANTS(parentId), { axisAttributeKeys });
   },
 
   async listCategories(options: MasterListOptions = {}) {
@@ -247,6 +306,32 @@ export const productService = {
 
   async removeCategory(id: number, reason: string) {
     return apiClient.delete<{ message: string }>(API.PRODUCTS.CATEGORY(id), reason);
+  },
+
+  async listAttributes(branchId?: number) {
+    const qs = branchId ? `?branchId=${branchId}` : '';
+    return apiClient.get<{ attributes: AttributeDefinition[] }>(`${API.PRODUCTS.ATTRIBUTES}${qs}`);
+  },
+
+  async createAttribute(data: {
+    key: string;
+    label: string;
+    dataType: AttributeDataType;
+    options?: string[];
+    branchId?: number;
+  }) {
+    return apiClient.post<{ attribute: AttributeDefinition }>(API.PRODUCTS.ATTRIBUTES, data);
+  },
+
+  async updateAttribute(
+    id: number,
+    data: Partial<{ label: string; dataType: AttributeDataType; options: string[]; isActive: boolean }>
+  ) {
+    return apiClient.put<{ attribute: AttributeDefinition }>(API.PRODUCTS.ATTRIBUTE(id), data);
+  },
+
+  async removeAttribute(id: number, reason: string) {
+    return apiClient.delete<{ message: string }>(API.PRODUCTS.ATTRIBUTE(id), reason);
   },
 
   async listUnits(options: MasterListOptions = {}) {

@@ -5,7 +5,7 @@ import { ApiError } from '../../utils/ApiError';
 import { deleteGlByRef, ensureCoreCoa, postGl } from '../../utils/glPosting';
 import { syncSystemAccountBalancesWithClient } from '../../utils/systemAccounts';
 import { parseSpreadsheet } from './import.parser';
-import { PRODUCT_ATTRIBUTE_CATALOG, splitAttributes } from '../../config/productAttributes';
+import { ProductAttributeDef, loadAttributeCatalog, splitAttributes } from '../../config/productAttributes';
 import {
   ImportMode,
   ImportRowError,
@@ -44,7 +44,7 @@ type ImportExecutionOptions = {
 type ImportDefinition<T> = {
   type: ImportType;
   requiredHeaders: Array<{ field: string; aliases: string[] }>;
-  parseRow: (raw: Record<string, unknown>, row: number) => ParseResult<T>;
+  parseRow: (raw: Record<string, unknown>, row: number, attributeCatalog: Record<string, ProductAttributeDef>) => ParseResult<T>;
   applyBusinessChecks: (
     rows: CandidateRow<T>[],
     branchId: number,
@@ -641,7 +641,10 @@ const parseSupplierRow = (raw: Record<string, unknown>): ParseResult<SupplierImp
   };
 };
 
-const parseItemRow = (raw: Record<string, unknown>): ParseResult<ItemImportRow> => {
+const parseItemRow = (
+  raw: Record<string, unknown>,
+  attributeCatalog: Record<string, ProductAttributeDef>
+): ParseResult<ItemImportRow> => {
   const errors: string[] = [];
   const name = readString(raw, ['name', 'item']) || '';
   const barcode = readString(raw, ['barcode', 'bar_code', 'sku']);
@@ -698,7 +701,7 @@ const parseItemRow = (raw: Record<string, unknown>): ParseResult<ItemImportRow> 
   // every business profile's template (which lists every possible
   // attribute column) works for every other profile too.
   const attributes: Record<string, string> = {};
-  for (const def of Object.values(PRODUCT_ATTRIBUTE_CATALOG)) {
+  for (const def of Object.values(attributeCatalog)) {
     const value = readString(raw, [def.key]);
     if (value) attributes[def.key] = value;
   }
@@ -1495,7 +1498,8 @@ const insertItem = async (
   }
 
   if (Object.keys(row.attributes).length) {
-    const { columns: attrColumns, jsonb: attrJsonb } = splitAttributes(row.attributes);
+    const attributeCatalog = await loadAttributeCatalog(branchId);
+    const { columns: attrColumns, jsonb: attrJsonb } = splitAttributes(attributeCatalog, row.attributes);
     const setClauses: string[] = [];
     const values: unknown[] = [];
     for (const [column, value] of Object.entries(attrColumns)) {
@@ -1588,7 +1592,7 @@ const customersDefinition: ImportDefinition<CustomerImportRow> = {
     { field: 'full_name', aliases: ['full_name', 'name', 'customer_name'] },
     { field: 'remaining_balance', aliases: ['remaining_balance', 'open_balance', 'balance'] },
   ],
-  parseRow: (raw, _row) => parseCustomerRow(raw),
+  parseRow: (raw, _row, _catalog) => parseCustomerRow(raw),
   applyBusinessChecks: applyCustomerChecks,
   insertRow: insertCustomer,
   toPreviewData: (row) => row,
@@ -1600,7 +1604,7 @@ const suppliersDefinition: ImportDefinition<SupplierImportRow> = {
     { field: 'supplier_name', aliases: ['supplier_name', 'supplier', 'business_name', 'company', 'company_name'] },
     { field: 'remaining_balance', aliases: ['remaining_balance', 'open_balance', 'balance'] },
   ],
-  parseRow: (raw, _row) => parseSupplierRow(raw),
+  parseRow: (raw, _row, _catalog) => parseSupplierRow(raw),
   applyBusinessChecks: applySupplierChecks,
   insertRow: insertSupplier,
   toPreviewData: (row) => row,
@@ -1617,7 +1621,7 @@ const itemsDefinition: ImportDefinition<ItemImportRow> = {
     // auto-assigns Main Store / the branch's default category / the branch's default unit.
     // A category or unit name that doesn't exist yet gets created automatically.
   ],
-  parseRow: (raw, _row) => parseItemRow(raw),
+  parseRow: (raw, _row, catalog) => parseItemRow(raw, catalog),
   applyBusinessChecks: applyItemChecks,
   insertRow: insertItem,
   toPreviewData: (row) => {
@@ -1695,13 +1699,18 @@ const executeImport = async <
   ensureFileHasRows(parsed.rows.length);
   ensureRequiredHeaders(parsed.headers, definition.requiredHeaders);
 
+  // Loaded once per import job (not per row) - the branch's current
+  // attribute catalog, used by items' parseRow to read whichever Dynamic
+  // Product Attribute columns are present in the file.
+  const attributeCatalog = await loadAttributeCatalog(branchId);
+
   const failedRows: ImportRowError[] = [];
   const skippedRows: ImportRowSkip[] = [];
   const previewMap = new Map<number, PreviewRow>();
   const candidates: CandidateRow<T>[] = [];
 
   for (const sourceRow of parsed.rows) {
-    const parsedRow = definition.parseRow(sourceRow.raw, sourceRow.row);
+    const parsedRow = definition.parseRow(sourceRow.raw, sourceRow.row, attributeCatalog);
     if (!parsedRow.data || parsedRow.errors.length) {
       failedRows.push({
         row: sourceRow.row,

@@ -7,6 +7,7 @@ import type { DateRange, ModalReportState } from '../types';
 import { formatCurrency, formatDateOnly, formatDateTime, formatQuantity, toRecordRows, defaultReportRange, withReportTruncation, type ReportTruncationMeta } from '../reportUtils';
 import { useBranch } from '../../../context/BranchContext';
 import { useLanguage } from '../../../context/LanguageContext';
+import { useAttributeCatalog } from '../../../hooks/useAttributeCatalog';
 import type { TranslationKey } from '../../../translations';
 
 type SalesCardId =
@@ -16,6 +17,7 @@ type SalesCardId =
   | 'sales-by-customer'
   | 'sales-by-product'
   | 'sales-by-store'
+  | 'sales-by-attribute'
   | 'top-selling-items'
   | 'top-customers'
   | 'sales-returns'
@@ -30,6 +32,7 @@ const salesCards: Array<{ id: SalesCardId; title: string; hint: string }> = [
   { id: 'sales-by-customer', title: 'Sales by Customer', hint: 'Dropdown + Show / All' },
   { id: 'sales-by-product', title: 'Sales by Product', hint: 'Dropdown + Show / All' },
   { id: 'sales-by-store', title: 'Sales by Store', hint: 'Between two dates + Store dropdown + Show / All' },
+  { id: 'sales-by-attribute', title: 'Sales by Attribute', hint: 'Between two dates + attribute dropdown' },
   { id: 'top-selling-items', title: 'Most Sold Products', hint: 'Between two dates' },
   { id: 'top-customers', title: 'Top Customers', hint: 'Between two dates' },
   { id: 'sales-returns', title: 'Sales Returns Report', hint: 'Between two dates' },
@@ -45,6 +48,7 @@ const SALES_CARD_TITLE_KEYS: Record<SalesCardId, TranslationKey> = {
   'sales-by-customer': 'rcard_sales_by_customer_title',
   'sales-by-product': 'rcard_sales_by_product_title',
   'sales-by-store': 'rcard_sales_by_store_title',
+  'sales-by-attribute': 'rcard_sales_by_attribute_title',
   'top-selling-items': 'rcard_top_selling_items_title',
   'top-customers': 'rcard_top_customers_title',
   'sales-returns': 'rcard_sales_returns_title',
@@ -60,6 +64,7 @@ const SALES_CARD_HINT_KEYS: Record<SalesCardId, TranslationKey> = {
   'sales-by-customer': 'hint_dropdown_show_all',
   'sales-by-product': 'hint_dropdown_show_all',
   'sales-by-store': 'hint_between_dates_store',
+  'sales-by-attribute': 'hint_between_dates_attribute',
   'top-selling-items': 'hint_between_two_dates',
   'top-customers': 'hint_between_two_dates',
   'sales-returns': 'hint_between_two_dates',
@@ -117,6 +122,13 @@ const invoiceStatusColumns: ReportColumn<Record<string, unknown>>[] = [
 
 const salesByStoreColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'store_name', header: 'Store' },
+  { key: 'quantity_sold', header: 'Qty Sold', align: 'right', render: (row) => formatQuantity(row.quantity_sold) },
+  { key: 'sales_count', header: 'Sales Count', align: 'right' },
+  { key: 'sales_amount', header: 'Sales Amount', align: 'right', render: (row) => formatCurrency(row.sales_amount) },
+];
+
+const salesByAttributeColumns: ReportColumn<Record<string, unknown>>[] = [
+  { key: 'attribute_value', header: 'Attribute Value' },
   { key: 'quantity_sold', header: 'Qty Sold', align: 'right', render: (row) => formatQuantity(row.quantity_sold) },
   { key: 'sales_count', header: 'Sales Count', align: 'right' },
   { key: 'sales_amount', header: 'Sales Amount', align: 'right', render: (row) => formatCurrency(row.sales_amount) },
@@ -215,6 +227,7 @@ export function SalesReportsTab({ onOpenModal }: Props) {
 
   const { activeBranchId } = useBranch();
   const { t } = useLanguage();
+  const attributeCatalog = useAttributeCatalog();
   const [expandedCardId, setExpandedCardId] = useState<SalesCardId | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<SalesCardId | null>(null);
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
@@ -222,12 +235,14 @@ export function SalesReportsTab({ onOpenModal }: Props) {
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [selectedProductId, setSelectedProductId] = useState('');
   const [selectedStoreId, setSelectedStoreId] = useState('');
+  const [selectedAttributeKey, setSelectedAttributeKey] = useState('');
   const [invoiceStatusFilter, setInvoiceStatusFilter] = useState<'all' | 'paid' | 'partial' | 'unpaid'>('all');
 
   const [summaryRange, setSummaryRange] = useState<DateRange>(defaultReportRange());
   const [invoiceStatusRange, setInvoiceStatusRange] = useState<DateRange>(defaultReportRange());
   const [topSellingRange, setTopSellingRange] = useState<DateRange>(defaultReportRange());
   const [salesByStoreRange, setSalesByStoreRange] = useState<DateRange>(defaultReportRange());
+  const [salesByAttributeRange, setSalesByAttributeRange] = useState<DateRange>(defaultReportRange());
   const [topCustomersRange, setTopCustomersRange] = useState<DateRange>(defaultReportRange());
   const [returnsRange, setReturnsRange] = useState<DateRange>(defaultReportRange());
   const [paymentsRange, setPaymentsRange] = useState<DateRange>(defaultReportRange());
@@ -760,6 +775,40 @@ export function SalesReportsTab({ onOpenModal }: Props) {
       }, response.data.meta);
     });
 
+  const handleSalesByAttribute = () =>
+    runCardAction('sales-by-attribute', async () => {
+      ensureRangeValid(salesByAttributeRange, 'Sales by Attribute');
+      if (!selectedAttributeKey) throw new Error('Select an attribute first');
+      const response = await salesReportsService.getSalesByAttribute({
+        ...salesByAttributeRange,
+        attributeKey: selectedAttributeKey,
+        branchId: activeBranchId ?? undefined,
+      });
+      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load sales by attribute report');
+      const rows = toRecordRows(response.data.rows || []);
+      const attributeLabel = attributeCatalog[selectedAttributeKey]?.label || selectedAttributeKey;
+      openReport({
+        title: `Sales by ${attributeLabel}`,
+        subtitle: `${formatDateOnly(salesByAttributeRange.fromDate)} - ${formatDateOnly(salesByAttributeRange.toDate)}`,
+        fileName: 'sales-by-attribute',
+        data: rows,
+        columns: salesByAttributeColumns,
+        filters: {
+          Attribute: attributeLabel,
+          'From Date': salesByAttributeRange.fromDate,
+          'To Date': salesByAttributeRange.toDate,
+        },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            quantity_sold: formatQuantity(sumNumericField(rows, 'quantity_sold')),
+            sales_count: sumNumericField(rows, 'sales_count').toLocaleString(),
+            sales_amount: formatCurrency(sumNumericField(rows, 'sales_amount')),
+          },
+        },
+      }, response.data.meta);
+    });
+
   const handleTopSellingItems = () =>
     runCardAction('top-selling-items', async () => {
       ensureRangeValid(topSellingRange, 'Top Selling Products');
@@ -1008,6 +1057,19 @@ export function SalesReportsTab({ onOpenModal }: Props) {
             <button onClick={() => handleSalesByStore('show')} disabled={loadingCardId === cardId} className="inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button>
             <button onClick={() => handleSalesByStore('all')} disabled={loadingCardId === cardId} className="rounded-md border border-primary-200 bg-white px-4 py-2.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-70">All</button>
           </div>
+        </div>
+      );
+    }
+
+    if (cardId === 'sales-by-attribute') {
+      return (
+        <div className="space-y-3">
+          {renderDateRange(salesByAttributeRange, setSalesByAttributeRange)}
+          <select value={selectedAttributeKey} onChange={(event) => setSelectedAttributeKey(event.target.value)} aria-label="Select attribute" className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none">
+            <option value="">Select Attribute</option>
+            {Object.values(attributeCatalog).map((attribute) => <option key={attribute.key} value={attribute.key}>{attribute.label}</option>)}
+          </select>
+          <button onClick={handleSalesByAttribute} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button>
         </div>
       );
     }

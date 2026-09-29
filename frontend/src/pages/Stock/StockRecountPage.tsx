@@ -14,6 +14,7 @@ import {
 } from '../../services/inventory.service';
 import { itemLabelWithAvailability } from '../../utils/itemAvailability';
 import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
+import { useAttributeCatalog } from '../../hooks/useAttributeCatalog';
 
 const inputClass =
   'h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
@@ -21,6 +22,7 @@ const labelClass = 'mb-1 block text-xs font-semibold uppercase tracking-wide tex
 
 const StockRecountPage = () => {
   const { showToast } = useToast();
+  const attributeCatalog = useAttributeCatalog();
   const [rows, setRows] = useState<StockAdjustmentRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [mastersLoading, setMastersLoading] = useState(false);
@@ -308,7 +310,7 @@ const StockRecountPage = () => {
               <option value="">All purchased products</option>
               {filterItems.map((item) => (
                 <option key={item.item_id} value={item.item_id}>
-                  {itemLabelWithAvailability(item.item_name, itemAvailableQty[item.item_id])}
+                  {itemLabelWithAvailability(item.item_name, itemAvailableQty[item.item_id], item.attributes, attributeCatalog)}
                 </option>
               ))}
             </select>
@@ -425,7 +427,7 @@ const StockRecountPage = () => {
               <option value="">Select purchased product</option>
               {formItems.map((item) => (
                 <option key={item.item_id} value={item.item_id}>
-                  {itemLabelWithAvailability(item.item_name, itemAvailableQty[item.item_id])}
+                  {itemLabelWithAvailability(item.item_name, itemAvailableQty[item.item_id], item.attributes, attributeCatalog)}
                 </option>
               ))}
             </select>

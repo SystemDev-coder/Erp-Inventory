@@ -16,6 +16,8 @@ import { accountService, Account } from '../../services/account.service';
 import { salesService } from '../../services/sales.service';
 import { settingsService } from '../../services/settings.service';
 import { useBranch } from '../../context/BranchContext';
+import { attributeSummary } from '../../config/productAttributes';
+import { useAttributeCatalog } from '../../hooks/useAttributeCatalog';
 
 interface CartItem {
     item_id: number;
@@ -24,6 +26,8 @@ interface CartItem {
     qty: number;
     available_qty: number;
     image_url: string | null;
+    attributes?: Record<string, string | number>;
+    is_expired?: boolean;
 }
 
 const isCashAccount = (account: Account) => account.name.trim().toLowerCase().startsWith('cash');
@@ -71,6 +75,7 @@ const printHtmlInIframe = (html: string) => {
 const POSTab = () => {
     const { showToast } = useToast();
     const { activeBranchId } = useBranch();
+    const attributeCatalog = useAttributeCatalog();
     const navigate = useNavigate();
     const productSearchRef = useRef<HTMLInputElement>(null);
 
@@ -103,7 +108,7 @@ const POSTab = () => {
         const load = async () => {
             setLoading(true);
             const [pRes, cRes, custRes, accRes] = await Promise.all([
-                productService.list({ branchId: activeBranchId ?? undefined, limit: 200 }),
+                productService.list({ branchId: activeBranchId ?? undefined, limit: 200, excludeVariantParents: true }),
                 productService.listCategories({ branchId: activeBranchId ?? undefined }),
                 customerService.list({ branchId: activeBranchId ?? undefined }),
                 accountService.list({ branchId: activeBranchId ?? undefined }),
@@ -123,17 +128,24 @@ const POSTab = () => {
         const q = productSearch.trim().toLowerCase();
         if (q) {
             list = list.filter(
-                (p) => p.name.toLowerCase().includes(q) || String(p.barcode || '').toLowerCase().includes(q)
+                (p) =>
+                    p.name.toLowerCase().includes(q) ||
+                    String(p.barcode || '').toLowerCase().includes(q) ||
+                    attributeSummary(p.attributes, 5, attributeCatalog).toLowerCase().includes(q)
             );
         }
         return list;
-    }, [products, activeCategory, productSearch]);
+    }, [products, activeCategory, productSearch, attributeCatalog]);
 
     const availableQtyOf = (product: Product) => Number(product.quantity ?? product.stock ?? 0);
     const cartQtyOf = (productId: number) => cart.find((item) => item.item_id === productId)?.qty ?? 0;
 
     const addToCart = (product: Product, delta = 1) => {
         const availableQty = availableQtyOf(product);
+        if (delta > 0 && product.is_expired) {
+            showToast('error', 'Expired', `${product.name} has expired batches and cannot be sold.`);
+            return;
+        }
         setCart((prev) => {
             const existing = prev.find((item) => item.item_id === product.product_id);
             const nextQty = (existing?.qty ?? 0) + delta;
@@ -156,6 +168,8 @@ const POSTab = () => {
                     qty: nextQty,
                     available_qty: availableQty,
                     image_url: product.image_url || null,
+                    attributes: product.attributes,
+                    is_expired: product.is_expired,
                 },
             ];
         });
@@ -167,6 +181,10 @@ const POSTab = () => {
             if (!item) return prev;
             const nextQty = item.qty + delta;
             if (nextQty <= 0) return prev.filter((line) => line.item_id !== id);
+            if (delta > 0 && item.is_expired) {
+                showToast('error', 'Expired', `${item.name} has expired batches and cannot be sold.`);
+                return prev;
+            }
             if (nextQty > item.available_qty) {
                 showToast('error', 'Stock limit', `Only ${item.available_qty} available.`);
                 return prev;
@@ -372,6 +390,8 @@ const POSTab = () => {
                                     {filteredProducts.map((product) => {
                                         const availableQty = availableQtyOf(product);
                                         const qty = cartQtyOf(product.product_id);
+                                        const isExpired = Boolean(product.is_expired);
+                                        const isUnsellable = isExpired || availableQty <= 0;
                                         return (
                                             <div
                                                 key={product.product_id}
@@ -379,12 +399,12 @@ const POSTab = () => {
                                                     qty > 0
                                                         ? 'border-primary-500 ring-1 ring-primary-500/30'
                                                         : 'border-slate-200 dark:border-slate-800'
-                                                }`}
+                                                } ${isUnsellable ? 'opacity-60' : ''}`}
                                             >
                                                 <button
                                                     type="button"
                                                     onClick={() => addToCart(product)}
-                                                    disabled={availableQty <= qty}
+                                                    disabled={availableQty <= qty || isExpired}
                                                     className="w-full bg-slate-50 dark:bg-slate-800 p-4 rounded-lg flex items-center justify-center aspect-square overflow-hidden disabled:cursor-not-allowed disabled:opacity-60"
                                                 >
                                                     {product.image_url ? (
@@ -394,12 +414,27 @@ const POSTab = () => {
                                                     )}
                                                 </button>
                                                 <div className="pt-5">
-                                                    {product.category_name && (
-                                                        <span className="inline-block text-[10px] text-primary-600 bg-primary-50 dark:bg-primary-900/20 dark:text-primary-300 px-1.5 py-0.5 rounded mb-1">
-                                                            {product.category_name}
-                                                        </span>
-                                                    )}
-                                                    <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 mt-1 mb-4 truncate">{product.name}</h2>
+                                                    <div className="flex flex-wrap items-center gap-1 mb-1">
+                                                        {product.category_name && (
+                                                            <span className="inline-block text-[10px] text-primary-600 bg-primary-50 dark:bg-primary-900/20 dark:text-primary-300 px-1.5 py-0.5 rounded">
+                                                                {product.category_name}
+                                                            </span>
+                                                        )}
+                                                        {isExpired && (
+                                                            <span className="inline-block text-[10px] font-semibold text-red-600 bg-red-50 dark:bg-red-900/20 dark:text-red-300 px-1.5 py-0.5 rounded">
+                                                                Expired
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 mt-1 truncate">{product.name}</h2>
+                                                    {(() => {
+                                                        const summary = attributeSummary(product.attributes, 2, attributeCatalog);
+                                                        return summary ? (
+                                                            <p className="text-xs text-slate-400 dark:text-slate-500 truncate mb-2">{summary}</p>
+                                                        ) : (
+                                                            <div className="mb-4" />
+                                                        );
+                                                    })()}
                                                     <div className="flex items-center justify-between gap-1">
                                                         <span className="text-sm font-medium text-primary-600">${Number(product.sell_price || 0).toFixed(2)}</span>
                                                         <div className="flex items-center gap-1 text-slate-500 dark:text-slate-400">
@@ -417,15 +452,15 @@ const POSTab = () => {
                                                                 type="button"
                                                                 aria-label={`Increase ${product.name}`}
                                                                 onClick={() => addToCart(product, 1)}
-                                                                disabled={availableQty <= qty}
+                                                                disabled={availableQty <= qty || isExpired}
                                                                 className="disabled:opacity-30 hover:text-emerald-500 transition"
                                                             >
                                                                 <PlusCircle className="size-4" />
                                                             </button>
                                                         </div>
                                                     </div>
-                                                    <p className={`mt-1 text-[11px] font-medium ${availableQty <= 0 ? 'text-red-500' : availableQty < 10 ? 'text-amber-500' : 'text-slate-400'}`}>
-                                                        {availableQty} in stock
+                                                    <p className={`mt-1 text-[11px] font-medium ${isUnsellable ? 'text-red-500' : availableQty < 10 ? 'text-amber-500' : 'text-slate-400'}`}>
+                                                        {isExpired ? 'Expired' : `${availableQty} in stock`}
                                                     </p>
                                                 </div>
                                             </div>
@@ -503,6 +538,12 @@ const POSTab = () => {
                                                     </div>
                                                     <div className="min-w-0">
                                                         <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">{item.name}</h3>
+                                                        {(() => {
+                                                            const summary = attributeSummary(item.attributes, 2, attributeCatalog);
+                                                            return summary ? (
+                                                                <span className="block text-xs text-slate-400 dark:text-slate-500 truncate">{summary}</span>
+                                                            ) : null;
+                                                        })()}
                                                         <span className="text-xs text-slate-500">${item.price.toFixed(2)} each</span>
                                                     </div>
                                                 </div>

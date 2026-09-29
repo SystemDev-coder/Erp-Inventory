@@ -22,7 +22,10 @@ import {
 } from './products.schemas';
 import {
   DEFAULT_CATEGORIES_BY_BUSINESS_TYPE,
-  isKnownAttributeKey,
+  STARTER_ATTRIBUTE_DEFS,
+  ProductAttributeType,
+  clearAttributeCatalogCache,
+  loadAttributeCatalog,
   splitAttributes,
 } from '../../config/productAttributes';
 
@@ -42,6 +45,19 @@ type ProductFilters = MasterFilters & {
   taxId?: number;
   storeId?: number;
   stockStatus?: 'in_stock' | 'low_stock' | 'no_stock';
+  // Category Configuration Engine: exact-match filter on a dynamic
+  // attribute value (e.g. Color = Red) - both must be given together.
+  attributeKey?: string;
+  attributeValue?: string;
+  // Product Variants: hide "parent" template rows that have at least one
+  // active variant - POS/Sales/Purchases pickers pass this so a cashier
+  // only ever sees concretely sellable items (a specific variant is just
+  // an ordinary item, never the non-sellable template it was generated
+  // from).
+  excludeVariantParents?: boolean;
+  // Product Variants: list only the variants of one specific parent item
+  // (used by the "Variants" section on ProductEditor.tsx).
+  parentItemId?: number;
 };
 
 type Paged<T> = { rows: T[]; total: number; page: number; limit: number };
@@ -53,8 +69,23 @@ export interface Category {
   description: string | null;
   is_active: boolean;
   attribute_keys: string[];
+  parent_id: number | null;
+  parent_name: string | null;
   created_at: string;
   updated_at: string | null;
+}
+
+export interface AttributeDefinition {
+  attribute_id: number;
+  branch_id: number;
+  key: string;
+  label: string;
+  data_type: ProductAttributeType;
+  options: string[] | null;
+  column_name: string | null;
+  is_active: boolean;
+  in_use: boolean;
+  created_at: string;
 }
 
 export interface Unit {
@@ -106,6 +137,11 @@ export interface Product {
   stock: number;
   quantity?: number;
   opening_balance: number;
+  latest_expiry_date?: string | null;
+  is_expired?: boolean;
+  parent_item_id?: number | null;
+  has_variants?: boolean;
+  variant_count?: number;
   is_active: boolean;
   status: string;
   description?: string | null;
@@ -215,6 +251,10 @@ const isActiveValue = (
   return fallback;
 };
 
+// attribute_keys now comes from ims.category_attributes -> attribute_definitions
+// (the Category Configuration Engine join), not the legacy attribute_keys
+// TEXT[] column - which is kept on ims.categories only for rollback safety
+// and is no longer read here.
 const getCategorySql = `
   SELECT
     c.cat_id AS category_id,
@@ -222,10 +262,21 @@ const getCategorySql = `
     c.cat_name AS name,
     c.description,
     COALESCE(c.is_active, TRUE) AS is_active,
-    COALESCE(c.attribute_keys, ARRAY[]::text[]) AS attribute_keys,
+    COALESCE(ca.attribute_keys, ARRAY[]::text[]) AS attribute_keys,
+    c.parent_id,
+    p.cat_name AS parent_name,
     c.created_at::text AS created_at,
     c.updated_at::text AS updated_at
   FROM ims.categories c
+  LEFT JOIN ims.categories p ON p.cat_id = c.parent_id
+  LEFT JOIN LATERAL (
+    SELECT ARRAY_AGG(ad.key ORDER BY cat_attr.display_order, ad.key) AS attribute_keys
+      FROM ims.category_attributes cat_attr
+      JOIN ims.attribute_definitions ad ON ad.attribute_id = cat_attr.attribute_id
+     WHERE cat_attr.category_id = c.cat_id
+       AND COALESCE(cat_attr.is_deleted, 0) = 0
+       AND COALESCE(ad.is_deleted, 0) = 0
+  ) ca ON TRUE
 `;
 
 const getUnitSql = `
@@ -293,7 +344,12 @@ const getProductSql = (stockAlertExpr: string, storeIdExpr = 'NULL::bigint') => 
     NULL::text AS description,
     i.image_url,
     i.created_at::text AS created_at,
-    i.created_at::text AS updated_at
+    i.created_at::text AS updated_at,
+    ex.latest_expiry_date::text AS latest_expiry_date,
+    (COALESCE(ex.batch_count, 0) > 0 AND ex.latest_expiry_date < CURRENT_DATE) AS is_expired,
+    i.parent_item_id,
+    COALESCE(vc.variant_count, 0)::int AS variant_count,
+    COALESCE(vc.variant_count, 0) > 0 AS has_variants
   FROM ims.items i
   LEFT JOIN ims.stores s ON s.store_id = i.store_id
   LEFT JOIN ims.categories c ON c.cat_id = i.category_id
@@ -313,6 +369,23 @@ const getProductSql = (stockAlertExpr: string, storeIdExpr = 'NULL::bigint') => 
          OR si.store_id = ${storeIdExpr}
        )
   ) sq ON TRUE
+  LEFT JOIN LATERAL (
+    SELECT
+      MAX(pi.expiry_date) AS latest_expiry_date,
+      COUNT(*) AS batch_count
+      FROM ims.purchase_items pi
+      JOIN ims.purchases p ON p.purchase_id = pi.purchase_id
+     WHERE pi.item_id = i.item_id
+       AND pi.branch_id = i.branch_id
+       AND pi.expiry_date IS NOT NULL
+       AND p.status <> 'void'
+  ) ex ON TRUE
+  LEFT JOIN LATERAL (
+    SELECT COUNT(*)::int AS variant_count
+      FROM ims.items v
+     WHERE v.parent_item_id = i.item_id
+       AND v.is_active = TRUE
+  ) vc ON TRUE
 `;
 
 // Reuses the existing ims.item_suppliers table (already there for
@@ -492,6 +565,74 @@ const getProductStockOnHand = async (client: PoolClient, itemId: number): Promis
   return Number(result.rows[0]?.total || 0);
 };
 
+// Category Configuration Engine: resolves the attribute keys an admin
+// picked (or an API caller sent) into real ims.attribute_definitions ids
+// for this branch. Throws on any key that isn't a defined attribute for
+// this branch - unlike Excel import (which silently ignores unknown
+// columns), assigning a category's fields is an explicit admin action and
+// an unrecognized key is almost always a typo or a stale client, not
+// something to paper over.
+const resolveAttributeIds = async (branchId: number, keys: string[]): Promise<number[]> => {
+  if (!keys.length) return [];
+  const rows = await queryMany<{ attribute_id: number; key: string }>(
+    `SELECT attribute_id, key
+       FROM ims.attribute_definitions
+      WHERE branch_id = $1
+        AND key = ANY($2::text[])
+        AND is_active = TRUE
+        AND COALESCE(is_deleted, 0) = 0`,
+    [branchId, keys]
+  );
+  const found = new Map(rows.map((row) => [row.key, Number(row.attribute_id)]));
+  const unknown = keys.filter((key) => !found.has(key));
+  if (unknown.length) {
+    throw ApiError.badRequest(`Unknown attribute key(s): ${unknown.join(', ')}`);
+  }
+  return keys.map((key) => found.get(key) as number);
+};
+
+// Full replace (not diff) - matches how the old attribute_keys TEXT[]
+// column was always written: the caller always sends the category's
+// complete desired attribute list, not an incremental add/remove.
+const replaceCategoryAttributes = async (
+  client: PoolClient,
+  categoryId: number,
+  attributeIds: number[]
+): Promise<void> => {
+  await client.query(`DELETE FROM ims.category_attributes WHERE category_id = $1`, [categoryId]);
+  for (let i = 0; i < attributeIds.length; i += 1) {
+    await client.query(
+      `INSERT INTO ims.category_attributes (category_id, attribute_id, display_order)
+       VALUES ($1, $2, $3)`,
+      [categoryId, attributeIds[i], i]
+    );
+  }
+};
+
+// Used only by seedDefaultCategories: unlike resolveAttributeIds (which
+// 400s on an unrecognized key - an admin picking from the checklist should
+// never send one that doesn't exist), the starter-pack seeder gets-or-creates
+// its well-known keys from STARTER_ATTRIBUTE_DEFS, so clicking "Add <Type>
+// Starter Categories" keeps working even before an admin has manually
+// defined any attribute themselves.
+const ensureStarterAttributeIds = async (branchId: number, keys: string[]): Promise<number[]> => {
+  if (!keys.length) return [];
+  const ids: number[] = [];
+  for (const key of keys) {
+    const def = STARTER_ATTRIBUTE_DEFS[key];
+    if (!def) continue;
+    const row = await queryOne<{ attribute_id: number }>(
+      `INSERT INTO ims.attribute_definitions (branch_id, key, label, data_type, options, column_name)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+       ON CONFLICT (branch_id, key) DO UPDATE SET is_active = TRUE
+       RETURNING attribute_id`,
+      [branchId, key, def.label, def.type, def.options ? JSON.stringify(def.options) : null, def.column || null]
+    );
+    if (row?.attribute_id) ids.push(Number(row.attribute_id));
+  }
+  return ids;
+};
+
 export const productsService = {
   async listCategories(scope: BranchScope, filters: MasterFilters): Promise<Paged<Category>> {
     const params: unknown[] = [];
@@ -544,39 +685,77 @@ export const productsService = {
 
   async createCategory(input: CategoryCreateInput, scope: BranchScope): Promise<Category> {
     const branchId = pickBranchForWrite(scope, input.branchId);
-    const attributeKeys = (input.attributeKeys || []).filter(isKnownAttributeKey);
-    const created = await queryOne<{ cat_id: number }>(
-      `INSERT INTO ims.categories (branch_id, cat_name, description, is_active, attribute_keys)
-       VALUES ($1, $2, NULLIF($3, ''), COALESCE($4, TRUE), $5::text[])
-       RETURNING cat_id`,
-      [branchId, input.name, input.description || '', input.isActive, attributeKeys]
-    );
-    return (await this.getCategory(Number(created?.cat_id), scope)) as Category;
+    const attributeIds = await resolveAttributeIds(branchId, input.attributeKeys || []);
+    if (input.parentId) {
+      const parent = await this.getCategory(input.parentId, scope);
+      if (!parent || Number(parent.branch_id) !== branchId) {
+        throw ApiError.badRequest('Parent category not found');
+      }
+    }
+    const catId = await withTransaction(async (client) => {
+      const created = await client.query<{ cat_id: number }>(
+        `INSERT INTO ims.categories (branch_id, cat_name, description, is_active, parent_id)
+         VALUES ($1, $2, NULLIF($3, ''), COALESCE($4, TRUE), $5)
+         RETURNING cat_id`,
+        [branchId, input.name, input.description || '', input.isActive, input.parentId || null]
+      );
+      const id = Number(created.rows[0]?.cat_id);
+      await replaceCategoryAttributes(client, id, attributeIds);
+      return id;
+    });
+    return (await this.getCategory(catId, scope)) as Category;
   },
 
   async updateCategory(id: number, input: CategoryUpdateInput, scope: BranchScope): Promise<Category | null> {
     const existing = await this.getCategory(id, scope);
     if (!existing) return null;
+
+    let attributeIds: number[] | undefined;
+    if (input.attributeKeys !== undefined) {
+      attributeIds = await resolveAttributeIds(existing.branch_id, input.attributeKeys);
+    }
+
+    if (input.parentId !== undefined && input.parentId !== null) {
+      if (input.parentId === id) {
+        throw ApiError.badRequest('A category cannot be its own parent');
+      }
+      const wouldCycle = await queryOne<{ exists: boolean }>(
+        `WITH RECURSIVE descendants AS (
+           SELECT cat_id FROM ims.categories WHERE parent_id = $1
+           UNION ALL
+           SELECT c.cat_id FROM ims.categories c JOIN descendants d ON c.parent_id = d.cat_id
+         )
+         SELECT EXISTS (SELECT 1 FROM descendants WHERE cat_id = $2) AS exists`,
+        [id, input.parentId]
+      );
+      if (wouldCycle?.exists) {
+        throw ApiError.badRequest('Cannot set parent category: this would create a category cycle');
+      }
+    }
+
     const updates: string[] = [];
     const values: unknown[] = [id];
     let p = 2;
     if (input.name !== undefined) { updates.push(`cat_name = $${p++}`); values.push(input.name); }
     if (input.description !== undefined) { updates.push(`description = NULLIF($${p++}, '')`); values.push(input.description || ''); }
     if (input.isActive !== undefined) { updates.push(`is_active = $${p++}`); values.push(input.isActive); }
-    if (input.attributeKeys !== undefined) {
-      updates.push(`attribute_keys = $${p++}::text[]`);
-      values.push(input.attributeKeys.filter(isKnownAttributeKey));
-    }
+    if (input.parentId !== undefined) { updates.push(`parent_id = $${p++}`); values.push(input.parentId || null); }
     updates.push('updated_at = NOW()');
-    if (scope.isAdmin) {
-      await queryOne(`UPDATE ims.categories SET ${updates.join(', ')} WHERE cat_id = $1`, values);
-    } else {
-      values.push(scope.branchIds);
-      await queryOne(
-        `UPDATE ims.categories SET ${updates.join(', ')} WHERE cat_id = $1 AND branch_id = ANY($${p}::bigint[])`,
-        values
-      );
-    }
+
+    await withTransaction(async (client) => {
+      if (scope.isAdmin) {
+        await client.query(`UPDATE ims.categories SET ${updates.join(', ')} WHERE cat_id = $1`, values);
+      } else {
+        const branchValues = [...values, scope.branchIds];
+        await client.query(
+          `UPDATE ims.categories SET ${updates.join(', ')} WHERE cat_id = $1 AND branch_id = ANY($${p}::bigint[])`,
+          branchValues
+        );
+      }
+      if (attributeIds !== undefined) {
+        await replaceCategoryAttributes(client, id, attributeIds);
+      }
+    });
     return this.getCategory(id, scope);
   },
 
@@ -621,22 +800,138 @@ export const productsService = {
     const targetBranchId = pickBranchForWrite(scope, branchId);
     const touched: Category[] = [];
     for (const def of defaults) {
-      const row = await queryOne<{ cat_id: number }>(
-        `INSERT INTO ims.categories (branch_id, cat_name, description, is_active, attribute_keys)
-         VALUES ($1, $2, $3, TRUE, $4::text[])
-         ON CONFLICT (branch_id, cat_name) DO UPDATE
-           SET attribute_keys = EXCLUDED.attribute_keys,
-               description = EXCLUDED.description,
-               is_active = TRUE
-         RETURNING cat_id`,
-        [targetBranchId, def.name, `${businessType} starter category`, def.attributeKeys]
-      );
-      if (row?.cat_id) {
-        const category = await this.getCategory(Number(row.cat_id), scope);
+      const attributeIds = await ensureStarterAttributeIds(targetBranchId, def.attributeKeys);
+      const catId = await withTransaction(async (client) => {
+        const row = await client.query<{ cat_id: number }>(
+          `INSERT INTO ims.categories (branch_id, cat_name, description, is_active)
+           VALUES ($1, $2, $3, TRUE)
+           ON CONFLICT (branch_id, cat_name) DO UPDATE
+             SET description = EXCLUDED.description,
+                 is_active = TRUE
+           RETURNING cat_id`,
+          [targetBranchId, def.name, `${businessType} starter category`]
+        );
+        const id = Number(row.rows[0]?.cat_id);
+        await replaceCategoryAttributes(client, id, attributeIds);
+        return id;
+      });
+      if (catId) {
+        const category = await this.getCategory(catId, scope);
         if (category) touched.push(category);
       }
     }
+    clearAttributeCatalogCache(targetBranchId);
     return touched;
+  },
+
+  // Category Configuration Engine: the attribute catalog an admin picks
+  // from when assigning fields to a category. Unlike categories/units/
+  // taxes, this list is deliberately unpaginated - it's rendered as a
+  // checklist (see Products.tsx's category modal), and a business
+  // realistically defines dozens, not thousands, of attribute types.
+  async listAttributeDefinitions(scope: BranchScope, branchId?: number): Promise<AttributeDefinition[]> {
+    const params: unknown[] = [];
+    const where = [scopeClause(scope, params, 'ad', branchId), 'ad.is_active = TRUE'];
+    return queryMany<AttributeDefinition>(
+      `SELECT
+          ad.attribute_id,
+          ad.branch_id,
+          ad.key,
+          ad.label,
+          ad.data_type,
+          ad.options,
+          ad.column_name,
+          ad.is_active,
+          EXISTS (
+            SELECT 1 FROM ims.category_attributes ca
+             WHERE ca.attribute_id = ad.attribute_id
+               AND COALESCE(ca.is_deleted, 0) = 0
+          ) AS in_use,
+          ad.created_at::text AS created_at
+         FROM ims.attribute_definitions ad
+        WHERE ${where.join(' AND ')}
+        ORDER BY ad.label`,
+      params
+    );
+  },
+
+  async createAttributeDefinition(
+    input: { key: string; label: string; dataType: ProductAttributeType; options?: string[]; branchId?: number },
+    scope: BranchScope
+  ): Promise<AttributeDefinition> {
+    const branchId = pickBranchForWrite(scope, input.branchId);
+    const created = await queryOne<{ attribute_id: number }>(
+      `INSERT INTO ims.attribute_definitions (branch_id, key, label, data_type, options)
+       VALUES ($1, $2, $3, $4, $5::jsonb)
+       RETURNING attribute_id`,
+      [
+        branchId,
+        input.key,
+        input.label,
+        input.dataType,
+        input.options?.length ? JSON.stringify(input.options) : null,
+      ]
+    );
+    const attributeId = Number(created?.attribute_id);
+    if (!attributeId) throw ApiError.internal('Failed to create attribute');
+    clearAttributeCatalogCache(branchId);
+    const all = await this.listAttributeDefinitions(scope, branchId);
+    return all.find((a) => Number(a.attribute_id) === attributeId) as AttributeDefinition;
+  },
+
+  async updateAttributeDefinition(
+    id: number,
+    input: { label?: string; dataType?: ProductAttributeType; options?: string[]; isActive?: boolean },
+    scope: BranchScope
+  ): Promise<AttributeDefinition | null> {
+    const existing = await queryOne<{ branch_id: number }>(
+      scope.isAdmin
+        ? `SELECT branch_id FROM ims.attribute_definitions WHERE attribute_id = $1`
+        : `SELECT branch_id FROM ims.attribute_definitions WHERE attribute_id = $1 AND branch_id = ANY($2::bigint[])`,
+      scope.isAdmin ? [id] : [id, scope.branchIds]
+    );
+    if (!existing) return null;
+
+    const updates: string[] = [];
+    const values: unknown[] = [id];
+    let p = 2;
+    if (input.label !== undefined) { updates.push(`label = $${p++}`); values.push(input.label); }
+    if (input.dataType !== undefined) { updates.push(`data_type = $${p++}`); values.push(input.dataType); }
+    if (input.options !== undefined) {
+      updates.push(`options = $${p++}::jsonb`);
+      values.push(input.options.length ? JSON.stringify(input.options) : null);
+    }
+    if (input.isActive !== undefined) { updates.push(`is_active = $${p++}`); values.push(input.isActive); }
+    updates.push('updated_at = NOW()');
+
+    if (updates.length) {
+      await queryOne(`UPDATE ims.attribute_definitions SET ${updates.join(', ')} WHERE attribute_id = $1`, values);
+      clearAttributeCatalogCache(Number(existing.branch_id));
+    }
+    const all = await this.listAttributeDefinitions(scope, Number(existing.branch_id));
+    return all.find((a) => Number(a.attribute_id) === id) || null;
+  },
+
+  async deleteAttributeDefinition(id: number, scope: BranchScope): Promise<void> {
+    const existing = await queryOne<{ branch_id: number }>(
+      scope.isAdmin
+        ? `SELECT branch_id FROM ims.attribute_definitions WHERE attribute_id = $1`
+        : `SELECT branch_id FROM ims.attribute_definitions WHERE attribute_id = $1 AND branch_id = ANY($2::bigint[])`,
+      scope.isAdmin ? [id] : [id, scope.branchIds]
+    );
+    if (!existing) throw ApiError.notFound('Attribute not found');
+
+    const inUse = await queryOne<{ total: string }>(
+      `SELECT COUNT(*)::text AS total FROM ims.category_attributes WHERE attribute_id = $1 AND COALESCE(is_deleted, 0) = 0`,
+      [id]
+    );
+    if (Number(inUse?.total || 0) > 0) {
+      throw ApiError.conflict('Cannot delete an attribute that is still assigned to a category.', {
+        code: 'RECORD_HAS_TRANSACTIONS',
+      });
+    }
+    await queryOne(`DELETE FROM ims.attribute_definitions WHERE attribute_id = $1`, [id]);
+    clearAttributeCatalogCache(Number(existing.branch_id));
   },
 
   async listUnits(scope: BranchScope, filters: MasterFilters): Promise<Paged<Unit>> {
@@ -864,13 +1159,36 @@ export const productsService = {
     const where: string[] = [scopeClause(scope, params, 'i', filters.branchId)];
     const q = like(filters.search);
     if (q) {
+      // Free-text search also matches dynamic attribute VALUES (e.g. typing
+      // "Woody" finds a product whose only match is attributes.fragrance_type
+      // = "Woody"), not just name/barcode - jsonb_each_text is a sequential
+      // scan (not GIN-indexed) but fine at this table's realistic scale,
+      // matching how name/barcode ILIKE already behaves here.
       params.push(q);
-      where.push(`(i.name ILIKE $${params.length} OR COALESCE(i.barcode, '') ILIKE $${params.length})`);
+      where.push(
+        `(i.name ILIKE $${params.length} OR COALESCE(i.barcode, '') ILIKE $${params.length} OR EXISTS (
+           SELECT 1 FROM jsonb_each_text(COALESCE(i.attributes, '{}'::jsonb)) av WHERE av.value ILIKE $${params.length}
+         ))`
+      );
     }
     if (!filters.includeInactive) where.push('i.is_active = TRUE');
+    if (filters.attributeKey && filters.attributeValue) {
+      // Exact-match "Filter by Attribute" (e.g. Color = Red), driven by the
+      // Products page's dedicated attribute filter dropdown - uses the
+      // GIN index idx_items_attributes (jsonb_ops, containment-eligible).
+      params.push(JSON.stringify({ [filters.attributeKey]: filters.attributeValue }));
+      where.push(`i.attributes @> $${params.length}::jsonb`);
+    }
     if (filters.categoryId) {
       params.push(filters.categoryId);
       where.push(`i.category_id = $${params.length}`);
+    }
+    if (filters.parentItemId) {
+      params.push(filters.parentItemId);
+      where.push(`i.parent_item_id = $${params.length}`);
+    }
+    if (filters.excludeVariantParents) {
+      where.push(`NOT EXISTS (SELECT 1 FROM ims.items v WHERE v.parent_item_id = i.item_id AND v.is_active = TRUE)`);
     }
     if (filters.unitId) {
       params.push(filters.unitId);
@@ -970,9 +1288,40 @@ export const productsService = {
     const catIdRequired = await isItemsCatIdRequired();
     const stockAlertColumn = (await hasItemsStockAlertColumn()) ? 'stock_alert' : 'reorder_level';
     const branchId = pickBranchForWrite(scope, input.branchId);
-    if (input.storeId) await ensureInBranch('stores', 'store_id', input.storeId, branchId, 'Store');
-    if (input.categoryId) await ensureInBranch('categories', 'cat_id', input.categoryId, branchId, 'Category');
-    if (input.unitId) await ensureInBranch('units', 'unit_id', input.unitId, branchId, 'Unit');
+
+    // Product Variants: a variant defaults category/unit/store/pricing from
+    // its parent when the caller doesn't override them, so creating one is
+    // as quick as picking the distinguishing attributes + barcode. Fetched
+    // up front so the ensureInBranch checks below validate the RESOLVED
+    // values, not just whatever the caller happened to send.
+    let parentItem: {
+      item_id: number;
+      category_id: number | null;
+      unit_id: number | null;
+      store_id: number | null;
+      cost_price: string;
+      sell_price: string;
+      parent_item_id: number | null;
+    } | null = null;
+    if (input.parentId) {
+      parentItem = await queryOne(
+        `SELECT item_id, category_id, unit_id, store_id, cost_price, sell_price, parent_item_id
+           FROM ims.items
+          WHERE item_id = $1 AND branch_id = $2`,
+        [input.parentId, branchId]
+      );
+      if (!parentItem) throw ApiError.badRequest('Parent product not found in selected branch');
+      if (parentItem.parent_item_id) throw ApiError.badRequest('Cannot create a variant of a variant - pick the top-level product as the parent');
+    }
+    const defaultCategoryId = input.categoryId ?? parentItem?.category_id ?? undefined;
+    const defaultUnitId = input.unitId ?? parentItem?.unit_id ?? undefined;
+    const defaultStoreId = input.storeId ?? parentItem?.store_id ?? undefined;
+    const defaultCostPrice = input.costPrice ?? (parentItem ? Number(parentItem.cost_price) : undefined);
+    const defaultSellPrice = input.sellPrice ?? (parentItem ? Number(parentItem.sell_price) : undefined);
+
+    if (defaultStoreId) await ensureInBranch('stores', 'store_id', defaultStoreId, branchId, 'Store');
+    if (defaultCategoryId) await ensureInBranch('categories', 'cat_id', defaultCategoryId, branchId, 'Category');
+    if (defaultUnitId) await ensureInBranch('units', 'unit_id', defaultUnitId, branchId, 'Unit');
     if (input.supplierId) await ensureInBranch('suppliers', 'supplier_id', input.supplierId, branchId, 'Supplier');
     // Legacy compat: some older deployments still have a NOT NULL ims.items.cat_id column
     // from before the current categories/units design - keep it satisfied with a default
@@ -983,8 +1332,8 @@ export const productsService = {
     const active = isActiveValue(input, true);
     const createdId = await withTransaction(async (client) => {
       const resolvedStoreId =
-        Number(input.storeId || 0) > 0
-          ? Number(input.storeId)
+        Number(defaultStoreId || 0) > 0
+          ? Number(defaultStoreId)
           : await getOrCreateDefaultStoreId(client, branchId);
       const created = await client.query<{ item_id: number }>(
         `INSERT INTO ims.items (
@@ -1002,11 +1351,11 @@ export const productsService = {
               input.barcode || '',
               input.stockAlert ?? 5,
               openingBalance,
-              input.costPrice ?? 0,
-              input.sellPrice ?? 0,
+              defaultCostPrice ?? 0,
+              defaultSellPrice ?? 0,
               active,
-              input.categoryId ?? null,
-              input.unitId ?? null,
+              defaultCategoryId ?? null,
+              defaultUnitId ?? null,
               input.brand || null,
             ]
           : [
@@ -1016,11 +1365,11 @@ export const productsService = {
               input.barcode || '',
               input.stockAlert ?? 5,
               openingBalance,
-              input.costPrice ?? 0,
-              input.sellPrice ?? 0,
+              defaultCostPrice ?? 0,
+              defaultSellPrice ?? 0,
               active,
-              input.categoryId ?? null,
-              input.unitId ?? null,
+              defaultCategoryId ?? null,
+              defaultUnitId ?? null,
               input.brand || null,
             ]
       );
@@ -1029,13 +1378,18 @@ export const productsService = {
         throw ApiError.internal('Failed to create item');
       }
 
+      if (input.parentId) {
+        await client.query(`UPDATE ims.items SET parent_item_id = $1 WHERE item_id = $2`, [input.parentId, itemId]);
+      }
+
       // Phase 11/9: set separately, deliberately outside the INSERT above.
       // That INSERT's column/placeholder list already branches on
       // catIdRequired via hand-counted $N positions - adding more columns
       // there risks an off-by-one in either branch. A follow-up UPDATE is
       // just as correct here since nothing downstream in this transaction
       // reads these columns before it runs.
-      const { columns: attrColumns, jsonb: attrJsonb } = splitAttributes(input.attributes);
+      const attributeCatalog = await loadAttributeCatalog(branchId);
+      const { columns: attrColumns, jsonb: attrJsonb } = splitAttributes(attributeCatalog, input.attributes);
       const finalSerialNumber = input.serialNumber || attrColumns.serial_number || null;
       const finalBrand = attrColumns.brand || null; // input.brand already set in the INSERT above
       if (
@@ -1093,6 +1447,126 @@ export const productsService = {
     return (await this.getProduct(createdId, scope, input.storeId ?? undefined)) as Product;
   },
 
+  // Product Variants: variants of one parent - just an ordinary
+  // listProducts() call scoped by the new parentItemId filter.
+  async listVariants(parentId: number, scope: BranchScope): Promise<Product[]> {
+    const result = await this.listProducts(scope, {
+      parentItemId: parentId,
+      includeInactive: true,
+      page: 1,
+      limit: 500,
+    });
+    return result.rows;
+  },
+
+  // Product Variants: bulk-creates one variant per combination of the given
+  // axis attributes' option values (e.g. Color x Storage), skipping
+  // combinations that already exist as a variant of this parent. Only
+  // 'select'-type attributes with defined options, and actually linked to
+  // this product's own category, are valid axes - a free-text/number/date
+  // attribute has no enumerable value set to combine.
+  async generateVariants(parentId: number, axisAttributeKeys: string[], scope: BranchScope): Promise<Product[]> {
+    if (!axisAttributeKeys.length) {
+      throw ApiError.badRequest('Select at least one attribute to generate variants from');
+    }
+
+    const parent = scope.isAdmin
+      ? await queryOne<{
+          item_id: number;
+          branch_id: number;
+          category_id: number | null;
+          name: string;
+          parent_item_id: number | null;
+          attributes: Record<string, string | number>;
+        }>(
+          `SELECT item_id, branch_id, category_id, name, parent_item_id, COALESCE(attributes, '{}'::jsonb) AS attributes
+             FROM ims.items WHERE item_id = $1`,
+          [parentId]
+        )
+      : await queryOne<{
+          item_id: number;
+          branch_id: number;
+          category_id: number | null;
+          name: string;
+          parent_item_id: number | null;
+          attributes: Record<string, string | number>;
+        }>(
+          `SELECT item_id, branch_id, category_id, name, parent_item_id, COALESCE(attributes, '{}'::jsonb) AS attributes
+             FROM ims.items WHERE item_id = $1 AND branch_id = ANY($2::bigint[])`,
+          [parentId, scope.branchIds]
+        );
+    if (!parent) throw ApiError.notFound('Product not found');
+    if (parent.parent_item_id) {
+      throw ApiError.badRequest('Cannot generate variants for a variant - pick the top-level product');
+    }
+    if (!parent.category_id) {
+      throw ApiError.badRequest('Assign a category to this product before generating variants');
+    }
+
+    const axisDefs = await queryMany<{ attribute_id: number; key: string; label: string; options: string[] | null }>(
+      `SELECT ad.attribute_id, ad.key, ad.label, ad.options
+         FROM ims.category_attributes ca
+         JOIN ims.attribute_definitions ad ON ad.attribute_id = ca.attribute_id
+        WHERE ca.category_id = $1
+          AND ad.branch_id = $2
+          AND ad.key = ANY($3::text[])
+          AND ad.data_type = 'select'
+          AND ad.is_active = TRUE`,
+      [parent.category_id, parent.branch_id, axisAttributeKeys]
+    );
+    const foundKeys = new Set(axisDefs.map((d) => d.key));
+    const missing = axisAttributeKeys.filter((key) => !foundKeys.has(key));
+    if (missing.length) {
+      throw ApiError.badRequest(`These attributes aren't valid select-type options for this product's category: ${missing.join(', ')}`);
+    }
+    const emptyOptions = axisDefs.filter((d) => !d.options || !d.options.length);
+    if (emptyOptions.length) {
+      throw ApiError.badRequest(`These attributes have no defined options to combine: ${emptyOptions.map((d) => d.label).join(', ')}`);
+    }
+
+    // Cartesian product of every axis's option values.
+    let combinations: Array<Record<string, string>> = [{}];
+    for (const def of axisDefs) {
+      const next: Array<Record<string, string>> = [];
+      for (const combo of combinations) {
+        for (const option of def.options || []) {
+          next.push({ ...combo, [def.key]: option });
+        }
+      }
+      combinations = next;
+    }
+
+    const existing = await queryMany<{ attributes: Record<string, string | number> }>(
+      `SELECT COALESCE(attributes, '{}'::jsonb) AS attributes FROM ims.items WHERE parent_item_id = $1`,
+      [parentId]
+    );
+    const comboKey = (attrs: Record<string, unknown>) => axisDefs.map((d) => String(attrs[d.key] ?? '')).join('\u0001');
+    const existingKeys = new Set(existing.map((row) => comboKey(row.attributes)));
+
+    const created: Product[] = [];
+    for (const combo of combinations) {
+      if (existingKeys.has(comboKey(combo))) continue;
+      const comboLabel = axisDefs.map((d) => `${d.label}: ${combo[d.key]}`).join(' · ');
+      // Deliberately omits categoryId/unitId/storeId/costPrice/sellPrice so
+      // createProduct's own parentId-driven defaulting (added above) picks
+      // them up from the parent - passing e.g. costPrice: 0 here would
+      // instead OVERRIDE the parent's real price with zero. The cast is
+      // safe: every field createProduct reads is accessed via `input.x ?? `
+      // fallback, never assumed present.
+      const product = await this.createProduct(
+        {
+          name: `${parent.name} - ${comboLabel}`,
+          parentId,
+          attributes: { ...parent.attributes, ...combo },
+          branchId: parent.branch_id,
+        } as ProductCreateInput,
+        scope
+      );
+      created.push(product);
+    }
+    return created;
+  },
+
   async updateProduct(id: number, input: ProductUpdateInput, scope: BranchScope): Promise<Product | null> {
     const stockAlertColumn = (await hasItemsStockAlertColumn()) ? 'stock_alert' : 'reorder_level';
     const current = scope.isAdmin
@@ -1126,7 +1600,8 @@ export const productsService = {
     if (input.strength !== undefined) { updates.push(`strength = NULLIF($${p++}, '')`); values.push(input.strength || ''); }
     if (input.serialNumber !== undefined) { updates.push(`serial_number = NULLIF($${p++}, '')`); values.push(input.serialNumber || ''); }
     if (input.attributes !== undefined) {
-      const { columns: attrColumns, jsonb: attrJsonb } = splitAttributes(input.attributes);
+      const attributeCatalog = await loadAttributeCatalog(current.branch_id);
+      const { columns: attrColumns, jsonb: attrJsonb } = splitAttributes(attributeCatalog, input.attributes);
       if (attrColumns.brand) { updates.push(`brand = $${p++}`); values.push(attrColumns.brand); }
       if (attrColumns.color) { updates.push(`color = $${p++}`); values.push(attrColumns.color); }
       if (attrColumns.size) { updates.push(`size = $${p++}`); values.push(attrColumns.size); }
@@ -1225,6 +1700,22 @@ export const productsService = {
         throw ApiError.badRequest(
           `Cannot delete: ${stockOnHand} unit(s) of stock remain across store(s)/warehouse(s). Adjust stock to zero first.`
         );
+      }
+
+      // Product Variants: deliberately NOT registered as 'cascade' in
+      // ims.delete_dependency_policy (see 20260930_product_variants.sql) -
+      // the stockOnHand check just above only covers THIS item's own
+      // stock, which says nothing about whether its variants (separate
+      // items with their own stock) still hold any. Block outright instead
+      // and require each variant to be deleted individually first, which
+      // already goes through this same safe, zero-stock-checked path.
+      const variantCount = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM ims.items WHERE parent_item_id = $1 AND is_active = TRUE`,
+        [id]
+      );
+      const activeVariants = Number(variantCount.rows[0]?.count || 0);
+      if (activeVariants > 0) {
+        throw ApiError.badRequest(`Cannot delete: ${activeVariants} variant(s) still exist. Delete them first.`);
       }
 
       await softDeleteById('items', id, { runner: client });

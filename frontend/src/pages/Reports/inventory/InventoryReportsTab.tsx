@@ -6,16 +6,19 @@ import type { DateRange, ModalReportState } from '../types';
 import { formatCurrency, formatDateOnly, formatDateTime, formatQuantity, toRecordRows, defaultReportRange, withReportTruncation, type ReportTruncationMeta } from '../reportUtils';
 import { useBranch } from '../../../context/BranchContext';
 import { useLanguage } from '../../../context/LanguageContext';
+import { useAttributeCatalog } from '../../../hooks/useAttributeCatalog';
 import type { TranslationKey } from '../../../translations';
 
 type InventoryCardId =
   | 'current-stock'
+  | 'stock-by-attribute'
   | 'low-stock'
   | 'valuation-fifo'
   | 'valuation-lifo'
   | 'valuation-average'
   | 'adjustments'
   | 'inventory-loss'
+  | 'expiry-tracking'
   | 'inventory-ledger'
   | 'store-stock'
   | 'store-wise'
@@ -24,12 +27,14 @@ type InventoryCardId =
 
 const inventoryCards: Array<{ id: InventoryCardId; title: string; hint: string }> = [
   { id: 'current-stock', title: 'Current Stock Levels', hint: 'All items with stock' },
+  { id: 'stock-by-attribute', title: 'Stock by Attribute', hint: 'Attribute dropdown' },
   { id: 'low-stock', title: 'Low Stock Alert', hint: 'Only below threshold' },
   { id: 'valuation-fifo', title: 'Stock Value (FIFO)', hint: 'First-in, first-out costing' },
   { id: 'valuation-lifo', title: 'Stock Value (LIFO)', hint: 'Last-in, first-out costing' },
   { id: 'valuation-average', title: 'Stock Value (Average)', hint: 'Moving average cost' },
   { id: 'adjustments', title: 'Stock Adjustment Log', hint: 'Between two dates' },
   { id: 'inventory-loss', title: 'Inventory Loss', hint: 'Lost/damaged adjustments' },
+  { id: 'expiry-tracking', title: 'Expiry Tracking', hint: 'Between two dates' },
   { id: 'inventory-ledger', title: 'Inventory Found', hint: 'Increase adjustments (found stock)' },
   { id: 'store-stock', title: 'Store Stock Report', hint: 'Show selected store or all' },
   { id: 'store-wise', title: 'Store-wise Stock', hint: 'Detailed by store' },
@@ -39,12 +44,14 @@ const inventoryCards: Array<{ id: InventoryCardId; title: string; hint: string }
 
 const INVENTORY_CARD_TITLE_KEYS: Record<InventoryCardId, TranslationKey> = {
   'current-stock': 'rcard_current_stock_title',
+  'stock-by-attribute': 'rcard_stock_by_attribute_title',
   'low-stock': 'rcard_low_stock_title',
   'valuation-fifo': 'rcard_valuation_fifo_title',
   'valuation-lifo': 'rcard_valuation_lifo_title',
   'valuation-average': 'rcard_valuation_average_title',
   adjustments: 'rcard_adjustments_title',
   'inventory-loss': 'rcard_inventory_loss_title',
+  'expiry-tracking': 'rcard_expiry_tracking_title',
   'inventory-ledger': 'rcard_inventory_found_title',
   'store-stock': 'rcard_store_stock_title',
   'store-wise': 'rcard_store_wise_title',
@@ -54,12 +61,14 @@ const INVENTORY_CARD_TITLE_KEYS: Record<InventoryCardId, TranslationKey> = {
 
 const INVENTORY_CARD_HINT_KEYS: Record<InventoryCardId, TranslationKey> = {
   'current-stock': 'hint_all_items_stock',
+  'stock-by-attribute': 'hint_attribute_dropdown',
   'low-stock': 'hint_below_threshold',
   'valuation-fifo': 'hint_fifo',
   'valuation-lifo': 'hint_lifo',
   'valuation-average': 'hint_average_cost',
   adjustments: 'hint_between_two_dates',
   'inventory-loss': 'hint_lost_damaged',
+  'expiry-tracking': 'hint_between_two_dates',
   'inventory-ledger': 'hint_found_stock',
   'store-stock': 'hint_selected_store_all',
   'store-wise': 'hint_detailed_by_store',
@@ -75,6 +84,13 @@ const currentStockColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'cost_price', header: 'Cost', align: 'right', render: (row) => formatCurrency(row.cost_price) },
   { key: 'sale_price', header: 'Sale', align: 'right', render: (row) => formatCurrency(row.sale_price) },
   { key: 'amount', header: 'Amount', align: 'right', render: (row) => formatCurrency(row.amount) },
+];
+
+const stockByAttributeColumns: ReportColumn<Record<string, unknown>>[] = [
+  { key: 'attribute_value', header: 'Attribute Value' },
+  { key: 'total_qty', header: 'Total Qty', align: 'right', render: (row) => formatQuantity(row.total_qty) },
+  { key: 'item_count', header: 'Products', align: 'right' },
+  { key: 'stock_value', header: 'Stock Value', align: 'right', render: (row) => formatCurrency(row.stock_value) },
 ];
 
 const lowStockColumns: ReportColumn<Record<string, unknown>>[] = [
@@ -113,6 +129,27 @@ const lossColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'reason', header: 'Reason' },
   { key: 'status', header: 'Status' },
   { key: 'created_by', header: 'Created By' },
+];
+
+const expiryTrackingColumns: ReportColumn<Record<string, unknown>>[] = [
+  { key: 'purchase_id', header: 'Purchase #' },
+  { key: 'purchase_date', header: 'Purchase Date', render: (row) => formatDateOnly(row.purchase_date) },
+  { key: 'supplier_name', header: 'Supplier' },
+  { key: 'item_name', header: 'Product' },
+  { key: 'batch_no', header: 'Batch No', render: (row) => row.batch_no || '-' },
+  { key: 'expiry_date', header: 'Expiry Date', render: (row) => formatDateOnly(row.expiry_date) },
+  {
+    key: 'days_to_expiry',
+    header: 'Days to Expiry',
+    align: 'right',
+    render: (row) => {
+      const days = Number(row.days_to_expiry ?? 0);
+      const cls = days <= 0 ? 'text-red-500 font-semibold' : days <= 30 ? 'text-amber-500 font-semibold' : '';
+      return <span className={cls}>{days}</span>;
+    },
+  },
+  { key: 'quantity', header: 'Qty', align: 'right', render: (row) => formatQuantity(row.quantity) },
+  { key: 'unit_cost', header: 'Unit Cost', align: 'right', render: (row) => formatCurrency(row.unit_cost) },
 ];
 
 const foundColumns: ReportColumn<Record<string, unknown>>[] = [
@@ -218,10 +255,12 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
 
   const { activeBranchId } = useBranch();
   const { t } = useLanguage();
+  const attributeCatalog = useAttributeCatalog();
   const [expandedCardId, setExpandedCardId] = useState<InventoryCardId | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<InventoryCardId | null>(null);
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
 
+  const [selectedAttributeKey, setSelectedAttributeKey] = useState('');
   const [selectedStoreSummaryId, setSelectedStoreSummaryId] = useState('');
   const [selectedStoreDetailsId, setSelectedStoreDetailsId] = useState('');
   const [selectedStoreMovementId, setSelectedStoreMovementId] = useState('');
@@ -230,6 +269,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
 
   const [adjustmentRange, setAdjustmentRange] = useState<DateRange>(defaultReportRange());
   const [lossRange, setLossRange] = useState<DateRange>(defaultReportRange());
+  const [expiryTrackingRange, setExpiryTrackingRange] = useState<DateRange>(defaultReportRange());
   const [inventoryLedgerRange, setInventoryLedgerRange] = useState<DateRange>(defaultReportRange());
   const [movementRange, setMovementRange] = useState<DateRange>(defaultReportRange());
   const [movementDetailRange, setMovementDetailRange] = useState<DateRange>(defaultReportRange());
@@ -338,6 +378,40 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
           moneyTotal('Total Cost Value', totalCostValue),
           moneyTotal('Total Sale Value', totalSaleValue),
           countTotal('Low Stock Products', lowStockCount),
+        ],
+      }, response.data.meta);
+    });
+
+  const handleStockByAttribute = () =>
+    runCardAction('stock-by-attribute', async () => {
+      if (!selectedAttributeKey) throw new Error('Select an attribute first');
+      const response = await inventoryReportsService.getStockByAttribute({
+        attributeKey: selectedAttributeKey,
+        branchId: activeBranchId ?? undefined,
+      });
+      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load stock by attribute report');
+      const rows = toRecordRows(response.data.rows || []);
+      const attributeLabel = attributeCatalog[selectedAttributeKey]?.label || selectedAttributeKey;
+      const totalQty = sumByKey(rows, 'total_qty');
+      const totalStockValue = sumByKey(rows, 'stock_value');
+      openReport({
+        title: `Stock by ${attributeLabel}`,
+        subtitle: 'Current Stock Snapshot',
+        fileName: 'stock-by-attribute',
+        data: rows,
+        columns: stockByAttributeColumns,
+        filters: { Attribute: attributeLabel },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            total_qty: formatQuantity(totalQty),
+            item_count: sumByKey(rows, 'item_count').toLocaleString(),
+            stock_value: formatCurrency(totalStockValue),
+          },
+        },
+        totals: [
+          quantityTotal('Total Qty', totalQty),
+          moneyTotal('Total Stock Value', totalStockValue),
         ],
       }, response.data.meta);
     });
@@ -472,6 +546,36 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
           countTotal('Loss Records', rows.length),
           quantityTotal('Total Qty Lost', totalQty),
           moneyTotal('Total Loss', totalLoss),
+        ],
+      }, response.data.meta);
+    });
+
+  const handleExpiryTracking = () =>
+    runCardAction('expiry-tracking', async () => {
+      ensureRangeValid(expiryTrackingRange, 'Expiry Tracking');
+      const response = await inventoryReportsService.getExpiryTracking({
+        ...expiryTrackingRange,
+        branchId: activeBranchId ?? undefined,
+      });
+      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load expiry tracking');
+      const rows = toRecordRows(response.data.rows || []);
+      const totalQty = sumByKey(rows, 'quantity');
+      openReport({
+        title: 'Expiry Tracking',
+        subtitle: `${formatDateOnly(expiryTrackingRange.fromDate)} - ${formatDateOnly(expiryTrackingRange.toDate)}`,
+        fileName: 'expiry-tracking',
+        data: rows,
+        columns: expiryTrackingColumns,
+        filters: { 'From Date': expiryTrackingRange.fromDate, 'To Date': expiryTrackingRange.toDate },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            quantity: formatQuantity(totalQty),
+          },
+        },
+        totals: [
+          countTotal('Batches', rows.length),
+          quantityTotal('Total Qty', totalQty),
         ],
       }, response.data.meta);
     });
@@ -720,12 +824,24 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
 
   const renderCardBody = (cardId: InventoryCardId) => {
     if (cardId === 'current-stock') return <button onClick={handleCurrentStockLevels} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">All Current Stock</button>;
+    if (cardId === 'stock-by-attribute') {
+      return (
+        <div className="space-y-3">
+          <select value={selectedAttributeKey} onChange={(event) => setSelectedAttributeKey(event.target.value)} aria-label="Select attribute" className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none">
+            <option value="">Select Attribute</option>
+            {Object.values(attributeCatalog).map((attribute) => <option key={attribute.key} value={attribute.key}>{attribute.label}</option>)}
+          </select>
+          <button onClick={handleStockByAttribute} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button>
+        </div>
+      );
+    }
     if (cardId === 'low-stock') return <button onClick={handleLowStockAlert} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show Low Stock</button>;
     if (cardId === 'valuation-fifo') return <button onClick={handleInventoryValuationFifo} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">View FIFO Value</button>;
     if (cardId === 'valuation-lifo') return <button onClick={handleInventoryValuationLifo} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">View LIFO Value</button>;
     if (cardId === 'valuation-average') return <button onClick={handleInventoryValuationAverage} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">View Average Value</button>;
     if (cardId === 'adjustments') return <div className="space-y-3">{renderDateRange(adjustmentRange, setAdjustmentRange)}<button onClick={handleStockAdjustmentLog} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
     if (cardId === 'inventory-loss') return <div className="space-y-3">{renderDateRange(lossRange, setLossRange)}<button onClick={handleInventoryLoss} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
+    if (cardId === 'expiry-tracking') return <div className="space-y-3">{renderDateRange(expiryTrackingRange, setExpiryTrackingRange)}<button onClick={handleExpiryTracking} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
     if (cardId === 'inventory-ledger') return <div className="space-y-3">{renderDateRange(inventoryLedgerRange, setInventoryLedgerRange)}<button onClick={handleInventoryFound} disabled={loadingCardId === cardId} className="inline-flex min-w-[200px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show Found</button></div>;
 
     if (cardId === 'store-stock') {

@@ -10,6 +10,7 @@ import { productService, Category, Unit } from '../../services/product.service';
 import { imageService } from '../../services/image.service';
 import { SaleDocType, SaleStatus, salesService } from '../../services/sales.service';
 import { formatAvailableQty, itemLabelWithAvailability } from '../../utils/itemAvailability';
+import { useAttributeCatalog } from '../../hooks/useAttributeCatalog';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { Modal } from '../../components/ui/modal/Modal';
@@ -61,6 +62,7 @@ const SaleCreate = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { activeBranchId } = useBranch();
+  const attributeCatalog = useAttributeCatalog();
   const { id } = useParams<{ id: string }>();
   const editId = Number(id || 0) || null;
   const isEditing = Boolean(editId);
@@ -1234,7 +1236,7 @@ const SaleCreate = () => {
                           options={(() => {
                             const base = itemOptions.map((item) => ({
                               value: item.item_id,
-                              label: itemLabelWithAvailability(item.item_name, item.available_qty, item.attributes),
+                              label: itemLabelWithAvailability(item.item_name, item.available_qty, item.attributes, attributeCatalog),
                             }));
                             const q = lineSearchQuery.trim();
                             if (!q) return base;

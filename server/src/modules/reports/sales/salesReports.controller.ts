@@ -83,6 +83,15 @@ export const getTopSellingItemsReport = asyncHandler(async (req: AuthRequest, re
   return ApiResponse.success(res, reportRows(branchId, { reportKey: 'top-selling-items', fromDate, toDate, rows }, rows, REPORT_ROW_LIMITS.topSellingItems));
 });
 
+export const getSalesByAttributeReport = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const branchId = await resolveBranchIdForReports(req);
+  const { fromDate, toDate } = parseDateRange(req);
+  const attributeKey = String(req.query.attributeKey || '').trim();
+  if (!attributeKey) throw ApiError.badRequest('attributeKey is required');
+  const rows = await salesReportsService.getSalesByAttribute(branchId, attributeKey, fromDate, toDate);
+  return ApiResponse.success(res, reportRows(branchId, { reportKey: 'sales-by-attribute', fromDate, toDate, attributeKey, rows }, rows, REPORT_ROW_LIMITS.topSellingItems));
+});
+
 export const getTopCustomersReport = asyncHandler(async (req: AuthRequest, res: Response) => {
   const branchId = await resolveBranchIdForReports(req);
   const { fromDate, toDate } = parseDateRange(req);

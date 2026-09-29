@@ -8,6 +8,8 @@ import { supplierService, Supplier } from '../../services/supplier.service';
 import { accountService, Account } from '../../services/account.service';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
 import { useBranch } from '../../context/BranchContext';
+import { attributeSummary } from '../../config/productAttributes';
+import { useAttributeCatalog } from '../../hooks/useAttributeCatalog';
 
 const inputClass =
   'h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
@@ -35,6 +37,7 @@ const sumLineQtyForItem = (lineItems: ReturnLine[], itemId: number) =>
 const PurchaseReturns = () => {
   const { showToast } = useToast();
   const { activeBranchId } = useBranch();
+  const attributeCatalog = useAttributeCatalog();
   const navigate = useNavigate();
   const { id } = useParams();
   const editingId = useMemo(() => {
@@ -400,10 +403,13 @@ const PurchaseReturns = () => {
 	                      <div className="space-y-1">
 	                        <SearchableCombobox<number>
 	                          value={line.itemId}
-	                          options={items.map((item) => ({
-	                            value: Number(item.item_id),
-	                            label: `${item.name} (Available: ${getMaxReturnQty(item, item.item_id)})`,
-	                          }))}
+	                          options={items.map((item) => {
+	                            const summary = attributeSummary(item.attributes, 2, attributeCatalog);
+	                            return {
+	                              value: Number(item.item_id),
+	                              label: `${item.name}${summary ? ` - ${summary}` : ''} (Available: ${getMaxReturnQty(item, item.item_id)})`,
+	                            };
+	                          })}
 	                          placeholder={form.supplierId ? 'Select product' : 'Select supplier first'}
 	                          disabled={!form.supplierId}
 	                          onChange={(nextValue) => handleSelectItem(idx, nextValue === '' ? '' : String(nextValue))}

@@ -14,6 +14,7 @@ import { storeService, Store } from '../../services/store.service';
 import { itemLabelWithAvailability } from '../../utils/itemAvailability';
 import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
+import { useAttributeCatalog } from '../../hooks/useAttributeCatalog';
 
 type MovementRow = {
   move_id: number;
@@ -66,6 +67,7 @@ const initialForm: TransferForm = {
 const Transfers = () => {
   const { showToast } = useToast();
   const { activeBranchId } = useBranch();
+  const attributeCatalog = useAttributeCatalog();
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [branches, setBranches] = useState<InventoryBranch[]>([]);
@@ -480,7 +482,7 @@ const Transfers = () => {
               <option value="">Select product</option>
               {availableItems.map((row) => (
                 <option key={row.item_id} value={row.item_id}>
-                  {itemLabelWithAvailability(row.item_name, itemAvailableQty[row.item_id])}
+                  {itemLabelWithAvailability(row.item_name, itemAvailableQty[row.item_id], row.attributes, attributeCatalog)}
                 </option>
               ))}
             </select>

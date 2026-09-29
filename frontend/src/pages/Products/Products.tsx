@@ -10,7 +10,7 @@ import { Modal } from '../../components/ui/modal/Modal';
 import { PageHeader } from '../../components/ui/layout';
 import { useToast } from '../../components/ui/toast/Toast';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
-import { Category, Product, Unit, productService } from '../../services/product.service';
+import { AttributeDataType, AttributeDefinition, Category, Product, Unit, productService } from '../../services/product.service';
 import { deletePreviewService, DeleteImpactPreview } from '../../services/deletePreview.service';
 import { InventoryTransactionRow, inventoryService } from '../../services/inventory.service';
 import { storeService, Store as StoreType } from '../../services/store.service';
@@ -19,7 +19,7 @@ import ImportUploadModal from '../../components/import/ImportUploadModal';
 import { useBranch } from '../../context/BranchContext';
 import { useBusinessConfig } from '../../context/BusinessConfigContext';
 import { usePermissions } from '../../hooks/usePermissions';
-import { attributeSummary, DEFAULT_CATEGORIES_BY_BUSINESS_TYPE, PRODUCT_ATTRIBUTE_CATALOG } from '../../config/productAttributes';
+import { attributeSummary, DEFAULT_CATEGORIES_BY_BUSINESS_TYPE } from '../../config/productAttributes';
 
 type TxCategory = 'adjustment' | 'paid' | 'sales' | 'cancelled';
 
@@ -88,6 +88,11 @@ const Products = () => {
   // the server-side query, not just the currently-loaded page, so every
   // matching item shows up regardless of which page it would otherwise fall on.
   const [itemsStockFilter, setItemsStockFilter] = useState<'in_stock' | 'low_stock' | 'no_stock' | null>(null);
+  // Category Configuration Engine: exact-match "Filter by Attribute"
+  // (e.g. Color = Red) on the Products list.
+  const [itemsAttributeKey, setItemsAttributeKey] = useState('');
+  const [itemsAttributeValue, setItemsAttributeValue] = useState('');
+  const [itemsAttributeValueDraft, setItemsAttributeValueDraft] = useState('');
   const [txDisplayed, setTxDisplayed] = useState(false);
   const [inactiveDisplayed, setInactiveDisplayed] = useState(false);
   const [txCategory, setTxCategory] = useState<TxCategory>('adjustment');
@@ -117,6 +122,19 @@ const Products = () => {
   const [categoryModalOpen, setCategoryModalOpen] = useState(false);
   const [categoryForm, setCategoryForm] = useState<Partial<Category>>(defaultCategoryForm);
   const [categoryToDelete, setCategoryToDelete] = useState<Category | null>(null);
+
+  // Category Configuration Engine: the attribute catalog an admin picks
+  // from when assigning fields to a category - loaded from the API, not a
+  // hardcoded list, so a brand-new attribute type needs no code change.
+  const [attributeDefinitions, setAttributeDefinitions] = useState<AttributeDefinition[]>([]);
+  const attributeCatalogByKey = useMemo(
+    () => Object.fromEntries(attributeDefinitions.map((a) => [a.key, a])),
+    [attributeDefinitions]
+  );
+  const [newAttributeLabel, setNewAttributeLabel] = useState('');
+  const [newAttributeDataType, setNewAttributeDataType] = useState<AttributeDataType>('text');
+  const [newAttributeOptions, setNewAttributeOptions] = useState('');
+  const [creatingAttribute, setCreatingAttribute] = useState(false);
 
   const [units, setUnits] = useState<Unit[]>([]);
   const [unitsDisplayed, setUnitsDisplayed] = useState(false);
@@ -230,9 +248,16 @@ const Products = () => {
     return loaded;
   };
 
+  const resolveAttributes = async () => {
+    const res = await productService.listAttributes(activeBranchId ?? undefined);
+    const loaded = res.success && res.data?.attributes ? res.data.attributes : [];
+    setAttributeDefinitions(loaded);
+    return loaded;
+  };
+
   const loadCategories = async () => {
     setLoading(true);
-    await resolveCategories();
+    await Promise.all([resolveCategories(), resolveAttributes()]);
     setLoading(false);
   };
 
@@ -241,6 +266,80 @@ const Products = () => {
     await resolveUnits();
     setLoading(false);
   };
+
+  // Category Configuration Engine: lets an admin invent a brand-new
+  // attribute type right from the checklist (no code change, no deploy).
+  // If the typed label happens to already exist as a key, it's just
+  // checked instead of re-created.
+  const handleCreateAttribute = async () => {
+    const label = newAttributeLabel.trim();
+    if (!label) return;
+    const key = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    if (!key) {
+      showToast('error', 'Attributes', 'Enter a valid label');
+      return;
+    }
+    const existing = attributeDefinitions.find((a) => a.key === key);
+    if (existing) {
+      const current = categoryForm.attribute_keys || [];
+      if (!current.includes(existing.key)) {
+        setCategoryForm({ ...categoryForm, attribute_keys: [...current, existing.key] });
+      }
+      setNewAttributeLabel('');
+      return;
+    }
+    const options =
+      newAttributeDataType === 'select'
+        ? newAttributeOptions.split(',').map((o) => o.trim()).filter(Boolean)
+        : undefined;
+    if (newAttributeDataType === 'select' && !options?.length) {
+      showToast('error', 'Attributes', 'Enter at least one option (comma-separated)');
+      return;
+    }
+    setCreatingAttribute(true);
+    const res = await productService.createAttribute({
+      key,
+      label,
+      dataType: newAttributeDataType,
+      options,
+      branchId: activeBranchId ?? undefined,
+    });
+    setCreatingAttribute(false);
+    if (res.success && res.data?.attribute) {
+      const created = res.data.attribute;
+      setAttributeDefinitions((prev) => [...prev, created]);
+      const current = categoryForm.attribute_keys || [];
+      setCategoryForm({ ...categoryForm, attribute_keys: [...current, created.key] });
+      setNewAttributeLabel('');
+      setNewAttributeOptions('');
+      setNewAttributeDataType('text');
+      showToast('success', 'Attributes', `"${created.label}" was added as a new attribute.`);
+    } else {
+      showToast('error', 'Attributes', res.error || 'Could not create this attribute.');
+    }
+  };
+
+  // A category can't become its own parent or its own descendant's parent -
+  // computed client-side (string-compared: bigint ids come back as JSON
+  // strings) so the picker never even offers an invalid option; the backend
+  // enforces the same rule as a hard guard.
+  const invalidParentIds = useMemo(() => {
+    if (!categoryForm.category_id) return new Set<string>();
+    const invalid = new Set<string>([String(categoryForm.category_id)]);
+    let added = true;
+    while (added) {
+      added = false;
+      for (const c of categories) {
+        const cId = String(c.category_id);
+        const pId = c.parent_id != null ? String(c.parent_id) : null;
+        if (pId !== null && invalid.has(pId) && !invalid.has(cId)) {
+          invalid.add(cId);
+          added = true;
+        }
+      }
+    }
+    return invalid;
+  }, [categories, categoryForm.category_id]);
 
   const saveCategory = async () => {
     setLoading(true);
@@ -362,16 +461,20 @@ const Products = () => {
     nextPageIndex = itemsPageIndex,
     search = itemsSearch,
     pageSize = itemsPageSize,
-    stockFilter = itemsStockFilter
+    stockFilter = itemsStockFilter,
+    attributeKey = itemsAttributeKey,
+    attributeValue = itemsAttributeValue
   ) => {
     setLoading(true);
-    await Promise.all([resolveStores(), resolveCategories(), resolveUnits(), loadSummary()]);
+    await Promise.all([resolveStores(), resolveCategories(), resolveUnits(), resolveAttributes(), loadSummary()]);
     const res = await productService.list({
       page: nextPageIndex + 1,
       limit: pageSize,
       search: search || undefined,
       branchId: activeBranchId ?? undefined,
       stockStatus: stockFilter ?? undefined,
+      attributeKey: attributeKey || undefined,
+      attributeValue: attributeValue || undefined,
     });
     if (res.success && res.data?.products) {
       setProducts(res.data.products);
@@ -406,6 +509,22 @@ const Products = () => {
     setItemsDisplayed(true);
     setItemsPageIndex(0);
     void loadProducts(0, itemsSearch, itemsPageSize, next);
+  };
+
+  const applyItemsAttributeFilter = () => {
+    if (!itemsAttributeKey || !itemsAttributeValueDraft.trim()) return;
+    setItemsAttributeValue(itemsAttributeValueDraft.trim());
+    setItemsDisplayed(true);
+    setItemsPageIndex(0);
+    void loadProducts(0, itemsSearch, itemsPageSize, itemsStockFilter, itemsAttributeKey, itemsAttributeValueDraft.trim());
+  };
+
+  const clearItemsAttributeFilter = () => {
+    setItemsAttributeKey('');
+    setItemsAttributeValue('');
+    setItemsAttributeValueDraft('');
+    setItemsPageIndex(0);
+    void loadProducts(0, itemsSearch, itemsPageSize, itemsStockFilter, '', '');
   };
 
   const loadTransactions = async (category: TxCategory = txCategory) => {
@@ -480,7 +599,7 @@ const Products = () => {
         // 128GB") instead of a fixed extra column, since different
         // categories under the same profile use different keys.
         cell: ({ row }) => {
-          const summary = attributeSummary(row.original.attributes);
+          const summary = attributeSummary(row.original.attributes, 2, attributeCatalogByKey);
           return (
             <div>
               <div>{row.original.name}</div>
@@ -490,6 +609,26 @@ const Products = () => {
         },
       },
       { accessorKey: 'category_name', header: 'Category', cell: ({ row }) => row.original.category_name || '-' },
+      {
+        id: 'variants',
+        header: 'Variants',
+        // Product Variants: a parent row shows how many variants it has
+        // (each is an ordinary sellable product); a variant row links back
+        // to its parent's name, looked up from the already-loaded page
+        // when present - falls back to a plain "Variant" badge otherwise
+        // (the parent may be on a different page).
+        cell: ({ row }) => {
+          const p = row.original;
+          if (p.has_variants) {
+            return <span className="text-xs font-medium text-primary-600">{p.variant_count ?? 0} variant{(p.variant_count ?? 0) === 1 ? '' : 's'}</span>;
+          }
+          if (p.parent_item_id) {
+            const parent = products.find((x) => x.product_id === p.parent_item_id);
+            return <span className="text-xs text-slate-400">Variant of: {parent?.name || `#${p.parent_item_id}`}</span>;
+          }
+          return '-';
+        },
+      },
       { accessorKey: 'brand', header: 'Brand', cell: ({ row }) => row.original.brand || '-' },
       {
         accessorKey: 'unit_name',
@@ -559,7 +698,7 @@ const Products = () => {
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [can]
+    [can, products]
   );
 
   const stateColumns: ColumnDef<Product>[] = useMemo(
@@ -574,6 +713,7 @@ const Products = () => {
   const categoryColumns: ColumnDef<Category>[] = useMemo(
     () => [
       { accessorKey: 'name', header: 'Category' },
+      { accessorKey: 'parent_name', header: 'Parent', cell: ({ row }) => row.original.parent_name || '-' },
       { accessorKey: 'description', header: 'Description', cell: ({ row }) => row.original.description || '-' },
       { accessorKey: 'is_active', header: 'Status', cell: ({ row }) => (row.original.is_active ? 'Active' : 'Inactive') },
     ],
@@ -664,6 +804,19 @@ const Products = () => {
     return Array.from(new Set(relevant.flatMap((c) => c.attribute_keys || [])));
   }, [categories, otherOnlyBusinessStarterNames]);
 
+  // Per-category Excel template: when a specific category is picked, the
+  // upload columns/template are scoped to JUST that category's own
+  // attributes (e.g. a "Mobile Phones" template shows Model/Storage/RAM,
+  // never Shade/Finish) - matches the original "Phones.xlsx vs Blush.xlsx"
+  // request instead of one combined template. Leaving it unset keeps the
+  // prior combined-template behavior for a mixed-category upload.
+  const [importCategoryId, setImportCategoryId] = useState<number | ''>('');
+  const importAttributeKeys = useMemo(() => {
+    if (!importCategoryId) return activeAttributeKeys;
+    const selected = categories.find((c) => String(c.category_id) === String(importCategoryId));
+    return selected?.attribute_keys || [];
+  }, [importCategoryId, categories, activeAttributeKeys]);
+
   const storeTabs = [
     {
       id: 'items',
@@ -727,6 +880,59 @@ const Products = () => {
               </button>
             </p>
           )}
+          <div className="flex flex-wrap items-end gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+            <ItemField label="Filter by Attribute">
+              <SearchableCombobox<string>
+                value={itemsAttributeKey}
+                options={attributeDefinitions.map((a) => ({ value: a.key, label: a.label }))}
+                placeholder="Choose an attribute"
+                onChange={(nextValue) => {
+                  setItemsAttributeKey(String(nextValue || ''));
+                  setItemsAttributeValueDraft('');
+                }}
+              />
+            </ItemField>
+            {itemsAttributeKey && (() => {
+              const def = attributeDefinitions.find((a) => a.key === itemsAttributeKey);
+              return def?.data_type === 'select' && def.options?.length ? (
+                <ItemField label="Value">
+                  <SearchableCombobox<string>
+                    value={itemsAttributeValueDraft}
+                    options={def.options.map((o) => ({ value: o, label: o }))}
+                    placeholder="Choose a value"
+                    onChange={(nextValue) => setItemsAttributeValueDraft(String(nextValue || ''))}
+                  />
+                </ItemField>
+              ) : (
+                <ItemField label="Value">
+                  <input
+                    placeholder={`e.g. ${def?.label || 'value'}`}
+                    value={itemsAttributeValueDraft}
+                    onChange={(e) => setItemsAttributeValueDraft(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && applyItemsAttributeFilter()}
+                  />
+                </ItemField>
+              );
+            })()}
+            {itemsAttributeKey && itemsAttributeValueDraft.trim() && (
+              <button
+                type="button"
+                onClick={applyItemsAttributeFilter}
+                className="rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-white"
+              >
+                Apply
+              </button>
+            )}
+            {itemsAttributeValue && (
+              <button
+                type="button"
+                onClick={clearItemsAttributeFilter}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Clear attribute filter
+              </button>
+            )}
+          </div>
           <div className="flex flex-wrap items-center justify-end gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
             <button
               type="button"
@@ -1142,7 +1348,7 @@ const Products = () => {
         </div>
       </Modal>
 
-      <Modal isOpen={categoryModalOpen} onClose={() => setCategoryModalOpen(false)} title={categoryForm.category_id ? 'Edit Category' : 'New Category'} size="sm">
+      <Modal isOpen={categoryModalOpen} onClose={() => setCategoryModalOpen(false)} title={categoryForm.category_id ? 'Edit Category' : 'New Category'} size="md">
         <form onSubmit={(e) => { e.preventDefault(); void saveCategory(); }} className="space-y-3">
           <ItemField label="Category Name" required>
             <input
@@ -1160,12 +1366,27 @@ const Products = () => {
               onChange={(e) => setCategoryForm({ ...categoryForm, description: e.target.value })}
             />
           </ItemField>
+          <ItemField label="Parent Category">
+            <SearchableCombobox<number>
+              value={categoryForm.parent_id ?? ''}
+              options={categories
+                .filter((c) => !invalidParentIds.has(String(c.category_id)))
+                .map((c) => ({ value: c.category_id, label: c.name }))}
+              placeholder="No parent (top-level category)"
+              onChange={(nextValue) =>
+                setCategoryForm({ ...categoryForm, parent_id: nextValue === '' ? null : Number(nextValue) })
+              }
+            />
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              Optional - makes this a sub-category (e.g. "Face" under "Cosmetics").
+            </p>
+          </ItemField>
           <ItemField label="Attributes">
             <p className="text-xs text-slate-500 dark:text-slate-400 -mt-0.5 mb-1">
               Which fields do products in this category need? (e.g. Model, Storage, RAM for phones)
             </p>
             <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 max-h-48 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 p-2">
-              {Object.values(PRODUCT_ATTRIBUTE_CATALOG).map((def) => {
+              {attributeDefinitions.map((def) => {
                 const checked = (categoryForm.attribute_keys || []).includes(def.key);
                 return (
                   <label key={def.key} className="flex items-center gap-1.5 text-xs">
@@ -1182,6 +1403,43 @@ const Products = () => {
                   </label>
                 );
               })}
+            </div>
+            {/* Category Configuration Engine: an admin invents a brand-new
+                attribute type here - no code change, no deploy - and it's
+                immediately available for this and every future category. */}
+            <div className="mt-2 grid grid-cols-1 sm:grid-cols-[1fr_auto_auto] gap-2 rounded-lg border border-dashed border-primary-300 bg-primary-50/60 p-2 dark:border-primary-700 dark:bg-primary-500/10">
+              <input
+                placeholder="+ New attribute label (e.g. Fragrance Type)"
+                value={newAttributeLabel}
+                onChange={(e) => setNewAttributeLabel(e.target.value)}
+                className="text-xs"
+              />
+              <select
+                value={newAttributeDataType}
+                onChange={(e) => setNewAttributeDataType(e.target.value as AttributeDataType)}
+                className="text-xs"
+              >
+                <option value="text">Text</option>
+                <option value="number">Number</option>
+                <option value="select">Select</option>
+                <option value="date">Date</option>
+              </select>
+              <button
+                type="button"
+                disabled={creatingAttribute || !newAttributeLabel.trim()}
+                onClick={() => void handleCreateAttribute()}
+                className="rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {creatingAttribute ? 'Adding...' : 'Add'}
+              </button>
+              {newAttributeDataType === 'select' && (
+                <input
+                  placeholder="Options, comma-separated (e.g. Floral, Woody, Citrus)"
+                  value={newAttributeOptions}
+                  onChange={(e) => setNewAttributeOptions(e.target.value)}
+                  className="sm:col-span-3 text-xs"
+                />
+              )}
             </div>
           </ItemField>
           <div className="flex justify-end gap-2 pt-1 border-t border-slate-100 dark:border-slate-700 mt-1">
@@ -1222,20 +1480,43 @@ const Products = () => {
 
       <ImportUploadModal
         isOpen={itemImportOpen}
-        onClose={() => setItemImportOpen(false)}
+        onClose={() => {
+          setItemImportOpen(false);
+          setImportCategoryId('');
+        }}
         importType="items"
         title="Upload Products"
-        columns={['item', 'quantity', 'cost_price', 'amount', 'sell_price', 'category', 'unit', 'supplier', ...activeAttributeKeys]}
+        columns={['item', 'quantity', 'cost_price', 'amount', 'sell_price', 'category', 'unit', 'supplier', ...importAttributeKeys]}
         templateHeaders={[
           'item', 'quantity', 'cost_price', 'sell_price', 'store_id', 'barcode', 'stock_alert', 'is_active', 'category', 'unit', 'supplier',
-          ...activeAttributeKeys,
+          ...importAttributeKeys,
         ]}
         hint={
-          activeAttributeKeys.length
-            ? `store_id, category, unit, and supplier are all optional. If left blank, the system assigns Main Store / the default category / the default unit / no default supplier. The remaining columns (${activeAttributeKeys
-                .map((k) => PRODUCT_ATTRIBUTE_CATALOG[k]?.label || k)
-                .join(', ')}) are also optional - based on your categories' current Attributes settings - only fill in the ones relevant to each row.`
+          importAttributeKeys.length
+            ? `store_id, category, unit, and supplier are all optional. If left blank, the system assigns Main Store / the default category / the default unit / no default supplier. The remaining columns (${importAttributeKeys
+                .map((k) => attributeDefinitions.find((a) => a.key === k)?.label || k)
+                .join(', ')}) are also optional${importCategoryId ? '' : " - based on your categories' current Attributes settings"} - only fill in the ones relevant to each row.`
             : "store_id, category, unit, and supplier are all optional. If left blank, the system assigns Main Store / the default category / the default unit / no default supplier - and creates a new category, unit, or supplier automatically if you type a name that doesn't exist yet."
+        }
+        templateFilename={(() => {
+          if (!importCategoryId) return 'products-import-template';
+          const name = categories.find((c) => String(c.category_id) === String(importCategoryId))?.name;
+          const slug = (name || 'category').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+          return `${slug}-import-template`;
+        })()}
+        extraControls={
+          <ItemField label="Template for category">
+            <SearchableCombobox<number>
+              value={importCategoryId}
+              options={categories.map((c) => ({ value: c.category_id, label: c.name }))}
+              placeholder="All categories (combined template)"
+              onChange={(nextValue) => setImportCategoryId(nextValue === '' ? '' : Number(nextValue))}
+            />
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              Pick a category to download/upload a template scoped to just its own fields - leave blank for one
+              combined template covering every category's attributes.
+            </p>
+          </ItemField>
         }
         onImported={async () => {
           if (itemsDisplayed) await loadProducts();

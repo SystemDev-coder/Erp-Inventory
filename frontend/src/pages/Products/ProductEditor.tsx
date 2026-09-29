@@ -3,13 +3,14 @@ import { useNavigate, useParams } from 'react-router';
 import { ArrowLeft, Check, Image as ImageIcon, ShieldCheck, X } from 'lucide-react';
 import { useToast } from '../../components/ui/toast/Toast';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
-import { Category, Product, Unit, productService } from '../../services/product.service';
+import { Modal } from '../../components/ui/modal/Modal';
+import { AttributeDefinition, Category, Product, Unit, productService } from '../../services/product.service';
 import { imageService } from '../../services/image.service';
 import { storeService, Store as StoreType } from '../../services/store.service';
 import { supplierService, Supplier } from '../../services/supplier.service';
 import { useBranch } from '../../context/BranchContext';
 import { useBusinessConfig } from '../../context/BusinessConfigContext';
-import { PRODUCT_ATTRIBUTE_CATALOG, ProductAttributeDef } from '../../config/productAttributes';
+import { ProductAttributeDef } from '../../config/productAttributes';
 
 type ProductForm = Partial<Product>;
 
@@ -102,6 +103,7 @@ const ProductEditor = () => {
   const [categories, setCategories] = useState<Category[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [attributeDefinitions, setAttributeDefinitions] = useState<AttributeDefinition[]>([]);
   const [itemImageFile, setItemImageFile] = useState<File | null>(null);
   const [itemImagePreview, setItemImagePreview] = useState<string | null>(null);
   const [itemImageRemoved, setItemImageRemoved] = useState(false);
@@ -111,6 +113,19 @@ const ProductEditor = () => {
   const [creatingItemCategory, setCreatingItemCategory] = useState(false);
   const [creatingItemUnit, setCreatingItemUnit] = useState(false);
   const [creatingItemSupplier, setCreatingItemSupplier] = useState(false);
+
+  // Product Variants
+  const [variants, setVariants] = useState<Product[]>([]);
+  const [parentProductName, setParentProductName] = useState<string | null>(null);
+  const [selectedAxisKeys, setSelectedAxisKeys] = useState<string[]>([]);
+  const [generatingVariants, setGeneratingVariants] = useState(false);
+  const [showAddVariantModal, setShowAddVariantModal] = useState(false);
+  const [newVariantAttrs, setNewVariantAttrs] = useState<Record<string, string>>({});
+  const [newVariantBarcode, setNewVariantBarcode] = useState('');
+  const [newVariantCostPrice, setNewVariantCostPrice] = useState('');
+  const [newVariantSellPrice, setNewVariantSellPrice] = useState('');
+  const [newVariantOpeningBalance, setNewVariantOpeningBalance] = useState('');
+  const [savingVariant, setSavingVariant] = useState(false);
 
   const resolveStores = async () => {
     const storeRes = await storeService.list({ branchId: activeBranchId ?? undefined });
@@ -150,6 +165,17 @@ const ProductEditor = () => {
     return loaded;
   };
 
+  // Category Configuration Engine: the attribute catalog (labels/types/
+  // options) is loaded from the API, not a hardcoded file, so a brand-new
+  // attribute an admin created in the Category modal shows up here with no
+  // code change.
+  const resolveAttributes = async () => {
+    const res = await productService.listAttributes(activeBranchId ?? undefined);
+    const loaded = res.success && res.data?.attributes ? res.data.attributes : [];
+    setAttributeDefinitions(loaded);
+    return loaded;
+  };
+
   useEffect(() => {
     const init = async () => {
       setLoading(true);
@@ -158,6 +184,7 @@ const ProductEditor = () => {
         resolveCategories(),
         resolveUnits(),
         resolveSuppliers(),
+        resolveAttributes(),
       ]);
       if (isEditing && editId) {
         const res = await productService.get(editId);
@@ -166,6 +193,20 @@ const ProductEditor = () => {
           setItemForm({ ...row, quantity: Number(row.quantity ?? row.stock ?? 0) });
           setItemImagePreview(row.image_url || null);
           setItemStoreId(row.store_id || loadedStores[0]?.store_id || '');
+          // Product Variants: this product is either a variant itself (show
+          // which parent it belongs to) or a potential parent (load its
+          // existing variants, if any) - never both, single level only.
+          if (row.parent_item_id) {
+            const parentRes = await productService.get(row.parent_item_id);
+            if (parentRes.success && parentRes.data?.product) {
+              setParentProductName(parentRes.data.product.name);
+            }
+          } else {
+            const variantsRes = await productService.listVariants(editId);
+            if (variantsRes.success && variantsRes.data?.variants) {
+              setVariants(variantsRes.data.variants);
+            }
+          }
         } else {
           showToast('error', 'Products', res.error || 'Product not found');
           navigate('/items');
@@ -199,7 +240,17 @@ const ProductEditor = () => {
     )
   );
   const dynamicAttributeDefs: ProductAttributeDef[] = (selectedItemCategory?.attribute_keys || [])
-    .map((key) => PRODUCT_ATTRIBUTE_CATALOG[key])
+    .map((key) => {
+      const def = attributeDefinitions.find((a) => a.key === key);
+      if (!def) return null;
+      return {
+        key: def.key,
+        label: def.label,
+        type: def.data_type,
+        options: def.options || undefined,
+        column: (def.column_name || undefined) as ProductAttributeDef['column'],
+      };
+    })
     .filter((def): def is ProductAttributeDef => Boolean(def) && !(def.column && legacyAttributeColumns.has(def.column)));
 
   const setAttributeField = (def: ProductAttributeDef, value: string) => {
@@ -350,6 +401,72 @@ const ProductEditor = () => {
     Boolean(productConfig.genericName) ||
     Boolean(productConfig.strength) ||
     dynamicAttributeDefs.length > 0;
+
+  // Product Variants: only a 'select'-type attribute with defined options
+  // has an enumerable value set to build a variant matrix from - a free
+  // text/number/date attribute (e.g. Warranty, Screen Size as free text)
+  // stays a plain descriptive field, never a variant axis.
+  const eligibleAxisDefs = dynamicAttributeDefs.filter((def) => def.type === 'select' && (def.options || []).length > 0);
+
+  const toggleAxisKey = (key: string) => {
+    setSelectedAxisKeys((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+  };
+
+  const handleGenerateVariants = async () => {
+    if (!itemForm.product_id) return;
+    if (!selectedAxisKeys.length) {
+      showToast('error', 'Variants', 'Select at least one attribute to combine');
+      return;
+    }
+    setGeneratingVariants(true);
+    const res = await productService.generateVariants(itemForm.product_id, selectedAxisKeys);
+    setGeneratingVariants(false);
+    if (res.success && res.data?.variants) {
+      if (res.data.variants.length) {
+        setVariants((prev) => [...prev, ...res.data!.variants]);
+        showToast('success', 'Variants', `${res.data.variants.length} variant(s) created - add a barcode and stock to each.`);
+      } else {
+        showToast('info', 'Variants', 'No new variants to create - every combination already exists.');
+      }
+      setSelectedAxisKeys([]);
+    } else {
+      showToast('error', 'Variants', res.error || 'Could not generate variants');
+    }
+  };
+
+  const openAddVariantModal = () => {
+    setNewVariantAttrs({});
+    setNewVariantBarcode('');
+    setNewVariantCostPrice('');
+    setNewVariantSellPrice('');
+    setNewVariantOpeningBalance('');
+    setShowAddVariantModal(true);
+  };
+
+  const handleAddVariant = async () => {
+    if (!itemForm.product_id) return;
+    setSavingVariant(true);
+    const comboLabel = eligibleAxisDefs
+      .filter((def) => newVariantAttrs[def.key])
+      .map((def) => `${def.label}: ${newVariantAttrs[def.key]}`)
+      .join(' · ');
+    const res = await productService.addVariant(itemForm.product_id, {
+      name: comboLabel ? `${itemForm.name} - ${comboLabel}` : itemForm.name,
+      attributes: newVariantAttrs,
+      barcode: newVariantBarcode || undefined,
+      cost_price: newVariantCostPrice ? Number(newVariantCostPrice) : undefined,
+      sell_price: newVariantSellPrice ? Number(newVariantSellPrice) : undefined,
+      opening_balance: newVariantOpeningBalance ? Number(newVariantOpeningBalance) : undefined,
+    } as Partial<Product>);
+    setSavingVariant(false);
+    if (res.success && res.data?.product) {
+      setVariants((prev) => [...prev, res.data!.product]);
+      setShowAddVariantModal(false);
+      showToast('success', 'Variants', 'Variant added - don\'t forget to set its barcode and stock.');
+    } else {
+      showToast('error', 'Variants', res.error || 'Could not add this variant');
+    }
+  };
 
   const costPriceNum = Number(itemForm.cost_price || 0);
   const sellPriceNum = Number(itemForm.sell_price || 0);
@@ -762,6 +879,134 @@ const ProductEditor = () => {
             </div>
           </div>
 
+          {/* Product Variants: only shown on an already-saved, non-variant
+              product - a variant belongs to a parent item_id, so this needs
+              a saved product_id to attach to, and variants can't nest. */}
+          {isEditing && itemForm.parent_item_id && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+              <SectionHeader title="Variant" />
+              <p className="text-sm text-slate-600 dark:text-slate-300">
+                This product is a variant of{' '}
+                <button
+                  type="button"
+                  onClick={() => navigate(`/items/${itemForm.parent_item_id}/edit`)}
+                  className="font-semibold text-primary-600 underline hover:text-primary-700"
+                >
+                  {parentProductName || `Product #${itemForm.parent_item_id}`}
+                </button>
+                . Its barcode, price, and stock are managed separately from that parent.
+              </p>
+            </div>
+          )}
+
+          {isEditing && !itemForm.parent_item_id && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+              <SectionHeader
+                title="Variants"
+                right={
+                  <button
+                    type="button"
+                    onClick={openAddVariantModal}
+                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                  >
+                    + Add Variant
+                  </button>
+                }
+              />
+
+              {itemForm.has_variants && (
+                <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+                  This product has {variants.length} variant{variants.length === 1 ? '' : 's'} and can&apos;t be sold directly - sell a specific variant instead.
+                </div>
+              )}
+
+              {variants.length > 0 && (
+                <div className="mb-5 overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                      <tr>
+                        <th className="px-3 py-2">Variant</th>
+                        <th className="px-3 py-2">Barcode</th>
+                        <th className="px-3 py-2">Price</th>
+                        <th className="px-3 py-2">Stock</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {variants.map((v) => (
+                        <tr key={v.product_id}>
+                          <td className="px-3 py-2">
+                            <button
+                              type="button"
+                              onClick={() => navigate(`/items/${v.product_id}/edit`)}
+                              className="text-left font-medium text-primary-600 hover:underline"
+                            >
+                              {v.name}
+                            </button>
+                          </td>
+                          <td className="px-3 py-2 text-slate-500 dark:text-slate-400">
+                            {v.barcode || <span className="italic text-amber-600 dark:text-amber-400">not set</span>}
+                          </td>
+                          <td className="px-3 py-2">${Number(v.sell_price || 0).toFixed(2)}</td>
+                          <td className="px-3 py-2">{Number(v.quantity ?? v.stock ?? 0)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {eligibleAxisDefs.length > 0 ? (
+                <div className="rounded-lg border border-slate-200 p-4 dark:border-slate-700">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                    Generate variants from attributes
+                  </p>
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {eligibleAxisDefs.map((def) => (
+                      <label
+                        key={def.key}
+                        className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium ${
+                          selectedAxisKeys.includes(def.key)
+                            ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-300'
+                            : 'border-slate-300 text-slate-600 dark:border-slate-600 dark:text-slate-300'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          className="sr-only"
+                          checked={selectedAxisKeys.includes(def.key)}
+                          onChange={() => toggleAxisKey(def.key)}
+                        />
+                        {def.label} ({(def.options || []).length})
+                      </label>
+                    ))}
+                  </div>
+                  {selectedAxisKeys.length > 0 && (
+                    <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
+                      Will create up to{' '}
+                      {eligibleAxisDefs
+                        .filter((def) => selectedAxisKeys.includes(def.key))
+                        .reduce((n, def) => n * (def.options || []).length, 1)}{' '}
+                      combination(s) (existing ones are skipped).
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    disabled={generatingVariants || !selectedAxisKeys.length}
+                    onClick={() => void handleGenerateVariants()}
+                    className="rounded-lg border border-slate-900 bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
+                  >
+                    {generatingVariants ? 'Generating...' : 'Generate Variants'}
+                  </button>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  This product's category has no attribute with a fixed list of options (a "select" type attribute) to
+                  build a variant matrix from - use "+ Add Variant" to add one manually instead.
+                </p>
+              )}
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-6 py-4 dark:border-slate-800 dark:bg-slate-900">
             <div className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400">
               <ShieldCheck className="h-4 w-4 text-emerald-500" aria-hidden="true" />
@@ -802,6 +1047,97 @@ const ProductEditor = () => {
           </div>
         </form>
       )}
+
+      <Modal
+        isOpen={showAddVariantModal}
+        onClose={() => setShowAddVariantModal(false)}
+        title={`Add Variant${itemForm.name ? ` of ${itemForm.name}` : ''}`}
+        size="md"
+      >
+        <div className="space-y-4">
+          {eligibleAxisDefs.length > 0 && (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {eligibleAxisDefs.map((def) => (
+                <ItemField key={def.key} label={def.label}>
+                  <select
+                    className={fieldControlClass}
+                    value={newVariantAttrs[def.key] || ''}
+                    onChange={(e) => setNewVariantAttrs((prev) => ({ ...prev, [def.key]: e.target.value }))}
+                  >
+                    <option value="">Select {def.label.toLowerCase()}</option>
+                    {(def.options || []).map((opt) => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+                </ItemField>
+              ))}
+            </div>
+          )}
+          <ItemField label="Barcode">
+            <input
+              placeholder="Scan or enter barcode"
+              className={fieldControlClass}
+              value={newVariantBarcode}
+              onChange={(e) => setNewVariantBarcode(e.target.value)}
+            />
+          </ItemField>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <ItemField label="Cost Price">
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder={String(itemForm.cost_price ?? 0)}
+                className={fieldControlClass}
+                value={newVariantCostPrice}
+                onChange={(e) => setNewVariantCostPrice(e.target.value)}
+              />
+            </ItemField>
+            <ItemField label="Sell Price">
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder={String(itemForm.sell_price ?? 0)}
+                className={fieldControlClass}
+                value={newVariantSellPrice}
+                onChange={(e) => setNewVariantSellPrice(e.target.value)}
+              />
+            </ItemField>
+            <ItemField label="Opening Stock">
+              <input
+                type="number"
+                step="1"
+                min="0"
+                placeholder="0"
+                className={fieldControlClass}
+                value={newVariantOpeningBalance}
+                onChange={(e) => setNewVariantOpeningBalance(e.target.value)}
+              />
+            </ItemField>
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Cost/Sell Price default to the parent product's own price when left blank.
+          </p>
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => setShowAddVariantModal(false)}
+              className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={savingVariant}
+              onClick={() => void handleAddVariant()}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
+            >
+              {savingVariant ? 'Saving...' : 'Add Variant'}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 };

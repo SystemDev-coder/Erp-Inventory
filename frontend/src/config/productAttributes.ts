@@ -109,13 +109,25 @@ export const DEFAULT_CATEGORIES_BY_BUSINESS_TYPE: Record<string, { name: string;
 // key itself for the dynamic attributes bag.
 export const attributeStorageField = (key: string): string => PRODUCT_ATTRIBUTE_CATALOG[key]?.column || key;
 
+// Minimal shape needed from the live, DB-driven attribute catalog (see
+// useAttributeCatalog) - kept loose/local instead of importing
+// AttributeDefinition from product.service.ts, so this config file stays
+// decoupled from the API layer.
+type AttributeLabelSource = Record<string, { label: string }>;
+
 // Short "Model: X · Storage: Y" caption from a product's dynamic
-// attributes - shared by the Products DataTable and the Sales/Purchases
-// product picker, so a scanned/selected line always shows enough to tell
-// two similarly-named products apart (e.g. two "iPhone 15" storage tiers).
+// attributes - shared by the Products DataTable and every Sales/Purchases/
+// POS/Returns/Stock Adjustment product picker, so a scanned/selected line
+// always shows enough to tell two similarly-named products apart (e.g. two
+// "iPhone 15" storage tiers). When a live `catalog` is passed (the usual
+// case now - see useAttributeCatalog), its labels win over the static
+// PRODUCT_ATTRIBUTE_CATALOG, so a brand-new admin-created attribute shows
+// its real label instead of falling back to the raw key. Callers that omit
+// `catalog` keep the old static-only behavior unchanged.
 export const attributeSummary = (
   attributes: Record<string, string | number> | undefined,
-  max = 2
+  max = 2,
+  catalog?: AttributeLabelSource
 ): string => {
   const attrs = attributes || {};
   const keys = Object.keys(attrs).filter((k) => attrs[k] !== '' && attrs[k] !== null && attrs[k] !== undefined);
@@ -123,6 +135,6 @@ export const attributeSummary = (
   const ordered = keys.includes('model') ? ['model', ...keys.filter((k) => k !== 'model')] : keys;
   return ordered
     .slice(0, max)
-    .map((key) => `${PRODUCT_ATTRIBUTE_CATALOG[key]?.label || key}: ${attrs[key]}`)
+    .map((key) => `${catalog?.[key]?.label || PRODUCT_ATTRIBUTE_CATALOG[key]?.label || key}: ${attrs[key]}`)
     .join(' · ');
 };
