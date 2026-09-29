@@ -10,7 +10,7 @@ import { Modal } from '../../components/ui/modal/Modal';
 import { PageHeader } from '../../components/ui/layout';
 import { useToast } from '../../components/ui/toast/Toast';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
-import { AttributeDataType, AttributeDefinition, Category, Product, Unit, productService } from '../../services/product.service';
+import { AttributeDefinition, Category, Product, Unit, productService } from '../../services/product.service';
 import { deletePreviewService, DeleteImpactPreview } from '../../services/deletePreview.service';
 import { InventoryTransactionRow, inventoryService } from '../../services/inventory.service';
 import { storeService, Store as StoreType } from '../../services/store.service';
@@ -47,7 +47,6 @@ function ItemField({
 }
 
 
-const defaultCategoryForm: Partial<Category> = { name: '', description: '', is_active: true };
 const defaultUnitForm: Partial<Unit> = { unit_name: '', symbol: '', is_active: true };
 
 const fieldCls =
@@ -119,22 +118,16 @@ const Products = () => {
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [categoriesDisplayed, setCategoriesDisplayed] = useState(false);
-  const [categoryModalOpen, setCategoryModalOpen] = useState(false);
-  const [categoryForm, setCategoryForm] = useState<Partial<Category>>(defaultCategoryForm);
   const [categoryToDelete, setCategoryToDelete] = useState<Category | null>(null);
 
-  // Category Configuration Engine: the attribute catalog an admin picks
-  // from when assigning fields to a category - loaded from the API, not a
-  // hardcoded list, so a brand-new attribute type needs no code change.
+  // Category Configuration Engine: the attribute catalog used elsewhere on
+  // this page for captions/filtering - New/Edit Category itself now lives on
+  // its own page/route (see CategoryEditor.tsx), which loads its own copy.
   const [attributeDefinitions, setAttributeDefinitions] = useState<AttributeDefinition[]>([]);
   const attributeCatalogByKey = useMemo(
     () => Object.fromEntries(attributeDefinitions.map((a) => [a.key, a])),
     [attributeDefinitions]
   );
-  const [newAttributeLabel, setNewAttributeLabel] = useState('');
-  const [newAttributeDataType, setNewAttributeDataType] = useState<AttributeDataType>('text');
-  const [newAttributeOptions, setNewAttributeOptions] = useState('');
-  const [creatingAttribute, setCreatingAttribute] = useState(false);
 
   const [units, setUnits] = useState<Unit[]>([]);
   const [unitsDisplayed, setUnitsDisplayed] = useState(false);
@@ -265,96 +258,6 @@ const Products = () => {
     setLoading(true);
     await resolveUnits();
     setLoading(false);
-  };
-
-  // Category Configuration Engine: lets an admin invent a brand-new
-  // attribute type right from the checklist (no code change, no deploy).
-  // If the typed label happens to already exist as a key, it's just
-  // checked instead of re-created.
-  const handleCreateAttribute = async () => {
-    const label = newAttributeLabel.trim();
-    if (!label) return;
-    const key = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-    if (!key) {
-      showToast('error', 'Attributes', 'Enter a valid label');
-      return;
-    }
-    const existing = attributeDefinitions.find((a) => a.key === key);
-    if (existing) {
-      const current = categoryForm.attribute_keys || [];
-      if (!current.includes(existing.key)) {
-        setCategoryForm({ ...categoryForm, attribute_keys: [...current, existing.key] });
-      }
-      setNewAttributeLabel('');
-      return;
-    }
-    const options =
-      newAttributeDataType === 'select'
-        ? newAttributeOptions.split(',').map((o) => o.trim()).filter(Boolean)
-        : undefined;
-    if (newAttributeDataType === 'select' && !options?.length) {
-      showToast('error', 'Attributes', 'Enter at least one option (comma-separated)');
-      return;
-    }
-    setCreatingAttribute(true);
-    const res = await productService.createAttribute({
-      key,
-      label,
-      dataType: newAttributeDataType,
-      options,
-      branchId: activeBranchId ?? undefined,
-    });
-    setCreatingAttribute(false);
-    if (res.success && res.data?.attribute) {
-      const created = res.data.attribute;
-      setAttributeDefinitions((prev) => [...prev, created]);
-      const current = categoryForm.attribute_keys || [];
-      setCategoryForm({ ...categoryForm, attribute_keys: [...current, created.key] });
-      setNewAttributeLabel('');
-      setNewAttributeOptions('');
-      setNewAttributeDataType('text');
-      showToast('success', 'Attributes', `"${created.label}" was added as a new attribute.`);
-    } else {
-      showToast('error', 'Attributes', res.error || 'Could not create this attribute.');
-    }
-  };
-
-  // A category can't become its own parent or its own descendant's parent -
-  // computed client-side (string-compared: bigint ids come back as JSON
-  // strings) so the picker never even offers an invalid option; the backend
-  // enforces the same rule as a hard guard.
-  const invalidParentIds = useMemo(() => {
-    if (!categoryForm.category_id) return new Set<string>();
-    const invalid = new Set<string>([String(categoryForm.category_id)]);
-    let added = true;
-    while (added) {
-      added = false;
-      for (const c of categories) {
-        const cId = String(c.category_id);
-        const pId = c.parent_id != null ? String(c.parent_id) : null;
-        if (pId !== null && invalid.has(pId) && !invalid.has(cId)) {
-          invalid.add(cId);
-          added = true;
-        }
-      }
-    }
-    return invalid;
-  }, [categories, categoryForm.category_id]);
-
-  const saveCategory = async () => {
-    setLoading(true);
-    const res = categoryForm.category_id
-      ? await productService.updateCategory(categoryForm.category_id, categoryForm)
-      : await productService.createCategory({ ...categoryForm, branchId: activeBranchId ?? undefined } as Partial<Category> & { branchId?: number });
-    setLoading(false);
-    if (res.success) {
-      showToast('success', 'Categories', categoryForm.category_id ? 'Category updated' : 'Category created');
-      setCategoryModalOpen(false);
-      setCategoryForm(defaultCategoryForm);
-      await resolveCategories();
-    } else {
-      showToast('error', 'Categories', res.error || 'Failed to save category');
-    }
   };
 
   const handleExportProducts = async () => {
@@ -1180,10 +1083,7 @@ const Products = () => {
             {can('items.create') && (
               <button
                 type="button"
-                onClick={() => {
-                  setCategoryForm(defaultCategoryForm);
-                  setCategoryModalOpen(true);
-                }}
+                onClick={() => navigate('/categories/new')}
                 className="rounded-lg bg-primary-600 px-3 py-2 text-sm text-white"
               >
                 New Category
@@ -1204,10 +1104,7 @@ const Products = () => {
             data={categoriesDisplayed ? categories : []}
             columns={categoryColumns}
             isLoading={loading}
-            onEdit={can('items.update') ? (row) => {
-              setCategoryForm(row);
-              setCategoryModalOpen(true);
-            } : undefined}
+            onEdit={can('items.update') ? (row) => navigate(`/categories/${row.category_id}/edit`) : undefined}
             onDelete={can('items.delete') ? (row) => setCategoryToDelete(row) : undefined}
             searchPlaceholder="Search categories..."
           />
@@ -1346,107 +1243,6 @@ const Products = () => {
             </button>
           </div>
         </div>
-      </Modal>
-
-      <Modal isOpen={categoryModalOpen} onClose={() => setCategoryModalOpen(false)} title={categoryForm.category_id ? 'Edit Category' : 'New Category'} size="md">
-        <form onSubmit={(e) => { e.preventDefault(); void saveCategory(); }} className="space-y-3">
-          <ItemField label="Category Name" required>
-            <input
-              required
-              minLength={2}
-              placeholder="e.g. Electronics"
-              value={categoryForm.name || ''}
-              onChange={(e) => setCategoryForm({ ...categoryForm, name: e.target.value })}
-            />
-          </ItemField>
-          <ItemField label="Description">
-            <input
-              placeholder="Optional description"
-              value={categoryForm.description || ''}
-              onChange={(e) => setCategoryForm({ ...categoryForm, description: e.target.value })}
-            />
-          </ItemField>
-          <ItemField label="Parent Category">
-            <SearchableCombobox<number>
-              value={categoryForm.parent_id ?? ''}
-              options={categories
-                .filter((c) => !invalidParentIds.has(String(c.category_id)))
-                .map((c) => ({ value: c.category_id, label: c.name }))}
-              placeholder="No parent (top-level category)"
-              onChange={(nextValue) =>
-                setCategoryForm({ ...categoryForm, parent_id: nextValue === '' ? null : Number(nextValue) })
-              }
-            />
-            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-              Optional - makes this a sub-category (e.g. "Face" under "Cosmetics").
-            </p>
-          </ItemField>
-          <ItemField label="Attributes">
-            <p className="text-xs text-slate-500 dark:text-slate-400 -mt-0.5 mb-1">
-              Which fields do products in this category need? (e.g. Model, Storage, RAM for phones)
-            </p>
-            <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 max-h-48 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 p-2">
-              {attributeDefinitions.map((def) => {
-                const checked = (categoryForm.attribute_keys || []).includes(def.key);
-                return (
-                  <label key={def.key} className="flex items-center gap-1.5 text-xs">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={(e) => {
-                        const current = categoryForm.attribute_keys || [];
-                        const next = e.target.checked ? [...current, def.key] : current.filter((k) => k !== def.key);
-                        setCategoryForm({ ...categoryForm, attribute_keys: next });
-                      }}
-                    />
-                    {def.label}
-                  </label>
-                );
-              })}
-            </div>
-            {/* Category Configuration Engine: an admin invents a brand-new
-                attribute type here - no code change, no deploy - and it's
-                immediately available for this and every future category. */}
-            <div className="mt-2 grid grid-cols-1 sm:grid-cols-[1fr_auto_auto] gap-2 rounded-lg border border-dashed border-primary-300 bg-primary-50/60 p-2 dark:border-primary-700 dark:bg-primary-500/10">
-              <input
-                placeholder="+ New attribute label (e.g. Fragrance Type)"
-                value={newAttributeLabel}
-                onChange={(e) => setNewAttributeLabel(e.target.value)}
-                className="text-xs"
-              />
-              <select
-                value={newAttributeDataType}
-                onChange={(e) => setNewAttributeDataType(e.target.value as AttributeDataType)}
-                className="text-xs"
-              >
-                <option value="text">Text</option>
-                <option value="number">Number</option>
-                <option value="select">Select</option>
-                <option value="date">Date</option>
-              </select>
-              <button
-                type="button"
-                disabled={creatingAttribute || !newAttributeLabel.trim()}
-                onClick={() => void handleCreateAttribute()}
-                className="rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {creatingAttribute ? 'Adding...' : 'Add'}
-              </button>
-              {newAttributeDataType === 'select' && (
-                <input
-                  placeholder="Options, comma-separated (e.g. Floral, Woody, Citrus)"
-                  value={newAttributeOptions}
-                  onChange={(e) => setNewAttributeOptions(e.target.value)}
-                  className="sm:col-span-3 text-xs"
-                />
-              )}
-            </div>
-          </ItemField>
-          <div className="flex justify-end gap-2 pt-1 border-t border-slate-100 dark:border-slate-700 mt-1">
-            <button type="button" onClick={() => setCategoryModalOpen(false)} className="px-3 py-1.5 text-sm rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
-            <button type="submit" className="px-4 py-1.5 text-sm rounded-lg bg-primary-600 text-white hover:bg-primary-700">{categoryForm.category_id ? 'Update' : 'Save'}</button>
-          </div>
-        </form>
       </Modal>
 
       <ConfirmDialog isOpen={!!categoryToDelete} onClose={() => setCategoryToDelete(null)} onConfirm={(reason) => void removeCategory(reason || '')} requireReason title="Delete Category" message={`Delete "${categoryToDelete?.name || ''}"?`} confirmText="Delete" variant="danger" isLoading={loading} />
