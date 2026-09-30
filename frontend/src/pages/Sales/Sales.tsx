@@ -15,6 +15,9 @@ import { deletePreviewService, DeleteImpactPreview } from '../../services/delete
 import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
 import { usePermissions } from '../../hooks/usePermissions';
+import { printSaleDocument } from '../../utils/printDocument';
+import { PrintFormatMenu } from '../../components/print/PrintFormatMenu';
+import { PaperSize } from '../../services/settings.service';
 
 const formatMoney = (value: number) => `$${Number(value || 0).toFixed(2)}`;
 
@@ -102,58 +105,11 @@ const Sales = () => {
   }, [activeBranchId]);
 
   const printSaleInvoice = useCallback(
-    async (sale: Sale) => {
-      try {
-        const printRes = await salesService.getPrintHtml(sale.sale_id);
-        if (!printRes.success || !printRes.data?.html) {
-          showToast('error', 'Print Failed', printRes.error || 'Unable to load print template');
-          return;
-        }
-
-        const html = printRes.data.html;
-         
-        // Print in a hidden iframe so no new tab/window appears.
-        const printFrame = document.createElement('iframe');
-        printFrame.style.position = 'fixed';
-        printFrame.style.right = '0';
-        printFrame.style.bottom = '0';
-        printFrame.style.width = '0';
-        printFrame.style.height = '0';
-        printFrame.style.border = '0';
-        document.body.appendChild(printFrame);
-
-        const frameWindow = printFrame.contentWindow;
-        if (!frameWindow) {
-          document.body.removeChild(printFrame);
-          showToast('error', 'Print Failed', 'Unable to open print frame');
-          return;
-        }
-
-        frameWindow.document.open();
-        frameWindow.document.write(html);
-        frameWindow.document.close();
-
-        let printed = false;
-        const cleanup = () => {
-          setTimeout(() => {
-            if (document.body.contains(printFrame)) {
-              document.body.removeChild(printFrame);
-            }
-          }, 300);
-        };
-
-        printFrame.onload = () => {
-          if (printed) return;
-          printed = true;
-          frameWindow.focus();
-          frameWindow.print();
-          cleanup();
-        };
-        
-      } catch (error) {
-        console.error('Invoice print error:', error);
-        showToast('error', 'Print Failed', 'Unable to generate document');
-      }
+    async (sale: Sale, paperSize?: PaperSize) => {
+      await printSaleDocument(sale.sale_id, {
+        paperSize,
+        onError: (message) => showToast('error', 'Print Failed', message),
+      });
     },
     [showToast]
   );
@@ -343,6 +299,10 @@ const Sales = () => {
                   <Printer className="h-4 w-4" aria-hidden="true" />
                   Print
                 </button>
+                <PrintFormatMenu
+                  onSelect={(paperSize) => void printSaleInvoice(sale, paperSize)}
+                  className="inline-flex min-h-11 items-center justify-center rounded-lg border border-indigo-200 text-indigo-700 hover:bg-indigo-50 px-2 dark:border-indigo-800 dark:text-indigo-300 dark:hover:bg-indigo-900/30"
+                />
                 {sale.status !== 'void' && can('sales.update') && (
                   <button type="button" onClick={() => navigate(`/sales/${sale.sale_id}/edit`)} className={`${btn} border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800`} aria-label={`Edit ${getDocRef(sale)}`}>
                     <Edit3 className="h-4 w-4" aria-hidden="true" />

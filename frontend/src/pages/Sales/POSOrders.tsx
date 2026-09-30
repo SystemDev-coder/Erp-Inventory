@@ -15,34 +15,11 @@ import { salesService, Sale, SaleItem, PosOrderItemRow, PosPaymentRow } from '..
 import { accountService, Account } from '../../services/account.service';
 import { returnsService } from '../../services/returns.service';
 import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
+import { printSaleDocument } from '../../utils/printDocument';
+import { PrintFormatMenu } from '../../components/print/PrintFormatMenu';
+import { PaperSize } from '../../services/settings.service';
 
 const formatMoney = (value: number) => `$${Number(value || 0).toFixed(2)}`;
-
-const printHtmlInIframe = (html: string) => {
-    const printFrame = document.createElement('iframe');
-    printFrame.style.position = 'fixed';
-    printFrame.style.right = '0';
-    printFrame.style.bottom = '0';
-    printFrame.style.width = '0';
-    printFrame.style.height = '0';
-    printFrame.style.border = '0';
-    document.body.appendChild(printFrame);
-    const frameWindow = printFrame.contentWindow;
-    if (!frameWindow) {
-        document.body.removeChild(printFrame);
-        return;
-    }
-    frameWindow.document.open();
-    frameWindow.document.write(html);
-    frameWindow.document.close();
-    printFrame.onload = () => {
-        frameWindow.focus();
-        frameWindow.print();
-        setTimeout(() => {
-            if (document.body.contains(printFrame)) document.body.removeChild(printFrame);
-        }, 300);
-    };
-};
 
 const POSOrders = () => {
     const { showToast } = useToast();
@@ -189,13 +166,11 @@ const POSOrders = () => {
     };
 
     const printSaleInvoice = useCallback(
-        async (sale: Sale) => {
-            const printRes = await salesService.getPrintHtml(sale.sale_id);
-            if (!printRes.success || !printRes.data?.html) {
-                showToast('error', 'Print Failed', printRes.error || 'Unable to load print template');
-                return;
-            }
-            printHtmlInIframe(printRes.data.html);
+        async (sale: Sale, paperSize?: PaperSize) => {
+            await printSaleDocument(sale.sale_id, {
+                paperSize,
+                onError: (message) => showToast('error', 'Print Failed', message),
+            });
         },
         [showToast]
     );
@@ -258,6 +233,7 @@ const POSOrders = () => {
                             <button type="button" onClick={() => void printSaleInvoice(sale)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300" aria-label="Print">
                                 <Printer className="h-4 w-4" />
                             </button>
+                            <PrintFormatMenu onSelect={(paperSize) => void printSaleInvoice(sale, paperSize)} />
                             {sale.status !== 'void' && can('sales.void') && (
                                 <button type="button" onClick={() => { setSaleToVoid(sale); setVoidOpen(true); }} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-red-200 text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-300" aria-label="Void">
                                     <Ban className="h-4 w-4" />

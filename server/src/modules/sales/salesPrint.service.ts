@@ -4,6 +4,9 @@ import { queryOne } from '../../db/query';
 import { ApiError } from '../../utils/ApiError';
 import { BranchScope } from '../../utils/branchScope';
 import { salesService } from './sales.service';
+import { settingsService, normalizePaperSize } from '../settings/settings.service';
+
+export type PaperSize = 'a4' | 'a5' | 'thermal-80' | 'thermal-58';
 
 type CompanyRow = {
   company_name?: string | null;
@@ -85,10 +88,26 @@ const readTemplate = async (fileName: string) => {
   throw ApiError.internal(`Print template missing: ${fileName}`);
 };
 
+// Document Print Settings: picks which of the 6 template files to render -
+// 2 doc types (invoice/quotation) x 3 layout families (A4, A5, thermal - the
+// two thermal widths share one template, parametrized by {{thermalWidthMm}}).
+const resolveTemplateFileName = (isQuotation: boolean, paperSize: PaperSize): string => {
+  const base = isQuotation ? 'quotation-print' : 'invoice-print';
+  if (paperSize === 'a5') return `${base}-a5.html`;
+  if (paperSize === 'thermal-80' || paperSize === 'thermal-58') return `${base}-thermal.html`;
+  return `${base}.html`;
+};
+
 export const salesPrintService = {
-  async renderSaleDocumentHtml(id: number, scope: BranchScope, baseUrl: string) {
+  async renderSaleDocumentHtml(id: number, scope: BranchScope, baseUrl: string, paperSizeOverride?: PaperSize) {
     const sale = await salesService.getSale(id, scope);
     if (!sale) throw ApiError.notFound('Sale not found');
+
+    // Document Print Settings: an explicit ?paperSize= query param always wins;
+    // otherwise fall back to the business-wide default saved in Settings.
+    const paperSize: PaperSize =
+      paperSizeOverride ?? normalizePaperSize((await settingsService.getBusinessProfile()).receiptConfig.paperSize);
+    const isThermal = paperSize === 'thermal-80' || paperSize === 'thermal-58';
 
     const docType = (sale.doc_type || 'sale').toLowerCase();
     const isQuotation = docType === 'quotation';
@@ -188,12 +207,21 @@ export const salesPrintService = {
     const paidBlock = isQuotation ? '' : `<div class="tot-row"><span>Paid</span><strong>${escapeHtml(formatMoney(paidAmount))}</strong></div>`;
     const balanceBlock = isQuotation ? '' : `<div class="tot-row"><span>Balance</span><strong>${escapeHtml(formatMoney(balance))}</strong></div>`;
 
+    // Thermal receipts are a single narrow column (no room for a 4-column
+    // table), so they get their own per-item markup: name on its own line,
+    // qty x price = total on the next - instead of <tr>/<td> table rows.
     const itemsRows = items
       .map((line) => {
         const name = line.item_name || `Item ${line.item_id}`;
         const qty = formatQty(line.quantity);
         const price = formatMoney(line.unit_price);
         const lineTotal = formatMoney(line.line_total ?? Number(line.quantity) * Number(line.unit_price));
+        if (isThermal) {
+          return `<div class="item">
+            <div class="name">${escapeHtml(name)}</div>
+            <div class="line"><span>${escapeHtml(qty)} x ${escapeHtml(price)}</span><span class="lt">${escapeHtml(lineTotal)}</span></div>
+          </div>`;
+        }
         return `<tr>
           <td>${escapeHtml(name)}</td>
           <td class="num">${escapeHtml(qty)}</td>
@@ -203,7 +231,7 @@ export const salesPrintService = {
       })
       .join('');
 
-    const template = await readTemplate(isQuotation ? 'quotation-print.html' : 'invoice-print.html');
+    const template = await readTemplate(resolveTemplateFileName(isQuotation, paperSize));
 
     return renderTemplate(template, {
       companyName,
@@ -215,6 +243,8 @@ export const salesPrintService = {
       docNo,
       docDate: saleDate,
       dueDate,
+      validUntilPlain: validUntil || '-',
+      thermalWidthMm: paperSize === 'thermal-58' ? '58' : '80',
       subtotal: formatMoney(totals.subtotal),
       discount: formatMoney(totals.discount),
       tax: formatMoney(totals.tax),

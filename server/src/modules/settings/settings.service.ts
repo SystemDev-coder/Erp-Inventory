@@ -106,8 +106,17 @@ export interface ReceiptConfig {
   showBarcode: boolean;
   showTax: boolean;
   showDiscount: boolean;
-  paperSize: 'a4' | 'thermal';
+  // 'thermal' is a legacy value from before 80mm/58mm were distinguished -
+  // normalizePaperSize() below maps any stored 'thermal' to 'thermal-80'.
+  paperSize: 'a4' | 'a5' | 'thermal-80' | 'thermal-58';
 }
+
+const VALID_PAPER_SIZES = new Set(['a4', 'a5', 'thermal-80', 'thermal-58']);
+export const normalizePaperSize = (value: unknown): ReceiptConfig['paperSize'] => {
+  const raw = String(value ?? '').trim();
+  if (raw === 'thermal') return 'thermal-80';
+  return VALID_PAPER_SIZES.has(raw) ? (raw as ReceiptConfig['paperSize']) : 'a4';
+};
 
 export interface NotificationConfig {
   lowStock: boolean;
@@ -1088,7 +1097,11 @@ export const settingsService = {
       purchaseConfig: { ...DEFAULT_PURCHASE_CONFIG, ...(stored.purchaseConfig || {}) },
       accountingConfig: { ...DEFAULT_ACCOUNTING_CONFIG, ...(stored.accountingConfig || {}) },
       branchConfig: { ...DEFAULT_BRANCH_CONFIG, ...(stored.branchConfig || {}) },
-      receiptConfig: { ...DEFAULT_RECEIPT_CONFIG, ...(stored.receiptConfig || {}) },
+      receiptConfig: {
+        ...DEFAULT_RECEIPT_CONFIG,
+        ...(stored.receiptConfig || {}),
+        paperSize: normalizePaperSize(stored.receiptConfig?.paperSize),
+      },
       notificationConfig: { ...DEFAULT_NOTIFICATION_CONFIG, ...(stored.notificationConfig || {}) },
     };
   },

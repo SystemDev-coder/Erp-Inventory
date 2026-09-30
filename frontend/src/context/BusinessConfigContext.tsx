@@ -48,6 +48,16 @@ const FALLBACK_PROFILE: BusinessProfile = {
     creditPurchases: true,
     supplierCreditDays: 30,
   },
+  receiptConfig: {
+    logo: true,
+    header: '',
+    footer: '',
+    showCustomer: true,
+    showBarcode: true,
+    showTax: true,
+    showDiscount: true,
+    paperSize: 'a4',
+  },
 };
 
 interface BusinessConfigContextType {

@@ -18,6 +18,7 @@ import { settingsService } from '../../services/settings.service';
 import { useBranch } from '../../context/BranchContext';
 import { attributeSummary } from '../../config/productAttributes';
 import { useAttributeCatalog } from '../../hooks/useAttributeCatalog';
+import { printSaleDocument } from '../../utils/printDocument';
 
 interface CartItem {
     item_id: number;
@@ -45,32 +46,6 @@ const CATEGORY_LOOKS: Array<{ icon: typeof Headphones; className: string }> = [
     { icon: Store, className: 'text-emerald-500' },
     { icon: Lightbulb, className: 'text-yellow-500' },
 ];
-
-const printHtmlInIframe = (html: string) => {
-    const printFrame = document.createElement('iframe');
-    printFrame.style.position = 'fixed';
-    printFrame.style.right = '0';
-    printFrame.style.bottom = '0';
-    printFrame.style.width = '0';
-    printFrame.style.height = '0';
-    printFrame.style.border = '0';
-    document.body.appendChild(printFrame);
-    const frameWindow = printFrame.contentWindow;
-    if (!frameWindow) {
-        document.body.removeChild(printFrame);
-        return;
-    }
-    frameWindow.document.open();
-    frameWindow.document.write(html);
-    frameWindow.document.close();
-    printFrame.onload = () => {
-        frameWindow.focus();
-        frameWindow.print();
-        setTimeout(() => {
-            if (document.body.contains(printFrame)) document.body.removeChild(printFrame);
-        }, 300);
-    };
-};
 
 const POSTab = () => {
     const { showToast } = useToast();
@@ -275,10 +250,10 @@ const POSTab = () => {
         }
         showToast('success', 'Sale Completed!', `Transaction for $${total.toFixed(2)} recorded successfully.`);
         const saleId = res.data.sale.sale_id;
-        const printRes = await salesService.getPrintHtml(saleId);
-        if (printRes.success && printRes.data?.html) {
-            printHtmlInIframe(printRes.data.html);
-        }
+        // Auto-prints right after checkout with the saved default format - no
+        // natural place for a per-print override in this automatic flow (see
+        // PrintFormatMenu for the manual reprint override in POS Orders).
+        await printSaleDocument(saleId);
         clearCart();
         setSelectedCustomerId('');
         setDiscount(0);

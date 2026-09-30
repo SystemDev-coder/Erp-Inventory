@@ -197,9 +197,10 @@ export const salesService = {
     return apiClient.delete(API.SALES.ITEM(id), reason);
   },
 
-  async getPrintHtml(id: number) {
+  async getPrintHtml(id: number, paperSize?: string) {
     const token = getAccessToken();
-    const res = await fetch(`${env.API_URL}${API.SALES.LIST}/${id}/print`, {
+    const query = paperSize ? `?paperSize=${encodeURIComponent(paperSize)}` : '';
+    const res = await fetch(`${env.API_URL}${API.SALES.LIST}/${id}/print${query}`, {
       method: 'GET',
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       credentials: 'include',

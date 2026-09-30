@@ -10,6 +10,7 @@ import { productService, Category, Unit } from '../../services/product.service';
 import { imageService } from '../../services/image.service';
 import { SaleDocType, SaleStatus, salesService } from '../../services/sales.service';
 import { formatAvailableQty, itemLabelWithAvailability } from '../../utils/itemAvailability';
+import { printSaleDocument } from '../../utils/printDocument';
 import { useAttributeCatalog } from '../../hooks/useAttributeCatalog';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
 import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
@@ -670,45 +671,6 @@ const SaleCreate = () => {
     : 0;
   const hasInsufficientStock = Boolean(firstInsufficientLine);
 
-  const printHtmlDocument = (html: string) => {
-    const printFrame = document.createElement('iframe');
-    printFrame.style.position = 'fixed';
-    printFrame.style.right = '0';
-    printFrame.style.bottom = '0';
-    printFrame.style.width = '0';
-    printFrame.style.height = '0';
-    printFrame.style.border = '0';
-    document.body.appendChild(printFrame);
-
-    const frameWindow = printFrame.contentWindow;
-    if (!frameWindow) {
-      document.body.removeChild(printFrame);
-      showToast('error', 'Print Failed', 'Unable to open print frame');
-      return;
-    }
-
-    frameWindow.document.open();
-    frameWindow.document.write(html);
-    frameWindow.document.close();
-
-    let printed = false;
-    const cleanup = () => {
-      setTimeout(() => {
-        if (document.body.contains(printFrame)) {
-          document.body.removeChild(printFrame);
-        }
-      }, 300);
-    };
-
-    printFrame.onload = () => {
-      if (printed) return;
-      printed = true;
-      frameWindow.focus();
-      frameWindow.print();
-      cleanup();
-    };
-  };
-
   // ── Validation ────────────────────────────────────────────────────────────
   const validate = (): FormErrors => {
     const errors: FormErrors = {};
@@ -809,13 +771,11 @@ const SaleCreate = () => {
         }
 
         const savedSale = saleRes.data.sale;
-        const printRes = await salesService.getPrintHtml(savedSale.sale_id);
-        if (!printRes.success || !printRes.data?.html) {
-          showToast('error', 'Quotation', printRes.error || 'Unable to load print template');
-          return;
-        }
+        const printed = await printSaleDocument(savedSale.sale_id, {
+          onError: (message) => showToast('error', 'Quotation', message),
+        });
+        if (!printed) return;
 
-        printHtmlDocument(printRes.data.html);
         showToast('success', 'Quotation', isEditing ? 'Quotation updated and printed' : 'Quotation saved and printed');
         navigate('/sales');
       } catch (error) {

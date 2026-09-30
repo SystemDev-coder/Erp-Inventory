@@ -24,6 +24,7 @@ import {
   settingsAssetPrepareSchema,
   openingBalanceCleanupSchema,
   businessProfileSchema,
+  updateReceiptConfigSchema,
 } from './settings.schemas';
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { logAudit } from '../../utils/audit';
@@ -342,6 +343,24 @@ export const updateBusinessProfile = asyncHandler(async (req: AuthRequest, res: 
     userAgent: req.get('user-agent') || null,
   });
   return ApiResponse.success(res, { profile }, 'Business profile updated');
+});
+
+// Document Print Settings: a narrower sibling of updateBusinessProfile above,
+// touching only receiptConfig - see settings.routes.ts's /receipt-config
+// route comment for why this needs its own, more lightly-gated endpoint
+// instead of reusing the Developer-only /business-profile one.
+export const updateReceiptConfig = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const input = updateReceiptConfigSchema.parse(req.body);
+  const profile = await settingsService.updateBusinessProfile({ receiptConfig: input.receiptConfig });
+  await logAudit({
+    userId: req.user?.userId ?? null,
+    action: 'update',
+    entity: 'receipt_config',
+    entityId: 1,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+  });
+  return ApiResponse.success(res, { profile }, 'Print settings updated');
 });
 
 export const getAssetOverview = asyncHandler(async (req: AuthRequest, res: Response) => {

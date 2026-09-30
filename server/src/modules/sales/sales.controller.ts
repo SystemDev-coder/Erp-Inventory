@@ -12,7 +12,13 @@ import {
 import { AuthRequest } from '../../middlewares/requireAuth';
 import { assertBranchAccess, pickBranchForWrite, resolveBranchScope } from '../../utils/branchScope';
 import { logDeleteAudit } from '../../utils/logDeleteAudit';
-import { salesPrintService } from './salesPrint.service';
+import { salesPrintService, PaperSize } from './salesPrint.service';
+
+const VALID_PAPER_SIZES = new Set<PaperSize>(['a4', 'a5', 'thermal-80', 'thermal-58']);
+const parsePaperSizeQuery = (value: unknown): PaperSize | undefined => {
+  const raw = String(value ?? '').trim();
+  return VALID_PAPER_SIZES.has(raw as PaperSize) ? (raw as PaperSize) : undefined;
+};
 import { listPaginationSchema, paginationMeta } from '../../utils/pagination';
 
 export const listSales = asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -175,7 +181,11 @@ export const printSale = asyncHandler(async (req: AuthRequest, res: Response) =>
   const id = Number(req.params.id);
   if (!id) throw ApiError.badRequest('Invalid sale id');
   const baseUrl = `${req.protocol}://${req.get('host')}`;
-  const html = await salesPrintService.renderSaleDocumentHtml(id, scope, baseUrl);
+  // Document Print Settings: an explicit ?paperSize= overrides this one print;
+  // an absent/invalid value falls back to the saved default (see
+  // renderSaleDocumentHtml), so a bad query param never breaks printing.
+  const paperSize = parsePaperSizeQuery(req.query.paperSize);
+  const html = await salesPrintService.renderSaleDocumentHtml(id, scope, baseUrl, paperSize);
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.status(200).send(html);
 });

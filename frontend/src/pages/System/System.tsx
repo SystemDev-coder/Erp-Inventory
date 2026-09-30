@@ -1,5 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
-import { CheckSquare, Home, Lock, Pencil, Plus, Settings2, Shield, Trash2, Users } from 'lucide-react';
+import { CheckSquare, Home, Lock, Pencil, Plus, Printer, Settings2, Shield, Trash2, Users } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
 import { Tabs } from '../../components/ui/tabs';
 import { Modal } from '../../components/ui/modal/Modal';
@@ -15,7 +15,7 @@ import {
   SystemRole,
   SystemUser,
 } from '../../services/system.service';
-import { settingsService, CompanyInfo } from '../../services/settings.service';
+import { settingsService, CompanyInfo, PaperSize, PAPER_SIZE_LABELS } from '../../services/settings.service';
 import { ImageUpload } from '../../components/common/ImageUpload';
 import { imageService } from '../../services/image.service';
 import { env } from '../../config/env';
@@ -113,6 +113,29 @@ const System = () => {
     await refreshBusinessProfile();
     showToast('success', 'Business Profile', 'Business profile updated');
     setBusinessProfileModalOpen(false);
+  };
+
+  // Document Print Settings: one shared default paper format for every
+  // printed POS receipt / Sales invoice / quotation (see PrintFormatMenu for
+  // the per-print override, which never touches this saved default).
+  const [printSettingsModalOpen, setPrintSettingsModalOpen] = useState(false);
+  const [printSettingsSaving, setPrintSettingsSaving] = useState(false);
+  const [printSettingsForm, setPrintSettingsForm] = useState<PaperSize>('a4');
+  const openPrintSettingsEdit = () => {
+    setPrintSettingsForm(businessProfile.receiptConfig.paperSize);
+    setPrintSettingsModalOpen(true);
+  };
+  const handlePrintSettingsSave = async () => {
+    setPrintSettingsSaving(true);
+    const res = await settingsService.updateReceiptConfig({ paperSize: printSettingsForm });
+    setPrintSettingsSaving(false);
+    if (!res.success) {
+      showToast('error', 'Print Settings', res.error || 'Failed to save print settings');
+      return;
+    }
+    await refreshBusinessProfile();
+    showToast('success', 'Print Settings', 'Default print format updated');
+    setPrintSettingsModalOpen(false);
   };
   const enabledFeatureList = [
     businessProfile.productConfig.barcode && 'Barcode',
@@ -983,6 +1006,67 @@ const System = () => {
     </div>
   );
 
+  // Document Print Settings: its own tab (open to any admin who can reach
+  // this page - unlike Business Profile, paper format is an everyday
+  // operational choice, not a developer-only one). Reuses the same
+  // updateBusinessProfile endpoint, just the receiptConfig.paperSize field.
+  const printSettingsContent = (
+    <div className="bg-white border border-black rounded-xl p-6 space-y-4 text-black">
+      <div className="flex items-center justify-between">
+        <h3 className="text-base font-semibold">Print Settings</h3>
+        <button
+          onClick={openPrintSettingsEdit}
+          className="px-3 py-2 rounded border border-black bg-black text-white text-sm inline-flex items-center gap-2"
+        >
+          <Pencil className="w-3.5 h-3.5" /> Edit
+        </button>
+      </div>
+      <div>
+        <div className="text-xs uppercase tracking-wide text-slate-500">Default Print Format</div>
+        <div>{PAPER_SIZE_LABELS[businessProfile.receiptConfig.paperSize]}</div>
+      </div>
+      <p className="text-sm text-slate-500">
+        Used for every POS receipt and Sales invoice/quotation print, unless overridden for a single print
+        from the format menu next to the Print button.
+      </p>
+
+      <Modal
+        isOpen={printSettingsModalOpen}
+        onClose={() => setPrintSettingsModalOpen(false)}
+        title="Edit Print Settings"
+        size="md"
+      >
+        <div className="space-y-4">
+          <label className="text-sm font-medium flex flex-col gap-1">
+            Default Print Format
+            <SearchableCombobox<string>
+              value={printSettingsForm}
+              options={Object.entries(PAPER_SIZE_LABELS).map(([value, label]) => ({ value, label }))}
+              placeholder="Select a print format"
+              onChange={(value) => setPrintSettingsForm((value || 'a4') as PaperSize)}
+            />
+            <span className="text-xs text-slate-500">
+              A4/A5 are full document layouts; 80mm/58mm Thermal are for receipt printers and use a
+              condensed single-column layout.
+            </span>
+          </label>
+        </div>
+        <div className="flex justify-end gap-2 pt-4">
+          <button className="px-4 py-2 rounded border border-black" onClick={() => setPrintSettingsModalOpen(false)}>
+            Cancel
+          </button>
+          <button
+            className="px-4 py-2 rounded border border-black bg-black text-white"
+            onClick={handlePrintSettingsSave}
+            disabled={printSettingsSaving}
+          >
+            {printSettingsSaving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+      </Modal>
+    </div>
+  );
+
   const tabs = [
     {
       id: 'company',
@@ -990,6 +1074,13 @@ const System = () => {
       icon: Home,
       badge: 0,
       content: companyContent,
+    },
+    {
+      id: 'print-settings',
+      label: 'Print Settings',
+      icon: Printer,
+      badge: 0,
+      content: printSettingsContent,
     },
     // Business Profile: its own tab, visible only to the Developer role -
     // see isDeveloper above for why this is tighter than plain company.update.

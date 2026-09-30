@@ -185,6 +185,31 @@ export const openingBalanceCleanupSchema = z.object({
 
 const optionalAccId = z.coerce.number().int().positive().nullable().optional();
 
+// Pulled out of businessProfileSchema so it can also back its own, more
+// lightly-gated endpoint (Document Print Settings) - see updateReceiptConfigSchema
+// and settings.routes.ts's /receipt-config route for why.
+export const receiptConfigSchema = z
+  .object({
+    logo: z.boolean().optional(),
+    header: z.string().trim().max(500).optional().or(z.literal('')),
+    footer: z.string().trim().max(500).optional().or(z.literal('')),
+    showCustomer: z.boolean().optional(),
+    showBarcode: z.boolean().optional(),
+    showTax: z.boolean().optional(),
+    showDiscount: z.boolean().optional(),
+    paperSize: z.enum(['a4', 'a5', 'thermal-80', 'thermal-58']).optional(),
+  })
+  .partial();
+
+// Document Print Settings: unlike the rest of businessProfileSchema (gated to
+// the Developer role - see settings.routes.ts's comment on PUT /business-profile),
+// the default print format is a day-to-day operational choice any admin with
+// basic settings access should be able to change, so it gets its own narrower
+// endpoint/schema instead of riding along on the Developer-only one.
+export const updateReceiptConfigSchema = z.object({
+  receiptConfig: receiptConfigSchema,
+});
+
 export const businessProfileSchema = z.object({
   businessType: z.enum(['general', 'supermarket', 'clothing', 'pharmacy', 'perfume', 'cosmetics', 'electronics', 'other']).optional(),
   email: z.string().trim().max(150).email('Invalid email').optional().or(z.literal('')),
@@ -251,19 +276,7 @@ export const businessProfileSchema = z.object({
     })
     .partial()
     .optional(),
-  receiptConfig: z
-    .object({
-      logo: z.boolean().optional(),
-      header: z.string().trim().max(500).optional().or(z.literal('')),
-      footer: z.string().trim().max(500).optional().or(z.literal('')),
-      showCustomer: z.boolean().optional(),
-      showBarcode: z.boolean().optional(),
-      showTax: z.boolean().optional(),
-      showDiscount: z.boolean().optional(),
-      paperSize: z.enum(['a4', 'thermal']).optional(),
-    })
-    .partial()
-    .optional(),
+  receiptConfig: receiptConfigSchema.optional(),
   notificationConfig: z
     .object({
       lowStock: z.boolean().optional(),

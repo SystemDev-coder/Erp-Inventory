@@ -35,6 +35,7 @@ import {
   previewSettingsOwnerProfit,
   getBusinessProfile,
   updateBusinessProfile,
+  updateReceiptConfig,
 } from './settings.controller';
 
 const router = Router();
@@ -58,6 +59,17 @@ router.put(
   requireRoleName('developer'),
   requireAnyPerm(['company.update', 'system.company.manage', 'system.settings']),
   updateBusinessProfile
+);
+
+// Document Print Settings: the default paper format (A4/A5/80mm/58mm
+// Thermal) for POS receipts and Sales invoices/quotations. Unlike the rest
+// of /business-profile above, this is a day-to-day operational choice, not
+// a one-time deployment-setup decision - no Developer-role gate, just the
+// same permission any admin already needs to touch company/system settings.
+router.put(
+  '/receipt-config',
+  requireAnyPerm(['company.update', 'system.company.manage', 'system.settings']),
+  updateReceiptConfig
 );
 router.get('/assets/overview', requireAnyPerm(['system.settings', 'accounts.view', 'finance.reports']), getAssetOverview);
 router.post('/assets/prepare', requireAnyPerm(['system.settings', 'accounts.view']), prepareAssetAccounts);
