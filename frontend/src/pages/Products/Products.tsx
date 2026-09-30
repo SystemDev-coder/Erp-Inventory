@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { ColumnDef } from '@tanstack/react-table';
-import { ArrowLeftRight, BadgeAlert, Boxes, Edit3, GitMerge, MoreVertical, PackageCheck, PackageSearch, PackageX, RefreshCw, Ruler, Store, Tags, Trash2 } from 'lucide-react';
+import { ArrowLeftRight, BadgeAlert, Boxes, Edit3, Filter, GitMerge, MoreVertical, PackageCheck, PackageSearch, PackageX, RefreshCw, RotateCcw, Ruler, Store, Tags, Trash2 } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
 import { DataTable } from '../../components/ui/table/DataTable';
 import { ActionDropdown } from '../../components/ui/dropdown/ActionDropdown';
@@ -780,113 +780,116 @@ const Products = () => {
               );
             })}
           </div>
-          {itemsStockFilter && (
-            <p className="text-xs font-medium text-primary-700 dark:text-primary-300">
-              Showing only "{itemsStockFilter.replace('_', ' ')}" products.{' '}
-              <button
-                type="button"
-                onClick={() => {
-                  setItemsStockFilter(null);
-                  setItemsPageIndex(0);
-                  void loadProducts(0, itemsSearch, itemsPageSize, null);
-                }}
-                className="underline hover:no-underline"
-              >
-                Clear filter
-              </button>
-            </p>
-          )}
-          <div className="flex flex-wrap items-end gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
-            <ItemField label="Filter by Attribute">
-              <SearchableCombobox<string>
-                value={itemsAttributeKey}
-                options={attributeDefinitions.map((a) => ({ value: a.key, label: a.label }))}
-                placeholder="Choose an attribute"
-                onChange={(nextValue) => {
-                  setItemsAttributeKey(String(nextValue || ''));
-                  setItemsAttributeValueDraft('');
-                }}
-              />
-            </ItemField>
-            {itemsAttributeKey && (() => {
-              const def = attributeDefinitions.find((a) => a.key === itemsAttributeKey);
-              return def?.data_type === 'select' && def.options?.length ? (
-                <ItemField label="Value">
-                  <SearchableCombobox<string>
-                    value={itemsAttributeValueDraft}
-                    options={def.options.map((o) => ({ value: o, label: o }))}
-                    placeholder="Choose a value"
-                    onChange={(nextValue) => setItemsAttributeValueDraft(String(nextValue || ''))}
-                  />
-                </ItemField>
-              ) : (
-                <ItemField label="Value">
-                  <input
-                    placeholder={`e.g. ${def?.label || 'value'}`}
-                    value={itemsAttributeValueDraft}
-                    onChange={(e) => setItemsAttributeValueDraft(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && applyItemsAttributeFilter()}
-                  />
-                </ItemField>
-              );
-            })()}
-            {itemsAttributeKey && itemsAttributeValueDraft.trim() && (
-              <button
-                type="button"
-                onClick={applyItemsAttributeFilter}
-                className="rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-white"
-              >
-                Apply
-              </button>
-            )}
-            {itemsAttributeValue && (
-              <button
-                type="button"
-                onClick={clearItemsAttributeFilter}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
-              >
-                Clear attribute filter
-              </button>
-            )}
-          </div>
-          {(itemsSearch || itemsStockFilter || itemsAttributeValue) && (
-            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
-              <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Active Criteria:</span>
-              {itemsSearch && (
-                <FilterChip
-                  label={`Search: "${itemsSearch}"`}
-                  onRemove={() => {
-                    setItemsSearch('');
-                    setItemsPageIndex(0);
-                    void loadProducts(0, '');
-                  }}
-                />
+          <div className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 p-4 dark:border-slate-800">
+              <div className="flex items-start gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                  <Filter className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Filter by Attribute</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Narrow the product list by stock status or a catalog attribute.
+                  </p>
+                </div>
+              </div>
+              {(itemsSearch || itemsStockFilter || itemsAttributeValue) && (
+                <button
+                  type="button"
+                  onClick={resetAllItemsFilters}
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" /> Reset Filters
+                </button>
               )}
-              {itemsStockFilter && (
-                <FilterChip
-                  label={`Stock Status: ${itemsStockFilter.replace('_', ' ')}`}
-                  onRemove={() => {
-                    setItemsStockFilter(null);
-                    setItemsPageIndex(0);
-                    void loadProducts(0, itemsSearch, itemsPageSize, null);
+            </div>
+
+            <div className="flex flex-wrap items-end gap-2 p-4">
+              <ItemField label="Attribute Name">
+                <SearchableCombobox<string>
+                  value={itemsAttributeKey}
+                  options={attributeDefinitions.map((a) => ({ value: a.key, label: a.label }))}
+                  placeholder="Choose an attribute"
+                  onChange={(nextValue) => {
+                    setItemsAttributeKey(String(nextValue || ''));
+                    setItemsAttributeValueDraft('');
                   }}
                 />
+              </ItemField>
+              {itemsAttributeKey && (() => {
+                const def = attributeDefinitions.find((a) => a.key === itemsAttributeKey);
+                return def?.data_type === 'select' && def.options?.length ? (
+                  <ItemField label="Value">
+                    <SearchableCombobox<string>
+                      value={itemsAttributeValueDraft}
+                      options={def.options.map((o) => ({ value: o, label: o }))}
+                      placeholder="Choose a value"
+                      onChange={(nextValue) => setItemsAttributeValueDraft(String(nextValue || ''))}
+                    />
+                  </ItemField>
+                ) : (
+                  <ItemField label="Value">
+                    <input
+                      placeholder={`e.g. ${def?.label || 'value'}`}
+                      value={itemsAttributeValueDraft}
+                      onChange={(e) => setItemsAttributeValueDraft(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && applyItemsAttributeFilter()}
+                    />
+                  </ItemField>
+                );
+              })()}
+              {itemsAttributeKey && itemsAttributeValueDraft.trim() && (
+                <button
+                  type="button"
+                  onClick={applyItemsAttributeFilter}
+                  className="rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-white"
+                >
+                  Apply Filter
+                </button>
               )}
               {itemsAttributeValue && (
-                <FilterChip
-                  label={`${attributeDefinitions.find((a) => a.key === itemsAttributeKey)?.label || itemsAttributeKey}: ${itemsAttributeValue}`}
-                  onRemove={clearItemsAttributeFilter}
-                />
+                <button
+                  type="button"
+                  onClick={clearItemsAttributeFilter}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+                >
+                  Clear attribute filter
+                </button>
               )}
-              <button
-                type="button"
-                onClick={resetAllItemsFilters}
-                className="ml-auto text-xs font-medium text-slate-500 underline hover:text-slate-800 hover:no-underline dark:text-slate-400 dark:hover:text-slate-100"
-              >
-                Reset Filters
-              </button>
             </div>
-          )}
+
+            {(itemsSearch || itemsStockFilter || itemsAttributeValue) && (
+              <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 px-4 py-3 dark:border-slate-800">
+                <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Active Criteria:</span>
+                {itemsSearch && (
+                  <FilterChip
+                    label={`Search: "${itemsSearch}"`}
+                    onRemove={() => {
+                      setItemsSearch('');
+                      setItemsPageIndex(0);
+                      void loadProducts(0, '');
+                    }}
+                  />
+                )}
+                {itemsStockFilter && (
+                  <FilterChip
+                    label={`Stock Status: ${itemsStockFilter.replace('_', ' ')}`}
+                    onRemove={() => {
+                      setItemsStockFilter(null);
+                      setItemsPageIndex(0);
+                      void loadProducts(0, itemsSearch, itemsPageSize, null);
+                    }}
+                  />
+                )}
+                {itemsAttributeValue && (
+                  <FilterChip
+                    label={`${attributeDefinitions.find((a) => a.key === itemsAttributeKey)?.label || itemsAttributeKey}: ${itemsAttributeValue}`}
+                    onRemove={clearItemsAttributeFilter}
+                  />
+                )}
+              </div>
+            )}
+          </div>
           <div className="flex flex-wrap items-center justify-end gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
             <button
               type="button"
