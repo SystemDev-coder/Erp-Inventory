@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
-import { CheckSquare, Home, Lock, Pencil, Plus, Printer, Settings2, Shield, Trash2, Users } from 'lucide-react';
+import { Bell, CheckSquare, Home, Lock, Pencil, Plus, Printer, Settings2, Shield, Trash2, Users } from 'lucide-react';
 
 // Reverted back to tabs-in-Settings per explicit request: the standalone sidebar
 // links/routes (/role-privileges, /user-privileges) are removed again, but the
@@ -9,6 +9,7 @@ import { CheckSquare, Home, Lock, Pencil, Plus, Printer, Settings2, Shield, Tras
 // this tab's content, lazy-loaded so they can't affect this page's initial load.
 const RolePrivilegesPage = lazy(() => import('../Privileges/RolePrivilegesPage'));
 const UserPrivilegesPage = lazy(() => import('../Privileges/UserPrivilegesPage'));
+import { NotificationsTab } from './NotificationsTab';
 import { PageHeader } from '../../components/ui/layout';
 import { Tabs } from '../../components/ui/tabs';
 import { Modal } from '../../components/ui/modal/Modal';
@@ -1087,6 +1088,16 @@ const System = () => {
       icon: Printer,
       badge: 0,
       content: printSettingsContent,
+    },
+    // Ungated, like Company Info/Print Settings above - every authenticated user has
+    // notifications worth seeing, not just admins. This is what the header bell's
+    // "View all Notifications" link (/settings?tab=notifications) actually opens.
+    {
+      id: 'notifications',
+      label: 'Notifications',
+      icon: Bell,
+      badge: 0,
+      content: <NotificationsTab />,
     },
     // Business Profile: its own tab, visible only to the Developer role -
     // see isDeveloper above for why this is tighter than plain company.update.

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { Bell, Package, ShoppingCart, Wallet, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { Dropdown } from '../ui/dropdown/Dropdown';
 import { useToast } from '../ui/toast/Toast';
 import { useBranch } from '../../context/BranchContext';
@@ -8,105 +8,14 @@ import {
   notificationService,
   NotificationItem,
 } from '../../services/notification.service';
-
-const formatTimeAgo = (value: string) => {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '-';
-
-  const diffMs = Date.now() - date.getTime();
-  const diffMin = Math.floor(diffMs / 60000);
-  if (diffMin < 1) return 'just now';
-  if (diffMin < 60) return `${diffMin} min`;
-
-  const diffHours = Math.floor(diffMin / 60);
-  if (diffHours < 24) return `${diffHours} hr`;
-
-  const diffDays = Math.floor(diffHours / 24);
-  if (diffDays < 7) return `${diffDays} day`;
-
-  return date.toLocaleDateString();
-};
-
-const initialsFromText = (value: string) =>
-  value
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => word.charAt(0).toUpperCase())
-    .join('') || 'N';
-
-const categoryIconConfig: Record<string, { icon: typeof Bell; bg: string; iconColor: string }> = {
-  inventory: {
-    icon: Package,
-    bg: 'bg-amber-100 dark:bg-amber-500/15',
-    iconColor: 'text-amber-600 dark:text-amber-400',
-  },
-  finance: {
-    icon: Wallet,
-    bg: 'bg-emerald-100 dark:bg-emerald-500/15',
-    iconColor: 'text-emerald-600 dark:text-emerald-400',
-  },
-  purchase: {
-    icon: ShoppingCart,
-    bg: 'bg-blue-100 dark:bg-blue-500/15',
-    iconColor: 'text-blue-600 dark:text-blue-400',
-  },
-  default: {
-    icon: Bell,
-    bg: 'bg-primary-100 dark:bg-primary-500/15',
-    iconColor: 'text-primary-600 dark:text-primary-400',
-  },
-};
-
-const avatarPalette = [
-  'bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300',
-  'bg-purple-100 text-purple-700 dark:bg-purple-500/15 dark:text-purple-300',
-  'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
-  'bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300',
-  'bg-pink-100 text-pink-700 dark:bg-pink-500/15 dark:text-pink-300',
-];
-
-const avatarColorFor = (value: string) => {
-  let hash = 0;
-  for (let i = 0; i < value.length; i += 1) hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
-  return avatarPalette[hash % avatarPalette.length];
-};
-
-// Highlights quoted phrases ('...'), reference tokens (#SO-2345), and
-// dollar amounts inside a notification message, mirroring the reference
-// design's colored call-outs, without needing extra fields from the backend.
-const HIGHLIGHT_PATTERN = /('[^']+'|"[^"]+"|#[\w-]+|\$[\d,]+(?:\.\d+)?)/g;
-
-const renderHighlightedMessage = (message: string) => {
-  // message.split() with a single capturing group puts matches at odd
-  // indices and plain text at even indices - no need to re-test the regex
-  // (which would be unsafe here anyway since it carries the `g` flag and
-  // .test() mutates its shared lastIndex across calls).
-  const parts = message.split(HIGHLIGHT_PATTERN);
-  return parts.map((part, index) =>
-    index % 2 === 1 ? (
-      <span key={index} className="font-medium text-primary-600 dark:text-primary-400">
-        {part}
-      </span>
-    ) : (
-      <span key={index}>{part}</span>
-    )
-  );
-};
-
-const normalizeNotificationLink = (rawLink: string | null) => {
-  if (!rawLink) return null;
-
-  const link = rawLink.trim();
-  if (!link) return null;
-
-  const legacyMap: Record<string, string> = {
-    '/inventory/stock': '/stock-management/items',
-    '/stock': '/stock-management/items',
-  };
-
-  return legacyMap[link] ?? link;
-};
+import {
+  categoryIconConfig,
+  avatarColorFor,
+  formatTimeAgo,
+  initialsFromText,
+  normalizeNotificationLink,
+  renderHighlightedMessage,
+} from '../../utils/notificationDisplay';
 
 export default function NotificationDropdown() {
   const [isOpen, setIsOpen] = useState(false);
@@ -115,7 +24,6 @@ export default function NotificationDropdown() {
   const [onlyUnread, setOnlyUnread] = useState(false);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [totalCount, setTotalCount] = useState(0);
   const { showToast } = useToast();
   const navigate = useNavigate();
   const { activeBranchId } = useBranch();
@@ -132,7 +40,6 @@ export default function NotificationDropdown() {
       if (res.success && res.data) {
         setNotifications(res.data.notifications ?? []);
         setUnreadCount(res.data.unreadCount ?? 0);
-        setTotalCount(res.data.total ?? res.data.notifications?.length ?? 0);
       } else if (withLoader) {
         showToast('error', 'Load failed', res.error ?? res.message ?? 'Could not load notifications');
       }
@@ -141,13 +48,21 @@ export default function NotificationDropdown() {
     [showToast, activeBranchId]
   );
 
+  // Keeps the background poll's "Only Unread" value live without needing to restart
+  // the interval on every toggle - otherwise a 60s-old closure silently overwrites the
+  // list with read+unread items while the toggle UI still shows ON.
+  const onlyUnreadRef = useRef(onlyUnread);
+  useEffect(() => {
+    onlyUnreadRef.current = onlyUnread;
+  }, [onlyUnread]);
+
   // H11 fix: re-fetch whenever the active branch changes (not just on mount),
   // so switching branches immediately shows that branch's notifications
   // instead of leaving the previous branch's list on screen.
   useEffect(() => {
-    void loadNotifications(false, false);
+    void loadNotifications(false, onlyUnreadRef.current);
     const timer = setInterval(() => {
-      void loadNotifications(false, onlyUnread);
+      void loadNotifications(false, onlyUnreadRef.current);
     }, 60000);
 
     return () => clearInterval(timer);
@@ -220,7 +135,7 @@ export default function NotificationDropdown() {
     }
   };
 
-  const badgeCount = totalCount > 0 ? totalCount : unreadCount;
+  const badgeCount = unreadCount;
   const unreadBadge = badgeCount > 99 ? '99+' : String(badgeCount);
 
   return (
@@ -363,7 +278,7 @@ export default function NotificationDropdown() {
             Mark all as read
           </button>
           <Link
-            to="/settings"
+            to="/settings?tab=notifications"
             onClick={closeDropdown}
             className="font-medium text-primary-600 transition hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
           >

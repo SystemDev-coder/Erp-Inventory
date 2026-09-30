@@ -64,7 +64,12 @@ export const markAllNotificationsRead = asyncHandler(async (req: AuthRequest, re
     throw ApiError.unauthorized('Authentication required');
   }
 
-  const updated = await notificationsService.markAllRead(req.user.userId);
+  // Scope to the caller's currently authorized branch(es), same as listNotifications -
+  // otherwise a multi-branch/Administrator user's click marks read every unread
+  // notification across every branch they're authorized for, not just the one they're
+  // currently viewing.
+  const branchIds = await resolveActiveBranchIds(req);
+  const updated = await notificationsService.markAllRead(req.user.userId, branchIds);
 
   await logAudit({
     userId: req.user.userId,

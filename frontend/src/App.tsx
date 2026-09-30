@@ -185,6 +185,15 @@ function AppRoutes() {
             element={
               <ProtectedRoute
                 permissionAny={[
+                  // dashboard.view/home.view: every regular authenticated user has this
+                  // (it's what gates the dashboard itself) - added so the header bell's
+                  // "View all Notifications" link actually opens for everyone, not just
+                  // admins. The tabs inside this page stay individually gated as before
+                  // (Users/Roles/Privileges/Permissions still hidden from anyone without
+                  // the keys below) - only Company Info/Print Settings/Notifications are
+                  // ungated, same as they already were.
+                  'dashboard.view',
+                  'home.view',
                   'system.settings',
                   'users.view',
                   'roles.view',

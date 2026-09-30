@@ -140,9 +140,22 @@ const ensureLowStockNotifications = async (branchId: number, userId: number) => 
 
 export const notificationsService = {
   async list(input: NotificationListInput) {
+    // Each generator is isolated so a transient failure in either one (e.g. a
+    // deadlock, a future schema change) never prevents the user from seeing their
+    // existing notifications - this request runs on nearly every page load/poll,
+    // unlike the sale/purchase-save path (stockAlerts.ts), which already has this
+    // same protection via a savepoint for the exact same reason.
     if (input.branchId) {
-      await ensureLowStockNotifications(input.branchId, input.userId);
-      await ensureCreditDueNotifications(input.branchId);
+      try {
+        await ensureLowStockNotifications(input.branchId, input.userId);
+      } catch (error) {
+        console.error('ensureLowStockNotifications failed:', (error as Error)?.message);
+      }
+      try {
+        await ensureCreditDueNotifications(input.branchId);
+      } catch (error) {
+        console.error('ensureCreditDueNotifications failed:', (error as Error)?.message);
+      }
     }
 
     // H11 fix: scope to the caller's authorized branch(es) as well as their
@@ -235,31 +248,45 @@ export const notificationsService = {
     );
   },
 
-  async markAllRead(userId: number): Promise<number> {
+  async markAllRead(userId: number, branchIds: number[]): Promise<number> {
+    // Same branch scoping as list() - a notification with a NULL branch_id is
+    // branch-independent and always eligible; anything else must match one of the
+    // caller's currently authorized branches.
     const result = await query(
       `UPDATE ims.notifications
           SET is_read = TRUE,
               read_at = COALESCE(read_at, NOW())
         WHERE user_id = $1
+          AND (branch_id = ANY($2) OR branch_id IS NULL)
           AND COALESCE(is_deleted, FALSE) = FALSE
           AND is_read = FALSE`,
-      [userId]
+      [userId, branchIds]
     );
 
     return result.rowCount ?? 0;
   },
 
   async softDelete(userId: number, notificationId: number): Promise<boolean> {
-    const deleted = await queryOne<{ notification_id: number }>(
-      `UPDATE ims.notifications
-          SET is_deleted = TRUE,
-              deleted_at = NOW()
-        WHERE notification_id = $1
-          AND user_id = $2
-          AND COALESCE(is_deleted, FALSE) = FALSE
-      RETURNING notification_id`,
-      [notificationId, userId]
-    );
+    // Same rls_soft_delete fix already applied to the low-stock cleanup UPDATE below
+    // (ensureLowStockNotifications) - writing is_deleted=TRUE without this session var
+    // set fails with "new row violates row-level security policy for table
+    // notifications". This was never caught earlier because nothing on the frontend
+    // ever called this endpoint until the new Notifications tab's dismiss button.
+    let deleted: { notification_id: number } | null = null;
+    await withTransaction(async (client) => {
+      await client.query(`SET LOCAL app.include_deleted = '1'`);
+      const res = await client.query<{ notification_id: number }>(
+        `UPDATE ims.notifications
+            SET is_deleted = TRUE,
+                deleted_at = NOW()
+          WHERE notification_id = $1
+            AND user_id = $2
+            AND COALESCE(is_deleted, FALSE) = FALSE
+        RETURNING notification_id`,
+        [notificationId, userId]
+      );
+      deleted = res.rows[0] ?? null;
+    });
 
     return Boolean(deleted);
   },
