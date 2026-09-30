@@ -1983,15 +1983,40 @@ const submitBudgetCharge = async () => {
       </div>
     ),
   };
+  // Each tab here maps to its own real, independently-grantable permission - filter
+  // before rendering so a role/user missing that specific key never sees the tab at
+  // all, instead of relying on the page-level route gate alone. "liability-payments"
+  // has no separate perm_key (it reuses accounts.*), so it stays tied to Accounts.
+  const accountsTabVisibility: Record<string, boolean> = {
+    accounts: can('accounts.view'),
+    transfers: can('account_transfers.view'),
+    'liability-payments': can('accounts.view'),
+    'other-income': can('other_incomes.view'),
+  };
+  const visibleAccountsTabs = accountsTabs.filter((t) => accountsTabVisibility[t.id] !== false);
+  const defaultAccountsTab = visibleAccountsTabs.some((t) => t.id === 'accounts')
+    ? 'accounts'
+    : visibleAccountsTabs[0]?.id;
+
+  const expenseTabVisibility: Record<string, boolean> = {
+    expenses: can('expenses.view'),
+    'expense-charge': can('expense_charges.view'),
+    'expense-budget': can('expense_budgets.view'),
+  };
+  const visibleExpenseTabs = expenseTabs.filter((t) => expenseTabVisibility[t.id] !== false);
+  const defaultExpenseTab = visibleExpenseTabs.some((t) => t.id === 'expense-charge')
+    ? 'expense-charge'
+    : visibleExpenseTabs[0]?.id;
+
   const sectionContent =
     section === 'payroll' ? (
       <Tabs tabs={[payrollTab]} defaultTab="employee-payment" />
     ) : section === 'receipts' ? (
       <Tabs tabs={receiptsTabs} defaultTab="customer-receipts" />
     ) : section === 'expense' ? (
-      <Tabs tabs={expenseTabs} defaultTab="expense-charge" />
+      <Tabs tabs={visibleExpenseTabs} defaultTab={defaultExpenseTab} />
     ) : (
-      <Tabs tabs={accountsTabs} defaultTab="accounts" />
+      <Tabs tabs={visibleAccountsTabs} defaultTab={defaultAccountsTab} />
     );
 
   return (

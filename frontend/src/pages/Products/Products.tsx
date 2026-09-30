@@ -1069,7 +1069,7 @@ const Products = () => {
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
               {loading ? 'Loading...' : 'Display'}
             </button>
-            {can('items.create') && starterCategoryDefs && !starterCategoriesSeeded && (
+            {can('categories.create') && starterCategoryDefs && !starterCategoriesSeeded && (
               <button
                 type="button"
                 disabled={seedingCategories}
@@ -1081,7 +1081,7 @@ const Products = () => {
                   : `Add ${businessProfile.businessType.charAt(0).toUpperCase()}${businessProfile.businessType.slice(1)} Starter Categories`}
               </button>
             )}
-            {can('items.create') && (
+            {can('categories.create') && (
               <button
                 type="button"
                 onClick={() => navigate('/categories/new')}
@@ -1105,8 +1105,8 @@ const Products = () => {
             data={categoriesDisplayed ? categories : []}
             columns={categoryColumns}
             isLoading={loading}
-            onEdit={can('items.update') ? (row) => navigate(`/categories/${row.category_id}/edit`) : undefined}
-            onDelete={can('items.delete') ? (row) => setCategoryToDelete(row) : undefined}
+            onEdit={can('categories.update') ? (row) => navigate(`/categories/${row.category_id}/edit`) : undefined}
+            onDelete={can('categories.delete') ? (row) => setCategoryToDelete(row) : undefined}
             searchPlaceholder="Search categories..."
           />
         </div>
@@ -1131,7 +1131,7 @@ const Products = () => {
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
               {loading ? 'Loading...' : 'Display'}
             </button>
-            {can('items.create') && (
+            {can('units.create') && (
               <button
                 type="button"
                 onClick={() => {
@@ -1158,11 +1158,11 @@ const Products = () => {
             data={unitsDisplayed ? units : []}
             columns={unitColumns}
             isLoading={loading}
-            onEdit={can('items.update') ? (row) => {
+            onEdit={can('units.update') ? (row) => {
               setUnitForm(row);
               setUnitModalOpen(true);
             } : undefined}
-            onDelete={can('items.delete') ? (row) => setUnitToDelete(row) : undefined}
+            onDelete={can('units.delete') ? (row) => setUnitToDelete(row) : undefined}
             searchPlaceholder="Search units..."
           />
         </div>
@@ -1170,10 +1170,25 @@ const Products = () => {
     },
   ];
 
+  // Each tab maps to its own real, independently-grantable permission (Categories/
+  // Units/Store/Inventory Transaction each have their own perm_key family now - see
+  // server/sql/20260930a_products_tab_permissions.sql) - a role/user denied e.g. just
+  // Units should never see that tab while Products itself stays visible.
+  const storeTabVisibility: Record<string, boolean> = {
+    items: can('items.view'),
+    store: can('stores.view') || can('store_items.view'),
+    'inventory-transaction': can('inventory_transactions.view'),
+    state: can('items.view'),
+    categories: can('categories.view'),
+    units: can('units.view'),
+  };
+  const visibleStoreTabs = storeTabs.filter((t) => storeTabVisibility[t.id] !== false);
+  const defaultStoreTab = visibleStoreTabs.some((t) => t.id === 'items') ? 'items' : visibleStoreTabs[0]?.id;
+
   return (
     <div>
       <PageHeader title="Stock Management" description="Manage products, categories, units, stores, inventory transactions, and product states." />
-      <Tabs tabs={storeTabs} defaultTab="items" />
+      <Tabs tabs={visibleStoreTabs} defaultTab={defaultStoreTab} />
 
       <Modal isOpen={stateModalOpen} onClose={() => setStateModalOpen(false)} title="Set Product State" size="sm">
         <div className="space-y-3">

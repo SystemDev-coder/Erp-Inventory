@@ -46,7 +46,10 @@ router.get('/warehouses', requireAnyPerm(['stock.view', 'inventory.view', 'syste
 router.post('/warehouses', requireAnyPerm(['system.branches', 'stock.adjust', 'inventory.adjust']), createWarehouse);
 router.put('/warehouses/:id', requireAnyPerm(['system.branches', 'stock.adjust', 'inventory.adjust']), updateWarehouse);
 router.delete('/warehouses/:id', requireAnyPerm(['system.branches', 'stock.adjust', 'inventory.adjust']), deleteWarehouse);
-router.get('/transactions', requireAnyPerm(['stock.view', 'inventory.view']), listInventoryTransactions);
-router.post('/transactions', requireAnyPerm(['stock.adjust', 'inventory.adjust']), createInventoryTransaction);
+// Own permission family (inventory_transactions.*), independent of items.*/stock.*, so
+// the Products page's "Inventory Transaction" tab can be granted/denied separately. See
+// server/sql/20260930a_products_tab_permissions.sql for the one-time backfill.
+router.get('/transactions', requireAnyPerm(['inventory_transactions.view']), listInventoryTransactions);
+router.post('/transactions', requireAnyPerm(['inventory_transactions.create']), createInventoryTransaction);
 
 export default router;

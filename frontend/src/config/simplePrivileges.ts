@@ -47,7 +47,13 @@ export const SIMPLE_PRIVILEGE_MODULES: SimplePrivilegeModule[] = [
     id: 'items',
     label: 'Products / Stock',
     prefixes: ['items'],
-    subItems: [{ id: 'stock-adjust', label: 'Adjust Stock', kind: 'toggle', key: 'stock.adjust' }],
+    subItems: [
+      { id: 'categories', label: 'Categories', kind: 'crud', prefixes: ['categories'] },
+      { id: 'units', label: 'Units', kind: 'crud', prefixes: ['units'] },
+      { id: 'store', label: 'Store', kind: 'crud', prefixes: ['stores', 'store_items'] },
+      { id: 'inventory-transaction', label: 'Inventory Transaction', kind: 'crud', prefixes: ['inventory_transactions'] },
+      { id: 'stock-adjust', label: 'Adjust Stock', kind: 'toggle', key: 'stock.adjust' },
+    ],
   },
   {
     id: 'sales',

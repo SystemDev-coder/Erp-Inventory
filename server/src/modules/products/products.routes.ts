@@ -40,12 +40,15 @@ const router = Router();
 
 router.use(requireAuth);
 
-// Categories
-router.get('/categories', requirePerm('items.view'), listCategories);
-router.post('/categories', requirePerm('items.create'), createCategory);
-router.post('/categories/seed-defaults', requirePerm('items.create'), seedDefaultCategories);
-router.put('/categories/:id', requirePerm('items.update'), updateCategory);
-router.delete('/categories/:id', requirePerm('items.delete'), deleteCategory);
+// Categories - own permission family (categories.*), independent of items.* so the
+// Categories tab can be granted/denied separately from the rest of Products. See
+// server/sql/20260930a_products_tab_permissions.sql for the one-time backfill that
+// keeps every existing items.*-holder's access unchanged on cutover.
+router.get('/categories', requirePerm('categories.view'), listCategories);
+router.post('/categories', requirePerm('categories.create'), createCategory);
+router.post('/categories/seed-defaults', requirePerm('categories.create'), seedDefaultCategories);
+router.put('/categories/:id', requirePerm('categories.update'), updateCategory);
+router.delete('/categories/:id', requirePerm('categories.delete'), deleteCategory);
 
 // Attribute definitions (Category Configuration Engine)
 router.get('/attributes', requirePerm('items.view'), listAttributeDefinitions);
@@ -53,11 +56,11 @@ router.post('/attributes', requirePerm('items.create'), createAttributeDefinitio
 router.put('/attributes/:id', requirePerm('items.update'), updateAttributeDefinition);
 router.delete('/attributes/:id', requirePerm('items.delete'), deleteAttributeDefinition);
 
-// Units
-router.get('/units', requirePerm('items.view'), listUnits);
-router.post('/units', requirePerm('items.create'), createUnit);
-router.put('/units/:id', requirePerm('items.update'), updateUnit);
-router.delete('/units/:id', requirePerm('items.delete'), deleteUnit);
+// Units - own permission family (units.*), same reasoning as Categories above.
+router.get('/units', requirePerm('units.view'), listUnits);
+router.post('/units', requirePerm('units.create'), createUnit);
+router.put('/units/:id', requirePerm('units.update'), updateUnit);
+router.delete('/units/:id', requirePerm('units.delete'), deleteUnit);
 
 // Taxes
 router.get('/taxes', requirePerm('items.view'), listTaxes);

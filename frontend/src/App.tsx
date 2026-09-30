@@ -76,8 +76,8 @@ function AppRoutes() {
           <Route path="/items" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
           <Route path="/items/new" element={<ProtectedRoute permission="items.create"><Lazy><ProductEditor /></Lazy></ProtectedRoute>} />
           <Route path="/items/:id/edit" element={<ProtectedRoute permission="items.update"><Lazy><ProductEditor /></Lazy></ProtectedRoute>} />
-          <Route path="/categories/new" element={<ProtectedRoute permission="items.create"><Lazy><CategoryEditor /></Lazy></ProtectedRoute>} />
-          <Route path="/categories/:id/edit" element={<ProtectedRoute permission="items.update"><Lazy><CategoryEditor /></Lazy></ProtectedRoute>} />
+          <Route path="/categories/new" element={<ProtectedRoute permission="categories.create"><Lazy><CategoryEditor /></Lazy></ProtectedRoute>} />
+          <Route path="/categories/:id/edit" element={<ProtectedRoute permission="categories.update"><Lazy><CategoryEditor /></Lazy></ProtectedRoute>} />
           <Route path="/stock/adjustments" element={<ProtectedRoute><Lazy><StockAdjustmentsPage /></Lazy></ProtectedRoute>} />
           <Route path="/stock/adjustments/new" element={<ProtectedRoute><Lazy><StockAdjustmentCreatePage /></Lazy></ProtectedRoute>} />
           <Route path="/sales" element={<ProtectedRoute permission="sales.view"><Sales /></ProtectedRoute>} />

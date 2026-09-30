@@ -735,6 +735,24 @@ const Purchases = () => {
     },
   ];
 
+  // Suppliers is its own permission family (suppliers.*), distinct from the other 3
+  // tabs (purchases.*) - a user with only purchases.view should never see it.
+  const tabVisibility: Record<string, boolean> = {
+    suppliers: can('suppliers.view'),
+    items: can('purchases.view'),
+    list: can('purchases.view'),
+    orders: can('purchases.view'),
+  };
+  const visibleTabs = tabs.filter((t) => tabVisibility[t.id] !== false);
+  const urlDefaultTab = location.pathname.endsWith('/suppliers')
+    ? 'suppliers'
+    : location.pathname.endsWith('/items')
+    ? 'items'
+    : location.pathname.endsWith('/orders')
+    ? 'orders'
+    : 'list';
+  const defaultVisibleTab = visibleTabs.some((t) => t.id === urlDefaultTab) ? urlDefaultTab : visibleTabs[0]?.id;
+
   return (
     <div>
       <PageHeader
@@ -743,16 +761,8 @@ const Purchases = () => {
       />
 
       <Tabs
-        tabs={tabs}
-        defaultTab={
-          location.pathname.endsWith('/suppliers')
-            ? 'suppliers'
-            : location.pathname.endsWith('/items')
-            ? 'items'
-            : location.pathname.endsWith('/orders')
-            ? 'orders'
-            : 'list'
-        }
+        tabs={visibleTabs}
+        defaultTab={defaultVisibleTab}
       />
 
       <ConfirmDialog

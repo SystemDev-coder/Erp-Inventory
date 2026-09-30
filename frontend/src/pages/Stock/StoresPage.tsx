@@ -11,11 +11,13 @@ import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombo
 import { itemLabelWithAvailability } from '../../utils/itemAvailability';
 import { useBranch } from '../../context/BranchContext';
 import { useAttributeCatalog } from '../../hooks/useAttributeCatalog';
+import { usePermissions } from '../../hooks/usePermissions';
 
 const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const { showToast } = useToast();
   const { activeBranchId } = useBranch();
   const attributeCatalog = useAttributeCatalog();
+  const { can } = usePermissions();
   const [stores, setStores] = useState<StoreType[]>([]);
   const [loading, setLoading] = useState(false);
   const [hasDisplayed, setHasDisplayed] = useState(false);
@@ -278,12 +280,14 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
               >
                 <ArrowLeftRight className="w-4 h-4" /> Store Transfer
               </button>
-              <button
-                onClick={openCreateStore}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-xl hover:bg-primary-700"
-              >
-                <Plus className="w-4 h-4" /> New Store
-              </button>
+              {can('stores.create') && (
+                <button
+                  onClick={openCreateStore}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-xl hover:bg-primary-700"
+                >
+                  <Plus className="w-4 h-4" /> New Store
+                </button>
+              )}
             </div>
           }
         />
@@ -297,12 +301,14 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
           >
             <ArrowLeftRight className="w-4 h-4" /> Store Transfer
           </button>
-          <button
-            onClick={openCreateStore}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-xl hover:bg-primary-700"
-          >
-            <Plus className="w-4 h-4" /> New Store
-          </button>
+          {can('stores.create') && (
+            <button
+              onClick={openCreateStore}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-xl hover:bg-primary-700"
+            >
+              <Plus className="w-4 h-4" /> New Store
+            </button>
+          )}
         </div>
       )}
 
@@ -346,9 +352,11 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
                   <span className="font-semibold text-slate-900 dark:text-white">{store.store_name}</span>
                   {store.store_code && <span className="text-sm text-slate-500">({store.store_code})</span>}
                   <div className="ml-auto flex items-center gap-2">
-                    <button onClick={() => openEditStore(store)} className="p-1.5 rounded-lg border hover:bg-slate-100" title="Edit Store">
-                      <Pencil className="w-4 h-4" />
-                    </button>
+                    {can('stores.update') && (
+                      <button onClick={() => openEditStore(store)} className="p-1.5 rounded-lg border hover:bg-slate-100" title="Edit Store">
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -356,12 +364,14 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
                   <div className="px-4 pb-4 pt-0 bg-slate-50/50 dark:bg-slate-800/30">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-sm font-medium text-slate-600 dark:text-slate-400">Products in this store</span>
-                      <button
-                        onClick={() => openAddItemModal(store)}
-                        className="inline-flex items-center gap-1 text-sm px-2 py-1 rounded-lg bg-primary-600 text-white hover:bg-primary-700"
-                      >
-                        <Package className="w-4 h-4" /> Add product
-                      </button>
+                      {can('store_items.create') && (
+                        <button
+                          onClick={() => openAddItemModal(store)}
+                          className="inline-flex items-center gap-1 text-sm px-2 py-1 rounded-lg bg-primary-600 text-white hover:bg-primary-700"
+                        >
+                          <Package className="w-4 h-4" /> Add product
+                        </button>
+                      )}
                     </div>
                     <div className="rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
                       <table className="min-w-full text-sm">
@@ -388,27 +398,31 @@ const StoresPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
                               </td>
                               <td className="px-3 py-2">
                                 <div className="flex items-center gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => void handleUpdateItemQty(store.store_id, item.store_item_id)}
-                                    className="rounded bg-primary-600 px-2 py-1 text-xs text-white hover:bg-primary-700"
-                                  >
-                                    Set
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setRemoveTarget({
-                                        storeId: store.store_id,
-                                        itemId: item.store_item_id,
-                                        productName: item.product_name || `Product #${item.product_id}`,
-                                      })
-                                    }
-                                    className="text-red-500 hover:text-red-600 p-1"
-                                    title="Remove"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
+                                  {can('store_items.update') && (
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleUpdateItemQty(store.store_id, item.store_item_id)}
+                                      className="rounded bg-primary-600 px-2 py-1 text-xs text-white hover:bg-primary-700"
+                                    >
+                                      Set
+                                    </button>
+                                  )}
+                                  {can('store_items.delete') && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setRemoveTarget({
+                                          storeId: store.store_id,
+                                          itemId: item.store_item_id,
+                                          productName: item.product_name || `Product #${item.product_id}`,
+                                        })
+                                      }
+                                      className="text-red-500 hover:text-red-600 p-1"
+                                      title="Remove"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  )}
                                 </div>
                               </td>
                             </tr>

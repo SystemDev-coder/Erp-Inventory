@@ -884,6 +884,16 @@ const Receipts = () => {
         },
     ];
 
+    // Each tab maps to its own real, independently-grantable permission - a user
+    // without customer_receipts.view (or supplier_receipts.view) should never see
+    // that tab at all.
+    const tabVisibility: Record<string, boolean> = {
+        'customer-receipts': can('customer_receipts.view'),
+        'supplier-receipts': can('supplier_receipts.view'),
+    };
+    const visibleTabs = tabs.filter((t) => tabVisibility[t.id] !== false);
+    const defaultVisibleTab = visibleTabs.some((t) => t.id === activeTab) ? activeTab : visibleTabs[0]?.id;
+
     // ─── Render ────────────────────────────────────────────────────────────────
     return (
         <div className="space-y-6">
@@ -893,8 +903,8 @@ const Receipts = () => {
             />
 
             <Tabs
-                tabs={tabs}
-                defaultTab={activeTab}
+                tabs={visibleTabs}
+                defaultTab={defaultVisibleTab}
                 onChange={(id) => setActiveTab(id as ActiveTab)}
             />
 

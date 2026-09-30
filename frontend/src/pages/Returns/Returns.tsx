@@ -35,7 +35,7 @@ const Returns = () => {
   const { showToast } = useToast();
   const navigate = useNavigate();
   const { activeBranchId } = useBranch();
-  const { can } = usePermissions();
+  const { can, canAny } = usePermissions();
   const [loading, setLoading] = useState(false);
   const [salesRows, setSalesRows] = useState<SalesReturn[]>([]);
   const [purchaseRows, setPurchaseRows] = useState<PurchaseReturn[]>([]);
@@ -459,6 +459,16 @@ const Returns = () => {
     },
   ];
 
+  // Each tab maps to its own real permission - a user with only purchase_returns.view
+  // (say) should never see the Sales Return tab, and vice versa. `returns.*` is a
+  // generic fallback prefix the backend also accepts, so it's included here too.
+  const tabVisibility: Record<string, boolean> = {
+    'sales-return': canAny(['sales_returns.view', 'returns.view']),
+    'purchase-return': canAny(['purchase_returns.view', 'returns.view']),
+  };
+  const visibleTabs = tabs.filter((t) => tabVisibility[t.id] !== false);
+  const defaultVisibleTab = visibleTabs.some((t) => t.id === 'sales-return') ? 'sales-return' : visibleTabs[0]?.id;
+
   return (
     <div>
       <PageHeader title="Returns" description="Manage sales returns and purchase/supplier returns." />
@@ -470,7 +480,7 @@ const Returns = () => {
           {pageError}
         </div>
       ) : null}
-      <Tabs tabs={tabs} defaultTab="sales-return" />
+      <Tabs tabs={visibleTabs} defaultTab={defaultVisibleTab} />
 
       <DeleteConfirmModal
         isOpen={!!deleteTarget}
