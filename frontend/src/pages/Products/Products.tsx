@@ -793,15 +793,14 @@ const Products = () => {
                   </p>
                 </div>
               </div>
-              {(itemsSearch || itemsStockFilter || itemsAttributeValue) && (
-                <button
-                  type="button"
-                  onClick={resetAllItemsFilters}
-                  className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" /> Reset Filters
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={resetAllItemsFilters}
+                disabled={!(itemsSearch || itemsStockFilter || itemsAttributeValue)}
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-slate-500 dark:text-slate-400 dark:hover:text-slate-100 dark:disabled:hover:text-slate-400"
+              >
+                <RotateCcw className="h-3.5 w-3.5" /> Reset Filters
+              </button>
             </div>
 
             <div className="flex flex-wrap items-end gap-2 p-4">
@@ -834,6 +833,7 @@ const Products = () => {
                       value={itemsAttributeValueDraft}
                       onChange={(e) => setItemsAttributeValueDraft(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && applyItemsAttributeFilter()}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:placeholder:text-slate-500"
                     />
                   </ItemField>
                 );

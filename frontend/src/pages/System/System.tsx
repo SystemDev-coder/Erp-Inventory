@@ -1,6 +1,14 @@
-import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router';
+import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router';
 import { CheckSquare, Home, Lock, Pencil, Plus, Printer, Settings2, Shield, Trash2, Users } from 'lucide-react';
+
+// Reverted back to tabs-in-Settings per explicit request: the standalone sidebar
+// links/routes (/role-privileges, /user-privileges) are removed again, but the
+// redesigned page components themselves (stat cards, Compare Roles, search, the audit
+// trail fix, etc. - see frontend/src/pages/Privileges/) are kept and rendered here as
+// this tab's content, lazy-loaded so they can't affect this page's initial load.
+const RolePrivilegesPage = lazy(() => import('../Privileges/RolePrivilegesPage'));
+const UserPrivilegesPage = lazy(() => import('../Privileges/UserPrivilegesPage'));
 import { PageHeader } from '../../components/ui/layout';
 import { Tabs } from '../../components/ui/tabs';
 import { Modal } from '../../components/ui/modal/Modal';
@@ -353,8 +361,27 @@ const System = () => {
     await loadCompany();
   };
 
-  const [activeTabId, setActiveTabId] = useState('company');
+  // Lets a link deep-link straight to a tab via /settings?tab=role-privileges&roleId=..,
+  // the same way Settings.tsx's own Activity Logs tab already does.
+  const [searchParams] = useSearchParams();
+  const [activeTabId, setActiveTabId] = useState(() => searchParams.get('tab') || 'company');
   const [tabsKey, setTabsKey] = useState(0);
+
+  // Programmatic tab switch helper (Tabs is uncontrolled, so a forced remount via
+  // tabsKey is needed to actually jump it - matches navigation-driven jumps below).
+  const goToTab = (tabId: string) => {
+    setActiveTabId(tabId);
+    setTabsKey((k) => k + 1);
+  };
+
+  // React to a later navigate('/settings?tab=...') while already on this page (e.g. the
+  // Roles/Users row actions below), not just the tab present on first mount.
+  useEffect(() => {
+    const fromUrl = searchParams.get('tab');
+    if (fromUrl && fromUrl !== activeTabId) goToTab(fromUrl);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   const [users, setUsers] = useState<SystemUser[]>([]);
   const [roles, setRoles] = useState<SystemRole[]>([]);
   const [permissions, setPermissions] = useState<SystemPermission[]>([]);
@@ -607,14 +634,14 @@ const System = () => {
     showToast('success', 'Roles', editingRole ? 'Role updated' : 'Role created');
     const nextRoles = await loadRoles();
 
-    // After creating a role, jump to the standalone Role Privileges page so admin can
-    // assign permissions immediately.
+    // After creating a role, jump to the Role Privileges tab so admin can assign
+    // permissions immediately.
     if (!editingRole && canViewRoles) {
       const createdRoleId = (res as any).data?.role?.role_id as number | undefined;
       const targetRoleId =
         createdRoleId ??
         nextRoles.find((r) => (r.role_name || '').toLowerCase() === roleName.toLowerCase())?.role_id;
-      navigate(targetRoleId ? `/role-privileges?roleId=${targetRoleId}` : '/role-privileges');
+      navigate(targetRoleId ? `/settings?tab=role-privileges&roleId=${targetRoleId}` : '/settings?tab=role-privileges');
     }
   };
 
@@ -1138,10 +1165,10 @@ const System = () => {
                       <td>{u.created_at ? String(u.created_at).slice(0, 10) : '-'}</td>
 	                      <td>{u.is_active ? 'Active' : 'Inactive'}</td>
 	                      <td className="space-x-2 py-2">
-	                        {/* Jump to the standalone User Privileges page, pre-selected */}
+	                        {/* Jump to the Privileges tab, pre-selected */}
 	                        {hasAnyPerm(['system.permissions.manage', 'permissions.view']) && (
 	                          <button
-	                            onClick={() => navigate(`/user-privileges?userId=${u.user_id}`)}
+	                            onClick={() => navigate(`/settings?tab=privileges&userId=${u.user_id}`)}
 	                            className="px-2 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
 	                            title="Edit privileges"
 	                          >
@@ -1219,10 +1246,10 @@ const System = () => {
 	                      <td>{r.role_name}</td>
 	                      <td>{r.description || '-'}</td>
 	                      <td className="space-x-2 py-2">
-	                        {/* Jump to the standalone Role Privileges page, pre-selected */}
+	                        {/* Jump to the Role Privileges tab, pre-selected */}
 	                        {canViewRoles && (
 	                          <button
-	                            onClick={() => navigate(`/role-privileges?roleId=${r.role_id}`)}
+	                            onClick={() => navigate(`/settings?tab=role-privileges&roleId=${r.role_id}`)}
 	                            className="px-2 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
 	                            title="Edit privileges"
 	                          >
@@ -1250,8 +1277,50 @@ const System = () => {
         </div>
       ),
 	    },
-	    // Role Privileges and User Privileges are now standalone pages (/role-privileges,
-	    // /user-privileges), reachable from the sidebar - see frontend/src/pages/Privileges/.
+	    // Privileges tab (user -> effective permissions + overrides), lazy-loaded for stability
+	    ...(hasAnyPerm(['system.permissions.manage', 'permissions.view'])
+	      ? [
+	          {
+	            id: 'privileges',
+	            label: t('tab_privileges'),
+	            icon: CheckSquare,
+	            badge: 0,
+	            content: (
+	              <Suspense
+	                fallback={
+	                  <div className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+	                    Loading privileges editor...
+	                  </div>
+	                }
+	              >
+	                <UserPrivilegesPage embedded />
+	              </Suspense>
+	            ),
+	          },
+	        ]
+	      : []),
+	    // Role Privileges tab (role -> permissions), lazy-loaded for stability
+	    ...(canViewRoles
+	      ? [
+	          {
+	            id: 'role-privileges',
+	            label: t('tab_role_privileges'),
+	            icon: CheckSquare,
+	            badge: 0,
+	            content: (
+	              <Suspense
+	                fallback={
+	                  <div className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+	                    Loading role privileges editor...
+	                  </div>
+	                }
+	              >
+	                <RolePrivilegesPage embedded />
+	              </Suspense>
+	            ),
+	          },
+	        ]
+	      : []),
 	    ...(SHOW_PERMISSION_TAB
 	      ? [
 	          {

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import {
   BriefcaseBusiness,
-  CheckSquare,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -13,7 +12,6 @@ import {
   LucideIcon,
   ReceiptText,
   Settings,
-  Shield,
   ShoppingBag,
   ShoppingCart,
   SlidersHorizontal,
@@ -176,8 +174,6 @@ const AppSidebar: React.FC = () => {
         items: [
           { id: 'system', label: t('nav_system'), icon: Settings, to: '/system', permissionAny: ['system.settings'] },
           { id: 'setting', label: t('nav_setting'), icon: Cog, to: '/settings', permissionAny: ['system.settings', 'users.view', 'roles.view', 'permissions.view', 'system.users.manage', 'system.roles.manage', 'system.permissions.manage'] },
-          { id: 'role-privileges', label: t('nav_role_privileges'), icon: Shield, to: '/role-privileges', permissionAny: ['system.roles.manage', 'roles.view'] },
-          { id: 'user-privileges', label: t('nav_user_privileges'), icon: CheckSquare, to: '/user-privileges', permissionAny: ['system.permissions.manage', 'permissions.view'] },
           { id: 'reports', label: t('nav_reports'), icon: FileText, to: '/reports', permissionAny: ['reports.all'] },
           ...(isDeveloper ? [{ id: 'trash', label: t('nav_trash'), icon: Trash2, to: '/trash', permissionAny: ['trash.view'] }] : []),
         ],

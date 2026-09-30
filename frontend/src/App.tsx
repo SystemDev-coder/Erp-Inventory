@@ -37,8 +37,6 @@ const AccountsReceivableReportPage = lazy(() => import("./pages/Reports/financia
 const AccountsPayableReportPage = lazy(() => import("./pages/Reports/financial/AccountsPayableReportPage"));
 const Settings = lazy(() => import("./pages/Settings/Settings"));
 const System = lazy(() => import("./pages/System/System"));
-const RolePrivilegesPage = lazy(() => import("./pages/Privileges/RolePrivilegesPage"));
-const UserPrivilegesPage = lazy(() => import("./pages/Privileges/UserPrivilegesPage"));
 const Trash = lazy(() => import("./pages/Trash/Trash"));
 const POSTab = lazy(() => import("./pages/Sales/POSTab"));
 const POSOrders = lazy(() => import("./pages/Sales/POSOrders"));
@@ -201,8 +199,6 @@ function AppRoutes() {
             }
           />
           <Route path="/system" element={<ProtectedRoute permission="system.settings"><Lazy><Settings /></Lazy></ProtectedRoute>} />
-          <Route path="/role-privileges" element={<ProtectedRoute permissionAny={['system.roles.manage', 'roles.view']}><Lazy><RolePrivilegesPage /></Lazy></ProtectedRoute>} />
-          <Route path="/user-privileges" element={<ProtectedRoute permissionAny={['system.permissions.manage', 'permissions.view']}><Lazy><UserPrivilegesPage /></Lazy></ProtectedRoute>} />
           <Route path="/trash" element={<ProtectedRoute permission="trash.view" roleAny={['developer']}><Lazy><Trash /></Lazy></ProtectedRoute>} />
         </Route>
 

@@ -58,7 +58,9 @@ const StatCard = ({
   );
 };
 
-const RolePrivilegesPage = () => {
+// `embedded`: true when rendered as a tab's content inside System.tsx (which already
+// has its own page header) - same pattern as StoresPage.tsx, avoids a duplicated header.
+const RolePrivilegesPage = ({ embedded = false }: { embedded?: boolean } = {}) => {
   const { showToast } = useToast();
   const { user, refreshUser } = useAuth();
   const { canAny } = usePermissions();
@@ -199,42 +201,48 @@ const RolePrivilegesPage = () => {
     return { modules: SIMPLE_PRIVILEGE_MODULES.length, granted, restricted };
   }, [byKey]);
 
+  const actionsBar = (
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        onClick={() => setCompareOpen(true)}
+        disabled={roles.length < 2}
+        className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+      >
+        <Split className="h-4 w-4" /> Compare Roles
+      </button>
+      <button
+        type="button"
+        onClick={() => navigate('/settings?tab=activity-logs&entity=role_permissions')}
+        className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+      >
+        <History className="h-4 w-4" /> Audit Logs
+      </button>
+      {canUpdateRolePermissions && (
+        <button
+          type="button"
+          onClick={save}
+          disabled={!roleId || loading || saving}
+          className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+        >
+          <Save className="h-4 w-4" /> {saving ? 'Saving...' : 'Save Changes'}
+        </button>
+      )}
+    </div>
+  );
+
   return (
     <div>
-      <PageHeader
-        title="Role Privileges"
-        description="Define what each role can see and do, area by area."
-        breadcrumbs={[{ label: 'Settings', href: '/settings' }, { label: 'Access & Security' }, { label: 'Role Privileges' }]}
-        actions={
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setCompareOpen(true)}
-              disabled={roles.length < 2}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-            >
-              <Split className="h-4 w-4" /> Compare Roles
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('/settings?tab=activity-logs&entity=role_permissions')}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-            >
-              <History className="h-4 w-4" /> Audit Logs
-            </button>
-            {canUpdateRolePermissions && (
-              <button
-                type="button"
-                onClick={save}
-                disabled={!roleId || loading || saving}
-                className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-              >
-                <Save className="h-4 w-4" /> {saving ? 'Saving...' : 'Save Changes'}
-              </button>
-            )}
-          </div>
-        }
-      />
+      {embedded ? (
+        <div className="mb-4 flex justify-end">{actionsBar}</div>
+      ) : (
+        <PageHeader
+          title="Role Privileges"
+          description="Define what each role can see and do, area by area."
+          breadcrumbs={[{ label: 'Settings', href: '/settings' }, { label: 'Access & Security' }, { label: 'Role Privileges' }]}
+          actions={actionsBar}
+        />
+      )}
 
       <div className="space-y-4">
         <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
