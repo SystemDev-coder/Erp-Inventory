@@ -14,6 +14,8 @@ import {
   Settings,
   ShoppingBag,
   ShoppingCart,
+  SlidersHorizontal,
+  Boxes,
   Store,
   Users,
   Trash2,
@@ -31,6 +33,10 @@ type SidebarSubItem = {
   to: string;
   exact?: boolean;
   permissionAny?: string[];
+  // Optional - most sub-items across this sidebar render text-only, as
+  // before; only sections that already have a matching icon elsewhere
+  // (e.g. Products.tsx's own tabs) set one, for visual consistency there.
+  icon?: LucideIcon;
 };
 
 type SidebarItem = {
@@ -118,8 +124,8 @@ const AppSidebar: React.FC = () => {
             permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'],
             expandable: true,
             subItems: [
-              { id: 'stock-items', label: t('nav_items'), to: '/stock-management/items', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
-              { id: 'adjust-items', label: t('nav_adjust_items'), to: '/stock-management/adjust-items', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
+              { id: 'stock-items', label: t('nav_items'), icon: Boxes, to: '/stock-management/items', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
+              { id: 'adjust-items', label: t('nav_adjust_items'), icon: SlidersHorizontal, to: '/stock-management/adjust-items', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
             ],
           },
           { id: 'returns', label: t('nav_returns'), icon: FileText, to: '/returns', exact: true, permissionAny: ['returns.view', 'sales_returns.view', 'purchase_returns.view'] },
@@ -196,7 +202,7 @@ const AppSidebar: React.FC = () => {
 
     return (
       <aside
-      className={`fixed mt-16 flex flex-col lg:mt-0 top-0 left-0 bg-white text-slate-900 border-r border-slate-200 dark:bg-black dark:text-white dark:border-white/10 h-screen transition-all duration-300 ease-in-out z-50 shadow-[0_8px_26px_-12px_rgba(15,23,42,0.45)]
+      className={`fixed mt-16 flex flex-col lg:mt-0 top-0 left-0 bg-white text-slate-900 border-r border-slate-200 dark:bg-primary-900 dark:text-white dark:border-white/10 h-screen transition-all duration-300 ease-in-out z-50 shadow-[0_8px_26px_-12px_rgba(15,23,42,0.45)]
         ${showExpanded ? 'w-[280px]' : 'w-[80px]'}
         ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'}
         lg:translate-x-0`}
@@ -277,17 +283,19 @@ const AppSidebar: React.FC = () => {
                       <ul id={`${item.id}-submenu`} className="ml-5 mt-2 space-y-1 border-l border-slate-200 pl-3 dark:border-white/10">
                         {(item.subItems || []).map((sub) => {
                           const subActive = isActive(sub.to, sub.exact);
+                          const SubIcon = sub.icon;
                           return (
                             <li key={sub.id}>
                               <Link
                                 to={sub.to}
-                                className={`block rounded-lg px-3 py-2 text-sm transition-colors ${
+                                className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${
                                   subActive
                                     ? 'bg-slate-100 text-slate-900 ring-1 ring-slate-200 dark:bg-white/10 dark:text-white dark:ring-white/15'
                                     : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900 dark:text-white/80 dark:hover:bg-white/10 dark:hover:text-white'
                                 }`}
                               >
-                                {sub.label}
+                                {SubIcon && <SubIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+                                <span className="truncate">{sub.label}</span>
                               </Link>
                             </li>
                           );
@@ -334,7 +342,7 @@ const AppSidebar: React.FC = () => {
               lock();
               navigate('/lock');
             }}
-            className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-100 dark:border-white/15 dark:bg-black dark:text-white dark:hover:bg-white/10"
+            className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-100 dark:border-white/15 dark:bg-primary-800 dark:text-white dark:hover:bg-primary-700"
           >
             <LockIcon className="h-4 w-4" /> {t('sidebar_lock')}
           </button>

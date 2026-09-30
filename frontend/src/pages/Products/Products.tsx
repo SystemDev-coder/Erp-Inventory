@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { ColumnDef } from '@tanstack/react-table';
-import { BadgeAlert, Boxes, Edit3, GitMerge, MoreVertical, PackageCheck, PackageSearch, PackageX, RefreshCw, Ruler, Store, Tags, Trash2 } from 'lucide-react';
+import { ArrowLeftRight, BadgeAlert, Boxes, Edit3, GitMerge, MoreVertical, PackageCheck, PackageSearch, PackageX, RefreshCw, Ruler, Store, Tags, Trash2 } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
 import { DataTable } from '../../components/ui/table/DataTable';
 import { ActionDropdown } from '../../components/ui/dropdown/ActionDropdown';
@@ -911,6 +911,7 @@ const Products = () => {
     {
       id: 'inventory-transaction',
       label: 'Inventory Transaction',
+      icon: ArrowLeftRight,
       content: (
         <div className="space-y-4">
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">

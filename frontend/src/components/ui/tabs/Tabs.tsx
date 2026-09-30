@@ -13,6 +13,11 @@ interface TabsProps {
   tabs: Tab[];
   defaultTab?: string;
   onChange?: (tabId: string) => void;
+  // Optional controlled mode: when provided, this (not internal state) is
+  // the source of truth for which tab is shown - lets a caller sync the
+  // active tab with something external (e.g. the URL). Every existing
+  // caller omits this and keeps the original uncontrolled behavior.
+  activeTab?: string;
 }
 
 /**
@@ -27,13 +32,15 @@ interface TabsProps {
  *  - Matches the Lock screen: same blue accent, same rounded corners,
  *    same focus ring treatment.
  */
-export const Tabs: React.FC<TabsProps> = ({ tabs, defaultTab, onChange }) => {
-  const [activeTab, setActiveTab] = useState(defaultTab || tabs[0]?.id);
+export const Tabs: React.FC<TabsProps> = ({ tabs, defaultTab, onChange, activeTab: controlledActiveTab }) => {
+  const [internalActiveTab, setInternalActiveTab] = useState(defaultTab || tabs[0]?.id);
+  const isControlled = controlledActiveTab !== undefined;
+  const activeTab = isControlled ? controlledActiveTab : internalActiveTab;
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const baseId = useId();
 
   const handleTabChange = (tabId: string) => {
-    setActiveTab(tabId);
+    if (!isControlled) setInternalActiveTab(tabId);
     onChange?.(tabId);
   };
 
