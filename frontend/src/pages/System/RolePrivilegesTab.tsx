@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Save } from 'lucide-react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { ChevronDown, ChevronRight, Save } from 'lucide-react';
 import { useToast } from '../../components/ui/toast/Toast';
+import { useAuth } from '../../context/AuthContext';
 import { systemService, type RolePermission, type SystemPermission, type SystemRole } from '../../services/system.service';
 import {
   SIMPLE_ACTIONS,
   SIMPLE_ACTION_LABELS,
   SIMPLE_PRIVILEGE_MODULES,
   simplePermKeys,
+  simpleSubItemKeys,
 } from '../../config/simplePrivileges';
 
 type Props = {
@@ -34,10 +36,21 @@ export const RolePrivilegesTab = ({
   onRoleSelected,
 }: Props) => {
   const { showToast } = useToast();
+  const { user, refreshUser } = useAuth();
   const [roleId, setRoleId] = useState<number | null>(null);
   const [rolePermissions, setRolePermissions] = useState<RolePermission[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const toggleExpanded = (moduleId: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(moduleId)) next.delete(moduleId);
+      else next.add(moduleId);
+      return next;
+    });
+  };
 
   const loadRolePermissions = useCallback(
     async (nextRoleId: number) => {
@@ -108,6 +121,9 @@ export const RolePrivilegesTab = ({
       }
       showToast('success', 'Privileges', 'Role privileges updated');
       await loadRolePermissions(roleId);
+      // If the admin just edited their own role, refresh the in-memory permission set so
+      // their own sidebar/UI reflects the change immediately instead of needing a re-login.
+      if (user?.role_id === roleId) await refreshUser();
     } finally {
       setSaving(false);
     }
@@ -171,31 +187,86 @@ export const RolePrivilegesTab = ({
               </tr>
             </thead>
             <tbody>
-              {SIMPLE_PRIVILEGE_MODULES.map((mod) => (
-                <tr key={mod.id} className="border-b border-slate-100 last:border-b-0 dark:border-slate-800">
-                  <td className="px-4 py-3 font-medium text-slate-900 dark:text-slate-100">{mod.label}</td>
-                  {SIMPLE_ACTIONS.map((action) => {
-                    const keys = simplePermKeys(mod, action);
-                    const matched = keys.map((k) => byKey.get(k)).filter((p): p is RolePermission => !!p);
-                    if (matched.length === 0) {
-                      return <td key={action} className="px-4 py-3 text-center text-slate-300 dark:text-slate-700">—</td>;
-                    }
-                    const checked = matched.every((p) => p.has_permission);
-                    return (
-                      <td key={action} className="px-4 py-3 text-center">
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4"
-                          checked={checked}
-                          onChange={() => toggleModuleAction(keys, !checked)}
-                          disabled={!canUpdateRolePermissions}
-                          aria-label={`${mod.label} - ${SIMPLE_ACTION_LABELS[action]}`}
-                        />
+              {SIMPLE_PRIVILEGE_MODULES.map((mod) => {
+                const hasSubItems = !!mod.subItems?.length;
+                const isExpanded = expanded.has(mod.id);
+                return (
+                  <Fragment key={mod.id}>
+                    <tr className="border-b border-slate-100 last:border-b-0 dark:border-slate-800">
+                      <td className="px-4 py-3 font-medium text-slate-900 dark:text-slate-100">
+                        <div className="flex items-center gap-1.5">
+                          {hasSubItems ? (
+                            <button
+                              type="button"
+                              onClick={() => toggleExpanded(mod.id)}
+                              className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                              aria-label={isExpanded ? `Collapse ${mod.label}` : `Expand ${mod.label}`}
+                            >
+                              {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                            </button>
+                          ) : (
+                            <span className="w-5" />
+                          )}
+                          {mod.label}
+                        </div>
                       </td>
-                    );
-                  })}
-                </tr>
-              ))}
+                      {SIMPLE_ACTIONS.map((action) => {
+                        const keys = simplePermKeys(mod, action);
+                        const matched = keys.map((k) => byKey.get(k)).filter((p): p is RolePermission => !!p);
+                        if (matched.length === 0) {
+                          return <td key={action} className="px-4 py-3 text-center text-slate-300 dark:text-slate-700">—</td>;
+                        }
+                        const checked = matched.every((p) => p.has_permission);
+                        return (
+                          <td key={action} className="px-4 py-3 text-center">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4"
+                              checked={checked}
+                              onChange={() => toggleModuleAction(keys, !checked)}
+                              disabled={!canUpdateRolePermissions}
+                              aria-label={`${mod.label} - ${SIMPLE_ACTION_LABELS[action]}`}
+                            />
+                          </td>
+                        );
+                      })}
+                    </tr>
+                    {hasSubItems && isExpanded && mod.subItems!.map((sub) => (
+                      <tr key={sub.id} className="border-b border-slate-100 bg-slate-50/60 last:border-b-0 dark:border-slate-800 dark:bg-slate-800/30">
+                        <td className="px-4 py-2 pl-11 text-slate-600 dark:text-slate-300">
+                          {sub.label}
+                          {sub.kind === 'info' && (
+                            <span className="ml-2 text-xs text-slate-400 dark:text-slate-500">{sub.note}</span>
+                          )}
+                        </td>
+                        {SIMPLE_ACTIONS.map((action) => {
+                          if (sub.kind === 'info') {
+                            return <td key={action} className="px-4 py-2 text-center text-slate-300 dark:text-slate-700">—</td>;
+                          }
+                          const keys = simpleSubItemKeys(sub, action);
+                          const matched = keys.map((k) => byKey.get(k)).filter((p): p is RolePermission => !!p);
+                          if (matched.length === 0) {
+                            return <td key={action} className="px-4 py-2 text-center text-slate-300 dark:text-slate-700">—</td>;
+                          }
+                          const checked = matched.every((p) => p.has_permission);
+                          return (
+                            <td key={action} className="px-4 py-2 text-center">
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4"
+                                checked={checked}
+                                onChange={() => toggleModuleAction(keys, !checked)}
+                                disabled={!canUpdateRolePermissions}
+                                aria-label={`${sub.label} - ${SIMPLE_ACTION_LABELS[action]}`}
+                              />
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
