@@ -13,6 +13,7 @@ import { ConfirmDialog } from '../../components/ui/modal/ConfirmDialog';
 import { useBranch } from '../../context/BranchContext';
 import { attributeSummary } from '../../config/productAttributes';
 import { useAttributeCatalog } from '../../hooks/useAttributeCatalog';
+import { usePermissions } from '../../hooks/usePermissions';
 
 const addDaysToDate = (baseDate: string, days: number) => {
   const dt = new Date(`${baseDate}T00:00:00`);
@@ -54,6 +55,7 @@ const PurchaseEditor = () => {
   const { showToast } = useToast();
   const { activeBranchId } = useBranch();
   const attributeCatalog = useAttributeCatalog();
+  const { can } = usePermissions();
   const docType: 'order' | 'purchase' = new URLSearchParams(location.search).get('docType') === 'order' ? 'order' : 'purchase';
 
   const [loading, setLoading] = useState(false);
@@ -1525,14 +1527,26 @@ const PurchaseEditor = () => {
           >
             Cancel
           </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={loading}
-            className="px-5 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50"
-          >
-            {loading ? 'Saving…' : isEdit ? 'Update Purchase' : 'Create Purchase'}
-          </button>
+          {(() => {
+            // Route-level access to this page only requires purchases.view (so a
+            // view-only user can still open an existing purchase to look at it) -
+            // the actual write permission (create vs update) has to be enforced
+            // here instead. Disabled-with-a-reason rather than hidden, since
+            // hiding the only submit button on the form with no explanation would
+            // be confusing for a legitimate view-only user.
+            const allowed = isEdit ? can('purchases.update') : can('purchases.create');
+            return (
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={loading || !allowed}
+                title={allowed ? undefined : "You don't have permission to save this."}
+                className="px-5 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50"
+              >
+                {loading ? 'Saving…' : isEdit ? 'Update Purchase' : 'Create Purchase'}
+              </button>
+            );
+          })()}
         </div>
         </div>
       </div>

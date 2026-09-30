@@ -27,11 +27,13 @@ import { Modal } from '../../components/ui/modal/Modal';
 import DeleteConfirmModal from '../../components/ui/modal/DeleteConfirmModal';
 import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
+import { usePermissions } from '../../hooks/usePermissions';
 
 const Finance = () => {
   const location = useLocation();
   const { showToast } = useToast();
   const { activeBranchId } = useBranch();
+  const { can } = usePermissions();
 
   const currentMonth = () => {
     const d = new Date();
@@ -319,18 +321,20 @@ const [deletingBudget, setDeletingBudget] = useState(false);
         header: 'Actions',
         cell: ({ row }) => (
           <div className="flex items-center gap-2">
-            <button
-              className="p-2 text-slate-600 hover:text-red-600"
-              aria-label="Delete liability payment"
-              onClick={() => setPendingDeleteLiabilityPayment(row.original)}
-            >
-              <Trash className="h-5 w-5" />
-            </button>
+            {can('accounts.update') && (
+              <button
+                className="p-2 text-slate-600 hover:text-red-600"
+                aria-label="Delete liability payment"
+                onClick={() => setPendingDeleteLiabilityPayment(row.original)}
+              >
+                <Trash className="h-5 w-5" />
+              </button>
+            )}
           </div>
         ),
       },
     ],
-    []
+    [can]
   );
 
   const receiptColumns: ColumnDef<Receipt>[] = useMemo(
@@ -357,25 +361,29 @@ const [deletingBudget, setDeletingBudget] = useState(false);
         header: 'Actions',
         cell: ({ row }) => (
           <div className="flex items-center gap-2">
-            <button
-              className="p-2 text-slate-600 hover:text-primary-600"
-              aria-label="Edit other income"
-              onClick={() => openOtherIncomeModal(row.original)}
-            >
-              <SquarePen className="h-5 w-5" />
-            </button>
-            <button
-              className="p-2 text-slate-600 hover:text-red-600"
-              aria-label="Delete other income"
-              onClick={() => setPendingDeleteOtherIncome(row.original)}
-            >
-              <Trash className="h-5 w-5" />
-            </button>
+            {can('other_incomes.update') && (
+              <button
+                className="p-2 text-slate-600 hover:text-primary-600"
+                aria-label="Edit other income"
+                onClick={() => openOtherIncomeModal(row.original)}
+              >
+                <SquarePen className="h-5 w-5" />
+              </button>
+            )}
+            {can('other_incomes.delete') && (
+              <button
+                className="p-2 text-slate-600 hover:text-red-600"
+                aria-label="Delete other income"
+                onClick={() => setPendingDeleteOtherIncome(row.original)}
+              >
+                <Trash className="h-5 w-5" />
+              </button>
+            )}
           </div>
         ),
       },
     ],
-    [openOtherIncomeModal]
+    [openOtherIncomeModal, can]
   );
 
   const unpaidCustomerColumns: ColumnDef<UnpaidCustomer>[] = useMemo(
@@ -444,7 +452,7 @@ const [deletingBudget, setDeletingBudget] = useState(false);
         header: 'Actions',
         cell: ({ row }) => (
           <div className="flex items-center gap-3">
-            {!!row.original.exp_id && !row.original.is_opening_paid && (
+            {!!row.original.exp_id && !row.original.is_opening_paid && can('expense_payments.create') && (
               <button
                 className="px-3 py-1.5 rounded-lg text-white bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold disabled:opacity-40"
                 aria-label="Full payment"
@@ -476,38 +484,42 @@ const [deletingBudget, setDeletingBudget] = useState(false);
                 <History className="h-5 w-5" />
               </button>
             )}
-            <button
-              className="p-2 text-slate-600 hover:text-slate-800"
-              aria-label="Edit expense charge"
-              onClick={() => {
-                const ch = row.original;
-                setEditingChargeId(ch.exp_ch_id);
-                setChargeForm({
-                  exp_id: ch.exp_id,
-                  amount: ch.amount,
-                  note: ch.note || '',
-                  exp_date: ch.exp_date ? ch.exp_date.slice(0, 10) : '',
-                  reg_date: ch.reg_date ? ch.reg_date.slice(0, 10) : ch.exp_date ? ch.exp_date.slice(0, 10) : undefined,
-                });
-                setIsChargeModalOpen(true);
-              }}
-            >
-              <SquarePen className="h-5 w-5" />
-            </button>
-            <button
-              className="p-2 text-slate-600 hover:text-red-600"
-              aria-label="Delete expense charge"
-              onClick={() => {
-                setPendingDeleteChargeId(row.original.exp_ch_id);
-              }}
-            >
-              <Trash className="h-5 w-5" />
-            </button>
+            {can('expense_charges.update') && (
+              <button
+                className="p-2 text-slate-600 hover:text-slate-800"
+                aria-label="Edit expense charge"
+                onClick={() => {
+                  const ch = row.original;
+                  setEditingChargeId(ch.exp_ch_id);
+                  setChargeForm({
+                    exp_id: ch.exp_id,
+                    amount: ch.amount,
+                    note: ch.note || '',
+                    exp_date: ch.exp_date ? ch.exp_date.slice(0, 10) : '',
+                    reg_date: ch.reg_date ? ch.reg_date.slice(0, 10) : ch.exp_date ? ch.exp_date.slice(0, 10) : undefined,
+                  });
+                  setIsChargeModalOpen(true);
+                }}
+              >
+                <SquarePen className="h-5 w-5" />
+              </button>
+            )}
+            {can('expense_charges.delete') && (
+              <button
+                className="p-2 text-slate-600 hover:text-red-600"
+                aria-label="Delete expense charge"
+                onClick={() => {
+                  setPendingDeleteChargeId(row.original.exp_ch_id);
+                }}
+              >
+                <Trash className="h-5 w-5" />
+              </button>
+            )}
           </div>
         ),
       },
     ],
-    []
+    [can]
   );
 
   const budgetColumns: ColumnDef<ExpenseBudget>[] = useMemo(
@@ -546,36 +558,40 @@ const [deletingBudget, setDeletingBudget] = useState(false);
         header: 'Actions',
         cell: ({ row }) => (
           <div className="flex items-center gap-3">
-            <button
-              className="p-2 text-slate-600 hover:text-slate-800"
-              aria-label="Edit budget"
-              onClick={() => {
-                const b = row.original;
-                setEditingBudget(b);
-                setBudgetForm({
-                  exp_id: b.exp_id,
-                  fixed_amount: b.fixed_amount || b.amount_limit,
-                  note: b.note || '',
-                });
-                setIsBudgetModalOpen(true);
-              }}
-            >
-              <SquarePen className="h-5 w-5" />
-            </button>
-            <button
-              className="p-2 text-slate-600 hover:text-red-600"
-              aria-label="Delete budget"
-              onClick={() => {
-                setPendingDeleteBudget(row.original);
-              }}
-            >
-              <Trash className="h-5 w-5" />
-            </button>
+            {can('expense_budgets.update') && (
+              <button
+                className="p-2 text-slate-600 hover:text-slate-800"
+                aria-label="Edit budget"
+                onClick={() => {
+                  const b = row.original;
+                  setEditingBudget(b);
+                  setBudgetForm({
+                    exp_id: b.exp_id,
+                    fixed_amount: b.fixed_amount || b.amount_limit,
+                    note: b.note || '',
+                  });
+                  setIsBudgetModalOpen(true);
+                }}
+              >
+                <SquarePen className="h-5 w-5" />
+              </button>
+            )}
+            {can('expense_budgets.delete') && (
+              <button
+                className="p-2 text-slate-600 hover:text-red-600"
+                aria-label="Delete budget"
+                onClick={() => {
+                  setPendingDeleteBudget(row.original);
+                }}
+              >
+                <Trash className="h-5 w-5" />
+              </button>
+            )}
           </div>
         ),
       },
     ],
-    []
+    [can]
   );
 
   const payrollColumns: ColumnDef<PayrollRow>[] = useMemo(
@@ -617,58 +633,64 @@ const [deletingBudget, setDeletingBudget] = useState(false);
           const remaining = Math.max(0, Number(row.original.net_salary || 0) - Number(row.original.paid_sum || 0));
           return (
             <div className="flex items-center gap-3">
-              <button
-                className="px-3 py-1.5 rounded-lg text-white bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold disabled:opacity-40"
-                aria-label="Pay salary"
-                disabled={remaining <= 0}
-                onClick={() => {
-                  setPaySalaryForm({
-                    payroll_line_id: row.original.payroll_line_id || undefined,
-                    acc_id: accounts[0]?.acc_id,
-                    amount: remaining > 0 ? remaining : row.original.net_salary || 0,
-                    pay_date: todayDate(),
-                    note: '',
-                  });
-                  setPaySalaryErrors({});
-                  setIsPaySalaryModalOpen(true);
-                }}
-              >
-                {remaining <= 0 ? 'Paid' : 'Pay'}
-              </button>
-              <button
-                className="p-2 text-slate-600 hover:text-slate-800"
-                aria-label="Edit salary line"
-                onClick={() => {
-                  setPaySalaryForm({
-                    payroll_line_id: row.original.payroll_line_id || undefined,
-                    acc_id: accounts[0]?.acc_id,
-                    amount: remaining > 0 ? remaining : row.original.net_salary || 0,
-                    pay_date: todayDate(),
-                    note: '',
-                  });
-                  setPaySalaryErrors({});
-                  setIsPaySalaryModalOpen(true);
-                }}
-              >
-                <SquarePen className="h-5 w-5" />
-              </button>
-              <button
-                className="p-2 text-slate-600 hover:text-red-600"
-                aria-label="Delete salary charge"
-                onClick={() => {
-                  setPendingPayrollLineId(row.original.payroll_line_id || null);
-                  setDeletePayrollMode('line');
-                  setIsDeletePayrollModalOpen(true);
-                }}
-              >
-                <Trash className="h-5 w-5" />
-              </button>
+              {can('payroll.pay') && (
+                <button
+                  className="px-3 py-1.5 rounded-lg text-white bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold disabled:opacity-40"
+                  aria-label="Pay salary"
+                  disabled={remaining <= 0}
+                  onClick={() => {
+                    setPaySalaryForm({
+                      payroll_line_id: row.original.payroll_line_id || undefined,
+                      acc_id: accounts[0]?.acc_id,
+                      amount: remaining > 0 ? remaining : row.original.net_salary || 0,
+                      pay_date: todayDate(),
+                      note: '',
+                    });
+                    setPaySalaryErrors({});
+                    setIsPaySalaryModalOpen(true);
+                  }}
+                >
+                  {remaining <= 0 ? 'Paid' : 'Pay'}
+                </button>
+              )}
+              {can('payroll.pay') && (
+                <button
+                  className="p-2 text-slate-600 hover:text-slate-800"
+                  aria-label="Edit salary line"
+                  onClick={() => {
+                    setPaySalaryForm({
+                      payroll_line_id: row.original.payroll_line_id || undefined,
+                      acc_id: accounts[0]?.acc_id,
+                      amount: remaining > 0 ? remaining : row.original.net_salary || 0,
+                      pay_date: todayDate(),
+                      note: '',
+                    });
+                    setPaySalaryErrors({});
+                    setIsPaySalaryModalOpen(true);
+                  }}
+                >
+                  <SquarePen className="h-5 w-5" />
+                </button>
+              )}
+              {can('payroll_runs.delete') && (
+                <button
+                  className="p-2 text-slate-600 hover:text-red-600"
+                  aria-label="Delete salary charge"
+                  onClick={() => {
+                    setPendingPayrollLineId(row.original.payroll_line_id || null);
+                    setDeletePayrollMode('line');
+                    setIsDeletePayrollModalOpen(true);
+                  }}
+                >
+                  <Trash className="h-5 w-5" />
+                </button>
+              )}
             </div>
           );
         },
       },
     ],
-    [accounts]
+    [accounts, can]
   );
 
   const loadAll = async () => {
@@ -1374,12 +1396,14 @@ const submitBudgetCharge = async () => {
               >
                 <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
               </button>
-              <button
-                onClick={() => openAccountModal()}
-                className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm text-white"
-              >
-                <Plus className="h-4 w-4" /> New Account
-              </button>
+              {can('accounts.create') && (
+                <button
+                  onClick={() => openAccountModal()}
+                  className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm text-white"
+                >
+                  <Plus className="h-4 w-4" /> New Account
+                </button>
+              )}
             </div>
           </div>
           {accountsLoadError && (
@@ -1394,8 +1418,8 @@ const submitBudgetCharge = async () => {
             columns={accountColumns}
             isLoading={loading && financeDisplayed}
             searchPlaceholder="Search accounts..."
-            onEdit={(row) => openAccountModal(row as Account)}
-            onDelete={(row) => requestDeleteAccount(row as Account)}
+            onEdit={can('accounts.update') ? (row) => openAccountModal(row as Account) : undefined}
+            onDelete={can('accounts.delete') ? (row) => requestDeleteAccount(row as Account) : undefined}
             canDelete={(row) => {
               const account = row as Account;
               return (
@@ -1423,12 +1447,14 @@ const submitBudgetCharge = async () => {
               >
                 <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
               </button>
-              <button
-                onClick={() => openTransferModal()}
-                className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm text-white"
-              >
-                <Plus className="h-4 w-4" /> New Transfer
-              </button>
+              {can('account_transfers.create') && (
+                <button
+                  onClick={() => openTransferModal()}
+                  className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm text-white"
+                >
+                  <Plus className="h-4 w-4" /> New Transfer
+                </button>
+              )}
             </div>
           </div>
           {!financeDisplayed && !loading && emptyHint('Click Display to load data.')}
@@ -1438,7 +1464,7 @@ const submitBudgetCharge = async () => {
             columns={transferColumns}
             isLoading={loading}
             searchPlaceholder="Search transfers..."
-            onEdit={(row) => openTransferModal(row as AccountTransfer)}
+            onEdit={can('account_transfers.update') ? (row) => openTransferModal(row as AccountTransfer) : undefined}
           />
         </div>
       ),
@@ -1459,12 +1485,14 @@ const submitBudgetCharge = async () => {
               >
                 <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
               </button>
-              <button
-                onClick={() => void openLiabilityPaymentModal()}
-                className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm text-white"
-              >
-                <Plus className="h-4 w-4" /> New Payment
-              </button>
+              {can('accounts.update') && (
+                <button
+                  onClick={() => void openLiabilityPaymentModal()}
+                  className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm text-white"
+                >
+                  <Plus className="h-4 w-4" /> New Payment
+                </button>
+              )}
             </div>
           </div>
           <p className="text-sm text-slate-600 dark:text-slate-400">
@@ -1498,12 +1526,14 @@ const submitBudgetCharge = async () => {
               >
                 <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
               </button>
-              <button
-                onClick={() => openOtherIncomeModal()}
-                className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm text-white"
-              >
-                <Plus className="h-4 w-4" /> New Other Income
-              </button>
+              {can('other_incomes.create') && (
+                <button
+                  onClick={() => openOtherIncomeModal()}
+                  className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm text-white"
+                >
+                  <Plus className="h-4 w-4" /> New Other Income
+                </button>
+              )}
             </div>
           </div>
           {!financeDisplayed && !loading && emptyHint('Click Display to load data.')}
@@ -1536,15 +1566,17 @@ const submitBudgetCharge = async () => {
               >
                 <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
               </button>
-              <button
-                onClick={() => {
-                  setReceiptForm({});
-                  setIsCustReceiptModalOpen(true);
-                }}
-                className="inline-flex items-center gap-2 rounded-full bg-primary-600 px-4 py-2 text-sm text-white transition-all hover:bg-primary-500 hover:-translate-y-0.5 hover:shadow-md"
-              >
-                <Plus className="h-4 w-4" /> New Customer Receipt
-              </button>
+              {can('customer_receipts.create') && (
+                <button
+                  onClick={() => {
+                    setReceiptForm({});
+                    setIsCustReceiptModalOpen(true);
+                  }}
+                  className="inline-flex items-center gap-2 rounded-full bg-primary-600 px-4 py-2 text-sm text-white transition-all hover:bg-primary-500 hover:-translate-y-0.5 hover:shadow-md"
+                >
+                  <Plus className="h-4 w-4" /> New Customer Receipt
+                </button>
+              )}
               <button
                 onClick={() => setShowCustUnpaid((v) => !v)}
                 className="inline-flex items-center gap-2 rounded-full border border-primary-600 px-4 py-2 text-sm text-primary-700 transition-all hover:-translate-y-0.5 hover:shadow-md"
@@ -1574,14 +1606,14 @@ const submitBudgetCharge = async () => {
                 columns={unpaidCustomerColumns}
                 isLoading={loading}
                 searchPlaceholder="Search unpaid customers..."
-                onEdit={(row) => {
+                onEdit={can('customer_receipts.update') ? (row) => {
                   const rec = row as UnpaidCustomer;
                   setReceiptForm({
                     customer_id: rec.customer_id,
                     amount: rec.balance,
                   });
                   setIsCustReceiptModalOpen(true);
-                }}
+                } : undefined}
               />
             </div>
           )}
@@ -1612,15 +1644,17 @@ const submitBudgetCharge = async () => {
               >
                 <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
               </button>
-              <button
-                onClick={() => {
-                  setReceiptForm({});
-                  setIsSupReceiptModalOpen(true);
-                }}
-                className="inline-flex items-center gap-2 rounded-full bg-primary-600 px-4 py-2 text-sm text-white transition-all hover:bg-primary-500 hover:-translate-y-0.5 hover:shadow-md"
-              >
-                <Plus className="h-4 w-4" /> New Supplier Receipt
-              </button>
+              {can('supplier_receipts.create') && (
+                <button
+                  onClick={() => {
+                    setReceiptForm({});
+                    setIsSupReceiptModalOpen(true);
+                  }}
+                  className="inline-flex items-center gap-2 rounded-full bg-primary-600 px-4 py-2 text-sm text-white transition-all hover:bg-primary-500 hover:-translate-y-0.5 hover:shadow-md"
+                >
+                  <Plus className="h-4 w-4" /> New Supplier Receipt
+                </button>
+              )}
               <button
                 onClick={() => setShowSupUnpaid((v) => !v)}
                 className="inline-flex items-center gap-2 rounded-full border border-primary-600 px-4 py-2 text-sm text-primary-700 transition-all hover:-translate-y-0.5 hover:shadow-md"
@@ -1650,14 +1684,14 @@ const submitBudgetCharge = async () => {
                 columns={unpaidSupplierColumns}
                 isLoading={loading}
                 searchPlaceholder="Search unpaid suppliers..."
-                onEdit={(row) => {
+                onEdit={can('supplier_receipts.update') ? (row) => {
                   const rec = row as UnpaidSupplier;
                   setReceiptForm({
                     supplier_id: rec.supplier_id,
                     amount: rec.balance,
                   });
                   setIsSupReceiptModalOpen(true);
-                }}
+                } : undefined}
               />
             </div>
           )}
@@ -1685,25 +1719,27 @@ const submitBudgetCharge = async () => {
         header: 'Actions',
         cell: ({ row }) => (
           <div className="flex items-center gap-3">
-            <button
-              className="p-2 text-slate-600 hover:text-slate-800"
-              aria-label="Edit expense"
-              onClick={() => {
-                const exp = row.original;
-                setEditingExpense(exp);
-                setExpenseForm({
-                  name: exp.name,
-                });
-                setIsExpenseModalOpen(true);
-              }}
-            >
-              <SquarePen className="h-5 w-5" />
-            </button>
+            {can('expenses.update') && (
+              <button
+                className="p-2 text-slate-600 hover:text-slate-800"
+                aria-label="Edit expense"
+                onClick={() => {
+                  const exp = row.original;
+                  setEditingExpense(exp);
+                  setExpenseForm({
+                    name: exp.name,
+                  });
+                  setIsExpenseModalOpen(true);
+                }}
+              >
+                <SquarePen className="h-5 w-5" />
+              </button>
+            )}
           </div>
         ),
       },
     ],
-    []
+    [can]
   );
 
   const expenseTabs = [
@@ -1723,16 +1759,18 @@ const submitBudgetCharge = async () => {
               >
                 <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
               </button>
-              <button
-                onClick={() => {
-                  setEditingExpense(null);
-                  setExpenseForm({ name: '' });
-                  setIsExpenseModalOpen(true);
-                }}
-                className="inline-flex items-center gap-2 rounded-full bg-primary-600 px-3 py-2 text-sm text-white"
-              >
-                <Plus className="h-4 w-4" /> New Expense
-              </button>
+              {can('expenses.create') && (
+                <button
+                  onClick={() => {
+                    setEditingExpense(null);
+                    setExpenseForm({ name: '' });
+                    setIsExpenseModalOpen(true);
+                  }}
+                  className="inline-flex items-center gap-2 rounded-full bg-primary-600 px-3 py-2 text-sm text-white"
+                >
+                  <Plus className="h-4 w-4" /> New Expense
+                </button>
+              )}
             </div>
           </div>
           {!financeDisplayed && !loading && emptyHint('Click Display to load data.')}
@@ -1765,21 +1803,23 @@ const submitBudgetCharge = async () => {
               >
                 <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
               </button>
-              <button
-                onClick={() => {
-                  setChargeForm({
-                    exp_id: expenses[0]?.exp_id,
-                    amount: undefined,
-                    note: '',
-                    exp_date: todayDate(),
-                    reg_date: todayDate(),
-                  });
-                  setIsChargeModalOpen(true);
-                }}
-                className="inline-flex items-center gap-2 rounded-full bg-primary-600 px-3 py-2 text-sm text-white"
-              >
-                <Plus className="h-4 w-4" /> New Charge
-              </button>
+              {can('expense_charges.create') && (
+                <button
+                  onClick={() => {
+                    setChargeForm({
+                      exp_id: expenses[0]?.exp_id,
+                      amount: undefined,
+                      note: '',
+                      exp_date: todayDate(),
+                      reg_date: todayDate(),
+                    });
+                    setIsChargeModalOpen(true);
+                  }}
+                  className="inline-flex items-center gap-2 rounded-full bg-primary-600 px-3 py-2 text-sm text-white"
+                >
+                  <Plus className="h-4 w-4" /> New Charge
+                </button>
+              )}
               <button
                 onClick={() => {
                   setOpeningChargeForm({
@@ -1836,26 +1876,28 @@ const submitBudgetCharge = async () => {
               >
                 <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
               </button>
-              <button
-                onClick={async () => {
-                  setEditingBudget(null);
-                  const res = await financeService.listExpenseBudgets({ branchId: activeBranchId ?? undefined });
-                  const taken = new Set(
-                    (res.success && res.data?.budgets ? res.data.budgets : []).map((b) => Number(b.exp_id))
-                  );
-                  setBudgetedExpIds(taken);
-                  const firstAvailable = expenses.find((ex) => !taken.has(Number(ex.exp_id)));
-                  setBudgetForm({
-                    exp_id: firstAvailable?.exp_id,
-                    fixed_amount: undefined,
-                    note: '',
-                  });
-                  setIsBudgetModalOpen(true);
-                }}
-                className="inline-flex items-center gap-2 rounded-full bg-primary-600 px-3 py-2 text-sm text-white"
-              >
-                <Plus className="h-4 w-4" /> New Budget
-              </button>
+              {can('expense_budgets.create') && (
+                <button
+                  onClick={async () => {
+                    setEditingBudget(null);
+                    const res = await financeService.listExpenseBudgets({ branchId: activeBranchId ?? undefined });
+                    const taken = new Set(
+                      (res.success && res.data?.budgets ? res.data.budgets : []).map((b) => Number(b.exp_id))
+                    );
+                    setBudgetedExpIds(taken);
+                    const firstAvailable = expenses.find((ex) => !taken.has(Number(ex.exp_id)));
+                    setBudgetForm({
+                      exp_id: firstAvailable?.exp_id,
+                      fixed_amount: undefined,
+                      note: '',
+                    });
+                    setIsBudgetModalOpen(true);
+                  }}
+                  className="inline-flex items-center gap-2 rounded-full bg-primary-600 px-3 py-2 text-sm text-white"
+                >
+                  <Plus className="h-4 w-4" /> New Budget
+                </button>
+              )}
               <button
                 onClick={() => {
                   setBudgetChargeForm({

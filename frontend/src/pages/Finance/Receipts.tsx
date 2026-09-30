@@ -21,6 +21,7 @@ import {
 } from '../../services/finance.service';
 import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
+import { usePermissions } from '../../hooks/usePermissions';
 
 type ActiveTab = 'customer-receipts' | 'supplier-receipts';
 
@@ -87,6 +88,7 @@ const parseAmountInput = (value: string | null | undefined) => {
 const Receipts = () => {
     const { showToast } = useToast();
     const { activeBranchId } = useBranch();
+    const { can } = usePermissions();
 
     const [activeTab, setActiveTab] = useState<ActiveTab>('customer-receipts');
     const [loading, setLoading] = useState(false);
@@ -671,12 +673,14 @@ const Receipts = () => {
                         >
                             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
                         </button>
-                        <button
-                            onClick={() => openCustModal()}
-                            className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700"
-                        >
-                            <Plus className="h-4 w-4" /> New Customer Receipt
-                        </button>
+                        {can('customer_receipts.create') && (
+                            <button
+                                onClick={() => openCustModal()}
+                                className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700"
+                            >
+                                <Plus className="h-4 w-4" /> New Customer Receipt
+                            </button>
+                        )}
                         {unpaidCustomers.length > 0 && (
                             <button
                                 onClick={() => setShowCustOutstanding(v => !v)}
@@ -700,13 +704,13 @@ const Receipts = () => {
                                 columns={unpaidCustColumns}
                                 isLoading={loading}
                                 searchPlaceholder="Search customers..."
-                                onEdit={(row) => {
+                                onEdit={can('customer_receipts.create') ? (row) => {
                                     const rec = row as UnpaidCustomer;
                                     setReceiptForm({ customer_id: rec.customer_id, amount: toAmountInput(rec.balance) });
                                     setEditingReceiptId(null);
                                     setIsCustModalOpen(true);
                                     void handleCustomerChange(rec.customer_id);
-                                }}
+                                } : undefined}
                             />
                         </div>
                     )}
@@ -732,8 +736,8 @@ const Receipts = () => {
                             columns={custReceiptColumns}
                             isLoading={loading}
                             searchPlaceholder="Search by customer, reference..."
-                            onEdit={(row) => openCustModal(row as Receipt)}
-                            onDelete={(row) => requestDeleteCustReceipt(row as Receipt)}
+                            onEdit={can('customer_receipts.update') ? (row) => openCustModal(row as Receipt) : undefined}
+                            onDelete={can('customer_receipts.delete') ? (row) => requestDeleteCustReceipt(row as Receipt) : undefined}
                         />
                     </div>
                 </div>
@@ -779,12 +783,14 @@ const Receipts = () => {
                         >
                             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
                         </button>
-                        <button
-                            onClick={() => openSupModal()}
-                            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
-                        >
-                            <Plus className="h-4 w-4" /> New Supplier Payment
-                        </button>
+                        {can('supplier_receipts.create') && (
+                            <button
+                                onClick={() => openSupModal()}
+                                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
+                            >
+                                <Plus className="h-4 w-4" /> New Supplier Payment
+                            </button>
+                        )}
                         {outstandingPurchases.length > 0 && (
                             <button
                                 onClick={() => setShowSupOutstanding(v => !v)}
@@ -808,7 +814,7 @@ const Receipts = () => {
                                 columns={outstandingPurchaseColumns}
                                 isLoading={loading}
                                 searchPlaceholder="Search supplier purchases..."
-                                onEdit={(row) => {
+                                onEdit={can('supplier_receipts.create') ? (row) => {
                                     const p = row as SupplierOutstandingPurchase;
                                     // Pre-fill the supplier receipt form with the outstanding amount
                                     const sup = suppliers.find(s => s.supplier_id === p.supplier_id);
@@ -824,7 +830,7 @@ const Receipts = () => {
                                     } else {
                                         setSupplierCombinedBalance(null);
                                     }
-                                }}
+                                } : undefined}
                             />
                             {/* Outstanding by supplier summary */}
                             {unpaidSuppliers.length > 0 && (
@@ -835,13 +841,13 @@ const Receipts = () => {
                                         columns={unpaidSupColumns}
                                         isLoading={loading}
                                         searchPlaceholder="Search suppliers..."
-                                        onEdit={(row) => {
+                                        onEdit={can('supplier_receipts.create') ? (row) => {
                                             const rec = row as UnpaidSupplier;
                                             setReceiptForm({ supplier_id: rec.supplier_id, amount: toAmountInput(rec.balance) });
                                             setEditingReceiptId(null);
                                             setIsSupModalOpen(true);
                                             void handleSupplierChange(rec.supplier_id);
-                                        }}
+                                        } : undefined}
                                     />
                                 </div>
                             )}
@@ -869,8 +875,8 @@ const Receipts = () => {
                             columns={supReceiptColumns}
                             isLoading={loading}
                             searchPlaceholder="Search by supplier, reference..."
-                            onEdit={(row) => openSupModal(row as Receipt)}
-                            onDelete={(row) => requestDeleteSupReceipt(row as Receipt)}
+                            onEdit={can('supplier_receipts.update') ? (row) => openSupModal(row as Receipt) : undefined}
+                            onDelete={can('supplier_receipts.delete') ? (row) => requestDeleteSupReceipt(row as Receipt) : undefined}
                         />
                     </div>
                 </div>
