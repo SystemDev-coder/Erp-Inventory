@@ -350,9 +350,9 @@ export const deletePermission = asyncHandler(async (req: AuthRequest, res: Respo
 });
 
 export const listLogs = asyncHandler(async (req: AuthRequest, res: Response) => {
-  const { page, limit, startDate, endDate, entity } = listLogsQuerySchema.parse(req.query);
-  const { rows, total } = await systemService.listLogs(page, limit, startDate, endDate, entity);
-  return ApiResponse.success(res, { logs: rows, total, page, limit, startDate: startDate || null, endDate: endDate || null, entity: entity || null });
+  const { page, limit, startDate, endDate, entity, sortBy, sortDir } = listLogsQuerySchema.parse(req.query);
+  const { rows, total } = await systemService.listLogs(page, limit, startDate, endDate, entity, sortBy, sortDir);
+  return ApiResponse.success(res, { logs: rows, total, page, limit, startDate: startDate || null, endDate: endDate || null, entity: entity || null, sortBy, sortDir });
 });
 
 export const deleteLog = asyncHandler(async (req: AuthRequest, res: Response) => {

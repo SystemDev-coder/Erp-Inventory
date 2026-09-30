@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import {
   ArrowLeftRight,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
   BriefcaseBusiness,
   CircleDollarSign,
   Eye,
@@ -50,6 +53,59 @@ const formatDateOnly = (value?: string | null) => {
 
 const formatMoney = (value: number) =>
   `$${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+// Shared by the Activity Log list table's Entity column and the "View" details modal
+// below - module-level (not inside the component) since they're pure string/value
+// formatters with no dependency on component state.
+const prettyLabel = (key: string) =>
+  key
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (m) => m.toUpperCase())
+    .trim();
+
+const parseJsonLoose = (value: unknown): unknown => {
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return value;
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return value;
+    }
+  }
+  return value;
+};
+
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const formatValue = (value: unknown): string => {
+  if (value === null || value === undefined) return '-';
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (typeof value === 'number') return String(value);
+  if (typeof value === 'string') {
+    const v = value.trim();
+    if (!v) return '-';
+    // Date-ish
+    const d = new Date(v);
+    if (!Number.isNaN(d.getTime()) && /^\d{4}-\d{2}-\d{2}/.test(v)) return d.toLocaleString();
+    return v;
+  }
+  if (Array.isArray(value)) {
+    // Arrays of primitives (e.g. a plain id list) read better as comma-separated text
+    // than raw JSON - anything more complex (objects) falls through to JSON below,
+    // still far more readable than the default [object Object] would be.
+    if (value.every((item) => item === null || ['string', 'number', 'boolean'].includes(typeof item))) {
+      return value.length ? value.map((item) => formatValue(item)).join(', ') : '-';
+    }
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+};
 
 const LOGS_LIMIT = 20;
 
@@ -218,6 +274,25 @@ const Settings = () => {
   // instead of the whole unfiltered log.
   const [entitySearchParams] = useSearchParams();
   const [logsEntityFilter, setLogsEntityFilter] = useState(entitySearchParams.get('entity') || '');
+  const [logsSortBy, setLogsSortBy] = useState<'created_at' | 'action' | 'entity' | 'user'>('created_at');
+  const [logsSortDir, setLogsSortDir] = useState<'asc' | 'desc'>('desc');
+  // Lazily resolved only when a viewed log's entity needs it (role_permissions /
+  // user_permission_overrides) - perm_id -> perm_key, so the diff can show real
+  // permission names instead of raw ids. Reuses the same systemService.getPermissions()
+  // call the Privileges pages already make; no new backend endpoint.
+  const [permsById, setPermsById] = useState<Record<number, string> | null>(null);
+
+  useEffect(() => {
+    const needsPermLookup = selectedLog?.entity === 'role_permissions' || selectedLog?.entity === 'user_permission_overrides';
+    if (!needsPermLookup || permsById) return;
+    void systemService.getPermissions().then((res) => {
+      if (res.success && res.data?.permissions) {
+        const map: Record<number, string> = {};
+        for (const p of res.data.permissions) map[p.perm_id] = p.perm_key;
+        setPermsById(map);
+      }
+    });
+  }, [selectedLog, permsById]);
 
   const totalCapitalPages = Math.max(1, Math.ceil(capitalTotal / capitalLimit));
   const totalDrawingPages = Math.max(1, Math.ceil(drawingTotal / drawingLimit));
@@ -549,7 +624,7 @@ const Settings = () => {
     }
 
     setLogsLoading(true);
-    const res = await systemService.getLogs(page, LOGS_LIMIT, logsStartDate, logsEndDate, logsEntityFilter || undefined);
+    const res = await systemService.getLogs(page, LOGS_LIMIT, logsStartDate, logsEndDate, logsEntityFilter || undefined, logsSortBy, logsSortDir);
     setLogsLoading(false);
     if (res.success && res.data?.logs) {
       setLogs(res.data.logs);
@@ -559,6 +634,47 @@ const Settings = () => {
       return;
     }
     showToast('error', 'Activity Logs', res.error || 'Failed to load logs');
+  };
+
+  // Clicking a column header sorts by it; clicking the already-active column flips
+  // direction instead of resetting to desc - real server-side sort, correct across
+  // pagination (not just re-ordering the current page's rows client-side).
+  const handleSortLogs = (column: 'created_at' | 'action' | 'entity' | 'user') => {
+    const nextDir = logsSortBy === column && logsSortDir === 'desc' ? 'asc' : logsSortBy === column ? 'desc' : 'desc';
+    setLogsSortBy(column);
+    setLogsSortDir(nextDir);
+    setLogsPage(1);
+    if (logsDisplayed) {
+      void (async () => {
+        setLogsLoading(true);
+        const res = await systemService.getLogs(1, LOGS_LIMIT, logsStartDate, logsEndDate, logsEntityFilter || undefined, column, nextDir);
+        setLogsLoading(false);
+        if (res.success && res.data?.logs) {
+          setLogs(res.data.logs);
+          setLogsPage(res.data.page || 1);
+          setLogsTotal(res.data.total || 0);
+        } else {
+          showToast('error', 'Activity Logs', res.error || 'Failed to load logs');
+        }
+      })();
+    }
+  };
+
+  const SortHeader = ({ column, label }: { column: 'created_at' | 'action' | 'entity' | 'user'; label: string }) => {
+    const active = logsSortBy === column;
+    const Icon = active ? (logsSortDir === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown;
+    return (
+      <th>
+        <button
+          type="button"
+          onClick={() => handleSortLogs(column)}
+          className={`inline-flex items-center gap-1 font-medium hover:text-slate-900 ${active ? 'text-slate-900' : 'text-slate-500'}`}
+        >
+          {label}
+          <Icon className={`h-3.5 w-3.5 ${active ? '' : 'opacity-40'}`} />
+        </button>
+      </th>
+    );
   };
 
   // Deep-linked straight to a filtered entity (e.g. from the Role/User Privileges pages'
@@ -2360,10 +2476,10 @@ const Settings = () => {
           <table className="min-w-full text-sm">
             <thead>
               <tr className="text-left text-slate-500">
-                <th>Action</th>
-                <th>Entity</th>
-                <th>User</th>
-                <th>Date</th>
+                <SortHeader column="action" label="Action" />
+                <SortHeader column="entity" label="Entity" />
+                <SortHeader column="user" label="User" />
+                <SortHeader column="created_at" label="Date" />
                 <th className="w-20">Action</th>
               </tr>
             </thead>
@@ -2371,7 +2487,7 @@ const Settings = () => {
               {logs.map((l) => (
                 <tr key={l.audit_id} className="border-t border-slate-200 text-slate-700">
                   <td>{l.action}</td>
-                  <td>{l.entity || '-'}</td>
+                  <td>{l.entity ? prettyLabel(l.entity) : '-'}</td>
                   <td>{l.username || l.user_id || '-'}</td>
                   <td>{new Date(l.created_at).toLocaleString()}</td>
                   <td>
@@ -2427,7 +2543,7 @@ const Settings = () => {
             </div>
             <div>
               <div className="text-xs font-semibold text-slate-500">Entity</div>
-              <div>{selectedLog.entity || '-'}</div>
+              <div>{selectedLog.entity ? prettyLabel(selectedLog.entity) : '-'}</div>
             </div>
             <div>
               <div className="text-xs font-semibold text-slate-500">User</div>
@@ -2448,48 +2564,6 @@ const Settings = () => {
           </div>
 
           {(() => {
-            const parseJsonLoose = (value: unknown): unknown => {
-              if (value === null || value === undefined) return value;
-              if (typeof value === 'string') {
-                const trimmed = value.trim();
-                if (!trimmed) return value;
-                try {
-                  return JSON.parse(trimmed);
-                } catch {
-                  return value;
-                }
-              }
-              return value;
-            };
-
-            const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
-              Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-
-            const prettyLabel = (key: string) =>
-              key
-                .replace(/_/g, ' ')
-                .replace(/\b\w/g, (m) => m.toUpperCase())
-                .trim();
-
-            const formatValue = (value: unknown): string => {
-              if (value === null || value === undefined) return '-';
-              if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-              if (typeof value === 'number') return String(value);
-              if (typeof value === 'string') {
-                const v = value.trim();
-                if (!v) return '-';
-                // Date-ish
-                const d = new Date(v);
-                if (!Number.isNaN(d.getTime()) && /^\d{4}-\d{2}-\d{2}/.test(v)) return d.toLocaleString();
-                return v;
-              }
-              try {
-                return JSON.stringify(value);
-              } catch {
-                return String(value);
-              }
-            };
-
             const oldAny = parseJsonLoose(selectedLog.old_value);
             const newAny = parseJsonLoose(selectedLog.new_value);
 
@@ -2505,6 +2579,47 @@ const Settings = () => {
               const b = newObj ? newObj[k] : undefined;
               return JSON.stringify(a) !== JSON.stringify(b);
             });
+
+            // role_permissions' `perm_ids` and user_permission_overrides' `overrides`
+            // are raw id arrays - meaningless to a non-technical reader. Resolve them
+            // to real permission names (permsById, lazily fetched above) instead of
+            // falling through to formatValue's generic array-join.
+            const renderFieldValue = (key: string, value: unknown) => {
+              if (selectedLog.entity === 'role_permissions' && key === 'perm_ids' && Array.isArray(value)) {
+                if (!permsById) return 'Loading permission names...';
+                if (value.length === 0) return '-';
+                return (
+                  <ul className="list-disc space-y-0.5 pl-4">
+                    {value.map((id) => (
+                      <li key={String(id)}>{permsById[Number(id)] ?? `#${id}`}</li>
+                    ))}
+                  </ul>
+                );
+              }
+              if (selectedLog.entity === 'user_permission_overrides' && key === 'overrides' && Array.isArray(value)) {
+                if (!permsById) return 'Loading permission names...';
+                if (value.length === 0) return '-';
+                return (
+                  <ul className="space-y-0.5">
+                    {(value as Array<{ permId?: number; effect?: string }>).map((row, i) => (
+                      <li key={i} className="flex items-center gap-1.5">
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                            row.effect === 'allow'
+                              ? 'bg-emerald-100 text-emerald-700'
+                              : 'bg-rose-100 text-rose-700'
+                          }`}
+                        >
+                          {row.effect || '?'}
+                        </span>
+                        {row.permId !== undefined ? permsById[row.permId] ?? `#${row.permId}` : '-'}
+                      </li>
+                    ))}
+                  </ul>
+                );
+              }
+              return formatValue(value);
+            };
 
             return (
               <div className="space-y-4">
@@ -2528,8 +2643,8 @@ const Settings = () => {
                           {changed.map((k) => (
                             <tr key={k} className="border-t border-slate-200">
                               <td className="px-3 py-2 font-medium text-slate-800">{prettyLabel(k)}</td>
-                              <td className="px-3 py-2 text-slate-700">{formatValue(oldObj ? oldObj[k] : null)}</td>
-                              <td className="px-3 py-2 text-slate-700">{formatValue(newObj ? newObj[k] : null)}</td>
+                              <td className="px-3 py-2 text-slate-700">{renderFieldValue(k, oldObj ? oldObj[k] : null)}</td>
+                              <td className="px-3 py-2 text-slate-700">{renderFieldValue(k, newObj ? newObj[k] : null)}</td>
                             </tr>
                           ))}
                         </tbody>

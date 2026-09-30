@@ -1303,13 +1303,27 @@ export const systemService = {
     limit = 50,
     startDate?: string,
     endDate?: string,
-    entity?: string
+    entity?: string,
+    sortBy: 'created_at' | 'action' | 'entity' | 'user' = 'created_at',
+    sortDir: 'asc' | 'desc' = 'desc'
   ): Promise<{ rows: AuditLogRow[]; total: number }> {
     const offset = (page - 1) * limit;
     const columns = await detectAuditLogColumns();
     const where: string[] = [];
     const filterValues: unknown[] = [];
     let param = 1;
+
+    // Whitelist lookup only - sortBy/sortDir are never interpolated directly, just used
+    // as keys here, same safety property the SELECT clause below already relies on for
+    // these same dynamically-resolved (but never user-supplied) column names.
+    const sortColumnMap: Record<typeof sortBy, string> = {
+      created_at: 'al.created_at',
+      action: `al.${columns.actionColumn}`,
+      entity: `al.${columns.entityColumn}`,
+      user: 'u.username',
+    };
+    const orderByColumn = sortColumnMap[sortBy] ?? 'al.created_at';
+    const orderByDirection = sortDir === 'asc' ? 'ASC' : 'DESC';
 
     if (startDate) {
       where.push(`al.created_at::date >= $${param++}::date`);
@@ -1345,7 +1359,7 @@ export const systemService = {
        FROM ims.audit_logs al
        LEFT JOIN ims.users u ON u.user_id = al.user_id
        ${whereSql}
-       ORDER BY al.created_at DESC
+       ORDER BY ${orderByColumn} ${orderByDirection} NULLS LAST, al.created_at DESC
        LIMIT $${limitParam} OFFSET $${offsetParam}`,
       [...filterValues, limit, offset]
     );
