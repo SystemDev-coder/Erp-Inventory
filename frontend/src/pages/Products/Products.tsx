@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { ColumnDef } from '@tanstack/react-table';
-import { ArrowLeftRight, BadgeAlert, Boxes, Edit3, Filter, GitMerge, MoreVertical, PackageCheck, PackageSearch, PackageX, RefreshCw, RotateCcw, Ruler, Store, Tags, Trash2 } from 'lucide-react';
+import { ArrowLeftRight, BadgeAlert, Boxes, Edit3, Filter, GitMerge, MoreVertical, PackageCheck, PackageSearch, PackageX, RefreshCw, RotateCcw, Ruler, Search, Store, Tags, Trash2 } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
 import { DataTable } from '../../components/ui/table/DataTable';
 import { ActionDropdown } from '../../components/ui/dropdown/ActionDropdown';
@@ -805,7 +805,7 @@ const Products = () => {
             </div>
 
             <div className="flex flex-wrap items-end gap-2 p-4">
-              <ItemField label="Attribute Name">
+              <ItemField label="Attribute Name *">
                 <SearchableCombobox<string>
                   value={itemsAttributeKey}
                   options={attributeDefinitions.map((a) => ({ value: a.key, label: a.label }))}
@@ -819,7 +819,7 @@ const Products = () => {
               {itemsAttributeKey && (() => {
                 const def = attributeDefinitions.find((a) => a.key === itemsAttributeKey);
                 return def?.data_type === 'select' && def.options?.length ? (
-                  <ItemField label="Value">
+                  <ItemField label="Value *">
                     <SearchableCombobox<string>
                       value={itemsAttributeValueDraft}
                       options={def.options.map((o) => ({ value: o, label: o }))}
@@ -828,7 +828,7 @@ const Products = () => {
                     />
                   </ItemField>
                 ) : (
-                  <ItemField label="Value">
+                  <ItemField label="Value *">
                     <input
                       placeholder={`e.g. ${def?.label || 'value'}`}
                       value={itemsAttributeValueDraft}
@@ -838,13 +838,14 @@ const Products = () => {
                   </ItemField>
                 );
               })()}
-              {itemsAttributeKey && itemsAttributeValueDraft.trim() && (
+              {itemsAttributeKey && (
                 <button
                   type="button"
                   onClick={applyItemsAttributeFilter}
-                  className="rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-white"
+                  disabled={!itemsAttributeValueDraft.trim()}
+                  className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Apply Filter
+                  <Search className="h-4 w-4" /> Apply Filter
                 </button>
               )}
               {itemsAttributeValue && (
@@ -890,7 +891,18 @@ const Products = () => {
               </div>
             )}
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+            {itemsDisplayed ? (
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                Displaying: <span className="font-medium text-slate-700 dark:text-slate-200">
+                  {itemsAttributeValue || itemsStockFilter || itemsSearch ? 'Filtered products view' : 'All products'}
+                </span>{' '}
+                ({itemsTotalRows} matching result{itemsTotalRows === 1 ? '' : 's'})
+              </p>
+            ) : (
+              <span />
+            )}
+            <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               disabled={loading}
@@ -932,6 +944,7 @@ const Products = () => {
                 New Product
               </button>
             )}
+            </div>
           </div>
           {!itemsDisplayed && !loading && (
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200">
