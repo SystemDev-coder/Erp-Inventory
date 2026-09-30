@@ -1302,7 +1302,8 @@ export const systemService = {
     page = 1,
     limit = 50,
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    entity?: string
   ): Promise<{ rows: AuditLogRow[]; total: number }> {
     const offset = (page - 1) * limit;
     const columns = await detectAuditLogColumns();
@@ -1317,6 +1318,10 @@ export const systemService = {
     if (endDate) {
       where.push(`al.created_at::date <= $${param++}::date`);
       filterValues.push(endDate);
+    }
+    if (entity) {
+      where.push(`al.${columns.entityColumn} = $${param++}`);
+      filterValues.push(entity);
     }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';

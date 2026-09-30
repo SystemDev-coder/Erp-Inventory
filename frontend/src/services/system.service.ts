@@ -194,7 +194,8 @@ export const systemService = {
     page = 1,
     limit = 20,
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    entity?: string
   ): Promise<ApiResponse<{ logs: SystemAuditLog[]; total: number; page: number; limit: number }>> {
     const params = new URLSearchParams({
       page: String(page),
@@ -203,6 +204,9 @@ export const systemService = {
     if (startDate && endDate) {
       params.set('startDate', startDate);
       params.set('endDate', endDate);
+    }
+    if (entity) {
+      params.set('entity', entity);
     }
     return apiClient.get(`${API.SYSTEM.LOGS}?${params.toString()}`);
   },

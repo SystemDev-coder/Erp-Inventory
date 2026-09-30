@@ -10,6 +10,7 @@ import { Modal } from '../../components/ui/modal/Modal';
 import { PageHeader } from '../../components/ui/layout';
 import { useToast } from '../../components/ui/toast/Toast';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
+import { FilterChip } from '../../components/ui/badge/FilterChip';
 import { AttributeDefinition, Category, Product, Unit, productService } from '../../services/product.service';
 import { deletePreviewService, DeleteImpactPreview } from '../../services/deletePreview.service';
 import { InventoryTransactionRow, inventoryService } from '../../services/inventory.service';
@@ -430,6 +431,18 @@ const Products = () => {
     void loadProducts(0, itemsSearch, itemsPageSize, itemsStockFilter, '', '');
   };
 
+  // "Reset Filters" - clears every active filter on the Products tab at once (search,
+  // stock-status card, attribute filter), instead of clearing each one individually.
+  const resetAllItemsFilters = () => {
+    setItemsSearch('');
+    setItemsStockFilter(null);
+    setItemsAttributeKey('');
+    setItemsAttributeValue('');
+    setItemsAttributeValueDraft('');
+    setItemsPageIndex(0);
+    void loadProducts(0, '', itemsPageSize, null, '', '');
+  };
+
   const loadTransactions = async (category: TxCategory = txCategory) => {
     if (txFromDate && txToDate && txFromDate > txToDate) {
       showToast('error', 'Inventory Transaction', 'From date cannot be after To date');
@@ -836,6 +849,44 @@ const Products = () => {
               </button>
             )}
           </div>
+          {(itemsSearch || itemsStockFilter || itemsAttributeValue) && (
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+              <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Active Criteria:</span>
+              {itemsSearch && (
+                <FilterChip
+                  label={`Search: "${itemsSearch}"`}
+                  onRemove={() => {
+                    setItemsSearch('');
+                    setItemsPageIndex(0);
+                    void loadProducts(0, '');
+                  }}
+                />
+              )}
+              {itemsStockFilter && (
+                <FilterChip
+                  label={`Stock Status: ${itemsStockFilter.replace('_', ' ')}`}
+                  onRemove={() => {
+                    setItemsStockFilter(null);
+                    setItemsPageIndex(0);
+                    void loadProducts(0, itemsSearch, itemsPageSize, null);
+                  }}
+                />
+              )}
+              {itemsAttributeValue && (
+                <FilterChip
+                  label={`${attributeDefinitions.find((a) => a.key === itemsAttributeKey)?.label || itemsAttributeKey}: ${itemsAttributeValue}`}
+                  onRemove={clearItemsAttributeFilter}
+                />
+              )}
+              <button
+                type="button"
+                onClick={resetAllItemsFilters}
+                className="ml-auto text-xs font-medium text-slate-500 underline hover:text-slate-800 hover:no-underline dark:text-slate-400 dark:hover:text-slate-100"
+              >
+                Reset Filters
+              </button>
+            </div>
+          )}
           <div className="flex flex-wrap items-center justify-end gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
             <button
               type="button"

@@ -53,6 +53,8 @@ export const translations = {
   nav_hr: { en: 'HR', so: 'Shaqaalaha' },
   nav_system: { en: 'System', so: 'Nidaamka' },
   nav_setting: { en: 'Setting', so: 'Dejinta' },
+  nav_role_privileges: { en: 'Role Privileges', so: 'Awoodaha Doorka' },
+  nav_user_privileges: { en: 'User Privileges', so: 'Awoodaha Isticmaalaha' },
   nav_reports: { en: 'Reports', so: 'Warbixinnada' },
   nav_trash: { en: 'Trash', so: 'Qashinka' },
   sidebar_lock: { en: 'Lock', so: 'Xidh' },

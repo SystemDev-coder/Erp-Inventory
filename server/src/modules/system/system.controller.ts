@@ -247,12 +247,15 @@ export const getRolePermissions = asyncHandler(async (req: AuthRequest, res: Res
 export const updateRolePermissions = asyncHandler(async (req: AuthRequest, res: Response) => {
   const roleId = parseId(req.params.id, 'Role ID');
   const input = updateRolePermissionsSchema.parse(req.body);
+  const before = await systemService.listRolePermissions(roleId);
+  const beforePermIds = before.filter((p) => p.has_permission).map((p) => p.perm_id);
   await systemService.replaceRolePermissions(roleId, input.permIds);
   await logAudit({
     userId: req.user?.userId ?? null,
     action: 'update',
     entity: 'role_permissions',
     entityId: roleId,
+    oldValue: { perm_ids: beforePermIds },
     newValue: { perm_ids: input.permIds },
     ip: req.ip,
     userAgent: req.get('user-agent') || null,
@@ -271,12 +274,17 @@ export const getUserPermissions = asyncHandler(async (req: AuthRequest, res: Res
 export const updateUserPermissionOverrides = asyncHandler(async (req: AuthRequest, res: Response) => {
   const userId = parseId(req.params.id, 'User ID');
   const input = updateUserPermissionOverridesSchema.parse(req.body);
+  const before = await systemService.listUserPermissions(userId);
+  const beforeOverrides = before
+    .filter((p) => p.override_effect)
+    .map((p) => ({ permId: p.perm_id, effect: p.override_effect }));
   await systemService.replaceUserPermissionOverrides(userId, input.overrides);
   await logAudit({
     userId: req.user?.userId ?? null,
     action: 'update',
     entity: 'user_permission_overrides',
     entityId: userId,
+    oldValue: { overrides: beforeOverrides },
     newValue: { overrides: input.overrides },
     ip: req.ip,
     userAgent: req.get('user-agent') || null,
@@ -342,9 +350,9 @@ export const deletePermission = asyncHandler(async (req: AuthRequest, res: Respo
 });
 
 export const listLogs = asyncHandler(async (req: AuthRequest, res: Response) => {
-  const { page, limit, startDate, endDate } = listLogsQuerySchema.parse(req.query);
-  const { rows, total } = await systemService.listLogs(page, limit, startDate, endDate);
-  return ApiResponse.success(res, { logs: rows, total, page, limit, startDate: startDate || null, endDate: endDate || null });
+  const { page, limit, startDate, endDate, entity } = listLogsQuerySchema.parse(req.query);
+  const { rows, total } = await systemService.listLogs(page, limit, startDate, endDate, entity);
+  return ApiResponse.success(res, { logs: rows, total, page, limit, startDate: startDate || null, endDate: endDate || null, entity: entity || null });
 });
 
 export const deleteLog = asyncHandler(async (req: AuthRequest, res: Response) => {

@@ -1,4 +1,5 @@
-import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router';
 import { CheckSquare, Home, Lock, Pencil, Plus, Printer, Settings2, Shield, Trash2, Users } from 'lucide-react';
 import { PageHeader } from '../../components/ui/layout';
 import { Tabs } from '../../components/ui/tabs';
@@ -36,14 +37,6 @@ const emptyCompanyForm = {
 const formatMoney = (value: number) =>
   `$${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-// NEW: Lazy-load the privileges editor so it can't affect initial app load/hosting stability
-const RolePrivilegesTab = lazy(() =>
-  import('./RolePrivilegesTab').then((m) => ({ default: m.RolePrivilegesTab }))
-);
-// NEW: Lazy-load user privileges editor
-const UserPrivilegesTab = lazy(() =>
-  import('./UserPrivilegesTab').then((m) => ({ default: m.UserPrivilegesTab }))
-);
 type ConfirmTarget =
   | { type: 'user'; payload: SystemUser }
   | { type: 'role'; payload: SystemRole }
@@ -53,6 +46,7 @@ const System = () => {
   const { showToast } = useToast();
   const { permissions: currentPermissions, user } = useAuth();
   const { t } = useLanguage();
+  const navigate = useNavigate();
   // Business Profile is Developer-only: choosing/changing a client's
   // business type is a one-time deployment-setup decision (it wholesale
   // resets product config defaults), not a day-to-day admin task - same
@@ -361,8 +355,6 @@ const System = () => {
 
   const [activeTabId, setActiveTabId] = useState('company');
   const [tabsKey, setTabsKey] = useState(0);
-  const [privilegesPrefillRoleId, setPrivilegesPrefillRoleId] = useState<number | null>(null);
-  const [privilegesPrefillUserId, setPrivilegesPrefillUserId] = useState<number | null>(null);
   const [users, setUsers] = useState<SystemUser[]>([]);
   const [roles, setRoles] = useState<SystemRole[]>([]);
   const [permissions, setPermissions] = useState<SystemPermission[]>([]);
@@ -426,16 +418,6 @@ const System = () => {
   const canCreateRoles = hasAnyPerm(['system.roles.manage', 'roles.create']);
   const canUpdateRoles = hasAnyPerm(['system.roles.manage', 'roles.update']);
   const canDeleteRoles = hasAnyPerm(['system.roles.manage', 'roles.delete']);
-
-  const canViewPrivileges = canViewRoles && hasAnyPerm(['system.permissions.manage', 'permissions.view']);
-  const canUpdateRolePermissions = hasAnyPerm(['system.roles.manage', 'roles.update']);
-  const canUpdateUserPrivileges = hasAnyPerm(['system.permissions.manage', 'users.update', 'system.users.manage']);
-
-  // NEW: Programmatic tab switch helper (Tabs is uncontrolled)
-  const goToTab = (tabId: string) => {
-    setActiveTabId(tabId);
-    setTabsKey((k) => k + 1);
-  };
 
   const loadUsers = async () => {
     const res = await systemService.getUsers();
@@ -625,17 +607,14 @@ const System = () => {
     showToast('success', 'Roles', editingRole ? 'Role updated' : 'Role created');
     const nextRoles = await loadRoles();
 
-    // NEW: After creating a role, jump to Privileges so admin can assign permissions immediately
-    if (!editingRole && canViewPrivileges) {
+    // After creating a role, jump to the standalone Role Privileges page so admin can
+    // assign permissions immediately.
+    if (!editingRole && canViewRoles) {
       const createdRoleId = (res as any).data?.role?.role_id as number | undefined;
-      if (createdRoleId) {
-        setPrivilegesPrefillRoleId(createdRoleId);
-      } else {
-        // fallback: try to find by name/code
-        const found = nextRoles.find((r) => (r.role_name || '').toLowerCase() === roleName.toLowerCase());
-        setPrivilegesPrefillRoleId(found?.role_id ?? null);
-      }
-      goToTab('role-privileges');
+      const targetRoleId =
+        createdRoleId ??
+        nextRoles.find((r) => (r.role_name || '').toLowerCase() === roleName.toLowerCase())?.role_id;
+      navigate(targetRoleId ? `/role-privileges?roleId=${targetRoleId}` : '/role-privileges');
     }
   };
 
@@ -1159,14 +1138,10 @@ const System = () => {
                       <td>{u.created_at ? String(u.created_at).slice(0, 10) : '-'}</td>
 	                      <td>{u.is_active ? 'Active' : 'Inactive'}</td>
 	                      <td className="space-x-2 py-2">
-	                        {/* NEW: Jump to user privileges editor */}
-	                        {canViewPrivileges && (
+	                        {/* Jump to the standalone User Privileges page, pre-selected */}
+	                        {hasAnyPerm(['system.permissions.manage', 'permissions.view']) && (
 	                          <button
-	                            onClick={async () => {
-	                              if (!users.length) await loadUsers();
-	                              setPrivilegesPrefillUserId(u.user_id);
-	                              goToTab('privileges');
-	                            }}
+	                            onClick={() => navigate(`/user-privileges?userId=${u.user_id}`)}
 	                            className="px-2 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
 	                            title="Edit privileges"
 	                          >
@@ -1244,13 +1219,10 @@ const System = () => {
 	                      <td>{r.role_name}</td>
 	                      <td>{r.description || '-'}</td>
 	                      <td className="space-x-2 py-2">
-	                        {/* NEW: Jump to privileges editor for this role */}
-	                        {canViewPrivileges && (
+	                        {/* Jump to the standalone Role Privileges page, pre-selected */}
+	                        {canViewRoles && (
 	                          <button
-	                            onClick={() => {
-	                              setPrivilegesPrefillRoleId(r.role_id);
-	                              goToTab('role-privileges');
-	                            }}
+	                            onClick={() => navigate(`/role-privileges?roleId=${r.role_id}`)}
 	                            className="px-2 py-1 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
 	                            title="Edit privileges"
 	                          >
@@ -1278,64 +1250,8 @@ const System = () => {
         </div>
       ),
 	    },
-	    // NEW: Privileges tab (role → permissions) is lazy-loaded for stability
-	    ...(canViewPrivileges
-	      ? [
-	          {
-	            id: 'privileges',
-	            label: t('tab_privileges'),
-	            icon: CheckSquare,
-	            badge: 0,
-	            content: (
-	              <Suspense
-	                fallback={
-	                  <div className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
-	                    Loading privileges editor...
-	                  </div>
-	                }
-	              >
-	                <UserPrivilegesTab
-	                  users={users}
-	                  canUpdateUserPrivileges={canUpdateUserPrivileges}
-	                  loadUsers={loadUsers}
-	                  initialUserId={privilegesPrefillUserId}
-	                  onUserSelected={(id) => setPrivilegesPrefillUserId(id)}
-	                />
-	              </Suspense>
-	            ),
-	          },
-	        ]
-	      : []),
-	    // NEW: Role Privileges tab (role → permissions) is lazy-loaded for stability
-	    ...(canViewPrivileges
-	      ? [
-	          {
-	            id: 'role-privileges',
-	            label: t('tab_role_privileges'),
-	            icon: CheckSquare,
-	            badge: 0,
-	            content: (
-	              <Suspense
-	                fallback={
-	                  <div className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
-	                    Loading role privileges editor...
-	                  </div>
-	                }
-	              >
-	                <RolePrivilegesTab
-	                  roles={roles}
-	                  permissions={permissions}
-	                  canUpdateRolePermissions={canUpdateRolePermissions}
-	                  loadRoles={loadRoles}
-	                  loadPermissions={loadPermissions}
-	                  initialRoleId={privilegesPrefillRoleId}
-	                  onRoleSelected={(id) => setPrivilegesPrefillRoleId(id)}
-	                />
-	              </Suspense>
-	            ),
-	          },
-	        ]
-	      : []),
+	    // Role Privileges and User Privileges are now standalone pages (/role-privileges,
+	    // /user-privileges), reachable from the sidebar - see frontend/src/pages/Privileges/.
 	    ...(SHOW_PERMISSION_TAB
 	      ? [
 	          {

@@ -213,6 +213,11 @@ const Settings = () => {
   const [logsTotal, setLogsTotal] = useState(0);
   // NEW: Selected audit log entry for details view.
   const [selectedLog, setSelectedLog] = useState<SystemAuditLog | null>(null);
+  // Lets the new Role/User Privileges pages' "Audit Logs" button deep-link straight to
+  // history for just privilege changes, e.g. /settings?tab=activity-logs&entity=role_permissions,
+  // instead of the whole unfiltered log.
+  const [entitySearchParams] = useSearchParams();
+  const [logsEntityFilter, setLogsEntityFilter] = useState(entitySearchParams.get('entity') || '');
 
   const totalCapitalPages = Math.max(1, Math.ceil(capitalTotal / capitalLimit));
   const totalDrawingPages = Math.max(1, Math.ceil(drawingTotal / drawingLimit));
@@ -544,7 +549,7 @@ const Settings = () => {
     }
 
     setLogsLoading(true);
-    const res = await systemService.getLogs(page, LOGS_LIMIT, logsStartDate, logsEndDate);
+    const res = await systemService.getLogs(page, LOGS_LIMIT, logsStartDate, logsEndDate, logsEntityFilter || undefined);
     setLogsLoading(false);
     if (res.success && res.data?.logs) {
       setLogs(res.data.logs);
@@ -555,6 +560,13 @@ const Settings = () => {
     }
     showToast('error', 'Activity Logs', res.error || 'Failed to load logs');
   };
+
+  // Deep-linked straight to a filtered entity (e.g. from the Role/User Privileges pages'
+  // "Audit Logs" button) - load immediately instead of waiting for a manual Display click.
+  useEffect(() => {
+    if (entitySearchParams.get('entity')) void loadLogs(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const createClosingPeriod = async () => {
     if (!closingForm.periodFrom || !closingForm.periodTo) {
@@ -2312,6 +2324,25 @@ const Settings = () => {
               {logsLoading ? 'Loading...' : 'Display'}
             </button>
           </div>
+          {logsEntityFilter && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-primary-50 px-3 py-1.5 text-xs font-medium text-primary-700">
+              Filtering: {logsEntityFilter}
+              <button
+                type="button"
+                onClick={() => {
+                  setLogsEntityFilter('');
+                  setLogsDisplayed(false);
+                  setLogs([]);
+                  setLogsPage(1);
+                  setLogsTotal(0);
+                }}
+                className="text-primary-600 hover:text-primary-900"
+                aria-label="Clear entity filter"
+              >
+                ×
+              </button>
+            </span>
+          )}
         </div>
       </div>
 
