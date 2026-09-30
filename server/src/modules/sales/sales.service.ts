@@ -1107,6 +1107,15 @@ export const salesService = {
 
   async listItems(saleId: number): Promise<SaleItem[]> {
     const schema = await getSalesSchemaMeta();
+    // Fixed: was an INNER JOIN to ims.items, which has an RLS soft-delete
+    // policy (is_deleted = 0). A sale is a historical record - if the
+    // product it referenced is later deleted from the catalog, the sale's
+    // own line item must still show up (with a "(deleted)" fallback name),
+    // not silently vanish and make the whole document look item-less.
+    // Confirmed on production: this broke both printing ("Cannot print: no
+    // items found for this document") and editing for any sale referencing
+    // a since-deleted product - LEFT JOIN + COALESCE fixes both call sites
+    // at once, since they both go through this same function.
     return queryMany<SaleItem>(
       `SELECT
          si.sale_item_id,
@@ -1115,9 +1124,9 @@ export const salesService = {
          si.quantity,
          si.unit_price,
          si.line_total,
-         p.name AS item_name
+         COALESCE(p.name, 'Item #' || si.${schema.saleItemIdColumn}::text || ' (deleted)') AS item_name
          FROM ims.sale_items si
-         JOIN ims.items p ON p.item_id = si.${schema.saleItemIdColumn}
+         LEFT JOIN ims.items p ON p.item_id = si.${schema.saleItemIdColumn}
         WHERE si.sale_id = $1
         ORDER BY si.sale_item_id`,
       [saleId]
