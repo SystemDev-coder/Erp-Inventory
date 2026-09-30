@@ -6,6 +6,7 @@ import { syncSystemAccountBalancesWithClient } from '../../utils/systemAccounts'
 import { postGl } from '../../utils/glPosting';
 import { ensureCoaAccounts } from '../../utils/coaDefaults';
 import { usersService, UserRow } from '../users/users.service';
+import { sessionService } from '../session/session.service';
 import { getUploadedImageUrl } from '../../config/cloudinary';
 import {
   CreatePermissionInput,
@@ -1080,6 +1081,29 @@ export const systemService = {
         [roleId, permIds]
       );
     });
+
+    // Fixed: invalidatePermissionCache() existed (session.service.ts) but had
+    // zero call sites anywhere in the codebase - a role's permission change
+    // never reached any user already holding that role until their 5-minute
+    // in-memory cache (PERMISSION_CACHE_TTL_MS, keyed by userId, independent
+    // of login/session) happened to expire. Confirmed during verification:
+    // even a brand-new login right after the change still returned the
+    // stale permission set, since login itself reads/populates the same
+    // cache rather than bypassing it. Every user currently holding this
+    // role needs their cache dropped so their very next request re-resolves
+    // permissions from the database instead of serving stale data.
+    // user_id is a bigint column - node-postgres returns bigint as a JS
+    // string to avoid precision loss, not a number (the same class of bug
+    // already fixed 4x elsewhere in this codebase for item-id lookups -
+    // see erp_id_string_vs_number_bug_class). The cache is keyed by
+    // req.user.userId, a real number decoded from the JWT - Map.delete('34')
+    // silently does nothing against a key set as Map.set(34, ...), so this
+    // MUST be Number()-cast or the whole fix above is a no-op.
+    const affectedUsers = await queryMany<{ user_id: number }>(
+      `SELECT user_id FROM ims.users WHERE role_id = $1`,
+      [roleId]
+    );
+    await Promise.all(affectedUsers.map((u) => sessionService.invalidatePermissionCache(Number(u.user_id))));
   },
 
   // NEW: Effective permissions for a user + their explicit overrides (does NOT use ims.user_permissions)
@@ -1154,6 +1178,11 @@ export const systemService = {
         [userId, permIds, effects]
       );
     });
+
+    // Fixed: same stale-cache bug as replaceRolePermissions above - a
+    // per-user override change never took effect for up to 5 minutes,
+    // not even after re-login, until this cache entry was dropped.
+    await sessionService.invalidatePermissionCache(userId);
   },
 
   async listPermissions(): Promise<PermissionRow[]> {

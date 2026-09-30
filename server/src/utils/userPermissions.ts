@@ -83,11 +83,11 @@ export const getUserPermissionSet = async (
   userId: number,
   roleId: number
 ): Promise<Set<string>> => {
-  const cached = await sessionService.getCachedPermissions(userId);
+  const cached = await sessionService.getCachedPermissions(userId, roleId);
   if (cached) return new Set(cached);
 
   const permissionSet = await loadUserPermissions(userId, roleId);
-  await sessionService.cachePermissions(userId, Array.from(permissionSet));
+  await sessionService.cachePermissions(userId, roleId, Array.from(permissionSet));
   return permissionSet;
 };
 

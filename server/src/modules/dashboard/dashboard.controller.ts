@@ -25,14 +25,14 @@ export class DashboardController {
     let permissions: string[];
     let roleName = 'User';
 
-    const cached = await sessionService.getCachedPermissions(req.user.userId);
+    const cached = await sessionService.getCachedPermissions(req.user.userId, req.user.roleId);
     if (cached) {
       permissions = cached;
     } else {
       const data = await authService.getUserWithPermissions(req.user.userId);
       permissions = data?.permissions ?? [];
       roleName = data?.role?.role_name ?? roleName;
-      await sessionService.cachePermissions(req.user.userId, permissions);
+      await sessionService.cachePermissions(req.user.userId, req.user.roleId, permissions);
     }
 
     if (roleName === 'User') {
@@ -93,13 +93,13 @@ export class DashboardController {
     }
 
     let permissions: string[];
-    const cached = await sessionService.getCachedPermissions(req.user.userId);
+    const cached = await sessionService.getCachedPermissions(req.user.userId, req.user.roleId);
     if (cached) {
       permissions = cached;
     } else {
       const data = await authService.getUserWithPermissions(req.user.userId);
       permissions = data?.permissions ?? [];
-      await sessionService.cachePermissions(req.user.userId, permissions);
+      await sessionService.cachePermissions(req.user.userId, req.user.roleId, permissions);
     }
 
     const cardId = String(req.params.cardId || '').trim();

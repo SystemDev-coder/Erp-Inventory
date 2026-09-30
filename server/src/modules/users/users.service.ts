@@ -2,6 +2,7 @@ import { queryMany, queryOne } from '../../db/query';
 import { withTransaction } from '../../db/withTx';
 import { hashPassword } from '../../utils/password';
 import { ApiError } from '../../utils/ApiError';
+import { sessionService } from '../session/session.service';
 import {
   UserCreateInput,
   UserGenerateFromEmployeeInput,
@@ -281,6 +282,16 @@ export const usersService = {
         }
       }
     });
+
+    // Fixed: same stale-permission-cache bug as replaceRolePermissions/
+    // replaceUserPermissionOverrides in system.service.ts - changing a
+    // user's role changes their effective permission set just as much as
+    // editing the role's own permissions does, but this call site never
+    // dropped their cache entry either. Covers both update paths that
+    // share this function (/api/system/users/:id and /api/users/:id).
+    if (input.roleId !== undefined) {
+      await sessionService.invalidatePermissionCache(id);
+    }
 
     return getUserRow(id);
   },
