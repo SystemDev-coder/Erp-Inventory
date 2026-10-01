@@ -4,14 +4,21 @@ import { requirePerm } from '../../middlewares/requirePerm';
 import { uploadProductImage as uploadProductImageMiddleware } from '../../config/cloudinary';
 import {
   listProducts,
+  getProductsSummary,
   getProduct,
   createProduct,
   updateProduct,
   deleteProduct,
+  mergeProducts,
   listCategories,
   createCategory,
   updateCategory,
   deleteCategory,
+  seedDefaultCategories,
+  listAttributeDefinitions,
+  createAttributeDefinition,
+  updateAttributeDefinition,
+  deleteAttributeDefinition,
   listUnits,
   createUnit,
   updateUnit,
@@ -22,23 +29,38 @@ import {
   deleteTax,
   uploadProductImage,
   deleteProductImage,
+  getProductByBarcode,
+  exportProducts,
+  listProductVariants,
+  addProductVariant,
+  generateProductVariants,
 } from './products.controller';
 
 const router = Router();
 
 router.use(requireAuth);
 
-// Categories
-router.get('/categories', requirePerm('items.view'), listCategories);
-router.post('/categories', requirePerm('items.create'), createCategory);
-router.put('/categories/:id', requirePerm('items.update'), updateCategory);
-router.delete('/categories/:id', requirePerm('items.delete'), deleteCategory);
+// Categories - own permission family (categories.*), independent of items.* so the
+// Categories tab can be granted/denied separately from the rest of Products. See
+// server/sql/20260930a_products_tab_permissions.sql for the one-time backfill that
+// keeps every existing items.*-holder's access unchanged on cutover.
+router.get('/categories', requirePerm('categories.view'), listCategories);
+router.post('/categories', requirePerm('categories.create'), createCategory);
+router.post('/categories/seed-defaults', requirePerm('categories.create'), seedDefaultCategories);
+router.put('/categories/:id', requirePerm('categories.update'), updateCategory);
+router.delete('/categories/:id', requirePerm('categories.delete'), deleteCategory);
 
-// Units
-router.get('/units', requirePerm('items.view'), listUnits);
-router.post('/units', requirePerm('items.create'), createUnit);
-router.put('/units/:id', requirePerm('items.update'), updateUnit);
-router.delete('/units/:id', requirePerm('items.delete'), deleteUnit);
+// Attribute definitions (Category Configuration Engine)
+router.get('/attributes', requirePerm('items.view'), listAttributeDefinitions);
+router.post('/attributes', requirePerm('items.create'), createAttributeDefinition);
+router.put('/attributes/:id', requirePerm('items.update'), updateAttributeDefinition);
+router.delete('/attributes/:id', requirePerm('items.delete'), deleteAttributeDefinition);
+
+// Units - own permission family (units.*), same reasoning as Categories above.
+router.get('/units', requirePerm('units.view'), listUnits);
+router.post('/units', requirePerm('units.create'), createUnit);
+router.put('/units/:id', requirePerm('units.update'), updateUnit);
+router.delete('/units/:id', requirePerm('units.delete'), deleteUnit);
 
 // Taxes
 router.get('/taxes', requirePerm('items.view'), listTaxes);
@@ -48,10 +70,19 @@ router.delete('/taxes/:id', requirePerm('items.delete'), deleteTax);
 
 // Products
 router.get('/', requirePerm('items.view'), listProducts);
+router.get('/export', requirePerm('items.view'), exportProducts);
+router.get('/summary', requirePerm('items.view'), getProductsSummary);
+router.get('/barcode/:barcode', requirePerm('items.view'), getProductByBarcode);
 router.get('/:id', requirePerm('items.view'), getProduct);
 router.post('/', requirePerm('items.create'), createProduct);
 router.put('/:id', requirePerm('items.update'), updateProduct);
 router.delete('/:id', requirePerm('items.delete'), deleteProduct);
+router.post('/:id/merge-into/:targetId', requirePerm('items.update'), requirePerm('items.delete'), mergeProducts);
+
+// Product Variants
+router.get('/:id/variants', requirePerm('items.view'), listProductVariants);
+router.post('/:id/variants', requirePerm('items.create'), addProductVariant);
+router.post('/:id/variants/generate', requirePerm('items.create'), generateProductVariants);
 
 // Product Image Upload
 router.post(

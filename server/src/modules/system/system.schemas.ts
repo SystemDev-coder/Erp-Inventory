@@ -94,6 +94,12 @@ export const listLogsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional().default(50),
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  // Lets a caller deep-link straight to e.g. privilege-change history
+  // (entity='role_permissions'/'user_permission_overrides') instead of the
+  // whole unfiltered log.
+  entity: z.string().trim().min(1).max(100).optional(),
+  sortBy: z.enum(['created_at', 'action', 'entity', 'user']).optional().default('created_at'),
+  sortDir: z.enum(['asc', 'desc']).optional().default('desc'),
 }).refine(
   (value) => !value.startDate || !value.endDate || value.startDate <= value.endDate,
   { message: 'startDate must be before or equal to endDate', path: ['endDate'] }

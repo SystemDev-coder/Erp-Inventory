@@ -7,6 +7,8 @@ import { financeService } from '../../../services/finance.service';
 import type { DateRange, ModalReportState } from '../types';
 import { formatCurrency, formatDateOnly, formatQuantity, toRecordRows, defaultReportRange, withReportTruncation, type ReportTruncationMeta } from '../reportUtils';
 import { useBranch } from '../../../context/BranchContext';
+import { useLanguage } from '../../../context/LanguageContext';
+import type { TranslationKey } from '../../../translations';
 
 type ProfitCardId = 'income-statement' | 'profit-by-period' | 'profit-analysis';
 type ProfitGroupBy = 'customer' | 'item' | 'store';
@@ -16,6 +18,18 @@ const profitCards: Array<{ id: ProfitCardId; title: string; hint: string }> = [
   { id: 'profit-analysis', title: 'Profit Analysis', hint: 'Group by customer, item, or store' },
   { id: 'profit-by-period', title: 'Profit by Closing Period', hint: 'Closed periods within range' },
 ];
+
+const PROFIT_CARD_TITLE_KEYS: Record<ProfitCardId, TranslationKey> = {
+  'income-statement': 'rcard_income_statement_title',
+  'profit-analysis': 'rcard_profit_analysis_title',
+  'profit-by-period': 'rcard_profit_by_period_title',
+};
+
+const PROFIT_CARD_HINT_KEYS: Record<ProfitCardId, TranslationKey> = {
+  'income-statement': 'hint_between_two_dates',
+  'profit-analysis': 'hint_group_by',
+  'profit-by-period': 'hint_closed_periods',
+};
 
 const statementColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'section', header: 'Section' },
@@ -51,7 +65,7 @@ const profitCustomerColumns: ReportColumn<Record<string, unknown>>[] = [
 ];
 
 const profitByItemColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'item_name', header: 'Item' },
+  { key: 'item_name', header: 'Product' },
   { key: 'quantity_sold', header: 'Qty Sold', align: 'right', render: (row) => formatQuantity(row.quantity_sold) },
   { key: 'sales_amount', header: 'Sales', align: 'right', render: (row) => formatCurrency(row.sales_amount) },
   { key: 'cost_amount', header: 'Cost', align: 'right', render: (row) => formatCurrency(row.cost_amount) },
@@ -80,6 +94,7 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
     onOpenModal(withReportTruncation(report, meta, legacy));
 
   const { activeBranchId } = useBranch();
+  const { t } = useLanguage();
   const [expandedCardId, setExpandedCardId] = useState<ProfitCardId | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<ProfitCardId | null>(null);
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
@@ -121,7 +136,7 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
           }
         }
         if (!inventory.success || !inventory.data) {
-          setOptionsError((prev) => prev || inventory.error || inventory.message || 'Failed to load item options');
+          setOptionsError((prev) => prev || inventory.error || inventory.message || 'Failed to load product options');
         } else {
           setProducts(inventory.data.products || []);
           setStores(inventory.data.stores || []);
@@ -304,7 +319,7 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
         filters = {
           ...filters,
           'Group By': 'Customer',
-          Item: resolveLabel(products, analysisItemId),
+          Product: resolveLabel(products, analysisItemId),
           ...(storeFiltersEnabled ? { Store: resolveLabel(stores, analysisStoreId) } : {}),
         };
       } else if (analysisGroupBy === 'item') {
@@ -315,12 +330,12 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
           customerId: selectedCustomerId,
           storeId: selectedStoreId,
         });
-        title = 'Profit by Item';
+        title = 'Profit by Product';
         fileName = 'profit-by-item';
         columns = profitByItemColumns;
         filters = {
           ...filters,
-          'Group By': 'Item',
+          'Group By': 'Product',
           Customer: resolveLabel(customers, analysisCustomerId),
           ...(storeFiltersEnabled ? { Store: resolveLabel(stores, analysisStoreId) } : {}),
         };
@@ -342,7 +357,7 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
           ...filters,
           'Group By': 'Store',
           Customer: resolveLabel(customers, analysisCustomerId),
-          Item: resolveLabel(products, analysisItemId),
+          Product: resolveLabel(products, analysisItemId),
         };
       }
 
@@ -424,7 +439,7 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
             {renderFilterButtons(
               [
                 { mode: 'customer', label: 'By Customer' },
-                { mode: 'item', label: 'By Item' },
+                { mode: 'item', label: 'By Product' },
                 ...(storeFiltersEnabled ? [{ mode: 'store' as const, label: 'By Store' }] : []),
               ],
               analysisGroupBy,
@@ -438,13 +453,13 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
               }`}
             >
               <label className="space-y-1 text-xs font-semibold text-slate-600">
-                <span>Item</span>
+                <span>Product</span>
                 <select
                   value={analysisItemId}
                   onChange={(event) => setAnalysisItemId(event.target.value)}
                   className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"
                 >
-                  <option value="">All Items</option>
+                  <option value="">All Products</option>
                   {products.map((option) => (
                     <option key={`analysis-item-${option.id}`} value={option.id}>
                       {option.label}
@@ -531,13 +546,13 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
                 </select>
               </label>
               <label className="space-y-1 text-xs font-semibold text-slate-600">
-                <span>Item</span>
+                <span>Product</span>
                 <select
                   value={analysisItemId}
                   onChange={(event) => setAnalysisItemId(event.target.value)}
                   className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-primary-500 focus:outline-none"
                 >
-                  <option value="">All Items</option>
+                  <option value="">All Products</option>
                   {products.map((option) => (
                     <option key={`analysis-item-${option.id}`} value={option.id}>
                       {option.label}
@@ -578,8 +593,8 @@ export function ProfitReportsTab({ onOpenModal }: Props) {
           className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-primary-900 to-primary-700 px-5 py-4 text-left text-white"
         >
           <div>
-            <p className="text-xl font-semibold leading-tight">{card.title}</p>
-            <p className="mt-1 text-xs font-medium text-white/85">{card.hint}</p>
+            <p className="text-xl font-semibold leading-tight">{t(PROFIT_CARD_TITLE_KEYS[card.id])}</p>
+            <p className="mt-1 text-xs font-medium text-white/85">{t(PROFIT_CARD_HINT_KEYS[card.id])}</p>
           </div>
           <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
         </button>

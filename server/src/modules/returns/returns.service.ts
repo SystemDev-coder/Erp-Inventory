@@ -94,6 +94,7 @@ export interface ReturnItemOption {
   returned_qty?: number;
   on_hand_qty?: number;
   available_qty?: number;
+  attributes?: Record<string, string | number>;
 }
 
 export interface CreateSalesReturnInput {
@@ -1352,7 +1353,8 @@ export const returnsService = {
                 COALESCE(price.unit_price, i.sell_price, i.cost_price, 0)::numeric(14,2) AS sell_price,
                 COALESCE(sold.sold_qty, 0)::int AS sold_qty,
                 COALESCE(returned.returned_qty, 0)::int AS returned_qty,
-                GREATEST(COALESCE(sold.sold_qty, 0) - COALESCE(returned.returned_qty, 0), 0)::int AS available_qty
+                GREATEST(COALESCE(sold.sold_qty, 0) - COALESCE(returned.returned_qty, 0), 0)::int AS available_qty,
+                COALESCE(i.attributes, '{}'::jsonb) AS attributes
              FROM sold
              JOIN ims.items i ON i.item_id = sold.item_id
              LEFT JOIN returned ON returned.item_id = sold.item_id
@@ -1482,7 +1484,8 @@ export const returnsService = {
                      ),
                      0
                    )
-                 )::int AS available_qty
+                 )::int AS available_qty,
+                 COALESCE(i.attributes, '{}'::jsonb) AS attributes
               FROM purchased
               JOIN ims.items i ON i.item_id = purchased.item_id
               LEFT JOIN LATERAL (
@@ -2216,7 +2219,6 @@ export const returnsService = {
         try {
             await client.query('BEGIN');
             await client.query(`SET LOCAL app.include_deleted = '0'`);
-            await client.query(`SET LOCAL app.allow_soft_void = '1'`);
             const hasBalanceColumn = await hasSalesReturnBalanceAdjustment(client);
             const existing = await client.query<{
                 sr_id: number;
@@ -2272,6 +2274,14 @@ export const returnsService = {
                 });
             }
 
+            // Delete-protection audit (Phase 10 Batch 1, Finding F7): the
+            // rls_soft_delete policy on GL/ledger/return-item tables gates
+            // writing is_deleted=1 on this same session var - it was left at
+            // '0' above (needed for the "correct totals" reads just done)
+            // and a previous, misnamed fix attempt (app.allow_soft_void,
+            // which the policy never references) never actually addressed
+            // it. Flip it to '1' now, before every soft-delete write below.
+            await client.query(`SET LOCAL app.include_deleted = '1'`);
             await softVoidReturnLinkedRows(client, {
                 branchId: Number(current.branch_id),
                 refTable: 'sales_returns',
@@ -2974,7 +2984,6 @@ export const returnsService = {
             await client.query('BEGIN');
             // Soft-delete triggers can toggle this session flag; keep deleted rows hidden for correct totals.
             await client.query(`SET LOCAL app.include_deleted = '0'`);
-            await client.query(`SET LOCAL app.allow_soft_void = '1'`);
             const hasBalanceColumn = await hasPurchaseReturnBalanceAdjustment(client);
             const existing = await client.query<{
                 pr_id: number;
@@ -3031,6 +3040,10 @@ export const returnsService = {
                 });
             }
 
+            // Delete-protection audit (Phase 10 Batch 1, Finding F7): same
+            // fix as deleteSalesReturn above - flip the RLS-gating session
+            // var back to '1' before any soft-delete write.
+            await client.query(`SET LOCAL app.include_deleted = '1'`);
             await softVoidReturnLinkedRows(client, {
                 branchId: Number(current.branch_id),
                 refTable: 'purchase_returns',

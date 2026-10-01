@@ -75,6 +75,7 @@ export interface ReturnItemOption {
     returned_qty?: number;
     on_hand_qty?: number;
     available_qty?: number;
+    attributes?: Record<string, string | number>;
 }
 
 export const returnsService = {

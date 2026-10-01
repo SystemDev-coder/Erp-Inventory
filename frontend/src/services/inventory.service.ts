@@ -30,6 +30,7 @@ export interface InventoryItem {
   weighted_unit_cost?: number;
   min_stock_threshold?: number;
   last_purchase_date?: string | null;
+  attributes?: Record<string, string | number>;
 }
 
 export interface WarehouseBreakdownRow {

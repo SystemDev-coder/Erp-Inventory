@@ -30,7 +30,22 @@ const PERMISSION_CACHE_TTL_MS = 5 * 60 * 1000;
 
 type PermissionCacheEntry = { permissions: string[]; expiresAt: number };
 
-const permissionCache = new Map<number, PermissionCacheEntry>();
+// Fixed: was keyed by userId alone, but a user's effective permission set
+// depends on (userId, roleId) together (loadUserPermissions takes both).
+// A user reassigned to a new role can still have an old, not-yet-refreshed
+// JWT floating around (another tab, hasn't re-logged-in yet) that embeds
+// the OLD roleId - a request using that stale token would compute and
+// cache permissions for the old role under this same userId, and a
+// SEPARATE request using a freshly re-logged-in token (new roleId) for
+// the SAME user would then incorrectly read that stale, wrong-role cache
+// entry instead of ever recomputing for its own roleId. Confirmed during
+// verification: reassigning a test user's role, then hitting one endpoint
+// with a stale (old-roleId) token before re-logging in, poisoned the
+// cache for the fresh (new-roleId) token's identical userId. Keying by
+// `${userId}:${roleId}` keeps every (user, role) combination's cache
+// entry fully independent.
+const permissionCacheKey = (userId: number, roleId: number) => `${userId}:${roleId}`;
+const permissionCache = new Map<string, PermissionCacheEntry>();
 
 export class SessionService {
   async createSession(): Promise<string> {
@@ -93,25 +108,32 @@ export class SessionService {
     _input: UpdateSessionLimitInput
   ): Promise<void> {}
 
-  async getCachedPermissions(userId: number): Promise<string[] | null> {
-    const entry = permissionCache.get(userId);
+  async getCachedPermissions(userId: number, roleId: number): Promise<string[] | null> {
+    const key = permissionCacheKey(userId, roleId);
+    const entry = permissionCache.get(key);
     if (!entry) return null;
     if (Date.now() > entry.expiresAt) {
-      permissionCache.delete(userId);
+      permissionCache.delete(key);
       return null;
     }
     return entry.permissions;
   }
 
-  async cachePermissions(userId: number, permissions: string[]): Promise<void> {
-    permissionCache.set(userId, {
+  async cachePermissions(userId: number, roleId: number, permissions: string[]): Promise<void> {
+    permissionCache.set(permissionCacheKey(userId, roleId), {
       permissions,
       expiresAt: Date.now() + PERMISSION_CACHE_TTL_MS,
     });
   }
 
+  // Drops every cached (userId, roleId) entry for this user - not just the
+  // caller's own current roleId - since the caller may not know every
+  // roleId a stale, still-valid JWT for this user might embed.
   async invalidatePermissionCache(userId: number): Promise<void> {
-    permissionCache.delete(userId);
+    const prefix = `${userId}:`;
+    for (const key of permissionCache.keys()) {
+      if (key.startsWith(prefix)) permissionCache.delete(key);
+    }
   }
 
   async cleanExpiredSessions(): Promise<{ deleted: number }> {

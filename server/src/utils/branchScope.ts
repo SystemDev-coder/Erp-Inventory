@@ -8,8 +8,21 @@ export interface BranchScope {
   primaryBranchId: number;
 }
 
-export const isAdminRoleName = (roleName: string | null | undefined): boolean =>
-  (roleName || '').toLowerCase().includes('admin');
+// H9 fix: all-branch/admin status must never be derived from the role's
+// display name (role_name) - that's free text an operator can set to
+// anything, and a substring check (`.includes('admin')`) meant a role named
+// e.g. "Store Administrator" or a rename of "Store Manager" -> "Store
+// Administrator" would silently grant every holder of that role unrestricted
+// access to every branch. role_code is the stable, unique, system-assigned
+// identifier (UNIQUE constraint on ims.roles.role_code), and is_system is
+// hardcoded FALSE for every role created through the app (system.service.ts
+// #createRole) with no update path to ever flip it back - so only the
+// originally-seeded Administrator role can ever satisfy both conditions,
+// regardless of what role_name or any custom role's role_code is set to.
+export const isAdminRoleRecord = (
+  role: { role_code?: string | null; is_system?: boolean | null } | null | undefined
+): boolean =>
+  String(role?.role_code || '').trim().toUpperCase() === 'ADMIN' && role?.is_system === true;
 
 const dedupeNumbers = (values: Array<number | null | undefined>) =>
   Array.from(
@@ -49,14 +62,14 @@ export const resolveBranchScope = async (req: AuthRequest): Promise<BranchScope>
     throw ApiError.unauthorized('Authentication required');
   }
 
-  const roleRow = await queryOne<{ role_name: string }>(
-    `SELECT role_name
+  const roleRow = await queryOne<{ role_code: string; is_system: boolean }>(
+    `SELECT role_code, is_system
        FROM ims.roles
       WHERE role_id = $1`,
     [req.user.roleId]
   );
 
-  const isAdmin = isAdminRoleName(roleRow?.role_name);
+  const isAdmin = isAdminRoleRecord(roleRow);
 
   if (isAdmin) {
     const rows = await queryMany<{ branch_id: number }>(

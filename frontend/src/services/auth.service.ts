@@ -3,8 +3,8 @@
  * Handles all authentication-related API calls
  */
 
-import { apiClient, ApiResponse } from './api';
-import { API } from '../config/env';
+import { apiClient, ApiResponse } from "./api";
+import { API } from "../config/env";
 
 export interface User {
   user_id: number;
@@ -70,10 +70,10 @@ export interface ResetPasswordData {
 class AuthService {
   async hashString(value: string): Promise<string> {
     const enc = new TextEncoder().encode(value);
-    const hashBuf = await crypto.subtle.digest('SHA-256', enc);
+    const hashBuf = await crypto.subtle.digest("SHA-256", enc);
     return Array.from(new Uint8Array(hashBuf))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
   }
 
   /**
@@ -86,7 +86,9 @@ class AuthService {
   /**
    * Login with credentials
    */
-  async login(credentials: LoginCredentials): Promise<ApiResponse<LoginResponse>> {
+  async login(
+    credentials: LoginCredentials,
+  ): Promise<ApiResponse<LoginResponse>> {
     return apiClient.post<LoginResponse>(API.AUTH.LOGIN, credentials);
   }
 
@@ -121,14 +123,18 @@ class AuthService {
   /**
    * Request password reset
    */
-  async forgotPassword(data: ForgotPasswordData): Promise<ApiResponse<{ message: string }>> {
+  async forgotPassword(
+    data: ForgotPasswordData,
+  ): Promise<ApiResponse<{ message: string }>> {
     return apiClient.post<{ message: string }>(API.AUTH.FORGOT_PASSWORD, data);
   }
 
   /**
    * Reset password with token
    */
-  async resetPassword(data: ResetPasswordData): Promise<ApiResponse<{ message: string }>> {
+  async resetPassword(
+    data: ResetPasswordData,
+  ): Promise<ApiResponse<{ message: string }>> {
     return apiClient.post<{ message: string }>(API.AUTH.RESET_PASSWORD, data);
   }
 
@@ -142,6 +148,12 @@ class AuthService {
 
   async clearLockPassword(): Promise<ApiResponse<void>> {
     return apiClient.post<void>(API.AUTH.LOCK_CLEAR);
+  }
+
+  async verifyLoginPassword(
+    password: string,
+  ): Promise<ApiResponse<{ verified: boolean }>> {
+    return apiClient.post("/api/auth/verify-login-password", { password });
   }
 }
 

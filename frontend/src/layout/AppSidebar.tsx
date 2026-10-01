@@ -14,6 +14,8 @@ import {
   Settings,
   ShoppingBag,
   ShoppingCart,
+  SlidersHorizontal,
+  Boxes,
   Store,
   Users,
   Trash2,
@@ -21,6 +23,7 @@ import {
 } from 'lucide-react';
 import { useSidebar } from '../context/SidebarContext';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
 import { useNavigate } from 'react-router';
 import { settingsService } from '../services/settings.service';
 
@@ -30,6 +33,10 @@ type SidebarSubItem = {
   to: string;
   exact?: boolean;
   permissionAny?: string[];
+  // Optional - most sub-items across this sidebar render text-only, as
+  // before; only sections that already have a matching icon elsewhere
+  // (e.g. Products.tsx's own tabs) set one, for visual consistency there.
+  icon?: LucideIcon;
 };
 
 type SidebarItem = {
@@ -46,6 +53,7 @@ type SidebarItem = {
 const AppSidebar: React.FC = () => {
   const { isExpanded, isMobileOpen, isHovered, setIsHovered, toggleSidebar } = useSidebar();
   const { permissions, lock, user } = useAuth();
+  const { t } = useLanguage();
   const [companyName, setCompanyName] = useState('');
 
   useEffect(() => {
@@ -100,68 +108,79 @@ const AppSidebar: React.FC = () => {
     const isDeveloper = (user?.role_name || '').toLowerCase() === 'developer';
     const base: { title: string; items: SidebarItem[] }[] = [
       {
-        title: 'Main',
+        title: t('sidebar_group_main'),
           items: [
-          { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: '/', exact: true, permissionAny: ['dashboard.view', 'home.view'] },
-          { id: 'customers', label: 'Customers', icon: Users, to: '/customers', permissionAny: ['customers.view'] },
+          { id: 'dashboard', label: t('nav_dashboard'), icon: LayoutDashboard, to: '/', exact: true, permissionAny: ['dashboard.view', 'home.view'] },
+          { id: 'customers', label: t('nav_customers'), icon: Users, to: '/customers', permissionAny: ['customers.view'] },
         ],
       },
       {
-        title: 'Operations',
+        title: t('sidebar_group_operations'),
         items: [
           {
             id: 'stockManagement',
-            label: 'Stock Management',
+            label: t('nav_stock_management'),
             icon: Store,
             permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'],
             expandable: true,
             subItems: [
-              { id: 'stock-items', label: 'Items', to: '/stock-management/items', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
-              { id: 'adjust-items', label: 'Adjust Items', to: '/stock-management/adjust-items', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
+              { id: 'stock-items', label: t('nav_items'), icon: Boxes, to: '/stock-management/items', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
+              { id: 'adjust-items', label: t('nav_adjust_items'), icon: SlidersHorizontal, to: '/stock-management/adjust-items', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
             ],
           },
-          { id: 'returns', label: 'Returns', icon: FileText, to: '/returns', exact: true, permissionAny: ['returns.view', 'sales_returns.view', 'purchase_returns.view'] },
-          { id: 'purchases', label: 'Purchases', icon: ShoppingBag, to: '/purchases', permissionAny: ['purchases.view', 'suppliers.view'] },
-          { id: 'sales', label: 'Sales', icon: ReceiptText, to: '/sales', exact: true, permissionAny: ['sales.view'] },
+          { id: 'returns', label: t('nav_returns'), icon: FileText, to: '/returns', exact: true, permissionAny: ['returns.view', 'sales_returns.view', 'purchase_returns.view'] },
+          { id: 'purchases', label: t('nav_purchases'), icon: ShoppingBag, to: '/purchases', permissionAny: ['purchases.view', 'suppliers.view'] },
+          {
+            id: 'sales',
+            label: t('nav_sales'),
+            icon: ReceiptText,
+            permissionAny: ['sales.view', 'sales.pos.access'],
+            expandable: true,
+            subItems: [
+              { id: 'sales-list', label: t('nav_sales'), to: '/sales', exact: true, permissionAny: ['sales.view'] },
+              { id: 'sales-pos', label: t('nav_pos'), to: '/sales/pos', exact: true, permissionAny: ['sales.pos.access'] },
+              { id: 'sales-pos-orders', label: t('nav_pos_orders'), to: '/sales/pos/orders', exact: true, permissionAny: ['sales.pos.access'] },
+            ],
+          },
         ],
       },
       {
-        title: 'Finance',
+        title: t('sidebar_group_finance'),
         items: [
           {
             id: 'finance',
-            label: 'Finance',
+            label: t('nav_finance'),
             icon: DollarSign,
             to: '/finance',
             exact: true,
             expandable: true,
             permissionAny: ['finance.reports', 'accounts.view', 'expenses.view', 'ledgers.view'],
             subItems: [
-              { id: 'finance-accounts', label: 'Accounts', to: '/finance/accounts', exact: true, permissionAny: ['accounts.view'] },
-              { id: 'finance-receipts', label: 'Receipts', to: '/finance/receipts', exact: true, permissionAny: ['accounts.view', 'sales.view', 'purchases.view'] },
-              { id: 'finance-expenses', label: 'Expenses', to: '/finance/expense', exact: true, permissionAny: ['expenses.view'] },
+              { id: 'finance-accounts', label: t('nav_accounts'), to: '/finance/accounts', exact: true, permissionAny: ['accounts.view'] },
+              { id: 'finance-receipts', label: t('nav_receipts'), to: '/finance/receipts', exact: true, permissionAny: ['accounts.view', 'sales.view', 'purchases.view'] },
+              { id: 'finance-expenses', label: t('nav_expenses'), to: '/finance/expense', exact: true, permissionAny: ['expenses.view'] },
               // UPDATED: Allow Accountant/Finance roles to see Payroll in Finance (supports both payroll_* and finance/account permissions)
-              { id: 'finance-payroll', label: 'Payroll', to: '/finance/payroll', exact: true, permissionAny: ['payroll_lines.view', 'payroll_runs.view', 'payroll.process', 'payroll.pay', 'finance.reports', 'accounts.view'] },
+              { id: 'finance-payroll', label: t('nav_payroll'), to: '/finance/payroll', exact: true, permissionAny: ['payroll_lines.view', 'payroll_runs.view', 'payroll.process', 'payroll.pay', 'finance.reports', 'accounts.view'] },
             ],
           },
         ],
       },
       {
-        title: 'People',
-        items: [{ id: 'hr', label: 'HR', icon: BriefcaseBusiness, to: '/employees/registration', permissionAny: ['employees.view'] }],
+        title: t('sidebar_group_people'),
+        items: [{ id: 'hr', label: t('nav_hr'), icon: BriefcaseBusiness, to: '/employees/registration', permissionAny: ['employees.view'] }],
       },
       {
-        title: 'System',
+        title: t('sidebar_group_system'),
         items: [
-          { id: 'system', label: 'System', icon: Settings, to: '/system', permissionAny: ['system.settings'] },
-          { id: 'setting', label: 'Setting', icon: Cog, to: '/settings', permissionAny: ['system.settings', 'users.view', 'roles.view', 'permissions.view', 'system.users.manage', 'system.roles.manage', 'system.permissions.manage'] },
-          { id: 'reports', label: 'Reports', icon: FileText, to: '/reports', permissionAny: ['reports.all'] },
-          ...(isDeveloper ? [{ id: 'trash', label: 'Trash', icon: Trash2, to: '/trash', permissionAny: ['trash.view'] }] : []),
+          { id: 'system', label: t('nav_system'), icon: Settings, to: '/system', permissionAny: ['system.settings'] },
+          { id: 'setting', label: t('nav_setting'), icon: Cog, to: '/settings', permissionAny: ['system.settings', 'users.view', 'roles.view', 'permissions.view', 'system.users.manage', 'system.roles.manage', 'system.permissions.manage'] },
+          { id: 'reports', label: t('nav_reports'), icon: FileText, to: '/reports', permissionAny: ['reports.all'] },
+          ...(isDeveloper ? [{ id: 'trash', label: t('nav_trash'), icon: Trash2, to: '/trash', permissionAny: ['trash.view'] }] : []),
         ],
       },
     ];
     return base;
-  }, [user?.role_name]);
+  }, [user?.role_name, t]);
 
   const visibleGroups = useMemo(
     () =>
@@ -183,7 +202,7 @@ const AppSidebar: React.FC = () => {
 
     return (
       <aside
-      className={`fixed mt-16 flex flex-col lg:mt-0 top-0 left-0 bg-white text-slate-900 border-r border-slate-200 dark:bg-black dark:text-white dark:border-white/10 h-screen transition-all duration-300 ease-in-out z-50 shadow-[0_8px_26px_-12px_rgba(15,23,42,0.45)]
+      className={`fixed mt-16 flex flex-col lg:mt-0 top-0 left-0 bg-white text-slate-900 border-r border-slate-200 dark:bg-primary-900 dark:text-white dark:border-white/10 h-screen transition-all duration-300 ease-in-out z-50 shadow-[0_8px_26px_-12px_rgba(15,23,42,0.45)]
         ${showExpanded ? 'w-[280px]' : 'w-[80px]'}
         ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'}
         lg:translate-x-0`}
@@ -264,17 +283,19 @@ const AppSidebar: React.FC = () => {
                       <ul id={`${item.id}-submenu`} className="ml-5 mt-2 space-y-1 border-l border-slate-200 pl-3 dark:border-white/10">
                         {(item.subItems || []).map((sub) => {
                           const subActive = isActive(sub.to, sub.exact);
+                          const SubIcon = sub.icon;
                           return (
                             <li key={sub.id}>
                               <Link
                                 to={sub.to}
-                                className={`block rounded-lg px-3 py-2 text-sm transition-colors ${
+                                className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${
                                   subActive
                                     ? 'bg-slate-100 text-slate-900 ring-1 ring-slate-200 dark:bg-white/10 dark:text-white dark:ring-white/15'
                                     : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900 dark:text-white/80 dark:hover:bg-white/10 dark:hover:text-white'
                                 }`}
                               >
-                                {sub.label}
+                                {SubIcon && <SubIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+                                <span className="truncate">{sub.label}</span>
                               </Link>
                             </li>
                           );
@@ -321,13 +342,10 @@ const AppSidebar: React.FC = () => {
               lock();
               navigate('/lock');
             }}
-            className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-100 dark:border-white/15 dark:bg-black dark:text-white dark:hover:bg-white/10"
+            className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-100 dark:border-white/15 dark:bg-primary-800 dark:text-white dark:hover:bg-primary-700"
           >
-            <LockIcon className="h-4 w-4" /> Lock
+            <LockIcon className="h-4 w-4" /> {t('sidebar_lock')}
           </button>
-          <p className="text-xs text-slate-500 text-center dark:text-white/50">
-            © 2026 {brandName}. All rights reserved.
-          </p>
         </div>
       )}
     </aside>

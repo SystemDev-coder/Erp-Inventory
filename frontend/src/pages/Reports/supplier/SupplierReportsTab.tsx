@@ -8,6 +8,8 @@ import { supplierService } from '../../../services/supplier.service';
 import type { DateRange, ModalReportState } from '../types';
 import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange, withReportTruncation, type ReportTruncationMeta } from '../reportUtils';
 import { useBranch } from '../../../context/BranchContext';
+import { useLanguage } from '../../../context/LanguageContext';
+import type { TranslationKey } from '../../../translations';
 
 type SupplierCardId =
   | 'supplier-list'
@@ -22,6 +24,22 @@ const supplierCards: Array<{ id: SupplierCardId; title: string; hint: string }> 
   { id: 'supplier-outstanding', title: 'Outstanding Purchases', hint: 'Dropdown + Show / All' },
   { id: 'credit-overdue', title: 'Overdue Credit Purchases', hint: 'Due date passed with balance remaining' },
 ];
+
+const SUPPLIER_CARD_TITLE_KEYS: Record<SupplierCardId, TranslationKey> = {
+  'supplier-list': 'rcard_supplier_list_title',
+  'supplier-ledger': 'rcard_supplier_ledger_title',
+  'supplier-payments': 'rcard_supplier_payments_title',
+  'supplier-outstanding': 'rcard_supplier_outstanding_title',
+  'credit-overdue': 'rcard_credit_overdue_purchases_title',
+};
+
+const SUPPLIER_CARD_HINT_KEYS: Record<SupplierCardId, TranslationKey> = {
+  'supplier-list': 'hint_dropdown_show_all',
+  'supplier-ledger': 'hint_date_range_show_all',
+  'supplier-payments': 'hint_date_range_show_all',
+  'supplier-outstanding': 'hint_dropdown_show_all',
+  'credit-overdue': 'hint_overdue_balance',
+};
 const supplierListColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'supplier_id', header: 'Supplier #' },
   { key: 'supplier_name', header: 'Supplier' },
@@ -91,6 +109,12 @@ const supplierOutstandingColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'total', header: 'Total', align: 'right', render: (row) => formatCurrency(row.total) },
   { key: 'paid', header: 'Paid', align: 'right', render: (row) => formatCurrency(row.paid) },
   { key: 'outstanding', header: 'Outstanding', align: 'right', render: (row) => formatCurrency(row.outstanding) },
+  // H2 fix: this purchase's own outstanding above only reflects payments
+  // explicitly linked to it. A pooled/unlinked receipt still reduces the
+  // supplier's overall balance but is never guessed onto a specific
+  // purchase - shown here as its own (supplier-level, not per-purchase)
+  // figure so it isn't silently missing from the picture.
+  { key: 'supplier_unallocated_payment', header: 'Supplier Unallocated', align: 'right', render: (row) => formatCurrency(row.supplier_unallocated_payment) },
   { key: 'status', header: 'Status' },
 ];
 
@@ -101,6 +125,8 @@ const creditOverdueColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'appointment_date', header: 'Appointment Date', render: (row) => formatDateOnly(row.appointment_date) },
   { key: 'days_overdue', header: 'Days Overdue', align: 'right' },
   { key: 'total', header: 'Balance Due', align: 'right', render: (row) => formatCurrency(row.total) },
+  // H2 fix: supplier-level pooled/unlinked receipt total - see note above.
+  { key: 'supplier_unallocated_payment', header: 'Supplier Unallocated', align: 'right', render: (row) => formatCurrency(row.supplier_unallocated_payment) },
 ];
 
 type Props = {
@@ -120,6 +146,7 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
     onOpenModal(withReportTruncation(report, meta, legacy));
 
   const { activeBranchId } = useBranch();
+  const { t } = useLanguage();
   const [expandedCardId, setExpandedCardId] = useState<SupplierCardId | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<SupplierCardId | null>(null);
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
@@ -481,8 +508,8 @@ export function SupplierReportsTab({ onOpenModal }: Props) {
           className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-primary-900 to-primary-700 px-5 py-4 text-left text-white"
         >
           <div>
-            <p className="text-xl font-semibold leading-tight">{card.title}</p>
-            <p className="mt-1 text-xs font-medium text-white/85">{card.hint}</p>
+            <p className="text-xl font-semibold leading-tight">{t(SUPPLIER_CARD_TITLE_KEYS[card.id])}</p>
+            <p className="mt-1 text-xs font-medium text-white/85">{t(SUPPLIER_CARD_HINT_KEYS[card.id])}</p>
           </div>
           <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
         </button>

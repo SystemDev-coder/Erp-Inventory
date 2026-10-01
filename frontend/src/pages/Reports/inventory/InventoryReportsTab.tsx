@@ -5,15 +5,20 @@ import { inventoryReportsService } from '../../../services/reports/inventoryRepo
 import type { DateRange, ModalReportState } from '../types';
 import { formatCurrency, formatDateOnly, formatDateTime, formatQuantity, toRecordRows, defaultReportRange, withReportTruncation, type ReportTruncationMeta } from '../reportUtils';
 import { useBranch } from '../../../context/BranchContext';
+import { useLanguage } from '../../../context/LanguageContext';
+import { useAttributeCatalog } from '../../../hooks/useAttributeCatalog';
+import type { TranslationKey } from '../../../translations';
 
 type InventoryCardId =
   | 'current-stock'
+  | 'stock-by-attribute'
   | 'low-stock'
   | 'valuation-fifo'
   | 'valuation-lifo'
   | 'valuation-average'
   | 'adjustments'
   | 'inventory-loss'
+  | 'expiry-tracking'
   | 'inventory-ledger'
   | 'store-stock'
   | 'store-wise'
@@ -22,21 +27,57 @@ type InventoryCardId =
 
 const inventoryCards: Array<{ id: InventoryCardId; title: string; hint: string }> = [
   { id: 'current-stock', title: 'Current Stock Levels', hint: 'All items with stock' },
+  { id: 'stock-by-attribute', title: 'Stock by Attribute', hint: 'Attribute dropdown' },
   { id: 'low-stock', title: 'Low Stock Alert', hint: 'Only below threshold' },
   { id: 'valuation-fifo', title: 'Stock Value (FIFO)', hint: 'First-in, first-out costing' },
   { id: 'valuation-lifo', title: 'Stock Value (LIFO)', hint: 'Last-in, first-out costing' },
   { id: 'valuation-average', title: 'Stock Value (Average)', hint: 'Moving average cost' },
   { id: 'adjustments', title: 'Stock Adjustment Log', hint: 'Between two dates' },
   { id: 'inventory-loss', title: 'Inventory Loss', hint: 'Lost/damaged adjustments' },
+  { id: 'expiry-tracking', title: 'Expiry Tracking', hint: 'Between two dates' },
   { id: 'inventory-ledger', title: 'Inventory Found', hint: 'Increase adjustments (found stock)' },
   { id: 'store-stock', title: 'Store Stock Report', hint: 'Show selected store or all' },
   { id: 'store-wise', title: 'Store-wise Stock', hint: 'Detailed by store' },
   { id: 'store-movement', title: 'Store Movement Summary', hint: 'Between two dates + begin/purchase/sales qty' },
-  { id: 'store-movement-detail', title: 'Store Movement Detail', hint: 'Item-wise movement between two dates' },
+  { id: 'store-movement-detail', title: 'Store Movement Detail', hint: 'Product-wise movement between two dates' },
 ];
 
+const INVENTORY_CARD_TITLE_KEYS: Record<InventoryCardId, TranslationKey> = {
+  'current-stock': 'rcard_current_stock_title',
+  'stock-by-attribute': 'rcard_stock_by_attribute_title',
+  'low-stock': 'rcard_low_stock_title',
+  'valuation-fifo': 'rcard_valuation_fifo_title',
+  'valuation-lifo': 'rcard_valuation_lifo_title',
+  'valuation-average': 'rcard_valuation_average_title',
+  adjustments: 'rcard_adjustments_title',
+  'inventory-loss': 'rcard_inventory_loss_title',
+  'expiry-tracking': 'rcard_expiry_tracking_title',
+  'inventory-ledger': 'rcard_inventory_found_title',
+  'store-stock': 'rcard_store_stock_title',
+  'store-wise': 'rcard_store_wise_title',
+  'store-movement': 'rcard_store_movement_title',
+  'store-movement-detail': 'rcard_store_movement_detail_title',
+};
+
+const INVENTORY_CARD_HINT_KEYS: Record<InventoryCardId, TranslationKey> = {
+  'current-stock': 'hint_all_items_stock',
+  'stock-by-attribute': 'hint_attribute_dropdown',
+  'low-stock': 'hint_below_threshold',
+  'valuation-fifo': 'hint_fifo',
+  'valuation-lifo': 'hint_lifo',
+  'valuation-average': 'hint_average_cost',
+  adjustments: 'hint_between_two_dates',
+  'inventory-loss': 'hint_lost_damaged',
+  'expiry-tracking': 'hint_between_two_dates',
+  'inventory-ledger': 'hint_found_stock',
+  'store-stock': 'hint_selected_store_all',
+  'store-wise': 'hint_detailed_by_store',
+  'store-movement': 'hint_store_movement_summary',
+  'store-movement-detail': 'hint_item_movement',
+};
+
 const currentStockColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'item_name', header: 'Item' },
+  { key: 'item_name', header: 'Product' },
   { key: 'total_qty', header: 'Qty', align: 'right', render: (row) => formatQuantity(row.total_qty) },
   { key: 'min_stock_threshold', header: 'Min Qty', align: 'right', render: (row) => formatQuantity(row.min_stock_threshold) },
   { key: 'low_stock', header: 'Low Stock', render: (row) => (row.low_stock ? 'Yes' : 'No') },
@@ -45,15 +86,22 @@ const currentStockColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'amount', header: 'Amount', align: 'right', render: (row) => formatCurrency(row.amount) },
 ];
 
+const stockByAttributeColumns: ReportColumn<Record<string, unknown>>[] = [
+  { key: 'attribute_value', header: 'Attribute Value' },
+  { key: 'total_qty', header: 'Total Qty', align: 'right', render: (row) => formatQuantity(row.total_qty) },
+  { key: 'item_count', header: 'Products', align: 'right' },
+  { key: 'stock_value', header: 'Stock Value', align: 'right', render: (row) => formatCurrency(row.stock_value) },
+];
+
 const lowStockColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'item_name', header: 'Item' },
+  { key: 'item_name', header: 'Product' },
   { key: 'total_qty', header: 'Qty', align: 'right', render: (row) => formatQuantity(row.total_qty) },
   { key: 'min_stock_threshold', header: 'Min Qty', align: 'right', render: (row) => formatQuantity(row.min_stock_threshold) },
   { key: 'stock_value', header: 'Value', align: 'right', render: (row) => formatCurrency(row.stock_value) },
 ];
 
 const valuationColumns: ReportColumn<Record<string, unknown>>[] = [
-  { key: 'item_name', header: 'Item' },
+  { key: 'item_name', header: 'Product' },
   { key: 'total_qty', header: 'Qty', align: 'right', render: (row) => formatQuantity(row.total_qty) },
   { key: 'unit_cost_used', header: 'Unit Cost', align: 'right', render: (row) => formatCurrency(row.unit_cost_used ?? row.cost_price) },
   { key: 'cost_value', header: 'Cost Value', align: 'right', render: (row) => formatCurrency(row.cost_value) },
@@ -63,7 +111,7 @@ const valuationColumns: ReportColumn<Record<string, unknown>>[] = [
 const adjustmentColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'adjustment_id', header: 'Adjustment #' },
   { key: 'adjustment_date', header: 'Date', render: (row) => formatDateTime(row.adjustment_date) },
-  { key: 'item_name', header: 'Item' },
+  { key: 'item_name', header: 'Product' },
   { key: 'adjustment_type', header: 'Type' },
   { key: 'quantity', header: 'Qty', align: 'right', render: (row) => formatQuantity(row.quantity) },
   { key: 'reason', header: 'Reason' },
@@ -74,7 +122,7 @@ const adjustmentColumns: ReportColumn<Record<string, unknown>>[] = [
 const lossColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'loss_id', header: 'Loss #' },
   { key: 'loss_date', header: 'Date', render: (row) => formatDateTime(row.loss_date) },
-  { key: 'item_name', header: 'Item' },
+  { key: 'item_name', header: 'Product' },
   { key: 'quantity', header: 'Qty Lost', align: 'right', render: (row) => formatQuantity(row.quantity) },
   { key: 'unit_cost', header: 'Unit Cost', align: 'right', render: (row) => formatCurrency(row.unit_cost) },
   { key: 'total_loss', header: 'Total Loss', align: 'right', render: (row) => formatCurrency(row.total_loss) },
@@ -83,10 +131,31 @@ const lossColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'created_by', header: 'Created By' },
 ];
 
+const expiryTrackingColumns: ReportColumn<Record<string, unknown>>[] = [
+  { key: 'purchase_id', header: 'Purchase #' },
+  { key: 'purchase_date', header: 'Purchase Date', render: (row) => formatDateOnly(row.purchase_date) },
+  { key: 'supplier_name', header: 'Supplier' },
+  { key: 'item_name', header: 'Product' },
+  { key: 'batch_no', header: 'Batch No', render: (row) => row.batch_no || '-' },
+  { key: 'expiry_date', header: 'Expiry Date', render: (row) => formatDateOnly(row.expiry_date) },
+  {
+    key: 'days_to_expiry',
+    header: 'Days to Expiry',
+    align: 'right',
+    render: (row) => {
+      const days = Number(row.days_to_expiry ?? 0);
+      const cls = days <= 0 ? 'text-red-500 font-semibold' : days <= 30 ? 'text-amber-500 font-semibold' : '';
+      return <span className={cls}>{days}</span>;
+    },
+  },
+  { key: 'quantity', header: 'Qty', align: 'right', render: (row) => formatQuantity(row.quantity) },
+  { key: 'unit_cost', header: 'Unit Cost', align: 'right', render: (row) => formatCurrency(row.unit_cost) },
+];
+
 const foundColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'found_id', header: 'Found #' },
   { key: 'found_date', header: 'Date', render: (row) => formatDateTime(row.found_date) },
-  { key: 'item_name', header: 'Item' },
+  { key: 'item_name', header: 'Product' },
   { key: 'quantity', header: 'Qty Found', align: 'right', render: (row) => formatQuantity(row.quantity) },
   { key: 'unit_cost', header: 'Unit Cost', align: 'right', render: (row) => formatCurrency(row.unit_cost) },
   { key: 'total_found', header: 'Total Found', align: 'right', render: (row) => formatCurrency(row.total_found) },
@@ -97,14 +166,14 @@ const foundColumns: ReportColumn<Record<string, unknown>>[] = [
 
 const storeStockColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'store_name', header: 'Store' },
-  { key: 'item_count', header: 'Items', align: 'right' },
+  { key: 'item_count', header: 'Products', align: 'right' },
   { key: 'total_qty', header: 'Qty', align: 'right', render: (row) => formatQuantity(row.total_qty) },
   { key: 'stock_value', header: 'Value', align: 'right', render: (row) => formatCurrency(row.stock_value) },
 ];
 
 const storeWiseColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'store_name', header: 'Store' },
-  { key: 'item_name', header: 'Item' },
+  { key: 'item_name', header: 'Product' },
   { key: 'barcode', header: 'Barcode' },
   { key: 'quantity', header: 'Qty', align: 'right', render: (row) => formatQuantity(row.quantity) },
   { key: 'cost_price', header: 'Cost', align: 'right', render: (row) => formatCurrency(row.cost_price) },
@@ -114,7 +183,7 @@ const storeWiseColumns: ReportColumn<Record<string, unknown>>[] = [
 
 const storeMovementColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'store_name', header: 'Store' },
-  { key: 'item_count', header: 'Items', align: 'right' },
+  { key: 'item_count', header: 'Products', align: 'right' },
   { key: 'begin_qty', header: 'Begin Qty', align: 'right', render: (row) => formatQuantity(row.begin_qty) },
   { key: 'purchase_qty', header: 'Purchase Qty', align: 'right', render: (row) => formatQuantity(row.purchase_qty) },
   { key: 'sales_qty', header: 'Sales Qty', align: 'right', render: (row) => formatQuantity(row.sales_qty) },
@@ -128,7 +197,7 @@ const storeMovementColumns: ReportColumn<Record<string, unknown>>[] = [
 
 const storeMovementDetailColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'store_name', header: 'Store' },
-  { key: 'item_name', header: 'Item' },
+  { key: 'item_name', header: 'Product' },
   { key: 'type_display', header: 'Type' },
   { key: 'txn_date', header: 'Date', render: (row) => formatDateTime(row.txn_date) },
   { key: 'num', header: 'Num' },
@@ -185,10 +254,13 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
     onOpenModal(withReportTruncation(report, meta, legacy));
 
   const { activeBranchId } = useBranch();
+  const { t } = useLanguage();
+  const attributeCatalog = useAttributeCatalog();
   const [expandedCardId, setExpandedCardId] = useState<InventoryCardId | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<InventoryCardId | null>(null);
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
 
+  const [selectedAttributeKey, setSelectedAttributeKey] = useState('');
   const [selectedStoreSummaryId, setSelectedStoreSummaryId] = useState('');
   const [selectedStoreDetailsId, setSelectedStoreDetailsId] = useState('');
   const [selectedStoreMovementId, setSelectedStoreMovementId] = useState('');
@@ -197,6 +269,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
 
   const [adjustmentRange, setAdjustmentRange] = useState<DateRange>(defaultReportRange());
   const [lossRange, setLossRange] = useState<DateRange>(defaultReportRange());
+  const [expiryTrackingRange, setExpiryTrackingRange] = useState<DateRange>(defaultReportRange());
   const [inventoryLedgerRange, setInventoryLedgerRange] = useState<DateRange>(defaultReportRange());
   const [movementRange, setMovementRange] = useState<DateRange>(defaultReportRange());
   const [movementDetailRange, setMovementDetailRange] = useState<DateRange>(defaultReportRange());
@@ -215,7 +288,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
       .then((response) => {
         if (!alive) return;
         if (!response.success || !response.data) {
-          setOptionsError(response.error || response.message || 'Failed to load store/item options');
+          setOptionsError(response.error || response.message || 'Failed to load store/product options');
           return;
         }
         setStores(response.data.stores || []);
@@ -223,7 +296,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
       })
       .catch((error: unknown) => {
         if (!alive) return;
-        setOptionsError(error instanceof Error ? error.message : 'Failed to load store/item options');
+        setOptionsError(error instanceof Error ? error.message : 'Failed to load store/product options');
       })
       .finally(() => {
         if (alive) setOptionsLoading(false);
@@ -286,7 +359,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
       const lowStockCount = rows.reduce((count, row) => count + (row.low_stock ? 1 : 0), 0);
       openReport({
         title: 'Current Stock Levels',
-        subtitle: 'All Active Items',
+        subtitle: 'All Active Products',
         fileName: 'current-stock-levels',
         data: rows,
         columns: currentStockColumns,
@@ -300,11 +373,45 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
           },
         },
         totals: [
-          countTotal('Items', rows.length),
+          countTotal('Products', rows.length),
           quantityTotal('Total Qty', totalQty),
           moneyTotal('Total Cost Value', totalCostValue),
           moneyTotal('Total Sale Value', totalSaleValue),
-          countTotal('Low Stock Items', lowStockCount),
+          countTotal('Low Stock Products', lowStockCount),
+        ],
+      }, response.data.meta);
+    });
+
+  const handleStockByAttribute = () =>
+    runCardAction('stock-by-attribute', async () => {
+      if (!selectedAttributeKey) throw new Error('Select an attribute first');
+      const response = await inventoryReportsService.getStockByAttribute({
+        attributeKey: selectedAttributeKey,
+        branchId: activeBranchId ?? undefined,
+      });
+      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load stock by attribute report');
+      const rows = toRecordRows(response.data.rows || []);
+      const attributeLabel = attributeCatalog[selectedAttributeKey]?.label || selectedAttributeKey;
+      const totalQty = sumByKey(rows, 'total_qty');
+      const totalStockValue = sumByKey(rows, 'stock_value');
+      openReport({
+        title: `Stock by ${attributeLabel}`,
+        subtitle: 'Current Stock Snapshot',
+        fileName: 'stock-by-attribute',
+        data: rows,
+        columns: stockByAttributeColumns,
+        filters: { Attribute: attributeLabel },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            total_qty: formatQuantity(totalQty),
+            item_count: sumByKey(rows, 'item_count').toLocaleString(),
+            stock_value: formatCurrency(totalStockValue),
+          },
+        },
+        totals: [
+          quantityTotal('Total Qty', totalQty),
+          moneyTotal('Total Stock Value', totalStockValue),
         ],
       }, response.data.meta);
     });
@@ -316,7 +423,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
       const rows = toRecordRows(response.data.rows || []);
       openReport({
         title: 'Low Stock Alert',
-        subtitle: 'Below threshold items',
+        subtitle: 'Below threshold products',
         fileName: 'low-stock-alert',
         data: rows,
         columns: lowStockColumns,
@@ -330,7 +437,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
           },
         },
         totals: [
-          countTotal('Items', rows.length),
+          countTotal('Products', rows.length),
           quantityTotal('Current Qty', sumByKey(rows, 'total_qty')),
           quantityTotal('Min Qty', sumByKey(rows, 'min_stock_threshold')),
           moneyTotal('Total Value', sumByKey(rows, 'stock_value')),
@@ -359,7 +466,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
           },
         },
         totals: [
-          countTotal('Items', rows.length),
+          countTotal('Products', rows.length),
           quantityTotal('Total Qty', sumByKey(rows, 'total_qty')),
           moneyTotal('Cost Value', sumByKey(rows, 'cost_value')),
           moneyTotal('Retail Value', sumByKey(rows, 'retail_value')),
@@ -443,6 +550,36 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
       }, response.data.meta);
     });
 
+  const handleExpiryTracking = () =>
+    runCardAction('expiry-tracking', async () => {
+      ensureRangeValid(expiryTrackingRange, 'Expiry Tracking');
+      const response = await inventoryReportsService.getExpiryTracking({
+        ...expiryTrackingRange,
+        branchId: activeBranchId ?? undefined,
+      });
+      if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load expiry tracking');
+      const rows = toRecordRows(response.data.rows || []);
+      const totalQty = sumByKey(rows, 'quantity');
+      openReport({
+        title: 'Expiry Tracking',
+        subtitle: `${formatDateOnly(expiryTrackingRange.fromDate)} - ${formatDateOnly(expiryTrackingRange.toDate)}`,
+        fileName: 'expiry-tracking',
+        data: rows,
+        columns: expiryTrackingColumns,
+        filters: { 'From Date': expiryTrackingRange.fromDate, 'To Date': expiryTrackingRange.toDate },
+        tableTotals: {
+          label: 'Total',
+          values: {
+            quantity: formatQuantity(totalQty),
+          },
+        },
+        totals: [
+          countTotal('Batches', rows.length),
+          quantityTotal('Total Qty', totalQty),
+        ],
+      }, response.data.meta);
+    });
+
   const handleInventoryFound = () =>
     runCardAction('inventory-ledger', async () => {
       ensureRangeValid(inventoryLedgerRange, 'Inventory Found');
@@ -511,7 +648,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
         },
         totals: [
           countTotal('Stores', rows.length),
-          countTotal('Items', sumByKey(rows, 'item_count')),
+          countTotal('Products', sumByKey(rows, 'item_count')),
           quantityTotal('Total Qty', sumByKey(rows, 'total_qty')),
           moneyTotal('Total Value', sumByKey(rows, 'stock_value')),
         ],
@@ -546,7 +683,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
         },
         totals: [
           countTotal('Rows', rows.length),
-          countTotal('Unique Items', uniqueItems),
+          countTotal('Unique Products', uniqueItems),
           quantityTotal('Total Qty', sumByKey(rows, 'quantity')),
           moneyTotal('Total Value', sumByKey(rows, 'stock_value')),
         ],
@@ -596,7 +733,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
         },
         totals: [
           countTotal('Stores', rows.length),
-          countTotal('Items', sumByKey(rows, 'item_count')),
+          countTotal('Products', sumByKey(rows, 'item_count')),
           quantityTotal('Begin Qty', sumByKey(rows, 'begin_qty')),
           quantityTotal('Purchase Qty', sumByKey(rows, 'purchase_qty')),
           quantityTotal('Sales Qty', sumByKey(rows, 'sales_qty')),
@@ -652,7 +789,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
           'To Date': movementDetailRange.toDate,
           Mode: mode === 'show' ? 'Show' : 'All',
           Store: mode === 'show' ? selectedStoreMovementDetailLabel || 'Selected Store' : 'All Stores',
-          Item: selectedMovementItemLabel || 'All Items',
+          Product: selectedMovementItemLabel || 'All Products',
         },
         tableTotals: {
           label: 'Total',
@@ -664,7 +801,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
         },
         totals: [
           countTotal('Rows', rows.length),
-          countTotal('Items', new Set(rows.map((row) => String(row.item_id || ''))).size),
+          countTotal('Products', new Set(rows.map((row) => String(row.item_id || ''))).size),
           moneyTotal('Total Debit', totalDebit),
           moneyTotal('Total Credit', totalCredit),
           moneyTotal('Closing Balance', closingBalance),
@@ -687,12 +824,24 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
 
   const renderCardBody = (cardId: InventoryCardId) => {
     if (cardId === 'current-stock') return <button onClick={handleCurrentStockLevels} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">All Current Stock</button>;
+    if (cardId === 'stock-by-attribute') {
+      return (
+        <div className="space-y-3">
+          <select value={selectedAttributeKey} onChange={(event) => setSelectedAttributeKey(event.target.value)} aria-label="Select attribute" className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none">
+            <option value="">Select Attribute</option>
+            {Object.values(attributeCatalog).map((attribute) => <option key={attribute.key} value={attribute.key}>{attribute.label}</option>)}
+          </select>
+          <button onClick={handleStockByAttribute} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button>
+        </div>
+      );
+    }
     if (cardId === 'low-stock') return <button onClick={handleLowStockAlert} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show Low Stock</button>;
     if (cardId === 'valuation-fifo') return <button onClick={handleInventoryValuationFifo} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">View FIFO Value</button>;
     if (cardId === 'valuation-lifo') return <button onClick={handleInventoryValuationLifo} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">View LIFO Value</button>;
     if (cardId === 'valuation-average') return <button onClick={handleInventoryValuationAverage} disabled={loadingCardId === cardId} className="inline-flex min-w-[180px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">View Average Value</button>;
     if (cardId === 'adjustments') return <div className="space-y-3">{renderDateRange(adjustmentRange, setAdjustmentRange)}<button onClick={handleStockAdjustmentLog} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
     if (cardId === 'inventory-loss') return <div className="space-y-3">{renderDateRange(lossRange, setLossRange)}<button onClick={handleInventoryLoss} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
+    if (cardId === 'expiry-tracking') return <div className="space-y-3">{renderDateRange(expiryTrackingRange, setExpiryTrackingRange)}<button onClick={handleExpiryTracking} disabled={loadingCardId === cardId} className="inline-flex min-w-[160px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show</button></div>;
     if (cardId === 'inventory-ledger') return <div className="space-y-3">{renderDateRange(inventoryLedgerRange, setInventoryLedgerRange)}<button onClick={handleInventoryFound} disabled={loadingCardId === cardId} className="inline-flex min-w-[200px] items-center justify-center rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-70">Show Found</button></div>;
 
     if (cardId === 'store-stock') {
@@ -735,7 +884,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
             {stores.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
           <select value={selectedMovementItemId} onChange={(event) => setSelectedMovementItemId(event.target.value)} className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none">
-            <option value="">All Items</option>
+            <option value="">All Products</option>
             {products.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -772,8 +921,8 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
           className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-primary-900 to-primary-700 px-5 py-4 text-left text-white"
         >
           <div>
-            <p className="text-xl font-semibold leading-tight">{card.title}</p>
-            <p className="mt-1 text-xs font-medium text-white/85">{card.hint}</p>
+            <p className="text-xl font-semibold leading-tight">{t(INVENTORY_CARD_TITLE_KEYS[card.id])}</p>
+            <p className="mt-1 text-xs font-medium text-white/85">{t(INVENTORY_CARD_HINT_KEYS[card.id])}</p>
           </div>
           <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
         </button>
@@ -793,7 +942,7 @@ export function InventoryReportsTab({ onOpenModal }: Props) {
   return (
     <div className="space-y-3">
       {optionsError && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{optionsError}</div>}
-      {optionsLoading && <div className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600"><Loader2 className="h-4 w-4 animate-spin" />Loading store/item options...</div>}
+      {optionsLoading && <div className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600"><Loader2 className="h-4 w-4 animate-spin" />Loading store/product options...</div>}
       <div className="space-y-3 lg:hidden">
         {inventoryCards.map(renderCard)}
       </div>

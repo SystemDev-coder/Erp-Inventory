@@ -2,7 +2,10 @@ import { PoolClient } from 'pg';
 import { queryMany, queryOne } from '../../db/query';
 import { withTransaction } from '../../db/withTx';
 import { ApiError } from '../../utils/ApiError';
+import { deleteGlByRef, ensureCoreCoa, postGl } from '../../utils/glPosting';
+import { syncSystemAccountBalancesWithClient } from '../../utils/systemAccounts';
 import { parseSpreadsheet } from './import.parser';
+import { ProductAttributeDef, loadAttributeCatalog, splitAttributes } from '../../config/productAttributes';
 import {
   ImportMode,
   ImportRowError,
@@ -35,12 +38,13 @@ type CandidateRow<T> = {
 
 type ImportExecutionOptions = {
   updateExistingBalances?: boolean;
+  mode?: ImportMode;
 };
 
 type ImportDefinition<T> = {
   type: ImportType;
   requiredHeaders: Array<{ field: string; aliases: string[] }>;
-  parseRow: (raw: Record<string, unknown>, row: number) => ParseResult<T>;
+  parseRow: (raw: Record<string, unknown>, row: number, attributeCatalog: Record<string, ProductAttributeDef>) => ParseResult<T>;
   applyBusinessChecks: (
     rows: CandidateRow<T>[],
     branchId: number,
@@ -67,9 +71,6 @@ type CustomerImportRow = {
 
 type SupplierImportRow = {
   supplier_name: string;
-  company_name: string | null;
-  contact_person: string | null;
-  contact_phone: string | null;
   phone: string | null;
   location: string | null;
   remaining_balance: number;
@@ -85,6 +86,22 @@ type ItemImportRow = {
   sell_price: number;
   is_active: boolean;
   store_id: number | null;
+  // Raw name text from the file, resolved (and auto-created if new) to an id by
+  // applyItemChecks before insertRow runs - mirrors how store_id gets defaulted.
+  category_name: string | null;
+  unit_name: string | null;
+  category_id: number | null;
+  unit_id: number | null;
+  // Optional - resolved (and auto-created if new) the same way category/unit
+  // are, but with no default fallback: a row with no Supplier column simply
+  // gets no default supplier linked.
+  supplier_name: string | null;
+  supplier_id: number | null;
+  // Phase 9: any Dynamic Product Attributes catalog column present in the
+  // file, keyed the same way the product form/API sends them - routed to
+  // the right storage (legacy column vs. attributes JSONB) by insertItem
+  // via the same splitAttributes helper products.service.ts uses.
+  attributes: Record<string, string>;
 };
 
 type CustomerShape = {
@@ -114,6 +131,7 @@ let customerShapeCache: CustomerShape | null = null;
 let supplierShapeCache: SupplierShape | null = null;
 let itemShapeCache: ItemShape | null = null;
 const defaultCategoryByBranch = new Map<number, number>();
+const defaultUnitByBranch = new Map<number, number>();
 
 const PREVIEW_LIMIT = 200;
 
@@ -319,6 +337,152 @@ const ensureDefaultCategory = async (client: PoolClient, branchId: number): Prom
   return createdId;
 };
 
+const ensureDefaultUnit = async (client: PoolClient, branchId: number): Promise<number> => {
+  const cached = defaultUnitByBranch.get(branchId);
+  if (cached) return cached;
+
+  const existing = await client.query<{ unit_id: number }>(
+    `SELECT unit_id
+       FROM ims.units
+      WHERE branch_id = $1
+      ORDER BY unit_id
+      LIMIT 1`,
+    [branchId]
+  );
+  if (existing.rows[0]?.unit_id) {
+    const id = Number(existing.rows[0].unit_id);
+    defaultUnitByBranch.set(branchId, id);
+    return id;
+  }
+
+  const created = await client.query<{ unit_id: number }>(
+    `INSERT INTO ims.units (branch_id, unit_name, symbol, is_active)
+     VALUES ($1, 'Piece', 'pc', TRUE)
+     RETURNING unit_id`,
+    [branchId]
+  );
+  const createdId = Number(created.rows[0]?.unit_id || 0);
+  if (!createdId) {
+    throw new Error('Failed to create default unit');
+  }
+  defaultUnitByBranch.set(branchId, createdId);
+  return createdId;
+};
+
+// Resolve each row's category/unit NAME (from the uploaded file) to an id, auto-creating a
+// new category/unit row the first time a name is seen for this branch, and falling back to
+// the branch's default when a row left the column blank - the same "never leave it unset"
+// behavior store_id already has via defaultStoreId above.
+const resolveItemCategoriesAndUnits = async (
+  rows: CandidateRow<ItemImportRow>[],
+  branchId: number,
+  options: ImportExecutionOptions
+) => {
+  // Preview is a read-only dry run: toPreviewData shows the raw category/unit text the
+  // user typed (falling back to a literal "(default)" label), never the resolved id, so
+  // there is nothing for a preview to gain by resolving anything here - and doing so would
+  // create real category/unit rows for a file the user hasn't actually committed yet.
+  if (options.mode !== 'import') return;
+
+  const activeRows = rows.filter((row) => !row.errors.length && !row.skipReason);
+  if (!activeRows.length) return;
+
+  const resolveMasterList = async (
+    table: 'categories' | 'units' | 'suppliers',
+    idColumn: 'cat_id' | 'unit_id' | 'supplier_id',
+    nameColumn: 'cat_name' | 'unit_name' | 'name',
+    namesByKey: Map<string, string>
+  ) => {
+    const map = new Map<string, number>();
+    const keys = Array.from(namesByKey.keys());
+    if (!keys.length) return map;
+    const existing = await queryMany<{ id: number; name_key: string }>(
+      `SELECT ${idColumn} AS id, LOWER(${nameColumn}) AS name_key
+         FROM ims.${table}
+        WHERE branch_id = $1
+          AND LOWER(${nameColumn}) = ANY($2::text[])`,
+      [branchId, keys]
+    );
+    for (const row of existing) map.set(row.name_key, Number(row.id));
+
+    const missing = keys.filter((key) => !map.has(key));
+    for (const key of missing) {
+      // Insert with the original casing the user typed (e.g. "Electronics"), not the
+      // lowercase lookup key, so newly auto-created rows read naturally afterward.
+      const originalName = namesByKey.get(key) as string;
+      const created = await queryOne<{ id: number }>(
+        `INSERT INTO ims.${table} (branch_id, ${nameColumn}, is_active)
+         VALUES ($1, $2, TRUE)
+         ON CONFLICT (branch_id, ${nameColumn}) DO UPDATE SET is_active = ims.${table}.is_active
+         RETURNING ${idColumn} AS id`,
+        [branchId, originalName]
+      );
+      if (created?.id) map.set(key, Number(created.id));
+    }
+    return map;
+  };
+
+  const collectNamesByKey = (values: string[]) => {
+    const map = new Map<string, string>();
+    for (const value of values) {
+      const key = normalizeLookup(value);
+      if (key && !map.has(key)) map.set(key, value.trim());
+    }
+    return map;
+  };
+
+  const categoryNamesByKey = collectNamesByKey(
+    activeRows.filter((row) => row.data.category_name).map((row) => row.data.category_name as string)
+  );
+  const unitNamesByKey = collectNamesByKey(
+    activeRows.filter((row) => row.data.unit_name).map((row) => row.data.unit_name as string)
+  );
+
+  // Unlike category/unit, supplier is optional - a row with no Supplier
+  // column value simply gets no default supplier (matching how the product
+  // form itself treats it), not auto-assigned to some fallback.
+  const supplierNamesByKey = collectNamesByKey(
+    activeRows.filter((row) => row.data.supplier_name).map((row) => row.data.supplier_name as string)
+  );
+
+  const [categoryMap, unitMap, supplierMap] = await Promise.all([
+    resolveMasterList('categories', 'cat_id', 'cat_name', categoryNamesByKey),
+    resolveMasterList('units', 'unit_id', 'unit_name', unitNamesByKey),
+    resolveMasterList('suppliers', 'supplier_id', 'name', supplierNamesByKey),
+  ]);
+
+  let defaultCategoryId: number | null = null;
+  let defaultUnitId: number | null = null;
+
+  for (const row of activeRows) {
+    if (row.data.category_name) {
+      row.data.category_id = categoryMap.get(normalizeLookup(row.data.category_name)) ?? null;
+    }
+    if (!row.data.category_id) {
+      if (defaultCategoryId === null) {
+        defaultCategoryId = await withTransaction((client) => ensureDefaultCategory(client, branchId));
+      }
+      row.data.category_id = defaultCategoryId;
+    }
+
+    if (row.data.unit_name) {
+      row.data.unit_id = unitMap.get(normalizeLookup(row.data.unit_name)) ?? null;
+    }
+    if (!row.data.unit_id) {
+      if (defaultUnitId === null) {
+        defaultUnitId = await withTransaction((client) => ensureDefaultUnit(client, branchId));
+      }
+      row.data.unit_id = defaultUnitId;
+    }
+
+    // No fallback here (unlike category/unit above) - a row with no
+    // Supplier column value stays supplier_id = null.
+    if (row.data.supplier_name) {
+      row.data.supplier_id = supplierMap.get(normalizeLookup(row.data.supplier_name)) ?? null;
+    }
+  }
+};
+
 const uniqueLowerSet = (values: string[]) =>
   Array.from(new Set(values.map((value) => normalizeLookup(value))));
 
@@ -421,12 +585,13 @@ const parseCustomerRow = (raw: Record<string, unknown>): ParseResult<CustomerImp
 
 const parseSupplierRow = (raw: Record<string, unknown>): ParseResult<SupplierImportRow> => {
   const errors: string[] = [];
+  // "Company"/"Company Name" are accepted as aliases for the supplier's own
+  // name (the only name ims.suppliers actually has a column for) - not a
+  // separate field. Same for "Contact"/"Contact Person": there's no column
+  // to store a contact name separately, so it's not collected at all.
   const supplierName =
-    readString(raw, ['supplier_name', 'name', 'supplier']) || '';
-  const companyName = readString(raw, ['company_name']);
-  const contactPerson = readString(raw, ['contact_person']);
-  const contactPhone = readString(raw, ['contact_phone']);
-  const phone = readString(raw, ['phone', 'mobile']);
+    readString(raw, ['supplier_name', 'supplier', 'business_name', 'company', 'company_name']) || '';
+  const phone = readString(raw, ['phone', 'mobile', 'contact_phone']);
   const location = readString(raw, ['location', 'country']);
   const remainingBalanceRaw = readRawValue(raw, [
     'remaining_balance',
@@ -439,18 +604,6 @@ const parseSupplierRow = (raw: Record<string, unknown>): ParseResult<SupplierImp
     errors.push('supplier_name is required');
   } else if (supplierName.length > 140) {
     errors.push('supplier_name must be at most 140 characters');
-  }
-
-  if (companyName && companyName.length > 80) {
-    errors.push('company_name must be at most 80 characters');
-  }
-
-  if (contactPerson && contactPerson.length > 140) {
-    errors.push('contact_person must be at most 140 characters');
-  }
-
-  if (contactPhone && contactPhone.length > 30) {
-    errors.push('contact_phone must be at most 30 characters');
   }
 
   if (phone && phone.length > 30) {
@@ -475,9 +628,6 @@ const parseSupplierRow = (raw: Record<string, unknown>): ParseResult<SupplierImp
 
   const data: SupplierImportRow = {
     supplier_name: supplierName,
-    company_name: companyName || null,
-    contact_person: contactPerson || null,
-    contact_phone: contactPhone || null,
     phone: phone || null,
     location: location || null,
     remaining_balance: remainingBalance,
@@ -491,7 +641,10 @@ const parseSupplierRow = (raw: Record<string, unknown>): ParseResult<SupplierImp
   };
 };
 
-const parseItemRow = (raw: Record<string, unknown>): ParseResult<ItemImportRow> => {
+const parseItemRow = (
+  raw: Record<string, unknown>,
+  attributeCatalog: Record<string, ProductAttributeDef>
+): ParseResult<ItemImportRow> => {
   const errors: string[] = [];
   const name = readString(raw, ['name', 'item']) || '';
   const barcode = readString(raw, ['barcode', 'bar_code', 'sku']);
@@ -502,6 +655,9 @@ const parseItemRow = (raw: Record<string, unknown>): ParseResult<ItemImportRow> 
   const isActiveRaw = readRawValue(raw, ['is_active', 'active', 'status']);
   const storeIdRaw = readRawValue(raw, ['store_id', 'store']);
   const branchFromFile = readRawValue(raw, ['branch_id', 'branch']);
+  const categoryName = readString(raw, ['category', 'category_name']);
+  const unitName = readString(raw, ['unit', 'unit_name']);
+  const supplierName = readString(raw, ['supplier', 'supplier_name']);
 
   if (!name) {
     errors.push('item is required');
@@ -539,6 +695,17 @@ const parseItemRow = (raw: Record<string, unknown>): ParseResult<ItemImportRow> 
   const isActive = parseBooleanLike(isActiveRaw, 'is_active', errors, true);
   const storeId = parseOptionalPositiveInt(storeIdRaw, 'store_id', errors);
 
+  // Phase 9: any catalog column present in this row's file (matched by its
+  // key, e.g. "Screen Size" -> screen_size, same as every other header
+  // here) - whatever isn't present is simply omitted, never an error, so
+  // every business profile's template (which lists every possible
+  // attribute column) works for every other profile too.
+  const attributes: Record<string, string> = {};
+  for (const def of Object.values(attributeCatalog)) {
+    const value = readString(raw, [def.key]);
+    if (value) attributes[def.key] = value;
+  }
+
   const data: ItemImportRow = {
     name,
     barcode: barcode || null,
@@ -548,6 +715,13 @@ const parseItemRow = (raw: Record<string, unknown>): ParseResult<ItemImportRow> 
     sell_price: sellPrice,
     is_active: isActive,
     store_id: storeId,
+    category_name: categoryName || null,
+    unit_name: unitName || null,
+    category_id: null,
+    unit_id: null,
+    supplier_name: supplierName || null,
+    supplier_id: null,
+    attributes,
   };
 
   return {
@@ -629,7 +803,7 @@ const applySupplierChecks = async (
 const applyItemChecks = async (
   rows: CandidateRow<ItemImportRow>[],
   branchId: number,
-  _options: ImportExecutionOptions
+  options: ImportExecutionOptions
 ) => {
   addFileDuplicateSkips(rows, (row) => row.data.name, 'Item name');
   addFileDuplicateSkips(
@@ -749,6 +923,8 @@ const applyItemChecks = async (
       row.errors.push(`store_id ${row.data.store_id} does not exist in this branch`);
     }
   }
+
+  await resolveItemCategoriesAndUnits(rows, branchId, options);
 };
 
 const hasCustomerNonOpeningLedger = async (
@@ -784,6 +960,38 @@ const upsertCustomerOpeningLedger = async (
     [branchId, customerId]
   );
 
+  const coa = await ensureCoreCoa(client, branchId, ['accountsReceivable', 'openingBalanceEquity']);
+  // H4 fix: reverse this ref's previous Opening Balance Equity contribution
+  // to accounts.balance before the old GL rows are deleted below - it was
+  // never mirrored into accounts.balance at all (same gap fixed in
+  // customers.service.ts#upsertCustomerOpeningLedger). Accounts Receivable
+  // is deliberately left out here; it's resynced from the ledger below.
+  const priorObeRows = await client.query<{ debit: string; credit: string }>(
+    `SELECT debit, credit FROM ims.account_transactions
+      WHERE branch_id = $1 AND ref_table = 'opening_balance' AND ref_id = $2
+        AND acc_id = $3 AND COALESCE(is_deleted, 0) = 0`,
+    [branchId, customerId, coa.openingBalanceEquity]
+  );
+  for (const row of priorObeRows.rows) {
+    const delta = -(Number(row.credit) - Number(row.debit));
+    if (delta) {
+      await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+        delta,
+        coa.openingBalanceEquity,
+        branchId,
+      ]);
+    }
+  }
+
+  // Same GL sync the manual customer opening-balance edit uses (see
+  // customers.service.ts#upsertCustomerOpeningLedger): replace any prior
+  // opening-balance journal entry for this customer, then re-post it if the
+  // new amount is non-zero, so Accounts Receivable never drifts from what
+  // the imported subsidiary ledger shows. deleteGlByRef matches on
+  // (branchId, refTable, refId), which also makes this safe to re-run for
+  // the same customer without creating duplicate GL entries.
+  await deleteGlByRef(client, { branchId, refTable: 'opening_balance', refId: customerId });
+
   if (!amount) return;
 
   await client.query(
@@ -793,6 +1001,29 @@ const upsertCustomerOpeningLedger = async (
       ($1, $2, 'opening', 'opening_balance', $2, NULL, $3, 0, NOW() - INTERVAL '1 second', $4)`,
     [branchId, customerId, amount, '[OPENING BALANCE] Imported from spreadsheet']
   );
+
+  await postGl(client, {
+    branchId,
+    refTable: 'opening_balance',
+    refId: customerId,
+    note: 'Customer opening balance (import)',
+    lines: [
+      { accId: coa.accountsReceivable, debit: amount, credit: 0, note: 'Customer receivable (imported opening balance)' },
+      { accId: coa.openingBalanceEquity, debit: 0, credit: amount, note: 'Opening balance equity' },
+    ],
+  });
+  // H4 fix: Opening Balance Equity credit above was never mirrored into
+  // accounts.balance. Equity - credit increases it.
+  await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+    amount,
+    coa.openingBalanceEquity,
+    branchId,
+  ]);
+
+  // Keep the cached Accounts Receivable system-account balance in sync in the
+  // same transaction, matching the manual flow - the Balance Sheet reads that
+  // stored balance directly rather than re-deriving it from account_transactions.
+  await syncSystemAccountBalancesWithClient(client, branchId);
 };
 
 const insertCustomer = async (
@@ -975,6 +1206,38 @@ const upsertSupplierOpeningLedger = async (
     [branchId, supplierId]
   );
 
+  const coa = await ensureCoreCoa(client, branchId, ['accountsPayable', 'openingBalanceEquity']);
+  // H4 fix: reverse this ref's previous Opening Balance Equity contribution
+  // to accounts.balance before the old GL rows are deleted below - it was
+  // never mirrored into accounts.balance at all (same gap fixed in
+  // suppliers.service.ts#upsertSupplierOpeningLedger). Accounts Payable is
+  // deliberately left out here; it's resynced from the ledger below.
+  const priorObeRows = await client.query<{ debit: string; credit: string }>(
+    `SELECT debit, credit FROM ims.account_transactions
+      WHERE branch_id = $1 AND ref_table = 'opening_balance' AND ref_id = $2
+        AND acc_id = $3 AND COALESCE(is_deleted, 0) = 0`,
+    [branchId, supplierId, coa.openingBalanceEquity]
+  );
+  for (const row of priorObeRows.rows) {
+    const delta = -(Number(row.credit) - Number(row.debit));
+    if (delta) {
+      await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+        delta,
+        coa.openingBalanceEquity,
+        branchId,
+      ]);
+    }
+  }
+
+  // Same GL sync the manual supplier opening-balance edit uses (see
+  // suppliers.service.ts#upsertSupplierOpeningLedger): replace any prior
+  // opening-balance journal entry for this supplier, then re-post it if the
+  // new amount is non-zero, so Accounts Payable never drifts from what the
+  // imported subsidiary ledger shows. deleteGlByRef matches on (branchId,
+  // refTable, refId), which also makes this safe to re-run for the same
+  // supplier without creating duplicate GL entries.
+  await deleteGlByRef(client, { branchId, refTable: 'opening_balance', refId: supplierId });
+
   if (!amount) return;
 
   await client.query(
@@ -984,6 +1247,28 @@ const upsertSupplierOpeningLedger = async (
       ($1, $2, 'opening', 'opening_balance', $2, NULL, 0, $3, NOW() - INTERVAL '1 second', $4)`,
     [branchId, supplierId, amount, '[OPENING BALANCE] Imported from spreadsheet']
   );
+
+  await postGl(client, {
+    branchId,
+    refTable: 'opening_balance',
+    refId: supplierId,
+    note: 'Supplier opening balance (import)',
+    lines: [
+      { accId: coa.openingBalanceEquity, debit: amount, credit: 0, note: 'Opening balance equity' },
+      { accId: coa.accountsPayable, debit: 0, credit: amount, note: 'Supplier payable (imported opening balance)' },
+    ],
+  });
+  // H4 fix: Opening Balance Equity debit above was never mirrored into
+  // accounts.balance. Equity - debit decreases it.
+  await client.query(`UPDATE ims.accounts SET balance = balance - $1 WHERE acc_id = $2 AND branch_id = $3`, [
+    amount,
+    coa.openingBalanceEquity,
+    branchId,
+  ]);
+
+  // Keep the cached Accounts Payable system-account balance in sync in the
+  // same transaction, matching the manual flow.
+  await syncSystemAccountBalancesWithClient(client, branchId);
 };
 
 const insertSupplier = async (
@@ -993,10 +1278,7 @@ const insertSupplier = async (
   options: ImportExecutionOptions
 ): Promise<'inserted' | 'updated'> => {
   const shape = await detectSupplierShape();
-  const locationValue =
-    shape.locationColumn === 'company_name'
-      ? row.company_name ?? row.location ?? null
-      : row.location ?? row.company_name ?? null;
+  const locationValue = row.location ?? null;
 
   const existing = await client.query<{ supplier_id: number }>(
     `SELECT supplier_id
@@ -1105,6 +1387,53 @@ const insertSupplier = async (
   return 'inserted';
 };
 
+// Same opening-stock GL posting the manual product-creation flow already does
+// (see products.service.ts#rewriteItemOpeningStockGl) - opening stock
+// (opening_balance * cost_price) must be reflected in the GL as an Inventory
+// asset, or the Balance Sheet's Inventory figure silently omits whatever
+// stock an imported item started with. deleteGlByRef first makes this safe
+// to re-run for the same item without creating duplicate GL entries.
+const postItemOpeningStockGl = async (
+  client: PoolClient,
+  params: { branchId: number; itemId: number; itemName: string; openingBalance: number; costPrice: number }
+) => {
+  await deleteGlByRef(client, { branchId: params.branchId, refTable: 'items', refId: params.itemId });
+
+  const value = Math.round(
+    (Number(params.openingBalance || 0) * Number(params.costPrice || 0) + Number.EPSILON) * 100
+  ) / 100;
+  if (value <= 0) return;
+
+  const coa = await ensureCoreCoa(client, params.branchId, ['inventory', 'openingBalanceEquity']);
+  await postGl(client, {
+    branchId: params.branchId,
+    refTable: 'items',
+    refId: params.itemId,
+    note: `Opening stock: ${params.itemName}`,
+    lines: [
+      { accId: coa.inventory, debit: value, note: 'Opening stock' },
+      { accId: coa.openingBalanceEquity, credit: value, note: 'Opening stock' },
+    ],
+  });
+
+  // Keep the cached Inventory system-account balance in sync in the same
+  // transaction, matching rewriteItemOpeningStockGl's own approach.
+  await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+    value,
+    coa.inventory,
+    params.branchId,
+  ]);
+  // H4 fix: the Opening Balance Equity credit above was never mirrored into
+  // accounts.balance. Equity - credit increases it. No reversal-before-delete
+  // is needed here: this function is only ever called from insertItem's plain
+  // INSERT, so itemId is always a brand-new ref with no prior GL to reverse.
+  await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+    value,
+    coa.openingBalanceEquity,
+    params.branchId,
+  ]);
+};
+
 const insertItem = async (
   client: PoolClient,
   row: ItemImportRow,
@@ -1129,7 +1458,9 @@ const insertItem = async (
     'opening_balance',
     'cost_price',
     'sell_price',
-    'is_active'
+    'is_active',
+    'category_id',
+    'unit_id'
   );
   values.push(
     row.store_id,
@@ -1139,7 +1470,9 @@ const insertItem = async (
     row.opening_balance,
     row.cost_price,
     row.sell_price,
-    row.is_active
+    row.is_active,
+    row.category_id,
+    row.unit_id
   );
 
   const placeholders = values.map((_, index) => `$${index + 1}`);
@@ -1163,6 +1496,44 @@ const insertItem = async (
       [row.store_id, itemId, row.opening_balance]
     );
   }
+
+  if (Object.keys(row.attributes).length) {
+    const attributeCatalog = await loadAttributeCatalog(branchId);
+    const { columns: attrColumns, jsonb: attrJsonb } = splitAttributes(attributeCatalog, row.attributes);
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    for (const [column, value] of Object.entries(attrColumns)) {
+      values.push(value);
+      setClauses.push(`${column} = $${values.length}`);
+    }
+    if (Object.keys(attrJsonb).length) {
+      values.push(JSON.stringify(attrJsonb));
+      setClauses.push(`attributes = $${values.length}::jsonb`);
+    }
+    if (setClauses.length) {
+      values.push(itemId);
+      await client.query(`UPDATE ims.items SET ${setClauses.join(', ')} WHERE item_id = $${values.length}`, values);
+    }
+  }
+
+  if (row.supplier_id) {
+    // Mirrors products.service.ts#setDefaultSupplier - a freshly-inserted item
+    // has no prior item_suppliers rows to clear, so this is a plain insert.
+    await client.query(
+      `INSERT INTO ims.item_suppliers (branch_id, item_id, supplier_id, is_default)
+       VALUES ($1, $2, $3, TRUE)
+       ON CONFLICT (branch_id, item_id, supplier_id) DO UPDATE SET is_default = TRUE`,
+      [branchId, itemId, row.supplier_id]
+    );
+  }
+
+  await postItemOpeningStockGl(client, {
+    branchId,
+    itemId,
+    itemName: row.name,
+    openingBalance: row.opening_balance,
+    costPrice: row.cost_price,
+  });
 
   return 'inserted';
 };
@@ -1221,7 +1592,7 @@ const customersDefinition: ImportDefinition<CustomerImportRow> = {
     { field: 'full_name', aliases: ['full_name', 'name', 'customer_name'] },
     { field: 'remaining_balance', aliases: ['remaining_balance', 'open_balance', 'balance'] },
   ],
-  parseRow: (raw, _row) => parseCustomerRow(raw),
+  parseRow: (raw, _row, _catalog) => parseCustomerRow(raw),
   applyBusinessChecks: applyCustomerChecks,
   insertRow: insertCustomer,
   toPreviewData: (row) => row,
@@ -1230,10 +1601,10 @@ const customersDefinition: ImportDefinition<CustomerImportRow> = {
 const suppliersDefinition: ImportDefinition<SupplierImportRow> = {
   type: 'suppliers',
   requiredHeaders: [
-    { field: 'supplier_name', aliases: ['supplier_name', 'name'] },
+    { field: 'supplier_name', aliases: ['supplier_name', 'supplier', 'business_name', 'company', 'company_name'] },
     { field: 'remaining_balance', aliases: ['remaining_balance', 'open_balance', 'balance'] },
   ],
-  parseRow: (raw, _row) => parseSupplierRow(raw),
+  parseRow: (raw, _row, _catalog) => parseSupplierRow(raw),
   applyBusinessChecks: applySupplierChecks,
   insertRow: insertSupplier,
   toPreviewData: (row) => row,
@@ -1246,9 +1617,11 @@ const itemsDefinition: ImportDefinition<ItemImportRow> = {
     { field: 'quantity', aliases: ['quantity', 'opening_balance', 'opening_stock'] },
     { field: 'cost_price', aliases: ['cost_price', 'cost'] },
     { field: 'sell_price', aliases: ['sell_price', 'price'] },
-    // store_id is preferred in file; if omitted, import auto-assigns Main Store.
+    // store_id, category, and unit are all optional in the file - if omitted, import
+    // auto-assigns Main Store / the branch's default category / the branch's default unit.
+    // A category or unit name that doesn't exist yet gets created automatically.
   ],
-  parseRow: (raw, _row) => parseItemRow(raw),
+  parseRow: (raw, _row, catalog) => parseItemRow(raw, catalog),
   applyBusinessChecks: applyItemChecks,
   insertRow: insertItem,
   toPreviewData: (row) => {
@@ -1263,6 +1636,10 @@ const itemsDefinition: ImportDefinition<ItemImportRow> = {
       store_id: row.store_id,
       barcode: row.barcode,
       stock_alert: Number(row.stock_alert || 0),
+      category: row.category_name || '(default)',
+      unit: row.unit_name || '(default)',
+      supplier: row.supplier_name || '',
+      ...row.attributes,
     };
   },
 };
@@ -1322,13 +1699,18 @@ const executeImport = async <
   ensureFileHasRows(parsed.rows.length);
   ensureRequiredHeaders(parsed.headers, definition.requiredHeaders);
 
+  // Loaded once per import job (not per row) - the branch's current
+  // attribute catalog, used by items' parseRow to read whichever Dynamic
+  // Product Attribute columns are present in the file.
+  const attributeCatalog = await loadAttributeCatalog(branchId);
+
   const failedRows: ImportRowError[] = [];
   const skippedRows: ImportRowSkip[] = [];
   const previewMap = new Map<number, PreviewRow>();
   const candidates: CandidateRow<T>[] = [];
 
   for (const sourceRow of parsed.rows) {
-    const parsedRow = definition.parseRow(sourceRow.raw, sourceRow.row);
+    const parsedRow = definition.parseRow(sourceRow.raw, sourceRow.row, attributeCatalog);
     if (!parsedRow.data || parsedRow.errors.length) {
       failedRows.push({
         row: sourceRow.row,
@@ -1356,7 +1738,7 @@ const executeImport = async <
     });
   }
 
-  await definition.applyBusinessChecks(candidates, branchId, options);
+  await definition.applyBusinessChecks(candidates, branchId, { ...options, mode });
 
   const rowsToInsert: CandidateRow<T>[] = [];
   for (const row of candidates) {

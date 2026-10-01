@@ -98,6 +98,13 @@ export interface SalesByStoreRow {
   sales_count: number;
 }
 
+export interface SalesByAttributeRow {
+  attribute_value: string;
+  quantity_sold: number;
+  sales_amount: number;
+  sales_count: number;
+}
+
 export interface PaymentByAccountRow {
   acc_id: number;
   account_name: string;
@@ -200,6 +207,16 @@ export const salesReportsService = {
       storeId: input.mode === 'show' ? input.storeId : undefined,
     });
     return apiClient.get<RowsResponse<SalesByStoreRow>>(`${API.REPORTS.SALES_BY_STORE}${query}`);
+  },
+
+  async getSalesByAttribute(input: { fromDate: string; toDate: string; attributeKey: string; branchId?: number }) {
+    const query = toQuery({
+      branchId: input.branchId,
+      fromDate: input.fromDate,
+      toDate: input.toDate,
+      attributeKey: input.attributeKey,
+    });
+    return apiClient.get<RowsResponse<SalesByAttributeRow>>(`${API.REPORTS.SALES_BY_ATTRIBUTE}${query}`);
   },
 
   async getTopSellingItems(input: { fromDate: string; toDate: string; branchId?: number }) {

@@ -6,6 +6,7 @@ import { syncSystemAccountBalancesWithClient } from '../../utils/systemAccounts'
 import { postGl } from '../../utils/glPosting';
 import { ensureCoaAccounts } from '../../utils/coaDefaults';
 import { usersService, UserRow } from '../users/users.service';
+import { sessionService } from '../session/session.service';
 import { getUploadedImageUrl } from '../../config/cloudinary';
 import {
   CreatePermissionInput,
@@ -478,31 +479,81 @@ export const systemService = {
           const openAp = Math.round(Math.max(supplierOpening, 0) * 100) / 100;
           if (openAr > 0 || openAp > 0) {
             const coa = await ensureCoaAccounts(client, bid, ['accountsReceivable', 'accountsPayable', 'openingBalanceEquity']);
+
+            // Bug fix: upsertCustomerOpeningLedger/upsertSupplierOpeningLedger
+            // (the normal create/update flow) already post an individual GL
+            // entry per customer/supplier, tagged ref_table='opening_balance'
+            // (singular). This consolidated migration used to post its own
+            // AR/AP total on top of those unconditionally, double-counting any
+            // branch where the per-record postings already exist. Skip
+            // whichever side is already covered that way - do not touch the
+            // side that still needs migrating.
+            const [hasIndividualAr, hasIndividualAp] = await Promise.all([
+              client
+                .query<{ exists: boolean }>(
+                  `SELECT EXISTS (
+                     SELECT 1 FROM ims.account_transactions
+                      WHERE branch_id = $1 AND ref_table = 'opening_balance' AND acc_id = $2
+                   ) AS exists`,
+                  [bid, coa.accountsReceivable]
+                )
+                .then((r) => Boolean(r.rows[0]?.exists)),
+              client
+                .query<{ exists: boolean }>(
+                  `SELECT EXISTS (
+                     SELECT 1 FROM ims.account_transactions
+                      WHERE branch_id = $1 AND ref_table = 'opening_balance' AND acc_id = $2
+                   ) AS exists`,
+                  [bid, coa.accountsPayable]
+                )
+                .then((r) => Boolean(r.rows[0]?.exists)),
+            ]);
+
+            const effectiveOpenAr = hasIndividualAr ? 0 : openAr;
+            const effectiveOpenAp = hasIndividualAp ? 0 : openAp;
+
             const lines = [
-              ...(openAr > 0
+              ...(effectiveOpenAr > 0
                 ? [
-                    { accId: coa.accountsReceivable, debit: openAr, credit: 0, note: 'Opening AR (customers)' },
-                    { accId: coa.openingBalanceEquity, debit: 0, credit: openAr, note: 'Offset (Opening Balance Equity)' },
+                    { accId: coa.accountsReceivable, debit: effectiveOpenAr, credit: 0, note: 'Opening AR (customers)' },
+                    { accId: coa.openingBalanceEquity, debit: 0, credit: effectiveOpenAr, note: 'Offset (Opening Balance Equity)' },
                   ]
                 : []),
-              ...(openAp > 0
+              ...(effectiveOpenAp > 0
                 ? [
-                    { accId: coa.openingBalanceEquity, debit: openAp, credit: 0, note: 'Offset (Opening Balance Equity)' },
-                    { accId: coa.accountsPayable, debit: 0, credit: openAp, note: 'Opening AP (suppliers)' },
+                    { accId: coa.openingBalanceEquity, debit: effectiveOpenAp, credit: 0, note: 'Offset (Opening Balance Equity)' },
+                    { accId: coa.accountsPayable, debit: 0, credit: effectiveOpenAp, note: 'Opening AP (suppliers)' },
                   ]
                 : []),
             ];
 
-            await postGl(client, {
-              branchId: bid,
-              txnType: 'opening',
-              refTable: 'opening_balances',
-              refId: bid,
-              note: 'Opening AR/AP migrated from customer/supplier opening balances',
-              lines,
-            });
+            if (lines.length) {
+              await postGl(client, {
+                branchId: bid,
+                txnType: 'opening',
+                refTable: 'opening_balances',
+                refId: bid,
+                note: 'Opening AR/AP migrated from customer/supplier opening balances',
+                lines,
+              });
 
-            updated.accountTransactions += lines.length;
+              // H4 fix: the Opening Balance Equity offset lines above were never
+              // mirrored into accounts.balance. Equity - credit increases it,
+              // debit decreases it; no reversal is needed since the
+              // alreadyOpeningArAp guard above ensures this block runs at most
+              // once per branch (account_transactions row for this ref makes it
+              // permanently skip on any future call).
+              const obeDelta = effectiveOpenAr - effectiveOpenAp;
+              if (obeDelta) {
+                await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+                  obeDelta,
+                  coa.openingBalanceEquity,
+                  bid,
+                ]);
+              }
+
+              updated.accountTransactions += lines.length;
+            }
           }
         }
 
@@ -566,6 +617,22 @@ export const systemService = {
               { accId: coa.openingBalanceEquity, debit: equityDebit, credit: equityCredit, note: 'Offset (Opening Balance Equity)' },
             ],
           });
+
+          // H4 fix: the acc.acc_id side is intentionally left untouched here -
+          // this loop back-fills GL rows to match an already-correct legacy
+          // balance, so that side needs no update. The Opening Balance Equity
+          // offset, however, was never mirrored into accounts.balance at all.
+          // Equity - credit increases it, debit decreases it; no reversal is
+          // needed since the NOT EXISTS guard in accountsToPost's query above
+          // ensures each account is migrated at most once, ever.
+          const obeDelta = equityCredit - equityDebit;
+          if (obeDelta) {
+            await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+              obeDelta,
+              coa.openingBalanceEquity,
+              bid,
+            ]);
+          }
 
           updated.accounts += 1;
           updated.accountTransactions += 2;
@@ -911,7 +978,7 @@ export const systemService = {
           UPDATE ims.roles
              SET ${updates.join(', ')}
            WHERE role_id = $${parameter}
-           RETURNING role_id, role_code, role_name, description, is_system
+           RETURNING role_id, role_code, role_name, description, monthly_salary, is_system
        )
        SELECT
           u.role_id,
@@ -1014,6 +1081,29 @@ export const systemService = {
         [roleId, permIds]
       );
     });
+
+    // Fixed: invalidatePermissionCache() existed (session.service.ts) but had
+    // zero call sites anywhere in the codebase - a role's permission change
+    // never reached any user already holding that role until their 5-minute
+    // in-memory cache (PERMISSION_CACHE_TTL_MS, keyed by userId, independent
+    // of login/session) happened to expire. Confirmed during verification:
+    // even a brand-new login right after the change still returned the
+    // stale permission set, since login itself reads/populates the same
+    // cache rather than bypassing it. Every user currently holding this
+    // role needs their cache dropped so their very next request re-resolves
+    // permissions from the database instead of serving stale data.
+    // user_id is a bigint column - node-postgres returns bigint as a JS
+    // string to avoid precision loss, not a number (the same class of bug
+    // already fixed 4x elsewhere in this codebase for item-id lookups -
+    // see erp_id_string_vs_number_bug_class). The cache is keyed by
+    // req.user.userId, a real number decoded from the JWT - Map.delete('34')
+    // silently does nothing against a key set as Map.set(34, ...), so this
+    // MUST be Number()-cast or the whole fix above is a no-op.
+    const affectedUsers = await queryMany<{ user_id: number }>(
+      `SELECT user_id FROM ims.users WHERE role_id = $1`,
+      [roleId]
+    );
+    await Promise.all(affectedUsers.map((u) => sessionService.invalidatePermissionCache(Number(u.user_id))));
   },
 
   // NEW: Effective permissions for a user + their explicit overrides (does NOT use ims.user_permissions)
@@ -1088,6 +1178,11 @@ export const systemService = {
         [userId, permIds, effects]
       );
     });
+
+    // Fixed: same stale-cache bug as replaceRolePermissions above - a
+    // per-user override change never took effect for up to 5 minutes,
+    // not even after re-login, until this cache entry was dropped.
+    await sessionService.invalidatePermissionCache(userId);
   },
 
   async listPermissions(): Promise<PermissionRow[]> {
@@ -1207,13 +1302,28 @@ export const systemService = {
     page = 1,
     limit = 50,
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    entity?: string,
+    sortBy: 'created_at' | 'action' | 'entity' | 'user' = 'created_at',
+    sortDir: 'asc' | 'desc' = 'desc'
   ): Promise<{ rows: AuditLogRow[]; total: number }> {
     const offset = (page - 1) * limit;
     const columns = await detectAuditLogColumns();
     const where: string[] = [];
     const filterValues: unknown[] = [];
     let param = 1;
+
+    // Whitelist lookup only - sortBy/sortDir are never interpolated directly, just used
+    // as keys here, same safety property the SELECT clause below already relies on for
+    // these same dynamically-resolved (but never user-supplied) column names.
+    const sortColumnMap: Record<typeof sortBy, string> = {
+      created_at: 'al.created_at',
+      action: `al.${columns.actionColumn}`,
+      entity: `al.${columns.entityColumn}`,
+      user: 'u.username',
+    };
+    const orderByColumn = sortColumnMap[sortBy] ?? 'al.created_at';
+    const orderByDirection = sortDir === 'asc' ? 'ASC' : 'DESC';
 
     if (startDate) {
       where.push(`al.created_at::date >= $${param++}::date`);
@@ -1222,6 +1332,10 @@ export const systemService = {
     if (endDate) {
       where.push(`al.created_at::date <= $${param++}::date`);
       filterValues.push(endDate);
+    }
+    if (entity) {
+      where.push(`al.${columns.entityColumn} = $${param++}`);
+      filterValues.push(entity);
     }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -1245,7 +1359,7 @@ export const systemService = {
        FROM ims.audit_logs al
        LEFT JOIN ims.users u ON u.user_id = al.user_id
        ${whereSql}
-       ORDER BY al.created_at DESC
+       ORDER BY ${orderByColumn} ${orderByDirection} NULLS LAST, al.created_at DESC
        LIMIT $${limitParam} OFFSET $${offsetParam}`,
       [...filterValues, limit, offset]
     );

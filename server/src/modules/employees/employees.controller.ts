@@ -17,6 +17,7 @@ import {
   resolveActiveBranchIds,
   resolveBranchScope,
 } from '../../utils/branchScope';
+import { getUserPermissionSet, isAdminRole, userHasPermission } from '../../utils/userPermissions';
 
 export const listEmployees = asyncHandler(async (req: AuthRequest, res: Response) => {
   const { search, status } = req.query;
@@ -106,8 +107,32 @@ export const getEmployeeStats = asyncHandler(async (req: AuthRequest, res: Respo
   return ApiResponse.success(res, stats);
 });
 
+// Phase 10 RBAC audit fix: this one route can flip the active/inactive state
+// of an employee, customer, or item depending on req.body.targetType - the
+// route-level middleware couldn't know which permission to require until
+// the body is parsed, so it previously accepted ANY of
+// employees.update/customers.update/items.update, letting e.g. an Inventory
+// Clerk (items.update only) deactivate an Employee. Check the permission
+// that actually matches the requested targetType here instead.
+const TARGET_TYPE_PERMISSION: Record<'employee' | 'customer' | 'item', string> = {
+  employee: 'employees.update',
+  customer: 'customers.update',
+  item: 'items.update',
+};
+
 export const updateGenericState = asyncHandler(async (req: AuthRequest, res: Response) => {
   const input = stateUpdateSchema.parse(req.body);
+  if (!req.user) {
+    throw ApiError.unauthorized('Authentication required');
+  }
+  const requiredPerm = TARGET_TYPE_PERMISSION[input.targetType];
+  const isAdmin = await isAdminRole(req.user.roleId);
+  if (!isAdmin) {
+    const permissions = await getUserPermissionSet(req.user.userId, req.user.roleId);
+    if (!userHasPermission(permissions, requiredPerm)) {
+      throw ApiError.forbidden('Insufficient permissions');
+    }
+  }
   const branchIds = await resolveActiveBranchIds(req);
   await employeesService.updateState(input, branchIds);
   return ApiResponse.success(res, null, 'State updated');

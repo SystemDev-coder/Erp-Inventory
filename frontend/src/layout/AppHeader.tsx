@@ -6,7 +6,9 @@ import { ThemeToggleButton } from "../components/common/ThemeToggleButton";
 import NotificationDropdown from "../components/header/NotificationDropdown";
 import UserDropdown from "../components/header/UserDropdown";
 import BranchSwitcherDropdown from "../components/header/BranchSwitcherDropdown";
+import LanguageSwitcher from "../components/header/LanguageSwitcher";
 import { useAuth } from "../context/AuthContext";
+import { useLanguage } from "../context/LanguageContext";
 
 type QuickCommand = {
   id: string;
@@ -19,8 +21,8 @@ type QuickCommand = {
 const QUICK_COMMANDS: QuickCommand[] = [
   { id: "dashboard", label: "Open Dashboard", to: "/", keywords: ["home", "kpi"], permissionAny: ["dashboard.view", "home.view"] },
   { id: "customers", label: "Open Customers", to: "/customers", keywords: ["customer", "ledger"], permissionAny: ["customers.view"] },
-  { id: "items", label: "Open Items", to: "/stock-management/items", keywords: ["stock", "products", "inventory"], permissionAny: ["items.view", "products.view", "stock.view", "inventory.view"] },
-  { id: "adjust", label: "Open Adjust Items", to: "/stock-management/adjust-items", keywords: ["stock adjust", "adjustment"], permissionAny: ["items.view", "products.view", "stock.view", "inventory.view"] },
+  { id: "items", label: "Open Products", to: "/stock-management/items", keywords: ["stock", "items", "inventory"], permissionAny: ["items.view", "products.view", "stock.view", "inventory.view"] },
+  { id: "adjust", label: "Open Adjust Products", to: "/stock-management/adjust-items", keywords: ["stock adjust", "adjustment"], permissionAny: ["items.view", "products.view", "stock.view", "inventory.view"] },
   { id: "sales", label: "Open Sales", to: "/sales", keywords: ["sell", "invoice", "pos"], permissionAny: ["sales.view"] },
   { id: "purchases", label: "Open Purchases", to: "/purchases", keywords: ["buy", "supplier"], permissionAny: ["purchases.view", "suppliers.view"] },
   { id: "returns", label: "Open Returns", to: "/returns", keywords: ["sales return", "purchase return", "supplier return"], permissionAny: ["returns.view", "sales_returns.view", "purchase_returns.view"] },
@@ -40,6 +42,7 @@ const AppHeader: React.FC = () => {
 
   const { isMobileOpen, toggleSidebar, toggleMobileSidebar } = useSidebar();
   const { permissions, lock } = useAuth();
+  const { t } = useLanguage();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -187,7 +190,7 @@ const AppHeader: React.FC = () => {
                   <input
                     ref={inputRef}
                     type="text"
-                    placeholder="Search or type command..."
+                    placeholder={t("search_placeholder")}
                     value={searchValue}
                     onFocus={() => setIsSearchOpen(true)}
                     onChange={(e) => setSearchValue(e.target.value)}
@@ -259,12 +262,10 @@ const AppHeader: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center gap-4 px-3 py-2 lg:px-0 lg:py-0">
-            <span className="hidden items-center whitespace-nowrap px-1 text-sm font-extrabold leading-none tracking-wide text-slate-900 sm:inline-flex dark:text-white">
-              Version 1.0
-            </span>
             <div className="flex items-center gap-2 2xsm:gap-3">
               <BranchSwitcherDropdown />
               <ThemeToggleButton />
+              <LanguageSwitcher />
               <NotificationDropdown />
             </div>
             <UserDropdown />

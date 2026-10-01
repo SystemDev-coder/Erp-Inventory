@@ -5,6 +5,7 @@ import {
   customerInvoicePaymentsCteSql,
   NON_QUOTATION_SALES_WHERE,
 } from '../reports.helpers';
+import { resolveAttributeGroupExpr } from '../../../config/productAttributes';
 
 export interface ReportOption {
   id: number;
@@ -46,6 +47,13 @@ export interface SalesByProductRow {
 export interface TopSellingItemRow {
   product_id: number;
   product_name: string;
+  quantity_sold: number;
+  sales_amount: number;
+  sales_count: number;
+}
+
+export interface SalesByAttributeRow {
+  attribute_value: string;
   quantity_sold: number;
   sales_amount: number;
   sales_count: number;
@@ -536,6 +544,51 @@ export const salesReportsService = {
       GROUP BY i.item_id, i.name
       HAVING COALESCE(SUM(m.quantity), 0) > 0
       ORDER BY quantity_sold DESC, sales_amount DESC, i.name
+      LIMIT 200`,
+      [branchId, fromDate, toDate]
+    );
+  },
+
+  // Category Configuration Engine: same shape as getTopSellingItems, just
+  // grouped by a dynamic attribute's VALUE (e.g. Color, Fragrance Type)
+  // instead of by product - answers "how much did we sell of each Red /
+  // Woody / ...". Returns [] if attributeKey isn't a defined attribute for
+  // this branch (caller responds with an empty report, not an error).
+  async getSalesByAttribute(
+    branchId: number,
+    attributeKey: string,
+    fromDate: string,
+    toDate: string
+  ): Promise<SalesByAttributeRow[]> {
+    const resolved = await resolveAttributeGroupExpr(branchId, attributeKey);
+    if (!resolved) return [];
+
+    return queryMany<SalesByAttributeRow>(
+      `WITH sale_item_map AS (
+         SELECT
+           si.sale_id,
+           COALESCE(
+             (to_jsonb(si) ->> 'product_id')::bigint,
+             (to_jsonb(si) ->> 'item_id')::bigint
+           ) AS item_id,
+           COALESCE((to_jsonb(si) ->> 'quantity')::numeric, 0) AS quantity,
+           COALESCE((to_jsonb(si) ->> 'line_total')::numeric, 0) AS line_total
+         FROM ims.sale_items si
+       )
+       SELECT
+         COALESCE(NULLIF(${resolved.expr}, ''), '(Not set)') AS attribute_value,
+         COALESCE(SUM(m.quantity), 0)::double precision AS quantity_sold,
+         COALESCE(SUM(m.line_total), 0)::double precision AS sales_amount,
+         COUNT(DISTINCT s.sale_id)::int AS sales_count
+       FROM sale_item_map m
+       JOIN ims.sales s ON s.sale_id = m.sale_id
+       JOIN ims.items i ON i.item_id = m.item_id
+      WHERE s.branch_id = $1
+        AND ${salesBaseFilters}
+        AND s.sale_date::date BETWEEN $2::date AND $3::date
+      GROUP BY 1
+      HAVING COALESCE(SUM(m.quantity), 0) > 0
+      ORDER BY quantity_sold DESC, sales_amount DESC, attribute_value
       LIMIT 200`,
       [branchId, fromDate, toDate]
     );

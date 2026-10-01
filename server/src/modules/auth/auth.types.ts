@@ -68,3 +68,8 @@ export interface LockSetInput {
 export interface LockVerifyInput {
   password: string;
 }
+
+// server/src/modules/auth/auth.types.ts
+export type VerifyLoginPasswordInput = {
+  password: string;
+};

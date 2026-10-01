@@ -20,7 +20,7 @@ export class SessionController {
     }
 
     // Check cache first
-    const cached = await sessionService.getCachedPermissions(req.user.userId);
+    const cached = await sessionService.getCachedPermissions(req.user.userId, req.user.roleId);
     if (cached) {
       return ApiResponse.success(res, {
         permissions: cached,
@@ -32,7 +32,7 @@ export class SessionController {
     const data = await authService.getUserWithPermissions(req.user.userId);
 
     // Cache for future requests
-    await sessionService.cachePermissions(req.user.userId, data.permissions);
+    await sessionService.cachePermissions(req.user.userId, req.user.roleId, data.permissions);
 
     return ApiResponse.success(res, {
       permissions: data.permissions,
@@ -50,14 +50,14 @@ export class SessionController {
 
     // Get user permissions
     let permissions: string[];
-    const cached = await sessionService.getCachedPermissions(req.user.userId);
+    const cached = await sessionService.getCachedPermissions(req.user.userId, req.user.roleId);
 
     if (cached) {
       permissions = cached;
     } else {
       const data = await authService.getUserWithPermissions(req.user.userId);
       permissions = data.permissions;
-      await sessionService.cachePermissions(req.user.userId, permissions);
+      await sessionService.cachePermissions(req.user.userId, req.user.roleId, permissions);
     }
 
     // Generate sidebar menu
@@ -158,14 +158,14 @@ export class SessionController {
 
     // Get user permissions
     let permissions: string[];
-    const cached = await sessionService.getCachedPermissions(req.user.userId);
+    const cached = await sessionService.getCachedPermissions(req.user.userId, req.user.roleId);
 
     if (cached) {
       permissions = cached;
     } else {
       const data = await authService.getUserWithPermissions(req.user.userId);
       permissions = data.permissions;
-      await sessionService.cachePermissions(req.user.userId, permissions);
+      await sessionService.cachePermissions(req.user.userId, req.user.roleId, permissions);
     }
 
     const hasPermission = permissions.includes(permKey);

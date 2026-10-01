@@ -20,6 +20,8 @@ const StockAdjustmentsPage = lazy(() => import("./pages/Stock/StockAdjustmentsPa
 const StockAdjustmentCreatePage = lazy(() => import("./pages/Stock/StockAdjustmentCreatePage"));
 const Purchases = lazy(() => import("./pages/Purchases/Purchases"));
 const PurchaseEditor = lazy(() => import("./pages/Purchases/PurchaseEditor"));
+const ProductEditor = lazy(() => import("./pages/Products/ProductEditor"));
+const CategoryEditor = lazy(() => import("./pages/Products/CategoryEditor"));
 const Returns = lazy(() => import("./pages/Returns/Returns"));
 const SalesReturns = lazy(() => import("./pages/Returns/SalesReturns"));
 const PurchaseReturns = lazy(() => import("./pages/Returns/PurchaseReturns"));
@@ -35,8 +37,9 @@ const AccountsReceivableReportPage = lazy(() => import("./pages/Reports/financia
 const AccountsPayableReportPage = lazy(() => import("./pages/Reports/financial/AccountsPayableReportPage"));
 const Settings = lazy(() => import("./pages/Settings/Settings"));
 const System = lazy(() => import("./pages/System/System"));
-const Support = lazy(() => import("./pages/Support/Support"));
 const Trash = lazy(() => import("./pages/Trash/Trash"));
+const POSTab = lazy(() => import("./pages/Sales/POSTab"));
+const POSOrders = lazy(() => import("./pages/Sales/POSOrders"));
 
 const PageLoader = () => (
   <div className="flex min-h-[40vh] items-center justify-center">
@@ -46,13 +49,6 @@ const PageLoader = () => (
 
 const Lazy = ({ children }: { children: ReactNode }) => (
   <Suspense fallback={<PageLoader />}>{children}</Suspense>
-);
-
-const ComingSoonPage = ({ title }: { title: string }) => (
-  <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-    <h1 className="text-xl font-semibold text-slate-900 dark:text-white">{title}</h1>
-    <p className="text-sm text-slate-600 dark:text-slate-300">Coming soon</p>
-  </div>
 );
 
 function AppRoutes() {
@@ -76,34 +72,38 @@ function AppRoutes() {
           <Route path="/inventory/stock" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
           <Route path="/stock-management/adjust-items" element={<ProtectedRoute><Lazy><StockAdjustmentsPage /></Lazy></ProtectedRoute>} />
           <Route path="/stock-management/adjust-items/new" element={<ProtectedRoute><Lazy><StockAdjustmentCreatePage /></Lazy></ProtectedRoute>} />
-          <Route path="/return" element={<ProtectedRoute permission="sales_returns.view"><Lazy><Returns /></Lazy></ProtectedRoute>} />
+          <Route path="/return" element={<ProtectedRoute permissionAny={['sales_returns.view', 'purchase_returns.view']}><Lazy><Returns /></Lazy></ProtectedRoute>} />
           <Route path="/items" element={<ProtectedRoute permission="items.view"><Products /></ProtectedRoute>} />
+          <Route path="/items/new" element={<ProtectedRoute permission="items.create"><Lazy><ProductEditor /></Lazy></ProtectedRoute>} />
+          <Route path="/items/:id/edit" element={<ProtectedRoute permission="items.update"><Lazy><ProductEditor /></Lazy></ProtectedRoute>} />
+          <Route path="/categories/new" element={<ProtectedRoute permission="categories.create"><Lazy><CategoryEditor /></Lazy></ProtectedRoute>} />
+          <Route path="/categories/:id/edit" element={<ProtectedRoute permission="categories.update"><Lazy><CategoryEditor /></Lazy></ProtectedRoute>} />
           <Route path="/stock/adjustments" element={<ProtectedRoute><Lazy><StockAdjustmentsPage /></Lazy></ProtectedRoute>} />
           <Route path="/stock/adjustments/new" element={<ProtectedRoute><Lazy><StockAdjustmentCreatePage /></Lazy></ProtectedRoute>} />
           <Route path="/sales" element={<ProtectedRoute permission="sales.view"><Sales /></ProtectedRoute>} />
           <Route path="/sales/transactions" element={<ProtectedRoute permission="sales.view"><Sales /></ProtectedRoute>} />
-          <Route path="/sales/pos" element={<ProtectedRoute permission="sales.view"><ComingSoonPage title="POS" /></ProtectedRoute>} />
+          <Route path="/sales/pos/orders" element={<ProtectedRoute permission="sales.pos.access"><Lazy><POSOrders /></Lazy></ProtectedRoute>} />
           <Route path="/sales/new" element={<ProtectedRoute permission="sales.create"><SaleCreate /></ProtectedRoute>} />
           <Route path="/sales/:id/edit" element={<ProtectedRoute permission="sales.update"><SaleCreate /></ProtectedRoute>} />
-          <Route path="/purchases" element={<ProtectedRoute><Lazy><Purchases /></Lazy></ProtectedRoute>} />
-          <Route path="/purchases/list" element={<ProtectedRoute><Lazy><Purchases /></Lazy></ProtectedRoute>} />
-          <Route path="/purchases/suppliers" element={<ProtectedRoute><Lazy><Purchases /></Lazy></ProtectedRoute>} />
-          <Route path="/purchases/items" element={<ProtectedRoute><Lazy><Purchases /></Lazy></ProtectedRoute>} />
+          <Route path="/purchases" element={<ProtectedRoute permissionAny={['purchases.view', 'suppliers.view']}><Lazy><Purchases /></Lazy></ProtectedRoute>} />
+          <Route path="/purchases/list" element={<ProtectedRoute permissionAny={['purchases.view', 'suppliers.view']}><Lazy><Purchases /></Lazy></ProtectedRoute>} />
+          <Route path="/purchases/suppliers" element={<ProtectedRoute permissionAny={['purchases.view', 'suppliers.view']}><Lazy><Purchases /></Lazy></ProtectedRoute>} />
+          <Route path="/purchases/items" element={<ProtectedRoute permissionAny={['purchases.view', 'suppliers.view']}><Lazy><Purchases /></Lazy></ProtectedRoute>} />
           <Route path="/purchases/new" element={<ProtectedRoute permission="purchases.create"><Lazy><PurchaseEditor /></Lazy></ProtectedRoute>} />
           <Route path="/purchases/:id" element={<ProtectedRoute permission="purchases.view"><Lazy><PurchaseEditor /></Lazy></ProtectedRoute>} />
-          <Route path="/returns" element={<ProtectedRoute permission="sales_returns.view"><Lazy><Returns /></Lazy></ProtectedRoute>} />
+          <Route path="/returns" element={<ProtectedRoute permissionAny={['sales_returns.view', 'purchase_returns.view']}><Lazy><Returns /></Lazy></ProtectedRoute>} />
           <Route path="/returns/sales/new" element={<ProtectedRoute permission="sales_returns.create"><Lazy><SalesReturns /></Lazy></ProtectedRoute>} />
           <Route path="/returns/sales/:id/edit" element={<ProtectedRoute permission="sales_returns.update"><Lazy><SalesReturns /></Lazy></ProtectedRoute>} />
           <Route path="/returns/purchases/new" element={<ProtectedRoute permission="purchase_returns.create"><Lazy><PurchaseReturns /></Lazy></ProtectedRoute>} />
           <Route path="/returns/purchases/:id/edit" element={<ProtectedRoute permission="purchase_returns.update"><Lazy><PurchaseReturns /></Lazy></ProtectedRoute>} />
           <Route path="/transfers" element={<ProtectedRoute permission="transfers.view"><Lazy><Transfers /></Lazy></ProtectedRoute>} />
-          <Route path="/finance" element={<ProtectedRoute><Lazy><Finance /></Lazy></ProtectedRoute>} />
-          <Route path="/finance/accounts" element={<ProtectedRoute><Lazy><Finance /></Lazy></ProtectedRoute>} />
-          <Route path="/finance/transfers" element={<ProtectedRoute><Lazy><Finance /></Lazy></ProtectedRoute>} />
-          <Route path="/finance/receipts" element={<ProtectedRoute><Lazy><Receipts /></Lazy></ProtectedRoute>} />
-          <Route path="/finance/payroll" element={<ProtectedRoute><Lazy><Finance /></Lazy></ProtectedRoute>} />
-          <Route path="/finance/expense" element={<ProtectedRoute><Lazy><Finance /></Lazy></ProtectedRoute>} />
-          <Route path="/finance/loans" element={<ProtectedRoute><Lazy><Finance /></Lazy></ProtectedRoute>} />
+          <Route path="/finance" element={<ProtectedRoute permissionAny={['finance.reports', 'accounts.view', 'expenses.view', 'ledgers.view']}><Lazy><Finance /></Lazy></ProtectedRoute>} />
+          <Route path="/finance/accounts" element={<ProtectedRoute permissionAny={['accounts.view']}><Lazy><Finance /></Lazy></ProtectedRoute>} />
+          <Route path="/finance/transfers" element={<ProtectedRoute permissionAny={['account_transfers.view', 'accounts.view']}><Lazy><Finance /></Lazy></ProtectedRoute>} />
+          <Route path="/finance/receipts" element={<ProtectedRoute permissionAny={['accounts.view', 'sales.view', 'purchases.view']}><Lazy><Receipts /></Lazy></ProtectedRoute>} />
+          <Route path="/finance/payroll" element={<ProtectedRoute permissionAny={['payroll_lines.view', 'payroll_runs.view', 'payroll.process', 'payroll.pay', 'finance.reports', 'accounts.view']}><Lazy><Finance /></Lazy></ProtectedRoute>} />
+          <Route path="/finance/expense" element={<ProtectedRoute permissionAny={['expenses.view']}><Lazy><Finance /></Lazy></ProtectedRoute>} />
+          <Route path="/finance/loans" element={<ProtectedRoute permissionAny={['accounts.view', 'finance.reports']}><Lazy><Finance /></Lazy></ProtectedRoute>} />
           <Route path="/customers" element={<ProtectedRoute permission="customers.view"><Lazy><Customers /></Lazy></ProtectedRoute>} />
           <Route path="/customers/:tab" element={<ProtectedRoute permission="customers.view"><Lazy><Customers /></Lazy></ProtectedRoute>} />
           <Route path="/employees" element={<ProtectedRoute permission="employees.view"><Lazy><Employees /></Lazy></ProtectedRoute>} />
@@ -185,6 +185,15 @@ function AppRoutes() {
             element={
               <ProtectedRoute
                 permissionAny={[
+                  // dashboard.view/home.view: every regular authenticated user has this
+                  // (it's what gates the dashboard itself) - added so the header bell's
+                  // "View all Notifications" link actually opens for everyone, not just
+                  // admins. The tabs inside this page stay individually gated as before
+                  // (Users/Roles/Privileges/Permissions still hidden from anyone without
+                  // the keys below) - only Company Info/Print Settings/Notifications are
+                  // ungated, same as they already were.
+                  'dashboard.view',
+                  'home.view',
                   'system.settings',
                   'users.view',
                   'roles.view',
@@ -199,7 +208,6 @@ function AppRoutes() {
             }
           />
           <Route path="/system" element={<ProtectedRoute permission="system.settings"><Lazy><Settings /></Lazy></ProtectedRoute>} />
-          <Route path="/support" element={<ProtectedRoute><Lazy><Support /></Lazy></ProtectedRoute>} />
           <Route path="/trash" element={<ProtectedRoute permission="trash.view" roleAny={['developer']}><Lazy><Trash /></Lazy></ProtectedRoute>} />
         </Route>
 
@@ -207,6 +215,10 @@ function AppRoutes() {
         <Route path="/signin" element={<SignIn />} />
         <Route path="/signup" element={<SignUp />} />
         <Route path="/lock" element={<Lazy><Lock /></Lazy>} />
+
+        {/* POS: a dedicated full-screen checkout terminal, deliberately outside
+            AppLayout - no sidebar, its own minimal header, like a real till screen. */}
+        <Route path="/sales/pos" element={<ProtectedRoute permission="sales.pos.access"><Lazy><POSTab /></Lazy></ProtectedRoute>} />
 
         {/* Fallback Route */}
         <Route path="*" element={<NotFound />} />

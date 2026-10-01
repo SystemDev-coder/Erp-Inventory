@@ -4,6 +4,7 @@ import {
   getDailySalesReport,
   getInvoiceStatusReport,
   getQuotationsReport,
+  getSalesByAttributeReport,
   getSalesByCustomerReport,
   getSalesByProductReport,
   getSalesByStoreReport,
@@ -24,6 +25,7 @@ router.get('/invoice-status', getInvoiceStatusReport);
 router.get('/by-customer', getSalesByCustomerReport);
 router.get('/by-product', getSalesByProductReport);
 router.get('/by-store', getSalesByStoreReport);
+router.get('/by-attribute', getSalesByAttributeReport);
 router.get('/top-items', getTopSellingItemsReport);
 router.get('/top-customers', getTopCustomersReport);
 router.get('/returns', getSalesReturnsReport);

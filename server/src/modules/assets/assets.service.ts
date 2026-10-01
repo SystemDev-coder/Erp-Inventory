@@ -266,7 +266,7 @@ const ensureAssetGlAccount = async (client: PoolClient, branchId: number, assetN
   const created = await client.query<{ acc_id: number }>(
     `INSERT INTO ims.accounts (branch_id, name, institution, balance, account_type, is_active)
      VALUES ($1, $2, '', 0, 'asset', TRUE)
-     ON CONFLICT (branch_id, name) DO UPDATE SET is_active = TRUE
+     ON CONFLICT (branch_id, name) DO UPDATE SET account_type = EXCLUDED.account_type
      RETURNING acc_id`,
     [branchId, name]
   );
@@ -284,18 +284,30 @@ const ensureAssetGlAccount = async (client: PoolClient, branchId: number, assetN
 // flows (like this one) must also keep ims.accounts.balance in sync themselves, since several
 // other code paths (e.g. the "pay expense charge"/"receive payment" account pickers) validate
 // against that cached column directly rather than recomputing from the ledger.
+// H4 fix: this previously assumed debit-increases (asset/expense/cost) for
+// every account it reversed. For liability/equity/revenue accounts, credit
+// is what increases balance, so reversing must flip that sign too - not
+// doing so meant re-editing an asset added the old Opening Balance Equity
+// credit back in a second time instead of subtracting it, inflating OBE's
+// cached balance on every edit. Mirrors the identical fix in
+// products.service.ts's reverseAccountBalanceForRef.
 const reverseAccountBalanceForRef = async (
   client: PoolClient,
   params: { branchId: number; refTable: string; refId: number }
 ) => {
-  const previous = await client.query<{ acc_id: number; debit: string; credit: string }>(
-    `SELECT acc_id, COALESCE(debit, 0)::text AS debit, COALESCE(credit, 0)::text AS credit
-       FROM ims.account_transactions
-      WHERE branch_id = $1 AND ref_table = $2 AND ref_id = $3 AND COALESCE(is_deleted, 0) = 0`,
+  const previous = await client.query<{ acc_id: number; debit: string; credit: string; account_type: string }>(
+    `SELECT t.acc_id, COALESCE(t.debit, 0)::text AS debit, COALESCE(t.credit, 0)::text AS credit, a.account_type
+       FROM ims.account_transactions t
+       JOIN ims.accounts a ON a.acc_id = t.acc_id
+      WHERE t.branch_id = $1 AND t.ref_table = $2 AND t.ref_id = $3 AND COALESCE(t.is_deleted, 0) = 0`,
     [params.branchId, params.refTable, params.refId]
   );
   for (const row of previous.rows) {
-    const delta = -(Number(row.debit) - Number(row.credit));
+    const debit = Number(row.debit);
+    const credit = Number(row.credit);
+    const creditIncreases = row.account_type === 'liability' || row.account_type === 'equity' || row.account_type === 'revenue';
+    const originalDelta = creditIncreases ? credit - debit : debit - credit;
+    const delta = -originalDelta;
     if (delta) {
       await client.query(
         `UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`,
@@ -329,6 +341,14 @@ export const rewriteAssetOpeningGl = async (
   await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
     value,
     assetAccId,
+    params.branchId,
+  ]);
+  // H4 fix: Opening Balance Equity credit above was never mirrored into
+  // accounts.balance. Equity - credit increases it, matching the amount
+  // just posted above.
+  await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+    value,
+    openingBalanceEquityAccId,
     params.branchId,
   ]);
 };
@@ -585,6 +605,11 @@ export const assetsService = {
       if (!row) return false;
 
       await client.query(`DELETE FROM ims.assets WHERE asset_id = $1`, [assetId]);
+      await reverseAccountBalanceForRef(client, {
+        branchId: Number(row.branch_id),
+        refTable: 'assets',
+        refId: Number(row.asset_id),
+      });
       await deleteGlByRef(client, { branchId: Number(row.branch_id), refTable: 'assets', refId: Number(row.asset_id) });
       return true;
     });

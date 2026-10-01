@@ -17,6 +17,13 @@ export interface CurrentStockLevelRow {
   stock_value: number;
 }
 
+export interface StockByAttributeRow {
+  attribute_value: string;
+  total_qty: number;
+  stock_value: number;
+  item_count: number;
+}
+
 export interface InventoryValuationRow {
   item_id: number;
   item_name: string;
@@ -165,6 +172,14 @@ export const inventoryReportsService = {
   async getCurrentStockLevels(branchId?: number) {
     const query = toQuery({ branchId });
     return apiClient.get<RowsResponse<CurrentStockLevelRow>>(`${API.REPORTS.INVENTORY_CURRENT_STOCK}${query}`);
+  },
+
+  async getStockByAttribute(input: { attributeKey: string; branchId?: number }) {
+    const query = toQuery({
+      branchId: input.branchId,
+      attributeKey: input.attributeKey,
+    });
+    return apiClient.get<RowsResponse<StockByAttributeRow>>(`${API.REPORTS.INVENTORY_BY_ATTRIBUTE}${query}`);
   },
 
   async getLowStockAlert(branchId?: number) {

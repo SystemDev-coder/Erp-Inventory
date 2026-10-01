@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { ColumnDef } from '@tanstack/react-table';
 import { Plus, RefreshCw, AlertCircle, DollarSign, Wallet, TrendingDown } from 'lucide-react';
 import { Tabs } from '../../components/ui/tabs';
@@ -20,6 +21,7 @@ import {
 } from '../../services/finance.service';
 import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
+import { usePermissions } from '../../hooks/usePermissions';
 
 type ActiveTab = 'customer-receipts' | 'supplier-receipts';
 
@@ -86,6 +88,7 @@ const parseAmountInput = (value: string | null | undefined) => {
 const Receipts = () => {
     const { showToast } = useToast();
     const { activeBranchId } = useBranch();
+    const { can } = usePermissions();
 
     const [activeTab, setActiveTab] = useState<ActiveTab>('customer-receipts');
     const [loading, setLoading] = useState(false);
@@ -156,6 +159,29 @@ const Receipts = () => {
             setSupplierLookup(res.data.suppliers);
         }
     };
+
+    // Dashboard's "Collect" button on a customer debt row links here as
+    // /finance/receipts?customerId=X - open straight into a pre-filled New
+    // Customer Receipt instead of making them pick the customer again.
+    const [searchParams, setSearchParams] = useSearchParams();
+    useEffect(() => {
+        const customerId = Number(searchParams.get('customerId'));
+        if (!customerId || !Number.isFinite(customerId)) return;
+        setEditingReceiptId(null);
+        setReceiptForm({ customer_id: customerId, payment_method: 'Cash' });
+        void lookupCustomers('');
+        setIsCustModalOpen(true);
+        void (async () => {
+            setCustomerBalanceLoading(true);
+            const balanceRes = await financeService.getCustomerCombinedBalance(customerId, activeBranchId ?? undefined);
+            if (balanceRes.success && balanceRes.data?.balance) {
+                setCustomerCombinedBalance(Number(balanceRes.data.balance.total_balance ?? 0));
+            }
+            setCustomerBalanceLoading(false);
+        })();
+        setSearchParams({}, { replace: true });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // ─── Data Loading ──────────────────────────────────────────────────────────
     const loadCustomerData = async () => {
@@ -334,6 +360,20 @@ const Receipts = () => {
             accessorKey: 'outstanding',
             header: 'Still Owed',
             cell: ({ row }) => <span className="font-bold text-red-600">{fmt(row.original.outstanding)}</span>,
+        },
+        {
+            // H2 fix: "Still Owed" above only reflects payments explicitly linked to
+            // this purchase - it never guesses that a pooled receipt belongs here.
+            // This shows the supplier's separate unlinked/pooled credit (same value
+            // on every row for that supplier, since it isn't tied to one purchase)
+            // so it's never silently missing from the picture.
+            accessorKey: 'supplier_unallocated_payment',
+            header: 'Supplier Unallocated',
+            cell: ({ row }) => {
+                const unallocated = Number(row.original.supplier_unallocated_payment || 0);
+                if (unallocated <= 0.004) return <span className="text-slate-400">—</span>;
+                return <span className="font-medium text-amber-700">{fmt(unallocated)}</span>;
+            },
         },
         {
             accessorKey: 'status',
@@ -633,12 +673,14 @@ const Receipts = () => {
                         >
                             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
                         </button>
-                        <button
-                            onClick={() => openCustModal()}
-                            className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700"
-                        >
-                            <Plus className="h-4 w-4" /> New Customer Receipt
-                        </button>
+                        {can('customer_receipts.create') && (
+                            <button
+                                onClick={() => openCustModal()}
+                                className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700"
+                            >
+                                <Plus className="h-4 w-4" /> New Customer Receipt
+                            </button>
+                        )}
                         {unpaidCustomers.length > 0 && (
                             <button
                                 onClick={() => setShowCustOutstanding(v => !v)}
@@ -662,13 +704,13 @@ const Receipts = () => {
                                 columns={unpaidCustColumns}
                                 isLoading={loading}
                                 searchPlaceholder="Search customers..."
-                                onEdit={(row) => {
+                                onEdit={can('customer_receipts.create') ? (row) => {
                                     const rec = row as UnpaidCustomer;
                                     setReceiptForm({ customer_id: rec.customer_id, amount: toAmountInput(rec.balance) });
                                     setEditingReceiptId(null);
                                     setIsCustModalOpen(true);
                                     void handleCustomerChange(rec.customer_id);
-                                }}
+                                } : undefined}
                             />
                         </div>
                     )}
@@ -694,8 +736,8 @@ const Receipts = () => {
                             columns={custReceiptColumns}
                             isLoading={loading}
                             searchPlaceholder="Search by customer, reference..."
-                            onEdit={(row) => openCustModal(row as Receipt)}
-                            onDelete={(row) => requestDeleteCustReceipt(row as Receipt)}
+                            onEdit={can('customer_receipts.update') ? (row) => openCustModal(row as Receipt) : undefined}
+                            onDelete={can('customer_receipts.delete') ? (row) => requestDeleteCustReceipt(row as Receipt) : undefined}
                         />
                     </div>
                 </div>
@@ -741,12 +783,14 @@ const Receipts = () => {
                         >
                             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
                         </button>
-                        <button
-                            onClick={() => openSupModal()}
-                            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
-                        >
-                            <Plus className="h-4 w-4" /> New Supplier Payment
-                        </button>
+                        {can('supplier_receipts.create') && (
+                            <button
+                                onClick={() => openSupModal()}
+                                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
+                            >
+                                <Plus className="h-4 w-4" /> New Supplier Payment
+                            </button>
+                        )}
                         {outstandingPurchases.length > 0 && (
                             <button
                                 onClick={() => setShowSupOutstanding(v => !v)}
@@ -770,7 +814,7 @@ const Receipts = () => {
                                 columns={outstandingPurchaseColumns}
                                 isLoading={loading}
                                 searchPlaceholder="Search supplier purchases..."
-                                onEdit={(row) => {
+                                onEdit={can('supplier_receipts.create') ? (row) => {
                                     const p = row as SupplierOutstandingPurchase;
                                     // Pre-fill the supplier receipt form with the outstanding amount
                                     const sup = suppliers.find(s => s.supplier_id === p.supplier_id);
@@ -786,7 +830,7 @@ const Receipts = () => {
                                     } else {
                                         setSupplierCombinedBalance(null);
                                     }
-                                }}
+                                } : undefined}
                             />
                             {/* Outstanding by supplier summary */}
                             {unpaidSuppliers.length > 0 && (
@@ -797,13 +841,13 @@ const Receipts = () => {
                                         columns={unpaidSupColumns}
                                         isLoading={loading}
                                         searchPlaceholder="Search suppliers..."
-                                        onEdit={(row) => {
+                                        onEdit={can('supplier_receipts.create') ? (row) => {
                                             const rec = row as UnpaidSupplier;
                                             setReceiptForm({ supplier_id: rec.supplier_id, amount: toAmountInput(rec.balance) });
                                             setEditingReceiptId(null);
                                             setIsSupModalOpen(true);
                                             void handleSupplierChange(rec.supplier_id);
-                                        }}
+                                        } : undefined}
                                     />
                                 </div>
                             )}
@@ -831,14 +875,24 @@ const Receipts = () => {
                             columns={supReceiptColumns}
                             isLoading={loading}
                             searchPlaceholder="Search by supplier, reference..."
-                            onEdit={(row) => openSupModal(row as Receipt)}
-                            onDelete={(row) => requestDeleteSupReceipt(row as Receipt)}
+                            onEdit={can('supplier_receipts.update') ? (row) => openSupModal(row as Receipt) : undefined}
+                            onDelete={can('supplier_receipts.delete') ? (row) => requestDeleteSupReceipt(row as Receipt) : undefined}
                         />
                     </div>
                 </div>
             ),
         },
     ];
+
+    // Each tab maps to its own real, independently-grantable permission - a user
+    // without customer_receipts.view (or supplier_receipts.view) should never see
+    // that tab at all.
+    const tabVisibility: Record<string, boolean> = {
+        'customer-receipts': can('customer_receipts.view'),
+        'supplier-receipts': can('supplier_receipts.view'),
+    };
+    const visibleTabs = tabs.filter((t) => tabVisibility[t.id] !== false);
+    const defaultVisibleTab = visibleTabs.some((t) => t.id === activeTab) ? activeTab : visibleTabs[0]?.id;
 
     // ─── Render ────────────────────────────────────────────────────────────────
     return (
@@ -849,8 +903,8 @@ const Receipts = () => {
             />
 
             <Tabs
-                tabs={tabs}
-                defaultTab={activeTab}
+                tabs={visibleTabs}
+                defaultTab={defaultVisibleTab}
                 onChange={(id) => setActiveTab(id as ActiveTab)}
             />
 
@@ -920,6 +974,33 @@ const Receipts = () => {
                             onChange={(e) => setReceiptForm(f => ({ ...f, amount: e.target.value }))}
                         />
                     </label>
+
+                    {/* H8 fix: this payment always got accepted silently, with no indication
+                        that it exceeds what's owed. The server has always supported the excess
+                        as a customer advance/credit (see finance.service.ts#createCustomerReceipt) -
+                        show that split here instead of hiding it, so the amount the user sees
+                        matches what actually happens when they submit. This is a preview only;
+                        the server recalculates the real split from its own outstanding-balance data. */}
+                    {receiptForm.customer_id && customerCombinedBalance != null && (() => {
+                        const entered = parseAmountInput(receiptForm.amount);
+                        if (!(entered > 0)) return null;
+                        const outstanding = Math.max(customerCombinedBalance, 0);
+                        const applyToAr = Math.min(entered, outstanding);
+                        const advance = Math.max(entered - outstanding, 0);
+                        if (advance <= 0.004) {
+                            return (
+                                <div className="rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600 ring-1 ring-slate-200">
+                                    Applies {fmt(applyToAr)} to the outstanding balance. Remaining after this payment: {fmt(Math.max(outstanding - applyToAr, 0))}.
+                                </div>
+                            );
+                        }
+                        return (
+                            <div className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200">
+                                <span className="font-semibold">This exceeds the outstanding balance.</span>{' '}
+                                {fmt(applyToAr)} will pay off the balance in full, and the remaining <span className="font-semibold">{fmt(advance)}</span> will be recorded as a customer advance/credit for future purchases.
+                            </div>
+                        );
+                    })()}
 
                     {/* Reference + Note */}
                     <div className="grid grid-cols-2 gap-3">
@@ -1055,6 +1136,29 @@ const Receipts = () => {
                             onChange={(e) => setReceiptForm(f => ({ ...f, amount: e.target.value }))}
                         />
                     </label>
+
+                    {/* H8 fix: same preview as the customer receipt modal - show the AP/advance
+                        split before submission instead of silently accepting an overpayment. */}
+                    {receiptForm.supplier_id && supplierCombinedBalance != null && (() => {
+                        const entered = parseAmountInput(receiptForm.amount);
+                        if (!(entered > 0)) return null;
+                        const outstanding = Math.max(supplierCombinedBalance, 0);
+                        const applyToAp = Math.min(entered, outstanding);
+                        const advance = Math.max(entered - outstanding, 0);
+                        if (advance <= 0.004) {
+                            return (
+                                <div className="rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600 ring-1 ring-slate-200">
+                                    Applies {fmt(applyToAp)} to the outstanding balance. Remaining after this payment: {fmt(Math.max(outstanding - applyToAp, 0))}.
+                                </div>
+                            );
+                        }
+                        return (
+                            <div className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200">
+                                <span className="font-semibold">This exceeds the outstanding balance.</span>{' '}
+                                {fmt(applyToAp)} will pay off the balance in full, and the remaining <span className="font-semibold">{fmt(advance)}</span> will be recorded as a supplier advance for future purchases.
+                            </div>
+                        );
+                    })()}
 
                     {/* Reference + Note */}
                     <div className="grid grid-cols-2 gap-3">

@@ -13,6 +13,13 @@ const defaultNames: Record<SystemAccountKind, string> = {
   receivable: 'Accounts Receivable',
   payable: 'Accounts Payable',
 };
+// Accounts Receivable is an asset (money owed TO the business); Accounts
+// Payable is a liability (money the business owes). Auto-provisioning must
+// not hardcode one type for both kinds.
+const accountTypes: Record<SystemAccountKind, string> = {
+  receivable: 'asset',
+  payable: 'liability',
+};
 
 const fetchSeedBalance = async (
   client: PoolClient | null,
@@ -75,15 +82,16 @@ const fetchAccountId = async (
   let accId = row?.acc_id ? Number(row.acc_id) : null;
   if (!accId) {
     const name = defaultNames[kind];
+    const accountType = accountTypes[kind];
     const insertSql = `
       INSERT INTO ims.accounts (branch_id, name, institution, balance, account_type, is_active)
-      VALUES ($1, $2, '', 0, 'asset', FALSE)
+      VALUES ($1, $2, '', 0, $3, FALSE)
       ON CONFLICT DO NOTHING
     `;
     if (client) {
-      await client.query(insertSql, [branchId, name]);
+      await client.query(insertSql, [branchId, name, accountType]);
     } else {
-      await queryOne(insertSql, [branchId, name]);
+      await queryOne(insertSql, [branchId, name, accountType]);
     }
     const retry = client
       ? (await client.query<{ acc_id: number }>(sql, [branchId, patternA, patternB])).rows[0]

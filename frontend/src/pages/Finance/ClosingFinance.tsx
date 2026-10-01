@@ -456,7 +456,7 @@ const ClosingFinance = () => {
               <Wallet className="h-5 w-5 text-primary-700" />
             </div>
             <p className="mt-2 text-2xl font-bold text-slate-800">{formatMoney(activeSnapshot.stockValuation)}</p>
-            <p className="mt-1 text-sm text-slate-600">Current store/item valuation integrated into closing decisions.</p>
+            <p className="mt-1 text-sm text-slate-600">Current store/product valuation integrated into closing decisions.</p>
           </div>
           <div className="rounded-2xl border border-warning-200 bg-warning-50 p-4">
             <div className="flex items-center justify-between">

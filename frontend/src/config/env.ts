@@ -94,9 +94,17 @@ export const API = {
   // Products endpoints
   PRODUCTS: {
     LIST: '/api/products',
+    SUMMARY: '/api/products/summary',
+    EXPORT: '/api/products/export',
+    BARCODE: (barcode: string) => `/api/products/barcode/${encodeURIComponent(barcode)}`,
     ITEM: (id: number) => `/api/products/${id}`,
     CATEGORIES: '/api/products/categories',
     CATEGORY: (id: number) => `/api/products/categories/${id}`,
+    CATEGORIES_SEED_DEFAULTS: '/api/products/categories/seed-defaults',
+    ATTRIBUTES: '/api/products/attributes',
+    ATTRIBUTE: (id: number) => `/api/products/attributes/${id}`,
+    VARIANTS: (id: number) => `/api/products/${id}/variants`,
+    GENERATE_VARIANTS: (id: number) => `/api/products/${id}/variants/generate`,
     UNITS: '/api/products/units',
     UNIT: (id: number) => `/api/products/units/${id}`,
     TAXES: '/api/products/taxes',
@@ -130,6 +138,7 @@ export const API = {
     SALES_BY_CUSTOMER: '/api/reports/sales/by-customer',
     SALES_BY_PRODUCT: '/api/reports/sales/by-product',
     SALES_BY_STORE: '/api/reports/sales/by-store',
+    SALES_BY_ATTRIBUTE: '/api/reports/sales/by-attribute',
     SALES_TOP_ITEMS: '/api/reports/sales/top-items',
     SALES_TOP_CUSTOMERS: '/api/reports/sales/top-customers',
     SALES_RETURNS: '/api/reports/sales/returns',
@@ -139,6 +148,7 @@ export const API = {
     SALES_COGS_BY_INVOICE: '/api/reports/sales/cogs',
     INVENTORY_OPTIONS: '/api/reports/inventory/options',
     INVENTORY_CURRENT_STOCK: '/api/reports/inventory/current-stock',
+    INVENTORY_BY_ATTRIBUTE: '/api/reports/inventory/by-attribute',
     INVENTORY_LOW_STOCK: '/api/reports/inventory/low-stock',
     INVENTORY_VALUATION: '/api/reports/inventory/valuation',
     INVENTORY_EXPIRY_TRACKING: '/api/reports/inventory/expiry-tracking',
@@ -217,6 +227,8 @@ export const API = {
 
   FINANCE: {
     TRANSFERS: '/api/finance/transfers',
+    LIABILITY_ACCOUNTS: '/api/finance/liability-accounts',
+    LIABILITY_PAYMENTS: '/api/finance/liability-payments',
     CUSTOMER_RECEIPTS: '/api/finance/receipts/customers',
     CUSTOMER_RECEIPTS_UNPAID: '/api/finance/receipts/customers/unpaid',
     CUSTOMER_BALANCE: (customerId: number) => `/api/finance/receipts/customers/${customerId}/balance`,

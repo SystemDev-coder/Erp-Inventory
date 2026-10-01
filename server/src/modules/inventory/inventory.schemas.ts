@@ -40,12 +40,14 @@ const requiredPositiveInt = z.coerce.number().int().positive();
 const dateStringSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format');
 
 const resolveTransferType = (
-  explicitType: 'warehouse' | 'branch' | undefined,
+  explicitType: 'warehouse' | 'branch' | 'store' | undefined,
   warehouseId?: number,
-  branchId?: number
+  branchId?: number,
+  storeId?: number
 ) => {
   if (explicitType) return explicitType;
   if (warehouseId) return 'warehouse' as const;
+  if (storeId) return 'store' as const;
   if (branchId) return 'branch' as const;
   return 'warehouse' as const;
 };
@@ -212,12 +214,14 @@ export const adjustmentUpdateSchema = z.object({
 
 export const transferSchema = z
   .object({
-    fromType: z.enum(['warehouse', 'branch']).optional(),
-    toType: z.enum(['warehouse', 'branch']).optional(),
+    fromType: z.enum(['warehouse', 'branch', 'store']).optional(),
+    toType: z.enum(['warehouse', 'branch', 'store']).optional(),
     fromWhId: optionalPositiveInt,
     toWhId: optionalPositiveInt,
     fromBranchId: optionalPositiveInt,
     toBranchId: optionalPositiveInt,
+    fromStoreId: optionalPositiveInt,
+    toStoreId: optionalPositiveInt,
     productId: optionalPositiveInt,
     itemId: optionalPositiveInt,
     qty: requiredPositiveRoundedInt,
@@ -225,8 +229,8 @@ export const transferSchema = z
     note: z.string().optional(),
   })
   .superRefine((value, ctx) => {
-    const fromType = resolveTransferType(value.fromType, value.fromWhId, value.fromBranchId);
-    const toType = resolveTransferType(value.toType, value.toWhId, value.toBranchId);
+    const fromType = resolveTransferType(value.fromType, value.fromWhId, value.fromBranchId, value.fromStoreId);
+    const toType = resolveTransferType(value.toType, value.toWhId, value.toBranchId, value.toStoreId);
 
     if (fromType === 'warehouse' && !value.fromWhId) {
       ctx.addIssue({
@@ -242,6 +246,13 @@ export const transferSchema = z
         path: ['fromBranchId'],
       });
     }
+    if (fromType === 'store' && !value.fromStoreId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Source store is required',
+        path: ['fromStoreId'],
+      });
+    }
 
     if (toType === 'warehouse' && !value.toWhId) {
       ctx.addIssue({
@@ -255,6 +266,13 @@ export const transferSchema = z
         code: z.ZodIssueCode.custom,
         message: 'Destination branch is required',
         path: ['toBranchId'],
+      });
+    }
+    if (toType === 'store' && !value.toStoreId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Destination store is required',
+        path: ['toStoreId'],
       });
     }
 
@@ -274,6 +292,14 @@ export const transferSchema = z
       });
     }
 
+    if (fromType === 'store' && toType === 'store' && value.fromStoreId && value.toStoreId && value.fromStoreId === value.toStoreId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Source and destination store must differ',
+        path: ['toStoreId'],
+      });
+    }
+
     if (!(value.productId || value.itemId)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -284,8 +310,8 @@ export const transferSchema = z
   })
   .transform((value) => ({
     ...value,
-    fromType: resolveTransferType(value.fromType, value.fromWhId, value.fromBranchId),
-    toType: resolveTransferType(value.toType, value.toWhId, value.toBranchId),
+    fromType: resolveTransferType(value.fromType, value.fromWhId, value.fromBranchId, value.fromStoreId),
+    toType: resolveTransferType(value.toType, value.toWhId, value.toBranchId, value.toStoreId),
     productId: value.productId ?? value.itemId!,
   }));
 

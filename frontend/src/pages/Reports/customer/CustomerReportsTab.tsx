@@ -5,6 +5,8 @@ import { customerReportsService } from '../../../services/reports/customerReport
 import type { DateRange, ModalReportState } from '../types';
 import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange, withReportTruncation, type ReportTruncationMeta } from '../reportUtils';
 import { useBranch } from '../../../context/BranchContext';
+import { useLanguage } from '../../../context/LanguageContext';
+import type { TranslationKey } from '../../../translations';
 
 type CustomerCardId =
   | 'customer-list'
@@ -26,6 +28,28 @@ const customerCards: Array<{ id: CustomerCardId; title: string; hint: string }> 
   { id: 'new-customers', title: 'New Customers (by date)', hint: 'Between two dates' },
   { id: 'customer-activity', title: 'Customer Activity', hint: 'Date range + Show / All' },
 ];
+
+const CUSTOMER_CARD_TITLE_KEYS: Record<CustomerCardId, TranslationKey> = {
+  'customer-list': 'rcard_customer_list_title',
+  'customer-ledger': 'rcard_customer_ledger_title',
+  'outstanding-balances': 'rcard_outstanding_balances_title',
+  'payment-history': 'rcard_customer_payment_history_title',
+  'credit-customers': 'rcard_credit_customers_title',
+  'credit-overdue': 'rcard_credit_overdue_sales_title',
+  'new-customers': 'rcard_new_customers_title',
+  'customer-activity': 'rcard_customer_activity_title',
+};
+
+const CUSTOMER_CARD_HINT_KEYS: Record<CustomerCardId, TranslationKey> = {
+  'customer-list': 'hint_dropdown_show_all',
+  'customer-ledger': 'hint_date_range_show_all',
+  'outstanding-balances': 'hint_dropdown_show_all',
+  'payment-history': 'hint_date_range_show_all',
+  'credit-customers': 'hint_dropdown_show_all',
+  'credit-overdue': 'hint_overdue_balance',
+  'new-customers': 'hint_between_two_dates',
+  'customer-activity': 'hint_date_range_show_all',
+};
 
 const customerListColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'customer_id', header: 'Customer #' },
@@ -149,6 +173,7 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
     onOpenModal(withReportTruncation(report, meta, legacy));
 
   const { activeBranchId } = useBranch();
+  const { t } = useLanguage();
   const [expandedCardId, setExpandedCardId] = useState<CustomerCardId | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<CustomerCardId | null>(null);
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
@@ -676,8 +701,8 @@ export function CustomerReportsTab({ onOpenModal }: Props) {
           className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-primary-900 to-primary-700 px-5 py-4 text-left text-white"
         >
           <div>
-            <p className="text-xl font-semibold leading-tight">{card.title}</p>
-            <p className="mt-1 text-xs font-medium text-white/85">{card.hint}</p>
+            <p className="text-xl font-semibold leading-tight">{t(CUSTOMER_CARD_TITLE_KEYS[card.id])}</p>
+            <p className="mt-1 text-xs font-medium text-white/85">{t(CUSTOMER_CARD_HINT_KEYS[card.id])}</p>
           </div>
           <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
         </button>

@@ -18,6 +18,7 @@ export interface BalanceSheetRow {
   line_item: string;
   amount: number;
   row_type: 'detail' | 'total';
+  account_id?: number;
 }
 
 export interface CashFlowRow {
@@ -174,65 +175,11 @@ export interface AccountsPayableRow {
   status: string;
 }
 
-type BalanceTable = 'customers' | 'suppliers';
-type BalanceColumn = 'open_balance' | 'remaining_balance';
 const OPENING_EXPENSE_NOTE_PREFIX = '[OPENING BALANCE]';
 const openingExpensePredicate = (alias: string) =>
   `COALESCE(NULLIF(to_jsonb(${alias}) ->> 'is_opening_paid', '')::boolean, COALESCE(${alias}.note, '') ILIKE '${OPENING_EXPENSE_NOTE_PREFIX}%')`;
 
-const balanceColumnCache: Partial<Record<BalanceTable, BalanceColumn>> = {};
 const columnExistsCache: Record<string, boolean> = {};
-
-const resolveBalanceColumn = async (table: BalanceTable): Promise<BalanceColumn> => {
-  const cached = balanceColumnCache[table];
-  if (cached) return cached;
-
-  const cols = await queryMany<{ column_name: string }>(
-    `SELECT column_name
-       FROM information_schema.columns
-      WHERE table_schema = 'ims'
-        AND table_name = $1`,
-    [table]
-  );
-  const names = new Set(cols.map((row) => row.column_name));
-  const resolved: BalanceColumn = names.has('remaining_balance') ? 'remaining_balance' : 'open_balance';
-  balanceColumnCache[table] = resolved;
-  return resolved;
-};
-
-const resolveBalanceExpression = async (
-  table: BalanceTable,
-  alias: string
-): Promise<string> => {
-  const cols = await queryMany<{ column_name: string }>(
-    `SELECT column_name
-       FROM information_schema.columns
-      WHERE table_schema = 'ims'
-        AND table_name = $1`,
-    [table]
-  );
-  const names = new Set(cols.map((row) => row.column_name));
-  const hasRemaining = names.has('remaining_balance');
-  const hasOpen = names.has('open_balance');
-
-  if (hasRemaining && hasOpen) {
-    // Some deployments maintain balances in `open_balance` while others use `remaining_balance`.
-    // Prefer `remaining_balance` when it is populated; otherwise fall back to `open_balance`.
-    // (We only apply this heuristic for suppliers, because customer balances are expected to be
-    // maintained in a single column in this system.)
-    if (table === 'suppliers') {
-      return `COALESCE(NULLIF(${alias}.remaining_balance, 0), ${alias}.open_balance, 0)`;
-    }
-    return `COALESCE(${alias}.remaining_balance, ${alias}.open_balance, 0)`;
-  }
-  if (hasRemaining) {
-    return `COALESCE(${alias}.remaining_balance, 0)`;
-  }
-  if (hasOpen) {
-    return `COALESCE(${alias}.open_balance, 0)`;
-  }
-  return '0';
-};
 
 const resolveColumnExists = async (table: string, column: string): Promise<boolean> => {
   const cacheKey = `${table}.${column}`;
@@ -506,6 +453,7 @@ const isEquityLikeAccount = (name: string) => {
   const n = normalizeAccountName(name);
   return n.includes('capital') || n.includes('equity') || n.includes('retained') || n.includes('owner');
 };
+const isOpeningBalanceEquityAccount = (name: string) => normalizeAccountName(name).includes('opening balance');
 
 type BalanceSheetKind = 'asset' | 'liability' | 'equity' | 'revenue' | 'expense';
 
@@ -997,17 +945,18 @@ export const buildBalanceSheetFromLedger = async (
   asOfDate: string,
   netIncomeFromDate?: string
 ): Promise<BalanceSheetRow[]> => {
-  const [customerBalanceColumn, supplierBalanceExpr] = await Promise.all([
-    resolveBalanceColumn('customers'),
-    resolveBalanceExpression('suppliers', 's'),
-  ]);
+  // customers'/suppliers' remaining_balance columns are deliberately never
+  // read in this function anymore (see the fix comments on receivableFallback
+  // and payableFromSupplierLedger below, and effectiveAccountsReceivable/
+  // effectiveAccountsPayable further down) - both live running balances have
+  // repeatedly proven stale/inflated relative to the real GL on this
+  // client's production data.
   const params: Array<number | string> = [branchId, asOfDate];
 
   const [
     accountRows,
     inventoryFallback,
     receivableFallback,
-    payableFallback,
     payableFromSupplierLedger,
     currentAssetRows,
     fixedAssetRows,
@@ -1021,6 +970,7 @@ export const buildBalanceSheetFromLedger = async (
   ] =
     await Promise.all([
       queryMany<{
+        account_id: number;
         account_name: string;
         institution: string;
         account_type: string;
@@ -1039,6 +989,7 @@ export const buildBalanceSheetFromLedger = async (
             GROUP BY at.acc_id
           )
           SELECT
+            a.acc_id AS account_id,
             COALESCE(NULLIF(BTRIM(a.name), ''), 'Account #' || a.acc_id::text) AS account_name,
             COALESCE(a.institution, '') AS institution,
             COALESCE(a.account_type::text, 'asset') AS account_type,
@@ -1102,65 +1053,63 @@ export const buildBalanceSheetFromLedger = async (
           FROM item_stock`,
         [branchId]
       ),
+      // Fixed (mirrors getAccountsReceivable's own openingRows query, ~line
+      // 2728): a GENUINE entry_type='opening' customer_ledger row dated
+      // on/before asOfDate, net of unallocated customer_receipts (payments
+      // not tied to any sale) - the exact same two sources
+      // getAccountsReceivable already nets per-customer, combined into one
+      // total here. The previous version summed customers.remaining_balance
+      // wholesale, a LIVE running balance that goes stale the moment
+      // postGl/ledger activity isn't mirrored back into it (see
+      // erp_gl_triple_source_of_truth), and had no divergence check at all
+      // (unlike the cash-account branch below). An earlier attempt at this
+      // fix that summed ONLY the opening rows (no unallocated-receipts
+      // netting) was caught overstating AR by exactly the unallocated
+      // amount during local verification - confirmed against
+      // getAccountsReceivable's own detail-row total before finalizing.
       queryAmount(
-        `SELECT COALESCE(SUM(COALESCE(c.${customerBalanceColumn}, 0)), 0)::double precision AS amount
-           FROM ims.customers c
-          WHERE c.branch_id = $1
-            AND c.is_active = TRUE`,
-        [branchId]
+        `WITH opening_total AS (
+           SELECT COALESCE(SUM(cl.debit - cl.credit), 0)::double precision AS amount
+             FROM ims.customer_ledger cl
+            WHERE cl.branch_id = $1
+              AND cl.entry_type = 'opening'
+              AND cl.ref_table = 'opening_balance'
+              AND cl.entry_date::date <= $2::date
+         ),
+         unallocated_total AS (
+           SELECT COALESCE(SUM(cr.amount), 0)::double precision AS amount
+             FROM ims.customer_receipts cr
+            WHERE cr.branch_id = $1
+              AND cr.sale_id IS NULL
+              AND cr.receipt_date::date <= $2::date
+         )
+         SELECT (opening_total.amount - unallocated_total.amount)::double precision AS amount
+           FROM opening_total, unallocated_total`,
+        params
       ),
+      // Fixed (mirrors getAccountsPayable's own H3-fixed openingRows query,
+      // ~line 2873): the old opening_rows branch credited a supplier's ENTIRE
+      // LIVE suppliers.remaining_balance whenever they had zero
+      // supplier_ledger rows at all - confirmed on production this session
+      // to produce a wildly inflated AP figure ($13,882.80 shown vs $2,300 in
+      // the real GL and the dedicated Accounts Payable report, which
+      // correctly shows $0 for that supplier since no real bill/opening
+      // entry backs it). A supplier with genuinely zero ledger history
+      // contributes $0 here now, exactly like the AP detail report already
+      // (correctly) does - refund-sign handling preserved unchanged for
+      // suppliers who do have real ledger rows.
       queryAmount(
-        `SELECT COALESCE(SUM(${supplierBalanceExpr}), 0)::double precision AS amount
-           FROM ims.suppliers s
-          WHERE s.branch_id = $1
-            AND s.is_active = TRUE`,
-        [branchId]
-      ),
-      queryAmount(
-        `WITH ledger_rows AS (
-           SELECT
-             l.supplier_id,
-             (
-               CASE
-                 WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%')
-                   THEN ABS(COALESCE(l.debit, 0)) + ABS(COALESCE(l.credit, 0))
-                 ELSE COALESCE(l.debit, 0)
-               END
-             )::double precision AS debit,
-             (
-               CASE
-                 WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%')
-                   THEN 0
-                 ELSE COALESCE(l.credit, 0)
-               END
-             )::double precision AS credit
+        `SELECT
+           GREATEST(COALESCE(SUM(
+             CASE
+               WHEN (COALESCE(l.entry_type::text, '') = 'refund' OR COALESCE(l.note, '') ILIKE '%refund%')
+                 THEN -(ABS(COALESCE(l.debit, 0)) + ABS(COALESCE(l.credit, 0)))
+               ELSE COALESCE(l.credit, 0) - COALESCE(l.debit, 0)
+             END
+           ), 0), 0)::double precision AS amount
            FROM ims.supplier_ledger l
           WHERE l.branch_id = $1
-            AND l.entry_date::date <= $2::date
-         ),
-         opening_rows AS (
-           SELECT
-             s.supplier_id,
-             0::double precision AS debit,
-             GREATEST(COALESCE(${supplierBalanceExpr}, 0), 0)::double precision AS credit
-           FROM ims.suppliers s
-          WHERE s.branch_id = $1
-            AND GREATEST(COALESCE(${supplierBalanceExpr}, 0), 0) > 0
-            AND NOT EXISTS (
-              SELECT 1
-                FROM ims.supplier_ledger l
-               WHERE l.branch_id = $1
-                 AND l.supplier_id = s.supplier_id
-                 AND l.entry_date::date <= $2::date
-            )
-         ),
-         unioned AS (
-           SELECT * FROM ledger_rows
-           UNION ALL
-           SELECT * FROM opening_rows
-         )
-         SELECT GREATEST(COALESCE(SUM(COALESCE(u.credit, 0) - COALESCE(u.debit, 0)), 0), 0)::double precision AS amount
-           FROM unioned u`,
+            AND l.entry_date::date <= $2::date`,
         params
       ),
       queryManyIfTableExists<{ asset_name: string; amount: number }>(
@@ -1316,9 +1265,31 @@ export const buildBalanceSheetFromLedger = async (
   const equityAccountRows: BalanceSheetRow[] = [];
   const equityRows: BalanceSheetRow[] = [];
 
-  let receivableFromAccounts = 0;
-  let accountsPayableFromAccounts = 0;
   let inventoryFromAccounts = 0;
+  // Pure account_transactions rollups (no stored-balance override) - used as
+  // the actual DISPLAYED Accounts Receivable/Payable figures (see
+  // effectiveAccountsReceivable/effectiveAccountsPayable below) AND for the
+  // equity reconciliation. inventoryFromAccounts (naturalBalance-based, which
+  // prefers the stored accounts.balance column whenever it's non-zero, even
+  // if that's gone stale relative to real new ledger activity - postGl never
+  // updates accounts.balance for non-cash accounts, so a one-time opening
+  // balance stays frozen forever unless a fallback overrides it) is kept
+  // only for Inventory, where inventoryValue below still prefers a
+  // non-GL source (physical items/store_items stock valuation) and only
+  // needs inventoryFromAccounts as ITS OWN fallback - the reconciliation
+  // still needs to compare against what the ledger actually contains, since
+  // that's the only figure double-entry bookkeeping guarantees is internally
+  // consistent (comparing against the "preferred", possibly-stale value
+  // would under- or over-correct, as an isolated test transaction proved
+  // during review). AR/AP went through the exact same lesson: naturalBalance
+  // was tried as their primary display value too, agreed with Trial Balance
+  // on one production check purely by coincidence (accounts.balance
+  // happened to be unset that day) and then diverged locally the moment
+  // accounts.balance held a stale, non-zero figure - see the fix comment on
+  // effectiveAccountsReceivable below for the full account.
+  let inventoryLedgerTotal = 0;
+  let accountsPayableLedgerTotal = 0;
+  let accountsReceivableLedgerTotal = 0;
   let drawingFromAccounts = 0;
   let usedPrepaidAccounts = false;
   let usedOwnerEquityBreakdown = false;
@@ -1328,28 +1299,37 @@ export const buildBalanceSheetFromLedger = async (
     const accountTypeRaw = String(row.account_type || 'asset');
     const accountType = normalizeAccountName(accountTypeRaw);
 
-    // Prefer the stored account balance because it's the system's source of truth and includes
-    // opening balances + all modules' adjustments. Some legacy deployments have incomplete
-    // `account_transactions` history, which would understate balances if we used ledger rollups.
-    // If the stored balance is effectively zero but we do have ledger entries, fall back to ledger.
+    // Prefer the stored account balance when there's no reason to distrust it - it's meant to
+    // include opening balances + all modules' adjustments, and some legacy deployments have
+    // incomplete `account_transactions` history, which would understate balances if we used
+    // ledger rollups unconditionally. But when real transaction activity DISAGREES with the
+    // stored balance, the stored balance is the one that's wrong: postGl enforces debit=credit
+    // on every posting, so txnBalanceRaw is the only figure double-entry bookkeeping actually
+    // guarantees stays internally consistent, and a stored accounts.balance can go stale the
+    // moment new activity is posted without that column being updated to match.
+    //
+    // Fixed 2026-09-30: this preference-when-disagreeing rule used to apply only to cash/bank
+    // accounts (as preferTxnForCash) - every other account trusted the stored balance
+    // unconditionally whenever it was non-zero, disagreement or not. Confirmed on demomadal
+    // production: the "Opening Balance Equity" account's stored balance read $24,688, stale by
+    // exactly $2,310 against its real, Trial-Balance-matching transaction total ($26,998) - the
+    // same staleness bug already fixed for AR/AP (see effectiveAccountsReceivable/
+    // effectiveAccountsPayable below), just on a plain equity account with no reconciliation
+    // safety net to catch the gap. Generalized the cash-only rule to every account.
     const baseBalanceRaw = Number(row.base_balance || 0);
     const baseSignedDebitMinusCredit = (() => {
       const side = resolveNaturalSide(accountTypeRaw, accountName);
       return side === 'credit' ? -Math.abs(baseBalanceRaw) : Math.abs(baseBalanceRaw);
     })();
 
-    const isCashAccount = isCashOrBankAccount(accountName, row.institution);
     const txnBalanceRaw = Number(row.txn_balance || 0);
     const hasTxnBalance = Number(row.txn_count || 0) > 0 && !isApproxZero(txnBalanceRaw);
-    const preferTxnForCash =
-      isCashAccount
-      && hasTxnBalance
+    const preferTxn =
+      hasTxnBalance
       && (isApproxZero(baseBalanceRaw) || Math.abs(txnBalanceRaw - baseSignedDebitMinusCredit) > 0.005);
-    const debitMinusCredit = isCashAccount
-      ? (preferTxnForCash ? txnBalanceRaw : baseSignedDebitMinusCredit)
-      : !isApproxZero(baseBalanceRaw)
-        ? baseSignedDebitMinusCredit
-        : (hasTxnBalance ? txnBalanceRaw : 0);
+    const debitMinusCredit = preferTxn
+      ? txnBalanceRaw
+      : (!isApproxZero(baseBalanceRaw) ? baseSignedDebitMinusCredit : (hasTxnBalance ? txnBalanceRaw : 0));
 
     if (isApproxZero(debitMinusCredit)) continue;
 
@@ -1366,7 +1346,12 @@ export const buildBalanceSheetFromLedger = async (
 
     if (kind === 'liability' || isPayableAccount(accountName)) {
       if (isAccountsPayableAccount(accountName)) {
-        accountsPayableFromAccounts += moneyPos(naturalBalance);
+        // Fixed: no longer pushed via naturalBalance (which prefers the
+        // stored accounts.balance column - see the comment on
+        // accountsPayableLedgerTotal above for why that can go stale). The
+        // displayed "Accounts Payable" row is computed once, below, from
+        // effectiveAccountsPayable, sourced from this pure-ledger total.
+        accountsPayableLedgerTotal += moneyPos(toNaturalBalance(txnBalanceRaw, accountTypeRaw, accountName));
         continue;
       }
       currentLiabilities.push({
@@ -1374,6 +1359,7 @@ export const buildBalanceSheetFromLedger = async (
         line_item: accountName,
         amount: naturalBalance,
         row_type: 'detail',
+        account_id: Number(row.account_id) || undefined,
       });
       continue;
     }
@@ -1384,6 +1370,7 @@ export const buildBalanceSheetFromLedger = async (
         line_item: accountName,
         amount: naturalBalance,
         row_type: 'detail',
+        account_id: Number(row.account_id) || undefined,
       });
       continue;
     }
@@ -1394,23 +1381,23 @@ export const buildBalanceSheetFromLedger = async (
         line_item: accountName,
         amount: naturalBalance,
         row_type: 'detail',
+        account_id: Number(row.account_id) || undefined,
       });
       continue;
     }
 
     if (isReceivableAccount(accountName)) {
-      receivableFromAccounts += moneyPos(naturalBalance);
-      currentAssets.push({
-        section: 'Current Assets',
-        line_item: accountName,
-        amount: naturalBalance,
-        row_type: 'detail',
-      });
+      // Fixed: no longer pushed via naturalBalance (stale-balance risk, same
+      // as Accounts Payable above). The displayed "Accounts Receivable" row
+      // is computed once, below, from effectiveAccountsReceivable, sourced
+      // from this pure-ledger total.
+      accountsReceivableLedgerTotal += moneyPos(toNaturalBalance(txnBalanceRaw, accountTypeRaw, accountName));
       continue;
     }
 
     if (kind === 'asset' && isInventoryAssetAccountName(accountName)) {
       inventoryFromAccounts += Number(naturalBalance || 0);
+      inventoryLedgerTotal += Number(toNaturalBalance(txnBalanceRaw, accountTypeRaw, accountName) || 0);
       continue;
     }
 
@@ -1421,6 +1408,7 @@ export const buildBalanceSheetFromLedger = async (
         line_item: accountName,
         amount: naturalBalance,
         row_type: 'detail',
+        account_id: Number(row.account_id) || undefined,
       });
       continue;
     }
@@ -1431,27 +1419,63 @@ export const buildBalanceSheetFromLedger = async (
         line_item: accountName,
         amount: naturalBalance,
         row_type: 'detail',
+        account_id: Number(row.account_id) || undefined,
       });
     }
   }
 
-  if (isApproxZero(receivableFromAccounts) && !isApproxZero(receivableFallback)) {
+  // Fixed 2026-09-30 (second pass, after a production check on the first):
+  // both AR and AP now display the PURE ledger total (accountsReceivableLedgerTotal/
+  // accountsPayableLedgerTotal - built from account_transactions only, the
+  // same rows Trial Balance itself sums), not naturalBalance's "prefer
+  // stored accounts.balance" figure and not the customer_ledger/
+  // supplier_ledger sub-ledger reconstruction. Two real bugs were found and
+  // fixed in sequence to get here - both worth keeping in mind before
+  // touching this again:
+  //   1) receivableFallback/payableFromSupplierLedger (the customer_ledger/
+  //      supplier_ledger-based sums) were first tried as the primary source.
+  //      On demomadal production, receivableFallback only summed genuine
+  //      entry_type='opening' rows and silently dropped a real $218.40 open
+  //      invoice (true AR was $308.40, it read $90); payableFromSupplierLedger
+  //      summed ALL supplier_ledger activity in principle, but that table
+  //      isn't populated for most of this branch's real purchase history, so
+  //      it evaluated near-$0 and fell through to `payableFallback`
+  //      (suppliers.remaining_balance summed wholesale - the exact
+  //      stale-balance bug this fix exists to kill; that query has been
+  //      removed outright).
+  //   2) naturalBalance (accountsPayableFromAccounts/receivableFromAccounts,
+  //      now removed) was tried next - it agreed with Trial Balance on
+  //      production ($308.40 / $2,300) but NOT locally, because it prefers
+  //      the stored accounts.balance column whenever non-zero, and that
+  //      column had gone stale relative to real new ledger activity (the
+  //      exact "postGl never updates accounts.balance for non-cash accounts"
+  //      risk the accountsPayableLedgerTotal comment above already
+  //      documented for the reconciliation math - it just hadn't been
+  //      applied to the DISPLAY value until now). accountsReceivableLedgerTotal/
+  //      accountsPayableLedgerTotal are pure account_transactions rollups
+  //      with no stored-balance override, so they equal Trial Balance by
+  //      construction, always - not just when accounts.balance happens to
+  //      already agree. The customer_ledger/supplier_ledger sums remain the
+  //      final fallback, used only when the GL account itself has zero
+  //      transaction history.
+  const effectiveAccountsReceivable =
+    !isApproxZero(accountsReceivableLedgerTotal)
+      ? moneyPos(accountsReceivableLedgerTotal)
+      : moneyPos(receivableFallback);
+
+  if (!isApproxZero(effectiveAccountsReceivable)) {
     currentAssets.push({
       section: 'Current Assets',
       line_item: 'Accounts Receivable',
-      amount: moneyPos(receivableFallback),
+      amount: effectiveAccountsReceivable,
       row_type: 'detail',
     });
   }
 
-  const accountsPayableFromSuppliers =
-    !isApproxZero(payableFromSupplierLedger)
-      ? moneyPos(payableFromSupplierLedger)
-      : moneyPos(payableFallback);
   const effectiveAccountsPayable =
-    !isApproxZero(accountsPayableFromSuppliers)
-      ? accountsPayableFromSuppliers
-      : moneyPos(accountsPayableFromAccounts);
+    !isApproxZero(accountsPayableLedgerTotal)
+      ? moneyPos(accountsPayableLedgerTotal)
+      : moneyPos(payableFromSupplierLedger);
 
   if (!isApproxZero(effectiveAccountsPayable)) {
     currentLiabilities.push({
@@ -1554,6 +1578,51 @@ export const buildBalanceSheetFromLedger = async (
       });
     }
 
+  // Inventory (above, line ~1476) and Accounts Payable (above, line ~1460) are both
+  // deliberately sourced from operational truth - on-hand stock valuation, the supplier
+  // ledger - rather than whatever ended up posted to their own GL account, since those
+  // are more trustworthy than a GL row that may be stale or never posted to at all. But
+  // neither substitution has a matching entry anywhere else on the statement, so
+  // totalAssets/totalLiabilities can move without totalEquity moving to match - this is
+  // NOT the generic residual/plug the comment below forbids for retained earnings, it's a
+  // specific, understood reconciliation for three named substitution mechanisms (Inventory,
+  // Accounts Payable, and now Accounts Receivable). Trial
+  // Balance (getTrialBalance) already solves the identical Inventory case by carrying that
+  // exact gap through Opening Balance Equity so the statement still balances - mirror that
+  // here for all three gaps instead of letting them surface as an unexplained "Balance
+  // Difference."
+  //
+  // Compared against inventoryLedgerTotal/accountsPayableLedgerTotal/
+  // accountsReceivableLedgerTotal (pure ledger sums), NOT inventoryFromAccounts/
+  // accountsPayableFromAccounts/receivableFromAccounts - those prefer the stored
+  // accounts.balance whenever it's non-zero (line ~1338, deliberately, to cover legacy
+  // deployments with incomplete ledger history), which can itself be stale relative to
+  // real new activity since postGl never updates accounts.balance for non-cash accounts.
+  // The whole-ledger accounting identity is only guaranteed by the ledger itself (postGl
+  // enforces debit=credit per posting), so that's what this reconciliation must compare
+  // against to land on the correct adjustment - comparing against the "preferred" (and
+  // possibly stale) value would under- or over-correct, as verified against a real test
+  // transaction during review.
+  const inventoryReconciliation = inventoryValue - Number(inventoryLedgerTotal || 0);
+  const accountsPayableReconciliation = effectiveAccountsPayable - moneyPos(accountsPayableLedgerTotal);
+  const accountsReceivableReconciliation = effectiveAccountsReceivable - moneyPos(accountsReceivableLedgerTotal);
+  // Assets up with nothing else moving means equity must be up by the same amount;
+  // liabilities up with nothing else moving means equity must be down by the same amount.
+  const equityReconciliation = inventoryReconciliation + accountsReceivableReconciliation - accountsPayableReconciliation;
+  if (!isApproxZero(equityReconciliation)) {
+    const obeRow = equityRows.find((row) => isOpeningBalanceEquityAccount(String(row.line_item || '')));
+    if (obeRow) {
+      obeRow.amount = Number(obeRow.amount || 0) + equityReconciliation;
+    } else {
+      equityRows.push({
+        section: 'Equity',
+        line_item: 'Opening Balance Equity',
+        amount: equityReconciliation,
+        row_type: 'detail',
+      });
+    }
+  }
+
   const formatPrepaidLabel = (raw: string) => {
     const trimmed = String(raw || '').trim();
     if (!trimmed) return 'Prepaid Expense';
@@ -1603,11 +1672,18 @@ export const buildBalanceSheetFromLedger = async (
   const totalLiabilities = totalCurrentLiabilities;
   const baseEquity = equityRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
 
-  // Retained earnings must stay synchronized with the Income Statement.
-  // We compute:
+  // Retained earnings must be computed independently from actual net-income
+  // history - NOT as a residual/plug that forces the balance sheet to always
+  // look balanced. We compute:
   // - netIncomeYtd: Net Income from last closed period (or year start) to asOfDate
-  // - openingRetained: prior retained earnings / opening imbalance
-  // - retainedEarnings: openingRetained + netIncomeYtd (must equal residual for the BS to balance)
+  // - openingRetained: Net Income from a fixed early floor date (well before any
+  //   real data) through the day before profitStart - i.e. everything the YTD
+  //   window doesn't already cover
+  // - retainedEarnings: openingRetained + netIncomeYtd (both independently
+  //   computed from the Income Statement, so they are NOT guaranteed to make
+  //   totalAssets == totalLiabilities + totalEquity - any real discrepancy
+  //   shows up in `balanceDifference` below instead of being hidden)
+  const RETAINED_EARNINGS_FLOOR_DATE = '2000-01-01';
   const profitStart = await resolveProfitStartDate(branchId, asOfDate);
   const netIncomeStart = netIncomeFromDate || profitStart;
   const hasClosedPeriods = await hasAnyClosedClosingPeriod(branchId, asOfDate);
@@ -1625,8 +1701,19 @@ export const buildBalanceSheetFromLedger = async (
           ).find((row) => String(row.line_item || '').toLowerCase() === 'net income')?.amount ?? 0
         ) || 0);
 
-  const residualRetained = totalAssets - totalLiabilities - baseEquity;
-  const openingRetained = residualRetained - netIncomeYtd;
+  const openingRetainedThrough = addDaysIsoDate(profitStart, -1);
+  const openingRetained =
+    openingRetainedThrough >= RETAINED_EARNINGS_FLOOR_DATE
+      ? Number(
+          (
+            await financialReportsService.getIncomeStatement(
+              branchId,
+              RETAINED_EARNINGS_FLOOR_DATE,
+              openingRetainedThrough
+            )
+          ).find((row) => String(row.line_item || '').toLowerCase() === 'net income')?.amount ?? 0
+        ) || 0
+      : 0;
   const retainedEarnings = openingRetained + netIncomeYtd;
 
   // Replace any previously-computed retained rows.
@@ -2201,7 +2288,6 @@ const buildIncomeStatementFromLedger = async (
   );
 
   if (ledgerRows.length === 0) return null;
-  const purchaseDiscount = metrics.purchaseDiscount;
   const salesDiscount = metrics.salesDiscount;
   const salesReturns = metrics.salesReturns;
 
@@ -2310,8 +2396,18 @@ const buildIncomeStatementFromLedger = async (
 
   const sum = (rows: Array<{ amount: number }>) => rows.reduce((s, r) => s + Number(r.amount || 0), 0);
   const totalRevenue = sum(revenue);
-  const discountApplied = Math.max(purchaseDiscount, 0);
-  const totalCogs = sum(cogs) + discountApplied;
+  // Bug fix: this used to also add metrics.purchaseDiscount (SUM(p.discount) across every
+  // purchase in the period, regardless of whether that purchase's inventory has even been
+  // sold yet) as a blanket reduction to COGS. sum(cogs) here is already the real, complete
+  // ledger-posted COGS - it ties exactly to the Trial Balance's own COGS account. A purchase
+  // discount was never itself posted to any ledger account (it's embedded, net, in the
+  // Inventory/Payable entries for that purchase - confirmed live: Trial Balance has no
+  // "Purchase Discount" account at all), so adding it again here double-counted an amount
+  // the ledger never separately recorded, inflating Net Income by the full discount and
+  // breaking the Balance Sheet's own "Assets = Liabilities + Equity" identity by exactly
+  // that amount (reported live: a $2 purchase discount produced a $2 Balance Sheet
+  // difference). sum(cogs) alone is correct and already reconciles.
+  const totalCogs = sum(cogs);
   const grossProfit = totalRevenue + totalCogs;
   const payrollExpense = sum(payroll);
   const operatingExpense = sum(expenses);
@@ -2328,9 +2424,6 @@ const buildIncomeStatementFromLedger = async (
   cogs.sort((a, b) => a.name.localeCompare(b.name)).forEach((row) => {
     rows.push({ section: 'Cost of Goods Sold', line_item: row.name, amount: row.amount, row_type: 'detail' });
   });
-  if (!isApproxZero(discountApplied)) {
-    rows.push({ section: 'Cost of Goods Sold', line_item: 'Purchase Discount', amount: discountApplied, row_type: 'detail' });
-  }
   rows.push({ section: 'Cost of Goods Sold', line_item: 'Total Cost of Goods Sold', amount: totalCogs, row_type: 'total' });
 
   rows.push({ section: 'Gross Profit', line_item: 'Gross Profit', amount: grossProfit, row_type: 'total' });
@@ -2424,11 +2517,16 @@ export const financialReportsService = {
     return buildBalanceSheetGuaranteedBalanced(branchId, asOfDate);
   },
 
-  async getAccountsReceivable(branchId: number, asOfDate: string): Promise<AccountsReceivableRow[]> {
-    // Invoices only cover debt raised by sales. Go-live balances live in the customer
-    // ledger as an `opening` entry, and receipts that are not tied to a sale settle
-    // that opening debt, so both have to be folded in or the report looks empty for
-    // customers who were migrated with a balance but have no unpaid invoice yet.
+  async getAccountsReceivable(branchId: number, fromDate: string, toDate: string): Promise<AccountsReceivableRow[]> {
+    // Period-scoped, mirroring getAccountsPayable exactly: invoices *raised* within
+    // [fromDate, toDate] (not every invoice ever, up to toDate), payments/receipts
+    // still counted up to toDate, and the opening-balance carry-forward using fromDate
+    // (the pre-period balance) instead of toDate. Invoices only cover debt raised by
+    // sales - go-live balances live in the customer ledger as an `opening` entry, and
+    // receipts that are not tied to a sale settle that opening debt, so both have to be
+    // folded in or the report looks empty for customers who were migrated with a
+    // balance but have no unpaid invoice yet.
+    const params: Array<number | string> = [branchId, fromDate, toDate];
     const [invoiceRows, openingRows, unallocatedRows] = await Promise.all([
       queryMany<AccountsReceivableRow>(
       `WITH sales_scope AS (
@@ -2441,12 +2539,12 @@ export const financialReportsService = {
          FROM ims.sales s
          LEFT JOIN ims.customers c ON c.customer_id = s.customer_id
          WHERE s.branch_id = $1
-           AND s.sale_date::date <= $2::date
+           AND s.sale_date::date BETWEEN $2::date AND $3::date
            AND LOWER(COALESCE(s.status::text, '')) <> 'void'
            AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
            AND COALESCE(s.is_deleted, 0) = 0
        ),
-       ${customerInvoicePaymentsCteSql('$1', '$2')}
+       ${customerInvoicePaymentsCteSql('$1', '$3')}
        SELECT
          ss.customer_name,
          ss.invoice_no,
@@ -2457,7 +2555,7 @@ export const financialReportsService = {
          GREATEST(ss.amount - COALESCE(ps.paid, 0), 0)::double precision AS balance,
          CASE
            WHEN GREATEST(ss.amount - COALESCE(ps.paid, 0), 0) <= 0.009 THEN 'Paid'
-           WHEN ss.due_date < $2::date THEN 'Overdue'
+           WHEN ss.due_date < $3::date THEN 'Overdue'
            ELSE 'Open'
          END AS status
        FROM sales_scope ss
@@ -2465,7 +2563,7 @@ export const financialReportsService = {
        WHERE GREATEST(ss.amount - COALESCE(ps.paid, 0), 0) > 0.009
         ORDER BY ss.invoice_date ASC, ss.invoice_no ASC
         LIMIT 5000`,
-        [branchId, asOfDate]
+        params
       ),
       queryMany<{ customer_id: number; customer_name: string; opening_balance: number }>(
         `SELECT
@@ -2480,7 +2578,7 @@ export const financialReportsService = {
           AND cl.entry_date::date <= $2::date
         GROUP BY c.customer_id, c.full_name
        HAVING COALESCE(SUM(cl.debit - cl.credit), 0) > 0.009`,
-        [branchId, asOfDate]
+        [branchId, fromDate]
       ),
       queryMany<{ customer_id: number; customer_name: string; unallocated_paid: number }>(
         `SELECT
@@ -2491,10 +2589,10 @@ export const financialReportsService = {
          JOIN ims.customers c ON c.customer_id = cr.customer_id
         WHERE cr.branch_id = $1
           AND cr.sale_id IS NULL
-          AND cr.receipt_date::date <= $2::date
+          AND cr.receipt_date::date BETWEEN $2::date AND $3::date
         GROUP BY c.customer_id, c.full_name
        HAVING COALESCE(SUM(cr.amount), 0) > 0.009`,
-        [branchId, asOfDate]
+        params
       ),
     ]);
 
@@ -2530,8 +2628,8 @@ export const financialReportsService = {
       rows.push({
         customer_name: entry.customer_name,
         invoice_no: 0,
-        invoice_date: asOfDate,
-        due_date: asOfDate,
+        invoice_date: toDate,
+        due_date: toDate,
         amount: entry.opening,
         paid: entry.paid,
         balance,
@@ -2549,7 +2647,6 @@ export const financialReportsService = {
   },
 
   async getAccountsPayable(branchId: number, fromDate: string, toDate: string): Promise<AccountsPayableRow[]> {
-    const supplierBalanceExpr = await resolveBalanceExpression('suppliers', 's');
     const params: Array<number | string> = [branchId, fromDate, toDate];
 
     const [purchaseRows, openingRows, unallocatedRows] = await Promise.all([
@@ -2606,15 +2703,28 @@ export const financialReportsService = {
           LIMIT 5000`,
         params
       ),
+      // H3 fix: this used to source "opening balance" from suppliers.remaining_balance,
+      // which is a LIVE running balance that already includes every purchase in
+      // purchases_scope above - double-counting the same payable in both places.
+      // Mirror the (correct) getAccountsReceivable pattern instead: only genuine
+      // entry_type='opening' ledger rows dated on/before the period start represent
+      // a true pre-period balance; normal purchase/payment/return activity is already
+      // covered by purchaseRows/unallocatedRows and must not be folded in here.
       queryMany<{ supplier_id: number; supplier_name: string; opening_balance: number }>(
         `SELECT
            s.supplier_id,
            COALESCE(s.name, 'Unknown Supplier') AS supplier_name,
-           GREATEST(${supplierBalanceExpr}, 0)::double precision AS opening_balance
-         FROM ims.suppliers s
-        WHERE s.branch_id = $1
-          AND GREATEST(${supplierBalanceExpr}, 0) > 0.000001`,
-        [branchId]
+           COALESCE(SUM(sl.credit - sl.debit), 0)::double precision AS opening_balance
+         FROM ims.supplier_ledger sl
+         JOIN ims.suppliers s ON s.supplier_id = sl.supplier_id
+        WHERE sl.branch_id = $1
+          AND sl.entry_type = 'opening'
+          AND sl.ref_table = 'opening_balance'
+          AND sl.entry_date::date <= $2::date
+          AND COALESCE(sl.is_deleted, 0) = 0
+        GROUP BY s.supplier_id, s.name
+       HAVING COALESCE(SUM(sl.credit - sl.debit), 0) > 0.000001`,
+        [branchId, fromDate]
       ),
       queryMany<{ supplier_id: number; supplier_name: string; unallocated_paid: number }>(
         `SELECT
@@ -3468,21 +3578,63 @@ export const financialReportsService = {
           AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
           AND s.sale_date::date BETWEEN $2::date AND $3::date
           ${salesFilter}
+       ),
+       -- Fixed: nets out returned revenue per item, matching the Income
+       -- Statement's own "Sales Returns" line exactly (SUM(sales_returns.total)
+       -- scoped by the return's own date range, not the original sale's -
+       -- financialReports.service.ts's getIncomeStatement, ~line 2260).
+       -- Previously this query never joined sales_return_items/sales_returns
+       -- at all, so a returned item's gross profit stayed overstated even
+       -- after the customer got their money back - confirmed on production
+       -- this session ($1,000.50 total here vs $949.50 Income Statement
+       -- Gross Profit for the same period, a $51 gap).
+       return_map AS (
+         SELECT sri.item_id, COALESCE(SUM(sri.line_total), 0)::double precision AS returned_amount
+           FROM ims.sales_return_items sri
+           JOIN ims.sales_returns sr ON sr.sr_id = sri.sr_id
+          WHERE sr.branch_id = $1
+            AND sr.return_date::date BETWEEN $2::date AND $3::date
+          GROUP BY sri.item_id
+       ),
+       -- Fixed: nets out the COST of returned units too. The Income Statement
+       -- does NOT leave COGS untouched on a return - its own COGS figure is
+       -- movementCostSales MINUS movementCostSalesReturns, i.e.
+       -- SUM(qty_in * unit_cost) FROM inventory_movements WHERE move_type =
+       -- 'sales_return' (getIncomeStatement, ~line 2109), scoped by the
+       -- movement's own date, same as return_map above. Restricting to
+       -- ref_table = 'sales_returns' here (unlike the Income Statement query,
+       -- which doesn't need to) excludes voided-sale reversal movements,
+       -- which also use move_type = 'sales_return' but ref_table = 'sales'
+       -- and must not be double counted as a "customer return" here.
+       -- Verified locally: without this, a 2-unit return on a 5-unit/$10-cost
+       -- sale left cost_amount at $50 instead of the true $30, overstating
+       -- this item's gross profit by exactly the $20 of returned cost.
+       return_cost_map AS (
+         SELECT m.item_id, COALESCE(SUM(m.qty_in * m.unit_cost), 0)::double precision AS returned_cost
+           FROM ims.inventory_movements m
+           JOIN ims.sales_returns sr ON sr.sr_id = m.ref_id AND sr.branch_id = m.branch_id
+          WHERE m.branch_id = $1
+            AND m.move_type = 'sales_return'
+            AND m.ref_table = 'sales_returns'
+            AND sr.return_date::date BETWEEN $2::date AND $3::date
+          GROUP BY m.item_id
        )
        SELECT
          i.item_id,
          i.name AS item_name,
          COALESCE(SUM(sc.quantity), 0)::double precision AS quantity_sold,
-         COALESCE(SUM(sc.line_total), 0)::double precision AS sales_amount,
-         COALESCE(SUM(sc.line_cost), 0)::double precision AS cost_amount,
-         (COALESCE(SUM(sc.line_total), 0) - COALESCE(SUM(sc.line_cost), 0))::double precision AS gross_profit,
+         (COALESCE(SUM(sc.line_total), 0) - COALESCE(MAX(rm.returned_amount), 0))::double precision AS sales_amount,
+         (COALESCE(SUM(sc.line_cost), 0) - COALESCE(MAX(rcm.returned_cost), 0))::double precision AS cost_amount,
+         (COALESCE(SUM(sc.line_total), 0) - COALESCE(MAX(rm.returned_amount), 0) - (COALESCE(SUM(sc.line_cost), 0) - COALESCE(MAX(rcm.returned_cost), 0)))::double precision AS gross_profit,
          CASE
-           WHEN COALESCE(SUM(sc.line_total), 0) > 0
-             THEN ((COALESCE(SUM(sc.line_total), 0) - COALESCE(SUM(sc.line_cost), 0)) / COALESCE(SUM(sc.line_total), 0) * 100)::double precision
+           WHEN (COALESCE(SUM(sc.line_total), 0) - COALESCE(MAX(rm.returned_amount), 0)) > 0
+             THEN ((COALESCE(SUM(sc.line_total), 0) - COALESCE(MAX(rm.returned_amount), 0) - (COALESCE(SUM(sc.line_cost), 0) - COALESCE(MAX(rcm.returned_cost), 0))) / (COALESCE(SUM(sc.line_total), 0) - COALESCE(MAX(rm.returned_amount), 0)) * 100)::double precision
            ELSE 0::double precision
          END AS margin_pct
        FROM scoped_sales sc
        JOIN ims.items i ON i.item_id = sc.item_id
+       LEFT JOIN return_map rm ON rm.item_id = i.item_id
+       LEFT JOIN return_cost_map rcm ON rcm.item_id = i.item_id
       WHERE i.branch_id = $1
         ${itemFilter}
       GROUP BY i.item_id, i.name
@@ -3574,21 +3726,54 @@ export const financialReportsService = {
           AND s.sale_date::date BETWEEN $2::date AND $3::date
           ${salesFilter}
           ${itemFilter}
+       ),
+       -- Fixed: same reasoning/fix as getProfitByItem's return_map - nets
+       -- out returned revenue, this time grouped by customer (sales_returns
+       -- links to a customer_id at the header level, not per line).
+       return_map AS (
+         SELECT
+           COALESCE(sr.customer_id, 0)::bigint AS customer_id,
+           COALESCE(SUM(sri.line_total), 0)::double precision AS returned_amount
+           FROM ims.sales_return_items sri
+           JOIN ims.sales_returns sr ON sr.sr_id = sri.sr_id
+          WHERE sr.branch_id = $1
+            AND sr.return_date::date BETWEEN $2::date AND $3::date
+          GROUP BY COALESCE(sr.customer_id, 0)
+       ),
+       -- Fixed: same reasoning/fix as getProfitByItem's return_cost_map -
+       -- nets out the COST of returned units too (the Income Statement's own
+       -- COGS is already net of return movements), grouped by customer via
+       -- the return's own customer_id. ref_table = 'sales_returns' excludes
+       -- voided-sale reversal movements (ref_table = 'sales'), which must
+       -- not be counted here as a customer return.
+       return_cost_map AS (
+         SELECT
+           COALESCE(sr.customer_id, 0)::bigint AS customer_id,
+           COALESCE(SUM(m.qty_in * m.unit_cost), 0)::double precision AS returned_cost
+           FROM ims.inventory_movements m
+           JOIN ims.sales_returns sr ON sr.sr_id = m.ref_id AND sr.branch_id = m.branch_id
+          WHERE m.branch_id = $1
+            AND m.move_type = 'sales_return'
+            AND m.ref_table = 'sales_returns'
+            AND sr.return_date::date BETWEEN $2::date AND $3::date
+          GROUP BY COALESCE(sr.customer_id, 0)
        )
        SELECT
          COALESCE(sc.customer_id, 0)::bigint AS customer_id,
          COALESCE(sc.customer_name, 'Walk-in Customer') AS customer_name,
          COALESCE(SUM(sc.quantity), 0)::double precision AS quantity_sold,
-         COALESCE(SUM(sc.line_total), 0)::double precision AS sales_amount,
-         COALESCE(SUM(sc.line_cost), 0)::double precision AS cost_amount,
-         (COALESCE(SUM(sc.line_total), 0) - COALESCE(SUM(sc.line_cost), 0))::double precision AS gross_profit,
+         (COALESCE(SUM(sc.line_total), 0) - COALESCE(MAX(rm.returned_amount), 0))::double precision AS sales_amount,
+         (COALESCE(SUM(sc.line_cost), 0) - COALESCE(MAX(rcm.returned_cost), 0))::double precision AS cost_amount,
+         (COALESCE(SUM(sc.line_total), 0) - COALESCE(MAX(rm.returned_amount), 0) - (COALESCE(SUM(sc.line_cost), 0) - COALESCE(MAX(rcm.returned_cost), 0)))::double precision AS gross_profit,
          CASE
-           WHEN COALESCE(SUM(sc.line_total), 0) > 0
-             THEN ((COALESCE(SUM(sc.line_total), 0) - COALESCE(SUM(sc.line_cost), 0)) / COALESCE(SUM(sc.line_total), 0) * 100)::double precision
+           WHEN (COALESCE(SUM(sc.line_total), 0) - COALESCE(MAX(rm.returned_amount), 0)) > 0
+             THEN ((COALESCE(SUM(sc.line_total), 0) - COALESCE(MAX(rm.returned_amount), 0) - (COALESCE(SUM(sc.line_cost), 0) - COALESCE(MAX(rcm.returned_cost), 0))) / (COALESCE(SUM(sc.line_total), 0) - COALESCE(MAX(rm.returned_amount), 0)) * 100)::double precision
            ELSE 0::double precision
          END AS margin_pct
        FROM scoped_sales sc
        JOIN ims.items i ON i.item_id = sc.item_id
+       LEFT JOIN return_map rm ON rm.customer_id = COALESCE(sc.customer_id, 0)
+       LEFT JOIN return_cost_map rcm ON rcm.customer_id = COALESCE(sc.customer_id, 0)
       WHERE i.branch_id = $1
       GROUP BY COALESCE(sc.customer_id, 0), COALESCE(sc.customer_name, 'Walk-in Customer')
       HAVING COALESCE(SUM(sc.quantity), 0) > 0

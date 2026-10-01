@@ -14,6 +14,7 @@ export type CoaKey =
   | 'supplierAdvances'
   | 'expensePayable'
   | 'payrollPayable'
+  | 'notesPayable'
   | 'operatingExpense'
   | 'payrollExpense'
   | 'ownerCapital'
@@ -43,6 +44,7 @@ const COA_SPECS: Record<CoaKey, CoaAccountSpec> = {
   supplierAdvances: { name: 'Supplier Advances', accountType: 'asset' },
   expensePayable: { name: 'Expense Payable', accountType: 'liability' },
   payrollPayable: { name: 'Payroll Payable', accountType: 'liability' },
+  notesPayable: { name: 'Note Payable', accountType: 'liability' },
   operatingExpense: { name: 'Operating Expense', accountType: 'expense' },
   payrollExpense: { name: 'Payroll Expense', accountType: 'expense' },
   ownerCapital: { name: 'Owner Capital', accountType: 'equity' },
@@ -58,6 +60,20 @@ const COA_SPECS: Record<CoaKey, CoaAccountSpec> = {
 };
 
 const normalizeName = (name: string) => name.trim().toLowerCase();
+
+// Central Delete Architecture (Phase 7): these core GL accounts are only
+// ever matched by name (there is no is_system flag on ims.accounts), so an
+// asset-typed one (Cash, Accounts Receivable, Inventory...) with a zero
+// balance and no history yet - e.g. right after a branch is created - could
+// otherwise be deleted through accounts.service.ts#remove() like any
+// ordinary user-created account, silently breaking the accounting engine
+// for that branch.
+const PROTECTED_ACCOUNT_NAMES = new Set(
+  Object.values(COA_SPECS).map((spec) => normalizeName(spec.name))
+);
+
+export const isProtectedAccountName = (name: string): boolean =>
+  PROTECTED_ACCOUNT_NAMES.has(normalizeName(name || ''));
 
 const findAccountByName = async (
   client: PoolClient,
@@ -106,8 +122,7 @@ export const ensureCoaAccount = async (
     // Ensure account_type is correct for reporting.
     await client.query(
       `UPDATE ims.accounts
-          SET account_type = $3,
-              is_active = TRUE
+          SET account_type = $3
         WHERE branch_id = $1
           AND acc_id = $2`,
       [branchId, existing, spec.accountType]
@@ -117,19 +132,27 @@ export const ensureCoaAccount = async (
   return createAccount(client, branchId, spec.name, spec.accountType);
 };
 
-// Find (or create) an asset account by an arbitrary, caller-supplied name - for accounts
-// that aren't part of the fixed CoaKey set (e.g. a "Prepaid <category>" account named after
-// a user-defined expense category).
-export const ensureNamedAssetAccount = async (
+// Find (or create) an account by an arbitrary, caller-supplied name and type - for
+// accounts that aren't part of the fixed CoaKey set (e.g. a "Prepaid <category>" account
+// named after a user-defined expense category, or a one-off liability like a specific
+// bank loan the user types in directly rather than picking from the standing list).
+export const ensureNamedAccount = async (
   client: PoolClient,
   branchId: number,
-  name: string
+  name: string,
+  accountType: string
 ): Promise<number> => {
   const trimmed = name.trim();
   const existing = await findAccountByName(client, branchId, trimmed);
   if (existing) return existing;
-  return createAccount(client, branchId, trimmed, 'asset');
+  return createAccount(client, branchId, trimmed, accountType);
 };
+
+export const ensureNamedAssetAccount = async (
+  client: PoolClient,
+  branchId: number,
+  name: string
+): Promise<number> => ensureNamedAccount(client, branchId, name, 'asset');
 
 export const ensureCoaAccounts = async (
   client: PoolClient,

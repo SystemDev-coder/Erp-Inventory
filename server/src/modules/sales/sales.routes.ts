@@ -5,6 +5,8 @@ import {
   listSales,
   getSale,
   listSaleItems,
+  listPosOrderItems,
+  listPosPayments,
   createSale,
   updateSale,
   voidSale,
@@ -19,6 +21,11 @@ router.use(requireAuth);
 
 // List sales
 router.get('/', requirePerm('sales.view'), listSales);
+
+// POS Orders read-only tabs - registered before the generic '/:id' route below so
+// "pos" in the path isn't swallowed as a sale id.
+router.get('/pos/items', requirePerm('sales.pos.access'), listPosOrderItems);
+router.get('/pos/payments', requirePerm('sales.pos.access'), listPosPayments);
 
 // Get single sale with items
 router.get('/:id', requirePerm('sales.view'), getSale);

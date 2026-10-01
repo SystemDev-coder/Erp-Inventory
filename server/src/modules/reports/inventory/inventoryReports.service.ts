@@ -1,4 +1,5 @@
 import { queryMany, queryOne } from '../../../db/query';
+import { resolveAttributeGroupExpr } from '../../../config/productAttributes';
 
 export interface InventoryReportOption {
   id: number;
@@ -15,6 +16,13 @@ export interface CurrentStockRow {
   sale_price: number;
   amount: number;
   stock_value: number;
+}
+
+export interface StockByAttributeRow {
+  attribute_value: string;
+  total_qty: number;
+  stock_value: number;
+  item_count: number;
 }
 
 export interface InventoryValuationRow {
@@ -417,6 +425,29 @@ export const inventoryReportsService = {
       WHERE i.branch_id = $1
         AND (i.is_active = TRUE OR COALESCE(st.total_qty, 0) <> 0)
       ORDER BY i.item_id ASC`,
+      [branchId]
+    );
+  },
+
+  async getStockByAttribute(branchId: number, attributeKey: string): Promise<StockByAttributeRow[]> {
+    const resolved = await resolveAttributeGroupExpr(branchId, attributeKey);
+    if (!resolved) return [];
+
+    return queryMany<StockByAttributeRow>(
+      `${stockTotalsCte}
+       SELECT
+         COALESCE(NULLIF(${resolved.expr}, ''), '(Not set)') AS attribute_value,
+         COALESCE(SUM(COALESCE(st.total_qty, 0)), 0)::double precision AS total_qty,
+         COALESCE(SUM(COALESCE(st.total_qty, 0) * COALESCE(i.cost_price, 0)), 0)::double precision AS stock_value,
+         COUNT(DISTINCT i.item_id)::int AS item_count
+       FROM ims.items i
+       LEFT JOIN stock_totals st
+         ON st.item_id = i.item_id
+        AND st.branch_id = i.branch_id
+      WHERE i.branch_id = $1
+        AND (i.is_active = TRUE OR COALESCE(st.total_qty, 0) <> 0)
+      GROUP BY 1
+      ORDER BY total_qty DESC, attribute_value`,
       [branchId]
     );
   },

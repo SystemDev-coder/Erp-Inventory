@@ -15,6 +15,7 @@ import {
 import DeleteConfirmModal from '../../components/ui/modal/DeleteConfirmModal';
 import { defaultDateRange, optionalDateParam } from '../../utils/dateRange';
 import { useBranch } from '../../context/BranchContext';
+import { usePermissions } from '../../hooks/usePermissions';
 
 const tableHeadCls = 'px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400';
 const tableCellCls = 'px-3 py-2 text-sm text-slate-800 dark:text-slate-200';
@@ -34,6 +35,7 @@ const Returns = () => {
   const { showToast } = useToast();
   const navigate = useNavigate();
   const { activeBranchId } = useBranch();
+  const { can, canAny } = usePermissions();
   const [loading, setLoading] = useState(false);
   const [salesRows, setSalesRows] = useState<SalesReturn[]>([]);
   const [purchaseRows, setPurchaseRows] = useState<PurchaseReturn[]>([]);
@@ -159,7 +161,7 @@ const Returns = () => {
         throw new Error(headerRes.error || 'Failed to load sales return');
       }
       if (!itemsRes.success || !itemsRes.data?.items) {
-        throw new Error(itemsRes.error || 'Failed to load return items');
+        throw new Error(itemsRes.error || 'Failed to load return products');
       }
       setViewHeader(headerRes.data.return);
       setViewItems(itemsRes.data.items);
@@ -184,7 +186,7 @@ const Returns = () => {
         throw new Error(headerRes.error || 'Failed to load purchase return');
       }
       if (!itemsRes.success || !itemsRes.data?.items) {
-        throw new Error(itemsRes.error || 'Failed to load return items');
+        throw new Error(itemsRes.error || 'Failed to load return products');
       }
       setViewHeader(headerRes.data.return);
       setViewItems(itemsRes.data.items);
@@ -237,13 +239,15 @@ const Returns = () => {
             >
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
             </button>
-            <button
-              type="button"
-              onClick={() => navigate('/returns/sales/new')}
-              className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-white hover:bg-primary-700"
-            >
-              <Plus className="h-4 w-4" /> New Return
-            </button>
+            {can('sales_returns.create') && (
+              <button
+                type="button"
+                onClick={() => navigate('/returns/sales/new')}
+                className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-white hover:bg-primary-700"
+              >
+                <Plus className="h-4 w-4" /> New Return
+              </button>
+            )}
             </div>
           </div>
 
@@ -307,8 +311,12 @@ const Returns = () => {
                             <Eye className="h-3.5 w-3.5" />
                             View
                           </button>
-                          <button type="button" onClick={() => navigate(`/returns/sales/${row.sr_id}/edit`)} className="rounded border px-2 py-1 text-xs">Edit</button>
-                          <button type="button" onClick={() => requestDeleteSalesReturn(row)} className="rounded border border-red-300 px-2 py-1 text-xs text-red-600">Delete</button>
+                          {can('sales_returns.update') && (
+                            <button type="button" onClick={() => navigate(`/returns/sales/${row.sr_id}/edit`)} className="rounded border px-2 py-1 text-xs">Edit</button>
+                          )}
+                          {can('sales_returns.delete') && (
+                            <button type="button" onClick={() => requestDeleteSalesReturn(row)} className="rounded border border-red-300 px-2 py-1 text-xs text-red-600">Delete</button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -360,13 +368,15 @@ const Returns = () => {
             >
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Loading...' : 'Display'}
             </button>
-            <button
-              type="button"
-              onClick={() => navigate('/returns/purchases/new')}
-              className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-white hover:bg-primary-700"
-            >
-              <Plus className="h-4 w-4" /> New Return
-            </button>
+            {can('purchase_returns.create') && (
+              <button
+                type="button"
+                onClick={() => navigate('/returns/purchases/new')}
+                className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-white hover:bg-primary-700"
+              >
+                <Plus className="h-4 w-4" /> New Return
+              </button>
+            )}
             </div>
           </div>
 
@@ -430,8 +440,12 @@ const Returns = () => {
                             <Eye className="h-3.5 w-3.5" />
                             View
                           </button>
-                          <button type="button" onClick={() => navigate(`/returns/purchases/${row.pr_id}/edit`)} className="rounded border px-2 py-1 text-xs">Edit</button>
-                          <button type="button" onClick={() => requestDeletePurchaseReturn(row)} className="rounded border border-red-300 px-2 py-1 text-xs text-red-600">Delete</button>
+                          {can('purchase_returns.update') && (
+                            <button type="button" onClick={() => navigate(`/returns/purchases/${row.pr_id}/edit`)} className="rounded border px-2 py-1 text-xs">Edit</button>
+                          )}
+                          {can('purchase_returns.delete') && (
+                            <button type="button" onClick={() => requestDeletePurchaseReturn(row)} className="rounded border border-red-300 px-2 py-1 text-xs text-red-600">Delete</button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -445,6 +459,16 @@ const Returns = () => {
     },
   ];
 
+  // Each tab maps to its own real permission - a user with only purchase_returns.view
+  // (say) should never see the Sales Return tab, and vice versa. `returns.*` is a
+  // generic fallback prefix the backend also accepts, so it's included here too.
+  const tabVisibility: Record<string, boolean> = {
+    'sales-return': canAny(['sales_returns.view', 'returns.view']),
+    'purchase-return': canAny(['purchase_returns.view', 'returns.view']),
+  };
+  const visibleTabs = tabs.filter((t) => tabVisibility[t.id] !== false);
+  const defaultVisibleTab = visibleTabs.some((t) => t.id === 'sales-return') ? 'sales-return' : visibleTabs[0]?.id;
+
   return (
     <div>
       <PageHeader title="Returns" description="Manage sales returns and purchase/supplier returns." />
@@ -456,7 +480,7 @@ const Returns = () => {
           {pageError}
         </div>
       ) : null}
-      <Tabs tabs={tabs} defaultTab="sales-return" />
+      <Tabs tabs={visibleTabs} defaultTab={defaultVisibleTab} />
 
       <DeleteConfirmModal
         isOpen={!!deleteTarget}
@@ -515,12 +539,12 @@ const Returns = () => {
 
             <div className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
               {viewItems.length === 0 ? (
-                <div className="py-10 text-center text-slate-500 text-sm">No items found.</div>
+                <div className="py-10 text-center text-slate-500 text-sm">No products found.</div>
               ) : (
                 <table className="min-w-full">
                   <thead className="bg-slate-50 dark:bg-slate-800">
                     <tr>
-                      <th className={tableHeadCls}>Item</th>
+                      <th className={tableHeadCls}>Product</th>
                       <th className={tableHeadCls}>Qty</th>
                       <th className={tableHeadCls}>{viewKind === 'purchase' ? 'Unit Cost' : 'Unit Price'}</th>
                       <th className={tableHeadCls}>Line Total</th>
@@ -529,7 +553,7 @@ const Returns = () => {
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                     {viewItems.map((item) => (
                       <tr key={'sr_item_id' in item ? item.sr_item_id : item.pr_item_id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
-                        <td className={tableCellCls}>{item.item_name || `Item #${item.item_id}`}</td>
+                        <td className={tableCellCls}>{item.item_name || `Product #${item.item_id}`}</td>
                         <td className={tableCellCls}>{Number(item.quantity || 0)}</td>
                         <td className={tableCellCls}>
                           {'unit_price' in item ? fmtCurrency(item.unit_price) : fmtCurrency((item as PurchaseReturnItem).unit_cost)}

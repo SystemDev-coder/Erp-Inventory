@@ -25,14 +25,14 @@ export class DashboardController {
     let permissions: string[];
     let roleName = 'User';
 
-    const cached = await sessionService.getCachedPermissions(req.user.userId);
+    const cached = await sessionService.getCachedPermissions(req.user.userId, req.user.roleId);
     if (cached) {
       permissions = cached;
     } else {
       const data = await authService.getUserWithPermissions(req.user.userId);
       permissions = data?.permissions ?? [];
       roleName = data?.role?.role_name ?? roleName;
-      await sessionService.cachePermissions(req.user.userId, permissions);
+      await sessionService.cachePermissions(req.user.userId, req.user.roleId, permissions);
     }
 
     if (roleName === 'User') {
@@ -48,10 +48,12 @@ export class DashboardController {
     }
 
     const widgets = dashboardService.getDashboardWidgets(permissions);
-    const [cards, charts, lowStockItems, recent] = await Promise.all([
+    const [cards, charts, lowStockItems, topProducts, debtBreakdown, recent] = await Promise.all([
       dashboardService.getDashboardCards(branchIds, permissions),
       dashboardService.getDashboardCharts(branchIds, permissions),
       dashboardService.getLowStockItems(branchIds, permissions),
+      dashboardService.getTopSellingProducts(branchIds, permissions),
+      dashboardService.getCustomerDebtList(branchIds, permissions),
       dashboardService.getRecentActivity(branchIds, permissions),
     ]);
 
@@ -60,6 +62,8 @@ export class DashboardController {
       cards,
       charts,
       low_stock_items: lowStockItems,
+      top_products: topProducts,
+      debt_breakdown: debtBreakdown,
       recent,
       summary: {
         modules: cards.length,
@@ -89,13 +93,13 @@ export class DashboardController {
     }
 
     let permissions: string[];
-    const cached = await sessionService.getCachedPermissions(req.user.userId);
+    const cached = await sessionService.getCachedPermissions(req.user.userId, req.user.roleId);
     if (cached) {
       permissions = cached;
     } else {
       const data = await authService.getUserWithPermissions(req.user.userId);
       permissions = data?.permissions ?? [];
-      await sessionService.cachePermissions(req.user.userId, permissions);
+      await sessionService.cachePermissions(req.user.userId, req.user.roleId, permissions);
     }
 
     const cardId = String(req.params.cardId || '').trim();

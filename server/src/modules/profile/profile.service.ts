@@ -9,12 +9,13 @@ export interface Profile {
   phone?: string | null;
   role_id?: number | null;
   role_name?: string | null;
+  created_at?: string;
 }
 
 export const profileService = {
   getProfile(userId: number): Promise<Profile | null> {
     return queryOne<Profile>(
-      `SELECT u.user_id, u.name, u.username, u.email, u.phone, u.role_id, r.role_name
+      `SELECT u.user_id, u.name, u.username, u.email, u.phone, u.role_id, r.role_name, u.created_at
          FROM ims.users u
          LEFT JOIN ims.roles r ON r.role_id = u.role_id
         WHERE u.user_id = $1`,
@@ -38,6 +39,10 @@ export const profileService = {
     if (input.phone !== undefined) {
       updates.push(`phone = $${p++}`);
       values.push(input.phone);
+    }
+    if (input.email !== undefined) {
+      updates.push(`email = $${p++}`);
+      values.push(input.email || null);
     }
 
     if (!updates.length) {

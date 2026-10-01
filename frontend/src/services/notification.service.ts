@@ -24,11 +24,12 @@ export interface NotificationsListResponse {
 }
 
 export const notificationService = {
-  async list(params?: { limit?: number; offset?: number; unreadOnly?: boolean }) {
+  async list(params?: { limit?: number; offset?: number; unreadOnly?: boolean; branchId?: number }) {
     const query = new URLSearchParams();
     if (params?.limit !== undefined) query.set('limit', String(params.limit));
     if (params?.offset !== undefined) query.set('offset', String(params.offset));
     if (params?.unreadOnly !== undefined) query.set('unreadOnly', String(params.unreadOnly));
+    if (params?.branchId !== undefined) query.set('branchId', String(params.branchId));
     const suffix = query.toString() ? `?${query.toString()}` : '';
     return apiClient.get<NotificationsListResponse>(`${API.NOTIFICATIONS.LIST}${suffix}`);
   },

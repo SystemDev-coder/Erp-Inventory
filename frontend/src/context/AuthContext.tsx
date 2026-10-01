@@ -115,6 +115,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setPermissions([]);
       setLockedInfo(null);
       localStorage.removeItem('app_lock');
+      sessionStorage.removeItem('lock_return_to');
     }
   };
 
@@ -122,6 +123,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
     await checkAuth();
   };
 
+  /**
+   * Lock the app: persist a minimal identity blob and redirect to /lock.
+   * The session (access + refresh token) stays intact, so unlock() can
+   * resume the user's work without re-login.
+   *
+   * We remember the current path in sessionStorage so unlock() can send
+   * the user back to exactly where they were.
+   */
   const lock = () => {
     if (!user) return;
     const raw = localStorage.getItem('app_lock');
@@ -129,6 +138,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const payload = { identifier: user.username, name: user.name, hasLock: existing.hasLock ?? true };
     localStorage.setItem('app_lock', JSON.stringify(payload));
     setLockedInfo(payload);
+
+    // Hard redirect to /lock. Using window.location (not react-router's
+    // navigate) because lock() may be called from outside the Router tree
+    // (e.g. from the inactivity hook) and we want a clean mount of the
+    // Lock page regardless of the current route.
+    if (window.location.pathname !== '/lock') {
+      sessionStorage.setItem('lock_return_to', window.location.pathname + window.location.search);
+      window.location.href = '/lock';
+    }
   };
 
   const unlock = async (password: string): Promise<ApiResponse> => {
@@ -139,6 +157,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
       localStorage.removeItem('app_lock');
       setLockedInfo(null);
       await refreshUser();
+
+      // Return to the page the user was on before the idle lock.
+      const returnTo = sessionStorage.getItem('lock_return_to');
+      if (returnTo) {
+        sessionStorage.removeItem('lock_return_to');
+        window.location.href = returnTo;
+      }
     }
     return response;
   };

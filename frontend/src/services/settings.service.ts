@@ -12,6 +12,80 @@ export interface CompanyInfo {
   updated_at?: string;
 }
 
+export interface ProductConfig {
+  barcode: boolean;
+  variants: boolean;
+  size: boolean;
+  color: boolean;
+  brand: boolean;
+  batchTracking: boolean;
+  expiryTracking: boolean;
+  serialNumber: boolean;
+  multipleUnits: boolean;
+  genericName: boolean;
+  strength: boolean;
+}
+
+export interface SalesConfig {
+  retail: boolean;
+  wholesale: boolean;
+  credit: boolean;
+  creditDays: number;
+  discount: boolean;
+  tax: boolean;
+  pos: boolean;
+  customerDisplay: boolean;
+}
+
+export interface PurchaseConfig {
+  supplierManagement: boolean;
+  purchaseOrders: boolean;
+  purchasePayments: boolean;
+  creditPurchases: boolean;
+  supplierCreditDays: number;
+}
+
+export type BusinessType = 'general' | 'supermarket' | 'clothing' | 'pharmacy' | 'perfume' | 'cosmetics' | 'electronics' | 'other';
+
+// Document Print Settings: the format used when printing a POS receipt or
+// Sales invoice/quotation. One shared default for both POS and Sales (per
+// product decision) - a per-print override is offered separately via
+// PrintFormatMenu, without changing this saved default.
+export type PaperSize = 'a4' | 'a5' | 'thermal-80' | 'thermal-58';
+export const PAPER_SIZE_LABELS: Record<PaperSize, string> = {
+  a4: 'A4',
+  a5: 'A5',
+  'thermal-80': '80mm Thermal',
+  'thermal-58': '58mm Thermal',
+};
+
+export interface ReceiptConfig {
+  logo: boolean;
+  header: string;
+  footer: string;
+  showCustomer: boolean;
+  showBarcode: boolean;
+  showTax: boolean;
+  showDiscount: boolean;
+  paperSize: PaperSize;
+}
+
+export interface BusinessProfile {
+  businessType: string | null;
+  email: string | null;
+  website: string | null;
+  currency: string | null;
+  country: string | null;
+  timezone: string | null;
+  productConfig: ProductConfig;
+  salesConfig: SalesConfig;
+  purchaseConfig: PurchaseConfig;
+  receiptConfig: ReceiptConfig;
+  // accountingConfig/branchConfig/notificationConfig also come back from the
+  // backend but aren't consumed by the frontend yet - left untyped here
+  // rather than duplicating shapes nothing reads.
+}
+
 export interface Branch {
   branch_id: number;
   branch_name: string;
@@ -193,6 +267,29 @@ export const settingsService = {
   },
   async deleteCompany(reason: string): Promise<ApiResponse> {
     return apiClient.delete('/api/settings/company', reason);
+  },
+
+  async getBusinessProfile(): Promise<ApiResponse<{ profile: BusinessProfile }>> {
+    return apiClient.get('/api/settings/business-profile');
+  },
+  // Gated to the Developer role server-side (businessType has a wholesale
+  // reset side-effect on product config) - for receiptConfig alone, use
+  // updateReceiptConfig below instead, which any settings-admin can call.
+  async updateBusinessProfile(
+    input: Partial<Omit<BusinessProfile, 'productConfig' | 'salesConfig' | 'purchaseConfig' | 'receiptConfig'>> & {
+      productConfig?: Partial<ProductConfig>;
+      salesConfig?: Partial<SalesConfig>;
+      purchaseConfig?: Partial<PurchaseConfig>;
+      receiptConfig?: Partial<ReceiptConfig>;
+    }
+  ): Promise<ApiResponse<{ profile: BusinessProfile }>> {
+    return apiClient.put('/api/settings/business-profile', input);
+  },
+  // Document Print Settings: the default print format, on its own endpoint
+  // with a lighter permission gate than updateBusinessProfile (see that
+  // method's comment) - this is the one PrintSettings/System.tsx should call.
+  async updateReceiptConfig(receiptConfig: Partial<ReceiptConfig>): Promise<ApiResponse<{ profile: BusinessProfile }>> {
+    return apiClient.put('/api/settings/receipt-config', { receiptConfig });
   },
 
   async listBranches(): Promise<ApiResponse<{ branches: Branch[] }>> {

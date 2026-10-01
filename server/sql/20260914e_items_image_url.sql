@@ -1,0 +1,1 @@
+ALTER TABLE ims.items ADD COLUMN IF NOT EXISTS image_url TEXT;

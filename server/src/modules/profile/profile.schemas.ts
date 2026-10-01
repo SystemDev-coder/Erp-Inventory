@@ -4,6 +4,7 @@ export const profileUpdateSchema = z.object({
   name: z.string().min(1).max(120).optional(),
   username: z.string().min(1).max(80).optional(),
   phone: z.string().min(4).max(40).optional(),
+  email: z.string().email().max(150).optional().or(z.literal('')),
 });
 
 export type ProfileUpdateInput = z.infer<typeof profileUpdateSchema>;

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AlertCircle, Trash2 } from 'lucide-react';
 import { Modal } from './Modal';
+import type { DeleteImpactPreview } from '../../../services/deletePreview.service';
 
 interface Props {
   isOpen: boolean;
@@ -12,6 +13,11 @@ interface Props {
   isDeleting?: boolean;
   requireReason?: boolean;
   reasonLabel?: string;
+  // Central Delete Architecture (Phase 2): optional Impact Preview summary.
+  // Omitted by existing callers, so none of them change behavior - only a
+  // caller that fetches this via deletePreviewService and passes it in gets
+  // the extra summary section.
+  impact?: DeleteImpactPreview | null;
 }
 
 const DeleteConfirmModal = ({
@@ -24,6 +30,7 @@ const DeleteConfirmModal = ({
   isDeleting = false,
   requireReason = true,
   reasonLabel = 'Reason for deletion',
+  impact,
 }: Props) => {
   const [reason, setReason] = useState('');
   const [reasonError, setReasonError] = useState('');
@@ -65,6 +72,27 @@ const DeleteConfirmModal = ({
           </p>
         )}
 
+        {impact && (impact.blockedBy.length > 0 || impact.cascaded.length > 0 || impact.preserved.length > 0) && (
+          <div className="mb-4 space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-left text-sm dark:border-slate-700 dark:bg-slate-800/40">
+            {impact.blockedBy.length > 0 && (
+              <p className="text-red-600 dark:text-red-400">
+                Cannot delete — already used in{' '}
+                {impact.blockedBy.map((e) => `${e.label} (${e.count})`).join(', ')}.
+              </p>
+            )}
+            {impact.cascaded.length > 0 && (
+              <p className="text-slate-600 dark:text-slate-300">
+                Will also be removed: {impact.cascaded.map((e) => `${e.label} (${e.count})`).join(', ')}.
+              </p>
+            )}
+            {impact.preserved.length > 0 && (
+              <p className="text-slate-500 dark:text-slate-400">
+                Kept for history, unaffected: {impact.preserved.map((e) => `${e.label} (${e.count})`).join(', ')}.
+              </p>
+            )}
+          </div>
+        )}
+
         <div className="mb-4 text-left">
           <label htmlFor="delete-reason" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
             {reasonLabel} {requireReason ? <span className="text-red-500">*</span> : null}
@@ -102,7 +130,7 @@ const DeleteConfirmModal = ({
           </button>
           <button
             onClick={handleConfirm}
-            disabled={isDeleting}
+            disabled={isDeleting || Boolean(impact?.blocked)}
             className="px-6 py-2.5 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center gap-2"
           >
             <Trash2 className="w-4 h-4" />
