@@ -26,7 +26,7 @@ const financialCards: Array<{ id: FinancialCardId; title: string; hint?: string 
   { id: 'cogs-by-invoice', title: 'COGS (Cost of Goods Sold)' },
   { id: 'account-balances', title: 'Account Balances' },
   { id: 'expense-summary', title: 'Expense Summary' },
-  { id: 'accounts-receivable', title: 'Accounts Receivable', hint: 'Open invoices as of date' },
+  { id: 'accounts-receivable', title: 'Accounts Receivable' },
   { id: 'accounts-payable', title: 'Accounts Payable' },
   { id: 'account-statement', title: 'Account Statement' },
   { id: 'trial-balance', title: 'Trial Balance' },
@@ -193,7 +193,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
   const [accountBalanceAsOfDate, setAccountBalanceAsOfDate] = useState(defaultAsOfDate);
   const [cogsRange, setCogsRange] = useState<DateRange>(defaultReportRange());
   const [expenseRange, setExpenseRange] = useState<DateRange>(defaultReportRange());
-  const [receivableAsOfDate, setReceivableAsOfDate] = useState(defaultAsOfDate);
+  const [receivableRange, setReceivableRange] = useState<DateRange>(defaultReportRange());
   const [payableRange, setPayableRange] = useState<DateRange>(defaultReportRange());
   const [statementRange, setStatementRange] = useState<DateRange>(defaultReportRange());
   const [trialBalanceRange, setTrialBalanceRange] = useState<DateRange>(defaultReportRange());
@@ -538,16 +538,17 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
 
   const handleAccountsReceivable = () =>
     runCardAction('accounts-receivable', async () => {
-      ensureAsOfDateValid(receivableAsOfDate, 'Accounts Receivable');
+      ensureRangeValid(receivableRange, 'Accounts Receivable');
       const response = await financialReportsService.getAccountsReceivable({
-        asOfDate: receivableAsOfDate,
+        fromDate: receivableRange.fromDate,
+        toDate: receivableRange.toDate,
         branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load accounts receivable');
       const rows = toRecordRows(response.data.rows || []);
       openReport({
         title: 'Accounts Receivable',
-        subtitle: `As of ${formatDateOnly(receivableAsOfDate)}`,
+        subtitle: `${formatDateOnly(receivableRange.fromDate)} - ${formatDateOnly(receivableRange.toDate)}`,
         fileName: 'accounts-receivable',
         data: rows,
         columns: accountsReceivableColumns,
@@ -559,7 +560,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
             balance: formatCurrency(sumNumericField(rows, 'balance')),
           },
         },
-        filters: { 'As of Date': receivableAsOfDate },
+        filters: { 'From Date': receivableRange.fromDate, 'To Date': receivableRange.toDate },
       }, response.data.meta);
     });
 
@@ -767,7 +768,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
     if (cardId === 'accounts-receivable') {
       return (
         <div className="space-y-3">
-          {renderAsOfDate(receivableAsOfDate, setReceivableAsOfDate)}
+          {renderDateRange(receivableRange, setReceivableRange)}
           <button
             onClick={handleAccountsReceivable}
             disabled={loadingCardId === cardId}

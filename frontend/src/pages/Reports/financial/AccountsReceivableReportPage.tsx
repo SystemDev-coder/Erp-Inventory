@@ -4,7 +4,7 @@ import { DataTable } from '../../../components/ui/table/DataTable';
 import { PageHeader } from '../../../components/ui/layout';
 import { useToast } from '../../../components/ui/toast/Toast';
 import { AccountsReceivableRow, financialReportsService } from '../../../services/reports/financialReports.service';
-import { defaultAsOfDate, truncationNote } from '../reportUtils';
+import { defaultReportRange, truncationNote } from '../reportUtils';
 import { useBranch } from '../../../context/BranchContext';
 
 const money = (value: number) =>
@@ -22,7 +22,7 @@ const formatDate = (value: string) => {
 export default function AccountsReceivableReportPage() {
   const { showToast } = useToast();
   const { activeBranchId } = useBranch();
-  const [asOfDate, setAsOfDate] = useState(defaultAsOfDate());
+  const [range, setRange] = useState(defaultReportRange());
   const [rows, setRows] = useState<AccountsReceivableRow[]>([]);
   const [meta, setMeta] = useState<{ truncated?: boolean; maxRows?: number; rowCount?: number }>();
   const [loading, setLoading] = useState(false);
@@ -30,8 +30,12 @@ export default function AccountsReceivableReportPage() {
   const [hasDisplayed, setHasDisplayed] = useState(false);
 
   const loadReport = async () => {
-    if (!asOfDate) {
-      showToast('error', 'Accounts Receivable', 'As-of date is required');
+    if (!range.fromDate || !range.toDate) {
+      showToast('error', 'Accounts Receivable', 'From and To dates are required');
+      return;
+    }
+    if (range.fromDate > range.toDate) {
+      showToast('error', 'Accounts Receivable', 'From date cannot be after To date');
       return;
     }
 
@@ -40,7 +44,7 @@ export default function AccountsReceivableReportPage() {
     setError('');
     try {
       const response = await financialReportsService.getAccountsReceivable({
-        asOfDate,
+        ...range,
         branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) {
@@ -113,22 +117,36 @@ export default function AccountsReceivableReportPage() {
     <div className="space-y-4">
       <PageHeader
         title="Accounts Receivable Report"
-        description="Outstanding customer invoices as of a specific date."
+        description="Outstanding customer invoices raised within a date range."
       />
 
       <div className="rounded-xl border border-zinc-300 bg-white p-4 shadow-sm">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-          <label htmlFor="ar-as-of-date" className="space-y-1 text-sm font-medium text-black">
-            <span>As of Date</span>
+          <label htmlFor="ar-from-date" className="space-y-1 text-sm font-medium text-black">
+            <span>From Date</span>
             <input
-              id="ar-as-of-date"
+              id="ar-from-date"
               type="date"
-              value={asOfDate}
-              onChange={(event) => setAsOfDate(event.target.value)}
+              value={range.fromDate}
+              onChange={(event) =>
+                setRange((prev) => ({ ...prev, fromDate: event.target.value }))
+              }
               className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-black focus:border-black focus:outline-none"
             />
           </label>
-          <div className="md:col-span-3 flex items-end">
+          <label htmlFor="ar-to-date" className="space-y-1 text-sm font-medium text-black">
+            <span>To Date</span>
+            <input
+              id="ar-to-date"
+              type="date"
+              value={range.toDate}
+              onChange={(event) =>
+                setRange((prev) => ({ ...prev, toDate: event.target.value }))
+              }
+              className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-black focus:border-black focus:outline-none"
+            />
+          </label>
+          <div className="md:col-span-2 flex items-end">
             <button
               type="button"
               onClick={() => void loadReport()}

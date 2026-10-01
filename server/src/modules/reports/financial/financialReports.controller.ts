@@ -114,12 +114,9 @@ export const getSupplierPaymentsReport = asyncHandler(async (req: AuthRequest, r
 
 export const getAccountsReceivableReport = asyncHandler(async (req: AuthRequest, res: Response) => {
   const branchId = await resolveBranchIdForReports(req);
-  const asOfDate = parseIsoDate(
-    (req.query.asOfDate as string | undefined) || (req.query.toDate as string | undefined),
-    'asOfDate'
-  );
-  const rows = await financialReportsService.getAccountsReceivable(branchId, asOfDate);
-  return ApiResponse.success(res, reportRows(branchId, { reportKey: 'accounts-receivable', asOfDate, rows }, rows, REPORT_ROW_LIMITS.detail));
+  const { fromDate, toDate } = parseDateRange(req);
+  const rows = await financialReportsService.getAccountsReceivable(branchId, fromDate, toDate);
+  return ApiResponse.success(res, reportRows(branchId, { reportKey: 'accounts-receivable', fromDate, toDate, rows }, rows, REPORT_ROW_LIMITS.detail));
 });
 
 export const getAccountsPayableReport = asyncHandler(async (req: AuthRequest, res: Response) => {

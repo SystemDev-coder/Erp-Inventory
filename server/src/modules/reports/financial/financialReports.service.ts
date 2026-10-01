@@ -2517,11 +2517,16 @@ export const financialReportsService = {
     return buildBalanceSheetGuaranteedBalanced(branchId, asOfDate);
   },
 
-  async getAccountsReceivable(branchId: number, asOfDate: string): Promise<AccountsReceivableRow[]> {
-    // Invoices only cover debt raised by sales. Go-live balances live in the customer
-    // ledger as an `opening` entry, and receipts that are not tied to a sale settle
-    // that opening debt, so both have to be folded in or the report looks empty for
-    // customers who were migrated with a balance but have no unpaid invoice yet.
+  async getAccountsReceivable(branchId: number, fromDate: string, toDate: string): Promise<AccountsReceivableRow[]> {
+    // Period-scoped, mirroring getAccountsPayable exactly: invoices *raised* within
+    // [fromDate, toDate] (not every invoice ever, up to toDate), payments/receipts
+    // still counted up to toDate, and the opening-balance carry-forward using fromDate
+    // (the pre-period balance) instead of toDate. Invoices only cover debt raised by
+    // sales - go-live balances live in the customer ledger as an `opening` entry, and
+    // receipts that are not tied to a sale settle that opening debt, so both have to be
+    // folded in or the report looks empty for customers who were migrated with a
+    // balance but have no unpaid invoice yet.
+    const params: Array<number | string> = [branchId, fromDate, toDate];
     const [invoiceRows, openingRows, unallocatedRows] = await Promise.all([
       queryMany<AccountsReceivableRow>(
       `WITH sales_scope AS (
@@ -2534,12 +2539,12 @@ export const financialReportsService = {
          FROM ims.sales s
          LEFT JOIN ims.customers c ON c.customer_id = s.customer_id
          WHERE s.branch_id = $1
-           AND s.sale_date::date <= $2::date
+           AND s.sale_date::date BETWEEN $2::date AND $3::date
            AND LOWER(COALESCE(s.status::text, '')) <> 'void'
            AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
            AND COALESCE(s.is_deleted, 0) = 0
        ),
-       ${customerInvoicePaymentsCteSql('$1', '$2')}
+       ${customerInvoicePaymentsCteSql('$1', '$3')}
        SELECT
          ss.customer_name,
          ss.invoice_no,
@@ -2550,7 +2555,7 @@ export const financialReportsService = {
          GREATEST(ss.amount - COALESCE(ps.paid, 0), 0)::double precision AS balance,
          CASE
            WHEN GREATEST(ss.amount - COALESCE(ps.paid, 0), 0) <= 0.009 THEN 'Paid'
-           WHEN ss.due_date < $2::date THEN 'Overdue'
+           WHEN ss.due_date < $3::date THEN 'Overdue'
            ELSE 'Open'
          END AS status
        FROM sales_scope ss
@@ -2558,7 +2563,7 @@ export const financialReportsService = {
        WHERE GREATEST(ss.amount - COALESCE(ps.paid, 0), 0) > 0.009
         ORDER BY ss.invoice_date ASC, ss.invoice_no ASC
         LIMIT 5000`,
-        [branchId, asOfDate]
+        params
       ),
       queryMany<{ customer_id: number; customer_name: string; opening_balance: number }>(
         `SELECT
@@ -2573,7 +2578,7 @@ export const financialReportsService = {
           AND cl.entry_date::date <= $2::date
         GROUP BY c.customer_id, c.full_name
        HAVING COALESCE(SUM(cl.debit - cl.credit), 0) > 0.009`,
-        [branchId, asOfDate]
+        [branchId, fromDate]
       ),
       queryMany<{ customer_id: number; customer_name: string; unallocated_paid: number }>(
         `SELECT
@@ -2584,10 +2589,10 @@ export const financialReportsService = {
          JOIN ims.customers c ON c.customer_id = cr.customer_id
         WHERE cr.branch_id = $1
           AND cr.sale_id IS NULL
-          AND cr.receipt_date::date <= $2::date
+          AND cr.receipt_date::date BETWEEN $2::date AND $3::date
         GROUP BY c.customer_id, c.full_name
        HAVING COALESCE(SUM(cr.amount), 0) > 0.009`,
-        [branchId, asOfDate]
+        params
       ),
     ]);
 
@@ -2623,8 +2628,8 @@ export const financialReportsService = {
       rows.push({
         customer_name: entry.customer_name,
         invoice_no: 0,
-        invoice_date: asOfDate,
-        due_date: asOfDate,
+        invoice_date: toDate,
+        due_date: toDate,
         amount: entry.opening,
         paid: entry.paid,
         balance,
