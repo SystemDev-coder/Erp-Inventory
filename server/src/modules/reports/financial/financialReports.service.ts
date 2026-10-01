@@ -2288,7 +2288,6 @@ const buildIncomeStatementFromLedger = async (
   );
 
   if (ledgerRows.length === 0) return null;
-  const purchaseDiscount = metrics.purchaseDiscount;
   const salesDiscount = metrics.salesDiscount;
   const salesReturns = metrics.salesReturns;
 
@@ -2397,8 +2396,18 @@ const buildIncomeStatementFromLedger = async (
 
   const sum = (rows: Array<{ amount: number }>) => rows.reduce((s, r) => s + Number(r.amount || 0), 0);
   const totalRevenue = sum(revenue);
-  const discountApplied = Math.max(purchaseDiscount, 0);
-  const totalCogs = sum(cogs) + discountApplied;
+  // Bug fix: this used to also add metrics.purchaseDiscount (SUM(p.discount) across every
+  // purchase in the period, regardless of whether that purchase's inventory has even been
+  // sold yet) as a blanket reduction to COGS. sum(cogs) here is already the real, complete
+  // ledger-posted COGS - it ties exactly to the Trial Balance's own COGS account. A purchase
+  // discount was never itself posted to any ledger account (it's embedded, net, in the
+  // Inventory/Payable entries for that purchase - confirmed live: Trial Balance has no
+  // "Purchase Discount" account at all), so adding it again here double-counted an amount
+  // the ledger never separately recorded, inflating Net Income by the full discount and
+  // breaking the Balance Sheet's own "Assets = Liabilities + Equity" identity by exactly
+  // that amount (reported live: a $2 purchase discount produced a $2 Balance Sheet
+  // difference). sum(cogs) alone is correct and already reconciles.
+  const totalCogs = sum(cogs);
   const grossProfit = totalRevenue + totalCogs;
   const payrollExpense = sum(payroll);
   const operatingExpense = sum(expenses);
@@ -2415,9 +2424,6 @@ const buildIncomeStatementFromLedger = async (
   cogs.sort((a, b) => a.name.localeCompare(b.name)).forEach((row) => {
     rows.push({ section: 'Cost of Goods Sold', line_item: row.name, amount: row.amount, row_type: 'detail' });
   });
-  if (!isApproxZero(discountApplied)) {
-    rows.push({ section: 'Cost of Goods Sold', line_item: 'Purchase Discount', amount: discountApplied, row_type: 'detail' });
-  }
   rows.push({ section: 'Cost of Goods Sold', line_item: 'Total Cost of Goods Sold', amount: totalCogs, row_type: 'total' });
 
   rows.push({ section: 'Gross Profit', line_item: 'Gross Profit', amount: grossProfit, row_type: 'total' });
