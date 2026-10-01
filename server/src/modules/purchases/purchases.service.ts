@@ -409,6 +409,35 @@ const calcMovingAverageCost = (params: {
   return Math.max(0, Number(avg.toFixed(4)));
 };
 
+// Spreads an order-level (purchase-wide) discount across its lines, proportionally to
+// each line's own value, so the effective unit cost fed into the item's weighted-average
+// cost_price and the purchase's inventory_movements row reflects what was actually paid
+// for those units - not the pre-discount sticker price. Previously the order-level
+// `discount` only reduced the purchase's own `total` (AP/GL/payment side); it never
+// reached the item's cost basis at all, so a discounted purchase permanently overstated
+// that item's cost_price (and every COGS entry drawn from it later) by the discount
+// amount, while the Balance Sheet's own ledger-vs-operational Inventory reconciliation
+// quietly absorbed the gap into Opening Balance Equity. `discount <= subtotal` is
+// already guaranteed by purchaseSchema's own validation (total = subtotal - discount
+// must be >= 0), so this can't go negative in practice; the clamp is defensive only.
+// A no-op (returns lines unchanged) for the overwhelming majority of purchases, which
+// have no order-level discount at all.
+const prorateOrderDiscount = <T extends { quantity: number; unitCost: number; lineTotal: number }>(
+  lines: T[],
+  orderDiscount: number,
+  orderSubtotal: number
+): T[] => {
+  const discount = Number(orderDiscount || 0);
+  const subtotal = Number(orderSubtotal || 0);
+  if (discount <= 0 || subtotal <= 0) return lines;
+  return lines.map((line) => {
+    const share = line.lineTotal / subtotal;
+    const netLineTotal = line.lineTotal - discount * share;
+    const netUnitCost = line.quantity > 0 ? netLineTotal / line.quantity : line.unitCost;
+    return { ...line, unitCost: Math.max(0, Number(netUnitCost.toFixed(4))) };
+  });
+};
+
 const applyPurchaseStockEffects = async (
   client: PoolClient,
   params: {
@@ -908,15 +937,20 @@ export const purchasesService = {
       const nextStatus: PurchaseStatus =
         purchaseType === 'credit' ? 'unpaid' : (input.status as PurchaseStatus);
 
-      const itemsRes = await client.query<{ item_id: number; quantity: string; unit_cost: string }>(
-        `SELECT item_id, quantity::text, unit_cost::text FROM ims.purchase_items WHERE purchase_id = $1`,
+      const itemsRes = await client.query<{ item_id: number; quantity: string; unit_cost: string; line_total: string }>(
+        `SELECT item_id, quantity::text, unit_cost::text, line_total::text FROM ims.purchase_items WHERE purchase_id = $1`,
         [id]
       );
-      const stockLines = itemsRes.rows.map((row) => ({
-        itemId: Number(row.item_id),
-        quantity: Number(row.quantity),
-        unitCost: Number(row.unit_cost),
-      }));
+      const stockLines = prorateOrderDiscount(
+        itemsRes.rows.map((row) => ({
+          itemId: Number(row.item_id),
+          quantity: Number(row.quantity),
+          unitCost: Number(row.unit_cost),
+          lineTotal: Number(row.line_total),
+        })),
+        Number(current.discount || 0),
+        Number(current.subtotal || 0)
+      );
 
       let storeId = current.store_id ? Number(current.store_id) : null;
       if (!storeId && stockLines.length > 0) {
@@ -1202,11 +1236,16 @@ export const purchasesService = {
         await applyPurchaseStockEffects(client, {
           branchId: context.branchId,
           purchaseId: purchase.purchase_id,
-          lines: preparedItems.map((item) => ({
-            itemId: item.productId,
-            quantity: item.quantity,
-            unitCost: item.unitCost,
-          })),
+          lines: prorateOrderDiscount(
+            preparedItems.map((item) => ({
+              itemId: item.productId,
+              quantity: item.quantity,
+              unitCost: item.unitCost,
+              lineTotal: item.lineTotal,
+            })),
+            discount,
+            subtotal
+          ),
           direction: 'in',
           moveType: 'purchase',
           storeId,
@@ -1316,8 +1355,9 @@ export const purchasesService = {
         item_id: number;
         quantity: string;
         unit_cost: string;
+        line_total: string;
       }>(
-        `SELECT item_id, quantity::text AS quantity, unit_cost::text AS unit_cost
+        `SELECT item_id, quantity::text AS quantity, unit_cost::text AS unit_cost, line_total::text AS line_total
            FROM ims.purchase_items
           WHERE purchase_id = $1`,
         [id]
@@ -1326,6 +1366,7 @@ export const purchasesService = {
         itemId: Number(row.item_id),
         quantity: Number(row.quantity || 0),
         unitCost: Number(row.unit_cost || 0),
+        lineTotal: Number(row.line_total || 0),
       }));
 
       const hasPaymentsResult = await client.query<{ payment_count: string }>(
@@ -1382,6 +1423,16 @@ export const purchasesService = {
         storeId = await getOrCreateDefaultStoreId(client, currentBranchId);
       }
 
+      // Hoisted above the stock-effects block below (computed again, unchanged, further
+      // down for nextTotal/validation) so the discount can be prorated into the new
+      // inbound cost basis in the same pass that applies it.
+      const computedSubtotal = preparedItems
+        ? preparedItems.reduce((sum, item) => sum + item.lineTotal, 0)
+        : (input.subtotal !== undefined ? Number(input.subtotal) : Number(current.subtotal || 0));
+      const nextDiscount = input.discount !== undefined
+        ? Number(input.discount)
+        : Number(current.discount || 0);
+
       if (preparedItems) {
         if (oldStockApplied && oldItems.length > 0) {
           await applyPurchaseStockEffects(client, {
@@ -1406,11 +1457,16 @@ export const purchasesService = {
           await applyPurchaseStockEffects(client, {
             branchId: currentBranchId,
             purchaseId: id,
-            lines: preparedItems.map((item) => ({
-              itemId: item.productId,
-              quantity: item.quantity,
-              unitCost: item.unitCost,
-            })),
+            lines: prorateOrderDiscount(
+              preparedItems.map((item) => ({
+                itemId: item.productId,
+                quantity: item.quantity,
+                unitCost: item.unitCost,
+                lineTotal: item.lineTotal,
+              })),
+              nextDiscount,
+              computedSubtotal
+            ),
             direction: 'in',
             moveType: 'purchase',
             storeId,
@@ -1421,7 +1477,14 @@ export const purchasesService = {
         await applyPurchaseStockEffects(client, {
           branchId: currentBranchId,
           purchaseId: id,
-          lines: oldItems,
+          // Only the "now entering inventory" direction needs the discount prorated
+          // into the cost basis (a status change alone, e.g. order -> received, with
+          // no item edits - so the purchase's existing discount/subtotal still apply).
+          // The reversal direction ('out') undoes whatever was actually applied and is
+          // left untouched, same as the other rollback call sites in this file.
+          lines: newStockApplied
+            ? prorateOrderDiscount(oldItems, nextDiscount, computedSubtotal)
+            : oldItems,
           direction: newStockApplied ? 'in' : 'out',
           moveType: newStockApplied ? 'purchase' : 'purchase_return',
           storeId,
@@ -1429,12 +1492,6 @@ export const purchasesService = {
         });
       }
 
-      const computedSubtotal = preparedItems
-        ? preparedItems.reduce((sum, item) => sum + item.lineTotal, 0)
-        : (input.subtotal !== undefined ? Number(input.subtotal) : Number(current.subtotal || 0));
-      const nextDiscount = input.discount !== undefined
-        ? Number(input.discount)
-        : Number(current.discount || 0);
       const nextTotal = input.total !== undefined
         ? Number(input.total)
         : (preparedItems || input.subtotal !== undefined || input.discount !== undefined
