@@ -350,7 +350,14 @@ apply_incremental_migrations() {
   fi
 
   # Apply all sql files except base schema and demo seed (safe to re-run with checksums).
-  migration_files=$(find "$MIGRATIONS_DIR" -maxdepth 1 -type f -name "*.sql" 2>/dev/null | sort)
+  # LC_ALL=C forces plain byte-order sort - without it, `sort` follows whatever
+  # locale the shell happens to run under, which is not guaranteed to agree that
+  # '_' sorts before 'b' (it does under C/POSIX, but some locales collate
+  # punctuation differently) - a dated migration like
+  # 20260922_central_delete_architecture.sql could then run AFTER its own
+  # 20260922b_*.sql dependent, failing with "relation does not exist" even
+  # though the filenames look correctly ordered.
+  migration_files=$(find "$MIGRATIONS_DIR" -maxdepth 1 -type f -name "*.sql" 2>/dev/null | LC_ALL=C sort)
   if [ -z "$migration_files" ]; then
     return
   fi
