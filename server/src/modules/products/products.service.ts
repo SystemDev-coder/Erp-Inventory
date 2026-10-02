@@ -594,17 +594,30 @@ const resolveAttributeIds = async (branchId: number, keys: string[]): Promise<nu
 // Full replace (not diff) - matches how the old attribute_keys TEXT[]
 // column was always written: the caller always sends the category's
 // complete desired attribute list, not an incremental add/remove.
+//
+// Fixed: a category edited before uq_category_attributes_category_attribute
+// existed (or saved via the old attribute_keys TEXT[] column) can have the
+// same key appear twice in its stored list. The edit form loads that array
+// as-is - a checkbox's `.includes()` check can't reveal the duplicate - so
+// simply re-saving without ever touching that one checkbox resent it
+// unchanged and this function tried to INSERT the same (category_id,
+// attribute_id) pair twice, hitting the unique constraint with the generic,
+// unhelpful "Field already exists" (the error handler's regex only names
+// single-column violations). De-duping here, not just in resolveAttributeIds,
+// protects every caller - including seedDefaultCategories/STARTER_ATTRIBUTE_DEFS,
+// which never goes through resolveAttributeIds at all.
 const replaceCategoryAttributes = async (
   client: PoolClient,
   categoryId: number,
   attributeIds: number[]
 ): Promise<void> => {
+  const uniqueAttributeIds = Array.from(new Set(attributeIds));
   await client.query(`DELETE FROM ims.category_attributes WHERE category_id = $1`, [categoryId]);
-  for (let i = 0; i < attributeIds.length; i += 1) {
+  for (let i = 0; i < uniqueAttributeIds.length; i += 1) {
     await client.query(
       `INSERT INTO ims.category_attributes (category_id, attribute_id, display_order)
        VALUES ($1, $2, $3)`,
-      [categoryId, attributeIds[i], i]
+      [categoryId, uniqueAttributeIds[i], i]
     );
   }
 };
