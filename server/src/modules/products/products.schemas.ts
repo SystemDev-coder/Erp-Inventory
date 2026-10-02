@@ -111,6 +111,10 @@ export const categoryCreateSchema = z.object({
   // Sub-category support: the parent category this one nests under, or
   // omitted/null for a top-level category.
   parentId: nullablePositiveInt.optional(),
+  // One of CATEGORY_ICON_OPTIONS' curated keys (frontend/src/config/categoryIcons.ts).
+  // Not whitelisted server-side - a stale/unknown key just falls back to the
+  // default icon client-side, same posture as attributeKeys.
+  icon: z.string().trim().max(40).optional().nullable(),
 });
 
 export const categoryUpdateSchema = categoryCreateSchema.partial();

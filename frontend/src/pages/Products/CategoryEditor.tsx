@@ -5,6 +5,7 @@ import { useToast } from '../../components/ui/toast/Toast';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
 import { AttributeDataType, AttributeDefinition, Category, productService } from '../../services/product.service';
 import { useBranch } from '../../context/BranchContext';
+import { CATEGORY_ICON_OPTIONS, resolveCategoryIcon } from '../../config/categoryIcons';
 
 type CategoryForm = Partial<Category>;
 
@@ -294,7 +295,14 @@ const CategoryEditor = () => {
                     value={categoryForm.parent_id ?? ''}
                     options={categories
                       .filter((c) => !invalidParentIds.has(String(c.category_id)))
-                      .map((c) => ({ value: c.category_id, label: c.name }))}
+                      .map((c, idx) => {
+                        const { Icon, className } = resolveCategoryIcon(c.icon, idx);
+                        return {
+                          value: c.category_id,
+                          label: c.name,
+                          icon: <Icon className={`size-4 ${className}`} aria-hidden="true" />,
+                        };
+                      })}
                     placeholder="No parent (top-level category)"
                     onChange={(nextValue) =>
                       setCategoryForm({ ...categoryForm, parent_id: nextValue === '' ? null : Number(nextValue) })
@@ -305,6 +313,38 @@ const CategoryEditor = () => {
                   </p>
                 </ItemField>
               </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+            <SectionHeader title="Icon" />
+            <p className="text-xs text-slate-500 dark:text-slate-400 -mt-2 mb-3">
+              Shown next to this category in lists, the POS category row, and product pickers.
+            </p>
+            <div className="grid grid-cols-5 gap-2 sm:grid-cols-7 md:grid-cols-9">
+              {CATEGORY_ICON_OPTIONS.map((opt) => {
+                const isSelected = categoryForm.icon === opt.key;
+                const Icon = opt.Icon;
+                return (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    title={opt.label}
+                    aria-label={opt.label}
+                    aria-pressed={isSelected}
+                    onClick={() => setCategoryForm({ ...categoryForm, icon: opt.key })}
+                    className={`flex flex-col items-center justify-center gap-1 rounded-lg border p-2 transition-colors ${
+                      isSelected
+                        ? 'border-primary-500 bg-primary-50 dark:border-primary-400 dark:bg-primary-500/10'
+                        : 'border-slate-200 hover:border-primary-300 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    <span className="flex size-8 items-center justify-center rounded-full border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800">
+                      <Icon className={`size-4 ${opt.className}`} aria-hidden="true" />
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 

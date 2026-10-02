@@ -75,6 +75,7 @@ const normalizeCategoryBody = (body: any) => ({
   branchId: body?.branchId ?? body?.branch_id,
   attributeKeys: body?.attributeKeys ?? body?.attribute_keys,
   parentId: body?.parentId ?? body?.parent_id,
+  icon: body?.icon,
 });
 
 const normalizeAttributeDefinitionBody = (body: any) => ({

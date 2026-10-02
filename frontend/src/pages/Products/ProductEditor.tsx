@@ -11,6 +11,7 @@ import { supplierService, Supplier } from '../../services/supplier.service';
 import { useBranch } from '../../context/BranchContext';
 import { useBusinessConfig } from '../../context/BusinessConfigContext';
 import { ProductAttributeDef } from '../../config/productAttributes';
+import { resolveCategoryIcon } from '../../config/categoryIcons';
 
 type ProductForm = Partial<Product>;
 
@@ -583,7 +584,14 @@ const ProductEditor = () => {
                 <SearchableCombobox<number>
                   value={itemForm.category_id ?? ''}
                   options={(() => {
-                    const base = categories.map((c) => ({ value: c.category_id, label: c.name }));
+                    const base = categories.map((c, idx) => {
+                      const { Icon, className } = resolveCategoryIcon(c.icon, idx);
+                      return {
+                        value: c.category_id,
+                        label: c.name,
+                        icon: <Icon className={`size-4 ${className}`} aria-hidden="true" />,
+                      };
+                    });
                     const q = itemCategoryQuery.trim();
                     if (!q) return base;
                     const exists = categories.some((c) => c.name.trim().toLowerCase() === q.toLowerCase());

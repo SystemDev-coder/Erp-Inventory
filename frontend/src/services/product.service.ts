@@ -15,6 +15,9 @@ export interface Category {
   name: string;
   description?: string | null;
   is_active: boolean;
+  // One of CATEGORY_ICON_OPTIONS' curated keys (config/categoryIcons.ts), or
+  // null/unset - resolveCategoryIcon() falls back to a deterministic default.
+  icon?: string | null;
   // Category Configuration Engine: which ims.attribute_definitions keys
   // apply to items in this category - resolved server-side from
   // ims.category_attributes, not a hardcoded list.

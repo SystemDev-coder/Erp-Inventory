@@ -21,6 +21,7 @@ import { useBranch } from '../../context/BranchContext';
 import { useBusinessConfig } from '../../context/BusinessConfigContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import { attributeSummary, DEFAULT_CATEGORIES_BY_BUSINESS_TYPE } from '../../config/productAttributes';
+import { resolveCategoryIcon } from '../../config/categoryIcons';
 
 type TxCategory = 'adjustment' | 'paid' | 'sales' | 'cancelled';
 
@@ -628,7 +629,21 @@ const Products = () => {
 
   const categoryColumns: ColumnDef<Category>[] = useMemo(
     () => [
-      { accessorKey: 'name', header: 'Category' },
+      {
+        accessorKey: 'name',
+        header: 'Category',
+        cell: ({ row }) => {
+          const { Icon, className } = resolveCategoryIcon(row.original.icon, row.index);
+          return (
+            <span className="flex items-center gap-2">
+              <span className="flex size-6 items-center justify-center rounded-full border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800">
+                <Icon className={`size-3.5 ${className}`} aria-hidden="true" />
+              </span>
+              {row.original.name}
+            </span>
+          );
+        },
+      },
       { accessorKey: 'parent_name', header: 'Parent', cell: ({ row }) => row.original.parent_name || '-' },
       { accessorKey: 'description', header: 'Description', cell: ({ row }) => row.original.description || '-' },
       { accessorKey: 'is_active', header: 'Status', cell: ({ row }) => (row.original.is_active ? 'Active' : 'Inactive') },

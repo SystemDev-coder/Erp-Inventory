@@ -262,6 +262,7 @@ const getCategorySql = `
     c.cat_name AS name,
     c.description,
     COALESCE(c.is_active, TRUE) AS is_active,
+    c.icon,
     COALESCE(ca.attribute_keys, ARRAY[]::text[]) AS attribute_keys,
     c.parent_id,
     p.cat_name AS parent_name,
@@ -707,10 +708,10 @@ export const productsService = {
     }
     const catId = await withTransaction(async (client) => {
       const created = await client.query<{ cat_id: number }>(
-        `INSERT INTO ims.categories (branch_id, cat_name, description, is_active, parent_id)
-         VALUES ($1, $2, NULLIF($3, ''), COALESCE($4, TRUE), $5)
+        `INSERT INTO ims.categories (branch_id, cat_name, description, is_active, parent_id, icon)
+         VALUES ($1, $2, NULLIF($3, ''), COALESCE($4, TRUE), $5, $6)
          RETURNING cat_id`,
-        [branchId, input.name, input.description || '', input.isActive, input.parentId || null]
+        [branchId, input.name, input.description || '', input.isActive, input.parentId || null, input.icon || null]
       );
       const id = Number(created.rows[0]?.cat_id);
       await replaceCategoryAttributes(client, id, attributeIds);
@@ -753,6 +754,7 @@ export const productsService = {
     if (input.description !== undefined) { updates.push(`description = NULLIF($${p++}, '')`); values.push(input.description || ''); }
     if (input.isActive !== undefined) { updates.push(`is_active = $${p++}`); values.push(input.isActive); }
     if (input.parentId !== undefined) { updates.push(`parent_id = $${p++}`); values.push(input.parentId || null); }
+    if (input.icon !== undefined) { updates.push(`icon = $${p++}`); values.push(input.icon || null); }
     updates.push('updated_at = NOW()');
 
     await withTransaction(async (client) => {

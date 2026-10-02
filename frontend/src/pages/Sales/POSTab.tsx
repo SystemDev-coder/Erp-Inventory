@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
     ArrowLeft, Search, Package, MinusCircle, PlusCircle, Trash2, PauseCircle,
-    XCircle, CreditCard, Wallet, Headphones, Footprints, Smartphone, Watch,
-    Laptop, Store, Lightbulb, LayoutGrid,
+    XCircle, CreditCard, Wallet, LayoutGrid,
 } from 'lucide-react';
+import { resolveCategoryIcon } from '../../config/categoryIcons';
 import { ThemeToggleButton } from '../../components/common/ThemeToggleButton';
 import NotificationDropdown from '../../components/header/NotificationDropdown';
 import UserDropdown from '../../components/header/UserDropdown';
@@ -32,20 +32,6 @@ interface CartItem {
 }
 
 const isCashAccount = (account: Account) => account.name.trim().toLowerCase().startsWith('cash');
-
-// Categories are user-defined in this app (no fixed icon/color per name like the
-// reference design has), so each one is assigned a look deterministically by
-// position instead - keeps every category visually distinct without needing
-// per-category configuration data.
-const CATEGORY_LOOKS: Array<{ icon: typeof Headphones; className: string }> = [
-    { icon: Headphones, className: 'text-purple-500' },
-    { icon: Footprints, className: 'text-orange-500' },
-    { icon: Smartphone, className: 'text-pink-500' },
-    { icon: Watch, className: 'text-amber-500' },
-    { icon: Laptop, className: 'text-primary-500' },
-    { icon: Store, className: 'text-emerald-500' },
-    { icon: Lightbulb, className: 'text-yellow-500' },
-];
 
 const POSTab = () => {
     const { showToast } = useToast();
@@ -324,8 +310,8 @@ const POSTab = () => {
                                     <span>All Categories</span>
                                 </button>
                                 {categories.map((c, idx) => {
-                                    const look = CATEGORY_LOOKS[idx % CATEGORY_LOOKS.length];
-                                    const Icon = look.icon;
+                                    const look = resolveCategoryIcon(c.icon, idx);
+                                    const Icon = look.Icon;
                                     const isActive = activeCategory === c.category_id;
                                     return (
                                         <button
