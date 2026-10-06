@@ -92,6 +92,11 @@ export interface Product {
   stock_alert?: number;
   cost_price: number;
   sell_price: number;
+  // Optional price band a cashier's edited unit price must stay within at
+  // sale time (null/unset on either = unrestricted, same as before this
+  // field existed).
+  min_price?: number | null;
+  max_price?: number | null;
   price?: number;
   cost?: number;
   stock: number;

@@ -22,6 +22,8 @@ type FormLine = {
   quantity: number;
   unit_price: number;
   available_qty?: number;
+  min_price?: number | null;
+  max_price?: number | null;
 };
 
 type FormErrors = {
@@ -56,6 +58,8 @@ type SaleItemOption = {
   unit_price: number;
   available_qty?: number;
   attributes?: Record<string, string | number>;
+  min_price?: number | null;
+  max_price?: number | null;
 };
 
 const SaleCreate = () => {
@@ -216,6 +220,8 @@ const SaleCreate = () => {
             unit_price: Number(fallbackPrice),
             available_qty: stockMap.get(itemId) ?? 0,
             attributes: item.attributes,
+            min_price: item.min_price ?? null,
+            max_price: item.max_price ?? null,
           };
         });
         setItemOptions(mapped);
@@ -435,6 +441,8 @@ const SaleCreate = () => {
       item_name: created.name,
       unit_price: Number(created.sell_price || 0),
       available_qty: 0,
+      min_price: created.min_price ?? null,
+      max_price: created.max_price ?? null,
     };
     setItemOptions((prev) => [option, ...prev]);
     if (newProductTargetIdx !== '') {
@@ -445,6 +453,8 @@ const SaleCreate = () => {
         item_id: option.item_id,
         unit_price: option.unit_price,
         available_qty: 0,
+        min_price: option.min_price,
+        max_price: option.max_price,
       };
       setSaleForm((prev) => ({ ...prev, items: nextItems }));
       recalcTotals(nextItems, saleForm.discount);
@@ -627,6 +637,8 @@ const SaleCreate = () => {
           item_name: product.name,
           unit_price: Number(product.sell_price || product.price || 0),
           available_qty: Number(product.stock ?? product.quantity ?? 0),
+          min_price: product.min_price ?? null,
+          max_price: product.max_price ?? null,
         },
         ...prev,
       ]);
@@ -644,6 +656,8 @@ const SaleCreate = () => {
         quantity: 1,
         unit_price: Number(product.sell_price || product.price || 0),
         available_qty: Number(product.stock ?? product.quantity ?? 0),
+        min_price: product.min_price ?? null,
+        max_price: product.max_price ?? null,
       };
       if (blankIdx >= 0) {
         nextItems = [...saleForm.items];
@@ -1222,6 +1236,8 @@ const SaleCreate = () => {
                               item_id: itemId,
                               unit_price: option ? Number(option.unit_price || 0) : nextItems[idx].unit_price,
                               available_qty: option?.available_qty ?? 0,
+                              min_price: option ? option.min_price ?? null : nextItems[idx].min_price,
+                              max_price: option ? option.max_price ?? null : nextItems[idx].max_price,
                             };
                             setSaleForm((prev) => ({ ...prev, items: nextItems }));
                             recalcTotals(nextItems, saleForm.discount);
@@ -1311,12 +1327,26 @@ const SaleCreate = () => {
                           </span>
                           <input
                             type="number"
-                            min={1}
-                            step={1}
-                            className={`${controlReadonlyCls} pl-6 text-right`}
+                            min={line.min_price ?? 0}
+                            max={line.max_price ?? undefined}
+                            step="0.01"
+                            className={`${controlCls} pl-6 text-right`}
                             value={line.unit_price}
-                            readOnly
-                            title="Unit price is set automatically from product price"
+                            onChange={(e) => {
+                              let price = Number(e.target.value || 0);
+                              if (line.min_price != null && price < line.min_price) {
+                                showToast('error', 'Price too low', `This item's price cannot go below ${line.min_price.toFixed(2)}.`);
+                                price = line.min_price;
+                              } else if (line.max_price != null && price > line.max_price) {
+                                showToast('error', 'Price too high', `This item's price cannot exceed ${line.max_price.toFixed(2)}.`);
+                                price = line.max_price;
+                              }
+                              const nextItems = [...saleForm.items];
+                              nextItems[idx] = { ...nextItems[idx], unit_price: price };
+                              setSaleForm((prev) => ({ ...prev, items: nextItems }));
+                              recalcTotals(nextItems, saleForm.discount);
+                            }}
+                            title="Defaults to the product's sell price - editable within its min/max price if set."
                             disabled={loading}
                           />
                         </div>

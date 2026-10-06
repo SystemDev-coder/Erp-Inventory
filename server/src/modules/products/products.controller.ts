@@ -121,6 +121,8 @@ const normalizeProductBody = (body: any) => ({
   openingBalance: body?.openingBalance ?? body?.opening_balance,
   costPrice: body?.costPrice ?? body?.cost_price ?? body?.cost,
   sellPrice: body?.sellPrice ?? body?.sell_price ?? body?.price,
+  minPrice: body?.minPrice ?? body?.min_price,
+  maxPrice: body?.maxPrice ?? body?.max_price,
   status: body?.status,
   isActive: body?.isActive ?? body?.is_active,
   branchId: body?.branchId ?? body?.branch_id,
@@ -171,6 +173,8 @@ export const exportProducts = asyncHandler(async (req: AuthRequest, res: Respons
       quantity: p.quantity ?? p.stock ?? 0,
       cost_price: p.cost_price,
       sell_price: p.sell_price,
+      min_price: p.min_price ?? '',
+      max_price: p.max_price ?? '',
       stock_alert: p.stock_alert,
       is_active: p.is_active ? 'active' : 'inactive',
     };

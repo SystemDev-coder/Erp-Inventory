@@ -26,6 +26,8 @@ export interface InventoryItem {
   item_name: string;
   cost_price: number;
   sale_price: number;
+  min_price?: number | null;
+  max_price?: number | null;
   last_unit_cost: number;
   weighted_unit_cost?: number;
   min_stock_threshold?: number;

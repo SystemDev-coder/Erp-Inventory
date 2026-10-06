@@ -24,6 +24,8 @@ interface CartItem {
     item_id: number;
     name: string;
     price: number;
+    min_price: number | null;
+    max_price: number | null;
     qty: number;
     available_qty: number;
     image_url: string | null;
@@ -126,6 +128,8 @@ const POSTab = () => {
                     item_id: product.product_id,
                     name: product.name,
                     price: Number(product.sell_price || 0),
+                    min_price: product.min_price != null ? Number(product.min_price) : null,
+                    max_price: product.max_price != null ? Number(product.max_price) : null,
                     qty: nextQty,
                     available_qty: availableQty,
                     image_url: product.image_url || null,
@@ -152,6 +156,26 @@ const POSTab = () => {
             }
             return prev.map((line) => (line.item_id === id ? { ...line, qty: nextQty } : line));
         });
+    };
+
+    // Clamps to the violated boundary rather than reverting to the old value -
+    // the cashier sees immediately where the price landed and why, instead of
+    // a silent no-op.
+    const updateCartPrice = (id: number, nextPrice: number) => {
+        setCart((prev) =>
+            prev.map((line) => {
+                if (line.item_id !== id) return line;
+                let price = nextPrice;
+                if (line.min_price != null && price < line.min_price) {
+                    showToast('error', 'Price too low', `${line.name}'s price cannot go below ${line.min_price.toFixed(2)}.`);
+                    price = line.min_price;
+                } else if (line.max_price != null && price > line.max_price) {
+                    showToast('error', 'Price too high', `${line.name}'s price cannot exceed ${line.max_price.toFixed(2)}.`);
+                    price = line.max_price;
+                }
+                return { ...line, price };
+            })
+        );
     };
 
     const removeFromCart = (id: number) => setCart((prev) => prev.filter((item) => item.item_id !== id));
@@ -505,7 +529,21 @@ const POSTab = () => {
                                                                 <span className="block text-xs text-slate-400 dark:text-slate-500 truncate">{summary}</span>
                                                             ) : null;
                                                         })()}
-                                                        <span className="text-xs text-slate-500">${item.price.toFixed(2)} each</span>
+                                                        <span className="flex items-center gap-1 text-xs text-slate-500">
+                                                            $
+                                                            <input
+                                                                type="number"
+                                                                step="0.01"
+                                                                min={item.min_price ?? 0}
+                                                                max={item.max_price ?? undefined}
+                                                                value={item.price}
+                                                                onChange={(e) => updateCartPrice(item.item_id, Number(e.target.value || 0))}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                                aria-label={`${item.name} unit price`}
+                                                                className="w-16 rounded border border-slate-200 bg-white px-1 py-0.5 text-xs text-slate-700 [color-scheme:light] focus:border-primary-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:[color-scheme:dark]"
+                                                            />
+                                                            each
+                                                        </span>
                                                     </div>
                                                 </div>
                                                 <div className="flex items-center gap-2">

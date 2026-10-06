@@ -851,6 +851,8 @@ export const inventoryService = {
           i.name AS item_name,
           COALESCE(pc.latest_cost, i.cost_price, 0)::numeric(14,2) AS cost_price,
           COALESCE(i.sell_price, i.cost_price, 0)::numeric(14,2) AS sale_price,
+          i.min_price,
+          i.max_price,
           COALESCE(pc.latest_cost, i.cost_price, 0)::numeric(14,2) AS last_unit_cost,
           COALESCE(
             pc.latest_cost,

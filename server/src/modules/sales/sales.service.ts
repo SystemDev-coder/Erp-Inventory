@@ -276,14 +276,26 @@ const prepareSaleItems = async (
       throw ApiError.badRequest('Quantity must be greater than zero');
     }
 
-    const prod = await queryOne<{ sell_price: number }>(
-      `SELECT sell_price FROM ims.items WHERE item_id = $1 AND branch_id = $2 AND is_active = TRUE`,
+    const prod = await queryOne<{ sell_price: number; min_price: number | null; max_price: number | null }>(
+      `SELECT sell_price, min_price, max_price FROM ims.items WHERE item_id = $1 AND branch_id = $2 AND is_active = TRUE`,
       [productId, branchId]
     );
     if (!prod) throw ApiError.badRequest(`Item ${productId} not found in selected branch`);
 
     const unitPrice = item.unitPrice !== undefined && item.unitPrice > 0 ? Number(item.unitPrice) : Number(prod.sell_price || 0);
     if (unitPrice <= 0) throw ApiError.badRequest('Unit price must be greater than zero (uses item sell price by default)');
+    // Authoritative price-band check - the frontend clamps/warns for immediate
+    // feedback, but this is the real guard for both createSale and updateSale,
+    // which both funnel through this one function. Applies to the final price
+    // regardless of source (explicit override or the default sell_price), so
+    // a catalog price that's drifted outside a newly-set band fails loudly
+    // instead of being silently let through.
+    if (prod.min_price != null && unitPrice < Number(prod.min_price)) {
+      throw ApiError.badRequest(`Unit price for item ${productId} cannot be below its minimum price (${Number(prod.min_price).toFixed(2)})`);
+    }
+    if (prod.max_price != null && unitPrice > Number(prod.max_price)) {
+      throw ApiError.badRequest(`Unit price for item ${productId} cannot exceed its maximum price (${Number(prod.max_price).toFixed(2)})`);
+    }
 
     prepared.push({ ...item, productId, quantity, unitPrice });
   }

@@ -1380,17 +1380,17 @@ const Products = () => {
         }}
         importType="items"
         title="Upload Products"
-        columns={['item', 'quantity', 'cost_price', 'amount', 'sell_price', 'category', 'unit', 'supplier', ...importAttributeKeys]}
+        columns={['item', 'quantity', 'cost_price', 'amount', 'sell_price', 'min_price', 'max_price', 'category', 'unit', 'supplier', ...importAttributeKeys]}
         templateHeaders={[
-          'item', 'quantity', 'cost_price', 'sell_price', 'store_id', 'barcode', 'stock_alert', 'is_active', 'category', 'unit', 'supplier',
+          'item', 'quantity', 'cost_price', 'sell_price', 'min_price', 'max_price', 'store_id', 'barcode', 'stock_alert', 'is_active', 'category', 'unit', 'supplier',
           ...importAttributeKeys,
         ]}
         hint={
           importAttributeKeys.length
-            ? `store_id, category, unit, and supplier are all optional. If left blank, the system assigns Main Store / the default category / the default unit / no default supplier. The remaining columns (${importAttributeKeys
+            ? `store_id, category, unit, supplier, min_price, and max_price are all optional. If left blank, the system assigns Main Store / the default category / the default unit / no default supplier / no price limit. The remaining columns (${importAttributeKeys
                 .map((k) => attributeDefinitions.find((a) => a.key === k)?.label || k)
                 .join(', ')}) are also optional${importCategoryId ? '' : " - based on your categories' current Attributes settings"} - only fill in the ones relevant to each row.`
-            : "store_id, category, unit, and supplier are all optional. If left blank, the system assigns Main Store / the default category / the default unit / no default supplier - and creates a new category, unit, or supplier automatically if you type a name that doesn't exist yet."
+            : "store_id, category, unit, supplier, min_price, and max_price are all optional. If left blank, the system assigns Main Store / the default category / the default unit / no default supplier / no price limit - and creates a new category, unit, or supplier automatically if you type a name that doesn't exist yet."
         }
         templateFilename={(() => {
           if (!importCategoryId) return 'products-import-template';

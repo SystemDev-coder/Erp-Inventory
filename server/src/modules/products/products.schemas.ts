@@ -199,6 +199,13 @@ export const productCreateSchema = z.object({
   openingBalance: optionalNonnegativeRoundedInt,
   costPrice: z.coerce.number().nonnegative().default(0),
   sellPrice: z.coerce.number().nonnegative().default(0),
+  // Optional price band a cashier's edited unit price must stay within at
+  // sale time (sales.service.ts#prepareSaleItems). Neither set = unrestricted,
+  // same as before this feature existed. The min<=max cross-check lives in
+  // products.service.ts, not here - an update can send just one of the two,
+  // and only the service layer knows the OTHER one's existing stored value.
+  minPrice: z.coerce.number().nonnegative().optional().nullable(),
+  maxPrice: z.coerce.number().nonnegative().optional().nullable(),
   isActive: z.boolean().optional(),
   status: z.enum(['active', 'inactive']).optional(),
   branchId: optionalPositiveInt,

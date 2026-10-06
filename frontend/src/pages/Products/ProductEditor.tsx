@@ -815,6 +815,36 @@ const ProductEditor = () => {
                 />
               </ItemField>
 
+              <ItemField label="Min Price">
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="No minimum"
+                  className={fieldControlClass}
+                  value={itemForm.min_price ?? ''}
+                  onChange={(e) => setItemField('min_price', e.target.value === '' ? null : Number(e.target.value))}
+                />
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  Lowest price a cashier can edit the unit price down to at sale time. Optional.
+                </p>
+              </ItemField>
+
+              <ItemField label="Max Price">
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="No maximum"
+                  className={fieldControlClass}
+                  value={itemForm.max_price ?? ''}
+                  onChange={(e) => setItemField('max_price', e.target.value === '' ? null : Number(e.target.value))}
+                />
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  Highest price a cashier can edit the unit price up to at sale time. Optional.
+                </p>
+              </ItemField>
+
               {itemForm.product_id ? (
                 <>
                   {/* Editing an existing product: Opening Balance (the original

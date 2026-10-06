@@ -132,6 +132,8 @@ export interface Product {
   stock_alert: number;
   cost_price: number;
   sell_price: number;
+  min_price?: number | null;
+  max_price?: number | null;
   price?: number;
   cost?: number;
   stock: number;
@@ -329,6 +331,8 @@ const getProductSql = (stockAlertExpr: string, storeIdExpr = 'NULL::bigint') => 
     ${stockAlertExpr} AS stock_alert,
     i.cost_price,
     i.sell_price,
+    i.min_price,
+    i.max_price,
     i.sell_price AS price,
     i.cost_price AS cost,
     CASE
@@ -1443,6 +1447,21 @@ export const productsService = {
         );
       }
 
+      // Same off-by-one reasoning as the attribute UPDATE above: set min/max
+      // price in a follow-up statement rather than threading two more
+      // positions into the hand-counted catIdRequired-branching INSERT.
+      if (input.minPrice !== undefined || input.maxPrice !== undefined) {
+        const effectiveMin = input.minPrice ?? null;
+        const effectiveMax = input.maxPrice ?? null;
+        if (effectiveMin != null && effectiveMax != null && effectiveMin > effectiveMax) {
+          throw ApiError.badRequest('Min price cannot be greater than max price');
+        }
+        await client.query(
+          `UPDATE ims.items SET min_price = $1, max_price = $2 WHERE item_id = $3`,
+          [effectiveMin, effectiveMax, itemId]
+        );
+      }
+
       const quantity = Number(input.quantity ?? input.openingBalance ?? 0);
       await upsertStoreItemQuantity(client, branchId, resolvedStoreId, itemId, quantity);
 
@@ -1585,15 +1604,23 @@ export const productsService = {
   async updateProduct(id: number, input: ProductUpdateInput, scope: BranchScope): Promise<Product | null> {
     const stockAlertColumn = (await hasItemsStockAlertColumn()) ? 'stock_alert' : 'reorder_level';
     const current = scope.isAdmin
-      ? await queryOne<{ item_id: number; branch_id: number; store_id: number | null }>(
-          `SELECT item_id, branch_id, store_id FROM ims.items WHERE item_id = $1`,
+      ? await queryOne<{ item_id: number; branch_id: number; store_id: number | null; min_price: string | null; max_price: string | null }>(
+          `SELECT item_id, branch_id, store_id, min_price, max_price FROM ims.items WHERE item_id = $1`,
           [id]
         )
-      : await queryOne<{ item_id: number; branch_id: number; store_id: number | null }>(
-          `SELECT item_id, branch_id, store_id FROM ims.items WHERE item_id = $1 AND branch_id = ANY($2::bigint[])`,
+      : await queryOne<{ item_id: number; branch_id: number; store_id: number | null; min_price: string | null; max_price: string | null }>(
+          `SELECT item_id, branch_id, store_id, min_price, max_price FROM ims.items WHERE item_id = $1 AND branch_id = ANY($2::bigint[])`,
           [id, scope.branchIds]
         );
     if (!current) return null;
+
+    if (input.minPrice !== undefined || input.maxPrice !== undefined) {
+      const effectiveMin = input.minPrice !== undefined ? input.minPrice : (current.min_price != null ? Number(current.min_price) : null);
+      const effectiveMax = input.maxPrice !== undefined ? input.maxPrice : (current.max_price != null ? Number(current.max_price) : null);
+      if (effectiveMin != null && effectiveMax != null && effectiveMin > effectiveMax) {
+        throw ApiError.badRequest('Min price cannot be greater than max price');
+      }
+    }
 
     if (input.storeId !== undefined && input.storeId !== null) await ensureInBranch('stores', 'store_id', input.storeId, current.branch_id, 'Store');
     if (input.categoryId !== undefined && input.categoryId !== null) await ensureInBranch('categories', 'cat_id', input.categoryId, current.branch_id, 'Category');
@@ -1632,6 +1659,8 @@ export const productsService = {
     if (input.stockAlert !== undefined) { updates.push(`${stockAlertColumn} = $${p++}`); values.push(input.stockAlert); }
     if (input.sellPrice !== undefined) { updates.push(`sell_price = $${p++}`); values.push(input.sellPrice); }
     if (input.costPrice !== undefined) { updates.push(`cost_price = $${p++}`); values.push(input.costPrice); }
+    if (input.minPrice !== undefined) { updates.push(`min_price = $${p++}`); values.push(input.minPrice ?? null); }
+    if (input.maxPrice !== undefined) { updates.push(`max_price = $${p++}`); values.push(input.maxPrice ?? null); }
     if (input.openingBalance !== undefined) { updates.push(`opening_balance = $${p++}`); values.push(input.openingBalance); }
     if (input.isActive !== undefined || input.status !== undefined) { updates.push(`is_active = $${p++}`); values.push(isActiveValue(input, true)); }
     const hasQuantityUpdate = input.quantity !== undefined;

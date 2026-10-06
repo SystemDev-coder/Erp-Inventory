@@ -84,6 +84,8 @@ type ItemImportRow = {
   opening_balance: number;
   cost_price: number;
   sell_price: number;
+  min_price: number | null;
+  max_price: number | null;
   is_active: boolean;
   store_id: number | null;
   // Raw name text from the file, resolved (and auto-created if new) to an id by
@@ -652,6 +654,8 @@ const parseItemRow = (
   const openingBalanceRaw = readRawValue(raw, ['opening_balance', 'opening_stock', 'quantity']);
   const costPriceRaw = readRawValue(raw, ['cost_price', 'cost']);
   const sellPriceRaw = readRawValue(raw, ['sell_price', 'price']);
+  const minPriceRaw = readRawValue(raw, ['min_price']);
+  const maxPriceRaw = readRawValue(raw, ['max_price']);
   const isActiveRaw = readRawValue(raw, ['is_active', 'active', 'status']);
   const storeIdRaw = readRawValue(raw, ['store_id', 'store']);
   const branchFromFile = readRawValue(raw, ['branch_id', 'branch']);
@@ -692,6 +696,14 @@ const parseItemRow = (
   );
   const costPrice = parseNonNegativeNumber(costPriceRaw, 'cost_price', errors, 0);
   const sellPrice = parseNonNegativeNumber(sellPriceRaw, 'sell_price', errors, 0);
+  // Optional, unlike cost_price/sell_price above - a blank cell means "no
+  // bound set", not 0, so this skips parseNonNegativeNumber's fallback-to-0
+  // behavior rather than reusing it.
+  const minPrice = isBlank(minPriceRaw) ? null : parseNonNegativeNumber(minPriceRaw, 'min_price', errors, 0);
+  const maxPrice = isBlank(maxPriceRaw) ? null : parseNonNegativeNumber(maxPriceRaw, 'max_price', errors, 0);
+  if (minPrice != null && maxPrice != null && minPrice > maxPrice) {
+    errors.push('min_price cannot be greater than max_price');
+  }
   const isActive = parseBooleanLike(isActiveRaw, 'is_active', errors, true);
   const storeId = parseOptionalPositiveInt(storeIdRaw, 'store_id', errors);
 
@@ -713,6 +725,8 @@ const parseItemRow = (
     opening_balance: openingBalance,
     cost_price: costPrice,
     sell_price: sellPrice,
+    min_price: minPrice,
+    max_price: maxPrice,
     is_active: isActive,
     store_id: storeId,
     category_name: categoryName || null,
@@ -1458,6 +1472,8 @@ const insertItem = async (
     'opening_balance',
     'cost_price',
     'sell_price',
+    'min_price',
+    'max_price',
     'is_active',
     'category_id',
     'unit_id'
@@ -1470,6 +1486,8 @@ const insertItem = async (
     row.opening_balance,
     row.cost_price,
     row.sell_price,
+    row.min_price,
+    row.max_price,
     row.is_active,
     row.category_id,
     row.unit_id
@@ -1633,6 +1651,8 @@ const itemsDefinition: ImportDefinition<ItemImportRow> = {
       cost_price: costPrice,
       amount: quantity * costPrice,
       sell_price: Number(row.sell_price || 0),
+      min_price: row.min_price ?? '',
+      max_price: row.max_price ?? '',
       store_id: row.store_id,
       barcode: row.barcode,
       stock_alert: Number(row.stock_alert || 0),
