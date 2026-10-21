@@ -155,6 +155,22 @@ const readString = (raw: Record<string, unknown>, aliases: string[]) => {
   return String(value).trim();
 };
 
+// Excel's "General" cell format renders a long plain-number cell (e.g. a
+// 13-digit EAN barcode typed as a number, not text) in scientific notation
+// once it exceeds ~11-12 significant digits (e.g. "4.00123E+12"). The parser
+// reads that same formatted display text (import.parser.ts uses raw:false,
+// needed elsewhere for date columns), so a numeric-looking barcode would
+// otherwise be saved verbatim as that garbled string. Reconstructs the plain
+// integer form when detected - safe up to Number.MAX_SAFE_INTEGER (~16
+// digits), well beyond any real barcode format (EAN-13/UPC-A/EAN-8 top out
+// at 13 digits).
+const SCIENTIFIC_NOTATION_RE = /^-?\d(\.\d+)?e\+?\d+$/i;
+const fixScientificNotation = (value: string): string => {
+  if (!SCIENTIFIC_NOTATION_RE.test(value)) return value;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed.toFixed(0) : value;
+};
+
 const normalizeLookup = (value: string) => value.trim().toLowerCase();
 
 const parseNonNegativeNumber = (
@@ -649,7 +665,8 @@ const parseItemRow = (
 ): ParseResult<ItemImportRow> => {
   const errors: string[] = [];
   const name = readString(raw, ['name', 'item']) || '';
-  const barcode = readString(raw, ['barcode', 'bar_code', 'sku']);
+  const barcodeRaw = readString(raw, ['barcode', 'bar_code', 'sku']);
+  const barcode = barcodeRaw !== null ? fixScientificNotation(barcodeRaw) : barcodeRaw;
   const stockAlertRaw = readRawValue(raw, ['stock_alert', 'stockalert', 'reorder_level']);
   const openingBalanceRaw = readRawValue(raw, ['opening_balance', 'opening_stock', 'quantity']);
   const costPriceRaw = readRawValue(raw, ['cost_price', 'cost']);

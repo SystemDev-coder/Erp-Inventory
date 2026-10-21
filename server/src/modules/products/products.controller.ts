@@ -73,13 +73,24 @@ const normalizeCategoryBody = (body: any) => ({
   description: body?.description,
   isActive: body?.isActive ?? body?.is_active,
   branchId: body?.branchId ?? body?.branch_id,
-  attributeKeys: body?.attributeKeys ?? body?.attribute_keys,
+  attributeKeys: Array.isArray(body?.attributeKeys ?? body?.attribute_keys)
+    ? Array.from(
+        new Set(
+          (body?.attributeKeys ?? body?.attribute_keys)
+            .map((key: unknown) => typeof key === 'string'
+              ? key.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+              : key)
+        )
+      )
+    : body?.attributeKeys ?? body?.attribute_keys,
   parentId: body?.parentId ?? body?.parent_id,
   icon: body?.icon,
 });
 
 const normalizeAttributeDefinitionBody = (body: any) => ({
-  key: body?.key,
+  key: typeof body?.key === 'string'
+    ? body.key.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+    : body?.key,
   label: body?.label,
   dataType: body?.dataType ?? body?.data_type,
   options: body?.options,

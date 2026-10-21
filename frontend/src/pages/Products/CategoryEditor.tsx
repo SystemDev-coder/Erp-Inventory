@@ -11,6 +11,15 @@ type CategoryForm = Partial<Category>;
 
 const defaultCategoryForm: CategoryForm = { name: '', description: '', is_active: true };
 
+// Attribute keys are stable identifiers, not display labels. Canonicalizing
+// them here keeps a legacy/stale response such as "Material" from producing
+// a second selection beside the catalog key "material".
+const normalizeAttributeKey = (key: string) =>
+  key.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+
+const uniqueAttributeKeys = (keys: string[] | undefined) =>
+  Array.from(new Set((keys || []).map(normalizeAttributeKey).filter(Boolean)));
+
 // Shared, theme-aware control styling for every <input> / <select> in the form -
 // same as ProductEditor.tsx's fieldControlClass, kept as its own local copy
 // here (this file has no other file to import it from without introducing a
@@ -99,7 +108,7 @@ const CategoryEditor = () => {
       if (isEditing && editId) {
         const row = loadedCategories.find((c) => Number(c.category_id) === editId);
         if (row) {
-          setCategoryForm(row);
+          setCategoryForm({ ...row, attribute_keys: uniqueAttributeKeys(row.attribute_keys) });
         } else {
           showToast('error', 'Categories', 'Category not found');
           navigate('/items');
@@ -123,11 +132,11 @@ const CategoryEditor = () => {
       showToast('error', 'Attributes', 'Enter a valid label');
       return;
     }
-    const existing = attributeDefinitions.find((a) => a.key === key);
+    const existing = attributeDefinitions.find((a) => normalizeAttributeKey(a.key) === key);
     if (existing) {
-      const current = categoryForm.attribute_keys || [];
-      if (!current.includes(existing.key)) {
-        setCategoryForm({ ...categoryForm, attribute_keys: [...current, existing.key] });
+      const current = uniqueAttributeKeys(categoryForm.attribute_keys);
+      if (!current.includes(key)) {
+        setCategoryForm({ ...categoryForm, attribute_keys: [...current, key] });
       }
       setNewAttributeLabel('');
       return;
@@ -152,8 +161,8 @@ const CategoryEditor = () => {
     if (res.success && res.data?.attribute) {
       const created = res.data.attribute;
       setAttributeDefinitions((prev) => [...prev, created]);
-      const current = categoryForm.attribute_keys || [];
-      setCategoryForm({ ...categoryForm, attribute_keys: [...current, created.key] });
+      const current = uniqueAttributeKeys(categoryForm.attribute_keys);
+      setCategoryForm({ ...categoryForm, attribute_keys: uniqueAttributeKeys([...current, created.key]) });
       setNewAttributeLabel('');
       setNewAttributeOptions('');
       setNewAttributeDataType('text');
@@ -193,9 +202,13 @@ const CategoryEditor = () => {
 
   const saveCategory = async (andAddAnother: boolean) => {
     setSavingMode(andAddAnother ? 'saveAndAdd' : 'save');
+    const categoryPayload = {
+      ...categoryForm,
+      attribute_keys: uniqueAttributeKeys(categoryForm.attribute_keys),
+    };
     const res = categoryForm.category_id
-      ? await productService.updateCategory(categoryForm.category_id, categoryForm)
-      : await productService.createCategory({ ...categoryForm, branchId: activeBranchId ?? undefined } as Partial<Category> & { branchId?: number });
+      ? await productService.updateCategory(categoryForm.category_id, categoryPayload)
+      : await productService.createCategory({ ...categoryPayload, branchId: activeBranchId ?? undefined } as Partial<Category> & { branchId?: number });
     setSavingMode(null);
     if (!res.success) {
       showToast('error', 'Categories', res.error || 'Failed to save category');
@@ -355,15 +368,19 @@ const CategoryEditor = () => {
             </p>
             <div className="grid grid-cols-1 gap-x-3 gap-y-1.5 sm:grid-cols-2 md:grid-cols-3 max-h-64 overflow-y-auto rounded-lg border border-slate-200 p-3 dark:border-slate-700">
               {attributeDefinitions.map((def) => {
-                const checked = (categoryForm.attribute_keys || []).includes(def.key);
+                const selectedKeys = uniqueAttributeKeys(categoryForm.attribute_keys);
+                const key = normalizeAttributeKey(def.key);
+                const checked = selectedKeys.includes(key);
                 return (
                   <label key={def.key} className="flex items-center gap-1.5 text-sm text-slate-700 dark:text-slate-200">
                     <input
                       type="checkbox"
                       checked={checked}
                       onChange={(e) => {
-                        const current = categoryForm.attribute_keys || [];
-                        const next = e.target.checked ? [...current, def.key] : current.filter((k) => k !== def.key);
+                        const current = uniqueAttributeKeys(categoryForm.attribute_keys);
+                        const next = e.target.checked
+                          ? uniqueAttributeKeys([...current, key])
+                          : current.filter((selectedKey) => selectedKey !== key);
                         setCategoryForm({ ...categoryForm, attribute_keys: next });
                       }}
                     />

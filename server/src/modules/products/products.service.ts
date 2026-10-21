@@ -570,6 +570,27 @@ const getProductStockOnHand = async (client: PoolClient, itemId: number): Promis
   return Number(result.rows[0]?.total || 0);
 };
 
+// Attribute keys are identifiers, rather than display labels. Keep one
+// canonical form at the API boundary so "Material", " material ", and
+// "material" all refer to the same branch-scoped definition. This also
+// protects the category_attributes unique (category_id, attribute_id) key
+// when a stale client submits the same field more than once with casing
+// differences.
+const normalizeAttributeKey = (key: string): string =>
+  key
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+const normalizeAttributeKeys = (keys: string[]): string[] => {
+  const normalizedKeys = keys.map(normalizeAttributeKey);
+  if (normalizedKeys.some((key) => !key)) {
+    throw ApiError.badRequest('Attribute keys must contain letters or numbers');
+  }
+  return Array.from(new Set(normalizedKeys));
+};
+
 // Category Configuration Engine: resolves the attribute keys an admin
 // picked (or an API caller sent) into real ims.attribute_definitions ids
 // for this branch. Throws on any key that isn't a defined attribute for
@@ -578,50 +599,61 @@ const getProductStockOnHand = async (client: PoolClient, itemId: number): Promis
 // an unrecognized key is almost always a typo or a stale client, not
 // something to paper over.
 const resolveAttributeIds = async (branchId: number, keys: string[]): Promise<number[]> => {
-  if (!keys.length) return [];
+  const normalizedKeys = normalizeAttributeKeys(keys);
+  if (!normalizedKeys.length) return [];
   const rows = await queryMany<{ attribute_id: number; key: string }>(
-    `SELECT attribute_id, key
+    `SELECT attribute_id, LOWER(key) AS key
        FROM ims.attribute_definitions
       WHERE branch_id = $1
-        AND key = ANY($2::text[])
+        AND LOWER(key) = ANY($2::text[])
         AND is_active = TRUE
         AND COALESCE(is_deleted, 0) = 0`,
-    [branchId, keys]
+    [branchId, normalizedKeys]
   );
   const found = new Map(rows.map((row) => [row.key, Number(row.attribute_id)]));
-  const unknown = keys.filter((key) => !found.has(key));
+  const unknown = normalizedKeys.filter((key) => !found.has(key));
   if (unknown.length) {
     throw ApiError.badRequest(`Unknown attribute key(s): ${unknown.join(', ')}`);
   }
-  return keys.map((key) => found.get(key) as number);
+  return normalizedKeys.map((key) => found.get(key) as number);
 };
 
-// Full replace (not diff) - matches how the old attribute_keys TEXT[]
-// column was always written: the caller always sends the category's
-// complete desired attribute list, not an incremental add/remove.
+// Full replace (not diff) - the caller sends the category's complete desired
+// attribute list. Do not DELETE the old join rows: deployment installs a
+// BEFORE DELETE soft-delete trigger on every IMS table. That trigger turns a
+// delete into is_deleted = 1, while the unconditional
+// (category_id, attribute_id) unique constraint still owns the pair; trying
+// to insert a retained attribute then raises 23505 / "Field already exists".
 //
-// Fixed: a category edited before uq_category_attributes_category_attribute
-// existed (or saved via the old attribute_keys TEXT[] column) can have the
-// same key appear twice in its stored list. The edit form loads that array
-// as-is - a checkbox's `.includes()` check can't reveal the duplicate - so
-// simply re-saving without ever touching that one checkbox resent it
-// unchanged and this function tried to INSERT the same (category_id,
-// attribute_id) pair twice, hitting the unique constraint with the generic,
-// unhelpful "Field already exists" (the error handler's regex only names
-// single-column violations). De-duping here, not just in resolveAttributeIds,
-// protects every caller - including seedDefaultCategories/STARTER_ATTRIBUTE_DEFS,
-// which never goes through resolveAttributeIds at all.
+// Reconcile directly instead: soft-remove unselected rows, then UPSERT every
+// selected relationship to restore it or update its order. De-duping remains
+// a defence for stale clients and callers such as seedDefaultCategories.
 const replaceCategoryAttributes = async (
   client: PoolClient,
   categoryId: number,
   attributeIds: number[]
 ): Promise<void> => {
   const uniqueAttributeIds = Array.from(new Set(attributeIds));
-  await client.query(`DELETE FROM ims.category_attributes WHERE category_id = $1`, [categoryId]);
+  // The soft-delete RLS policy normally hides retired join rows. They must be
+  // visible inside this transaction so ON CONFLICT can revive the original
+  // (category_id, attribute_id) row instead of treating it as an opaque
+  // uniqueness collision.
+  await client.query(`SET LOCAL app.include_deleted = '1'`);
+  await client.query(
+    `UPDATE ims.category_attributes
+        SET is_deleted = 1
+      WHERE category_id = $1
+        AND COALESCE(is_deleted, 0) = 0
+        AND NOT (attribute_id = ANY($2::bigint[]))`,
+    [categoryId, uniqueAttributeIds]
+  );
   for (let i = 0; i < uniqueAttributeIds.length; i += 1) {
     await client.query(
-      `INSERT INTO ims.category_attributes (category_id, attribute_id, display_order)
-       VALUES ($1, $2, $3)`,
+      `INSERT INTO ims.category_attributes (category_id, attribute_id, display_order, is_deleted)
+       VALUES ($1, $2, $3, 0)
+       ON CONFLICT (category_id, attribute_id) DO UPDATE
+         SET display_order = EXCLUDED.display_order,
+             is_deleted = 0`,
       [categoryId, uniqueAttributeIds[i], i]
     );
   }
@@ -879,13 +911,15 @@ export const productsService = {
     scope: BranchScope
   ): Promise<AttributeDefinition> {
     const branchId = pickBranchForWrite(scope, input.branchId);
+    const key = normalizeAttributeKey(input.key);
+    if (!key) throw ApiError.badRequest('Attribute key is required');
     const created = await queryOne<{ attribute_id: number }>(
       `INSERT INTO ims.attribute_definitions (branch_id, key, label, data_type, options)
        VALUES ($1, $2, $3, $4, $5::jsonb)
        RETURNING attribute_id`,
       [
         branchId,
-        input.key,
+        key,
         input.label,
         input.dataType,
         input.options?.length ? JSON.stringify(input.options) : null,
