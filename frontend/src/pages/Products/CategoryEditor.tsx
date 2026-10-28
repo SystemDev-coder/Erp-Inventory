@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
-import { ArrowLeft, Check, ShieldCheck, X } from 'lucide-react';
+import { ArrowLeft, Check, ShieldCheck, X, Search } from 'lucide-react';
 import { useToast } from '../../components/ui/toast/Toast';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
 import { AttributeDataType, AttributeDefinition, Category, productService } from '../../services/product.service';
@@ -11,19 +11,12 @@ type CategoryForm = Partial<Category>;
 
 const defaultCategoryForm: CategoryForm = { name: '', description: '', is_active: true };
 
-// Attribute keys are stable identifiers, not display labels. Canonicalizing
-// them here keeps a legacy/stale response such as "Material" from producing
-// a second selection beside the catalog key "material".
 const normalizeAttributeKey = (key: string) =>
   key.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 
 const uniqueAttributeKeys = (keys: string[] | undefined) =>
   Array.from(new Set((keys || []).map(normalizeAttributeKey).filter(Boolean)));
 
-// Shared, theme-aware control styling for every <input> / <select> in the form -
-// same as ProductEditor.tsx's fieldControlClass, kept as its own local copy
-// here (this file has no other file to import it from without introducing a
-// new shared module for a handful of classes).
 const fieldControlClass =
   'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm ' +
   'placeholder:text-slate-400 [color-scheme:light] transition-colors ' +
@@ -64,11 +57,6 @@ function SectionHeader({ title, right }: { title: string; right?: React.ReactNod
   );
 }
 
-// "New Category"/"Edit Category" used to be a Modal inside Products.tsx -
-// moved to its own page/route (same reasoning as ProductEditor.tsx already
-// being a full page, not a modal) so it has room for the attribute checklist
-// and inline "+ New attribute" creator instead of squeezing them into a
-// size="md" modal.
 const CategoryEditor = () => {
   const { showToast } = useToast();
   const navigate = useNavigate();
@@ -86,6 +74,13 @@ const CategoryEditor = () => {
   const [newAttributeDataType, setNewAttributeDataType] = useState<AttributeDataType>('text');
   const [newAttributeOptions, setNewAttributeOptions] = useState('');
   const [creatingAttribute, setCreatingAttribute] = useState(false);
+
+  // NEW STATE: For searching attributes
+  const [attributeSearch, setAttributeSearch] = useState('');
+
+  // NEW STATE: For adding custom icons
+  const [customIcons, setCustomIcons] = useState<string[]>([]);
+  const [newIconUrl, setNewIconUrl] = useState('');
 
   const resolveCategories = async () => {
     const res = await productService.listCategories({ branchId: activeBranchId ?? undefined });
@@ -109,6 +104,10 @@ const CategoryEditor = () => {
         const row = loadedCategories.find((c) => Number(c.category_id) === editId);
         if (row) {
           setCategoryForm({ ...row, attribute_keys: uniqueAttributeKeys(row.attribute_keys) });
+          // If the existing icon is a URL, add it to custom icons so it shows up
+          if (row.icon && row.icon.startsWith('http')) {
+            setCustomIcons([row.icon]);
+          }
         } else {
           showToast('error', 'Categories', 'Category not found');
           navigate('/items');
@@ -120,10 +119,6 @@ const CategoryEditor = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editId]);
 
-  // Category Configuration Engine: lets an admin invent a brand-new
-  // attribute type right from the checklist (no code change, no deploy).
-  // If the typed label happens to already exist as a key, it's just
-  // checked instead of re-created.
   const handleCreateAttribute = async () => {
     const label = newAttributeLabel.trim();
     if (!label) return;
@@ -172,10 +167,6 @@ const CategoryEditor = () => {
     }
   };
 
-  // A category can't become its own parent or its own descendant's parent -
-  // computed client-side (string-compared: bigint ids come back as JSON
-  // strings) so the picker never even offers an invalid option; the backend
-  // enforces the same rule as a hard guard.
   const invalidParentIds = useMemo(() => {
     if (!categoryForm.category_id) return new Set<string>();
     const invalid = new Set<string>([String(categoryForm.category_id)]);
@@ -194,10 +185,35 @@ const CategoryEditor = () => {
     return invalid;
   }, [categories, categoryForm.category_id]);
 
+  // NEW: Filter attributes based on search input
+  const filteredAttributes = useMemo(() => {
+    return attributeDefinitions.filter(
+      (def) =>
+        def.label.toLowerCase().includes(attributeSearch.toLowerCase()) ||
+        def.key.toLowerCase().includes(attributeSearch.toLowerCase())
+    );
+  }, [attributeDefinitions, attributeSearch]);
+
+  // NEW: Handler to add a custom icon URL
+  const handleAddCustomIcon = () => {
+    const url = newIconUrl.trim();
+    if (!url) return;
+    if (!url.startsWith('http') && !url.startsWith('data:image')) {
+      showToast('error', 'Icons', 'Please enter a valid image URL (starting with http).');
+      return;
+    }
+    if (!customIcons.includes(url)) {
+      setCustomIcons([...customIcons, url]);
+    }
+    setCategoryForm({ ...categoryForm, icon: url });
+    setNewIconUrl('');
+  };
+
   const [savingMode, setSavingMode] = useState<'save' | 'saveAndAdd' | null>(null);
 
   const resetFormForNewEntry = () => {
     setCategoryForm(defaultCategoryForm);
+    setAttributeSearch('');
   };
 
   const saveCategory = async (andAddAnother: boolean) => {
@@ -334,7 +350,9 @@ const CategoryEditor = () => {
             <p className="text-xs text-slate-500 dark:text-slate-400 -mt-2 mb-3">
               Shown next to this category in lists, the POS category row, and product pickers.
             </p>
-            <div className="grid grid-cols-5 gap-2 sm:grid-cols-7 md:grid-cols-9">
+            
+            {/* ICON GRID */}
+            <div className="grid grid-cols-5 gap-2 sm:grid-cols-7 md:grid-cols-9 mb-4">
               {CATEGORY_ICON_OPTIONS.map((opt) => {
                 const isSelected = categoryForm.icon === opt.key;
                 const Icon = opt.Icon;
@@ -358,6 +376,50 @@ const CategoryEditor = () => {
                   </button>
                 );
               })}
+
+              {/* RENDER CUSTOM ICONS IF ANY */}
+              {customIcons.map((url, idx) => {
+                const isSelected = categoryForm.icon === url;
+                return (
+                  <button
+                    key={`custom-${idx}`}
+                    type="button"
+                    title="Custom Icon"
+                    aria-label="Custom Icon"
+                    aria-pressed={isSelected}
+                    onClick={() => setCategoryForm({ ...categoryForm, icon: url })}
+                    className={`flex flex-col items-center justify-center gap-1 rounded-lg border p-2 transition-colors ${
+                      isSelected
+                        ? 'border-primary-500 bg-primary-50 dark:border-primary-400 dark:bg-primary-500/10'
+                        : 'border-slate-200 hover:border-primary-300 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    <span className="flex size-8 items-center justify-center rounded-full border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800">
+                      <img src={url} alt="Custom Icon" className="size-4 object-contain" />
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* NEW: ADD CUSTOM ICON INPUT */}
+            <div className="flex flex-col sm:flex-row items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50/50 p-3 dark:border-slate-700 dark:bg-slate-800/30">
+              <span className="text-xs font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap">Add Custom Icon:</span>
+              <input
+                type="text"
+                placeholder="Paste image URL (e.g. https://example.com/icon.png)"
+                value={newIconUrl}
+                onChange={(e) => setNewIconUrl(e.target.value)}
+                className={`${fieldControlClass} text-xs py-1.5`}
+              />
+              <button
+                type="button"
+                onClick={handleAddCustomIcon}
+                disabled={!newIconUrl.trim()}
+                className="w-full sm:w-auto rounded-lg bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white disabled:opacity-50 dark:bg-white dark:text-slate-900 whitespace-nowrap"
+              >
+                Add Icon
+              </button>
             </div>
           </div>
 
@@ -366,32 +428,50 @@ const CategoryEditor = () => {
             <p className="text-xs text-slate-500 dark:text-slate-400 -mt-2 mb-3">
               Which fields do products in this category need? (e.g. Model, Storage, RAM for phones)
             </p>
-            <div className="grid grid-cols-1 gap-x-3 gap-y-1.5 sm:grid-cols-2 md:grid-cols-3 max-h-64 overflow-y-auto rounded-lg border border-slate-200 p-3 dark:border-slate-700">
-              {attributeDefinitions.map((def) => {
-                const selectedKeys = uniqueAttributeKeys(categoryForm.attribute_keys);
-                const key = normalizeAttributeKey(def.key);
-                const checked = selectedKeys.includes(key);
-                return (
-                  <label key={def.key} className="flex items-center gap-1.5 text-sm text-slate-700 dark:text-slate-200">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={(e) => {
-                        const current = uniqueAttributeKeys(categoryForm.attribute_keys);
-                        const next = e.target.checked
-                          ? uniqueAttributeKeys([...current, key])
-                          : current.filter((selectedKey) => selectedKey !== key);
-                        setCategoryForm({ ...categoryForm, attribute_keys: next });
-                      }}
-                    />
-                    {def.label}
-                  </label>
-                );
-              })}
+            
+            {/* NEW: ATTRIBUTE SEARCH BAR */}
+            <div className="relative mb-3">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 size-4" />
+              <input
+                type="text"
+                placeholder="Search attributes..."
+                value={attributeSearch}
+                onChange={(e) => setAttributeSearch(e.target.value)}
+                className={`${fieldControlClass} pl-9 py-1.5 text-xs`}
+              />
             </div>
-            {/* Category Configuration Engine: an admin invents a brand-new
-                attribute type here - no code change, no deploy - and it's
-                immediately available for this and every future category. */}
+
+            <div className="grid grid-cols-1 gap-x-3 gap-y-1.5 sm:grid-cols-2 md:grid-cols-3 max-h-64 overflow-y-auto rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+              {/* USE filteredAttributes Halkan */}
+              {filteredAttributes.length === 0 ? (
+                <div className="col-span-full py-4 text-center text-xs text-slate-500 dark:text-slate-400">
+                  No attributes found matching "{attributeSearch}"
+                </div>
+              ) : (
+                filteredAttributes.map((def) => {
+                  const selectedKeys = uniqueAttributeKeys(categoryForm.attribute_keys);
+                  const key = normalizeAttributeKey(def.key);
+                  const checked = selectedKeys.includes(key);
+                  return (
+                    <label key={def.key} className="flex items-center gap-1.5 text-sm text-slate-700 dark:text-slate-200">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => {
+                          const current = uniqueAttributeKeys(categoryForm.attribute_keys);
+                          const next = e.target.checked
+                            ? uniqueAttributeKeys([...current, key])
+                            : current.filter((selectedKey) => selectedKey !== key);
+                          setCategoryForm({ ...categoryForm, attribute_keys: next });
+                        }}
+                      />
+                      {def.label}
+                    </label>
+                  );
+                })
+              )}
+            </div>
+
             <div className="mt-3 grid grid-cols-1 gap-2 rounded-lg border border-dashed border-primary-300 bg-primary-50/60 p-3 dark:border-primary-700 dark:bg-primary-500/10 sm:grid-cols-[1fr_auto_auto]">
               <input
                 placeholder="+ New attribute label (e.g. Fragrance Type)"
