@@ -85,7 +85,11 @@ const fetchAccountId = async (
     const accountType = accountTypes[kind];
     const insertSql = `
       INSERT INTO ims.accounts (branch_id, name, institution, balance, account_type, is_active)
-      VALUES ($1, $2, '', 0, $3, FALSE)
+      -- AR/AP are posting accounts.  They must be active when provisioned:
+      -- postGl enforces is_active for every line, including the purchase
+      -- Inventory/AP entry.  Creating them inactive during the startup
+      -- balance sync made the first purchase in a branch impossible.
+      VALUES ($1, $2, '', 0, $3, TRUE)
       ON CONFLICT DO NOTHING
     `;
     if (client) {

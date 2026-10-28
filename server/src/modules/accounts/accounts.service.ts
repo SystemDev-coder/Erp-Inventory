@@ -378,6 +378,14 @@ export const accountsService = {
         updates.push(`institution = $${p++}`);
         values.push(input.institution || null);
       }
+      // Core COA accounts are referenced by operational postings by stable
+      // name.  They are not optional payment accounts and must always remain
+      // available to their own branch; for example, purchases require
+      // Inventory and Accounts Payable even before a cash payment is made.
+      if (input.isActive === false && isProtectedAccountName(existing.name)) {
+        throw ApiError.badRequest('Core system accounts must remain active.');
+      }
+
       // M08 fix: deactivating an account used to be unconditional, letting an
       // account with a live balance or posting history disappear from every
       // account picker with no warning while account_transactions/GL still

@@ -363,22 +363,6 @@ BEGIN
   )
   SELECT COUNT(*) INTO v_created FROM inserted;
 
-  UPDATE ims.accounts
-     SET is_active = FALSE
-   WHERE branch_id = p_branch_id
-     AND (
-       account_type = 'equity'
-       OR LOWER(name) LIKE 'accounts payable%'
-       OR LOWER(name) LIKE 'accounts receivable%'
-       OR LOWER(name) LIKE 'fixed asset%'
-       OR LOWER(name) LIKE '%capital%'
-       OR LOWER(name) LIKE 'office furniture%'
-       OR LOWER(name) LIKE 'computer%'
-       OR LOWER(name) LIKE 'equipment%'
-       OR LOWER(name) LIKE 'vehicle%'
-       OR LOWER(name) LIKE 'mukeef%'
-     );
-
   RETURN v_created;
 END $$;
 
