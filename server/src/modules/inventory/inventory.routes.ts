@@ -22,7 +22,7 @@ import {
   createInventoryTransaction,
 } from './inventory.controller';
 import { requireAuth } from '../../middlewares/requireAuth';
-import { requireAnyPerm } from '../../middlewares/requirePerm';
+import { requireAnyPerm, requirePerm } from '../../middlewares/requirePerm';
 
 const router = Router();
 
@@ -39,13 +39,13 @@ router.get('/recounts', requireAnyPerm(['stock.view', 'stock.recount', 'inventor
 router.post('/recounts', requireAnyPerm(['stock.recount', 'stock.adjust', 'inventory.adjust']), createRecount);
 router.post('/transfers', requireAnyPerm(['stock.adjust', 'stock.recount', 'inventory.transfer']), createTransfer);
 router.get('/branches', requireAnyPerm(['stock.view', 'inventory.view', 'system.branches']), listBranches);
-router.post('/branches', requireAnyPerm(['system.branches', 'stock.adjust', 'inventory.adjust']), createBranch);
-router.put('/branches/:id', requireAnyPerm(['system.branches', 'stock.adjust', 'inventory.adjust']), updateBranch);
-router.delete('/branches/:id', requireAnyPerm(['system.branches', 'stock.adjust', 'inventory.adjust']), deleteBranch);
+router.post('/branches', requirePerm('system.branches'), createBranch);
+router.put('/branches/:id', requirePerm('system.branches'), updateBranch);
+router.delete('/branches/:id', requirePerm('system.branches'), deleteBranch);
 router.get('/warehouses', requireAnyPerm(['stock.view', 'inventory.view', 'system.branches']), listWarehouses);
-router.post('/warehouses', requireAnyPerm(['system.branches', 'stock.adjust', 'inventory.adjust']), createWarehouse);
-router.put('/warehouses/:id', requireAnyPerm(['system.branches', 'stock.adjust', 'inventory.adjust']), updateWarehouse);
-router.delete('/warehouses/:id', requireAnyPerm(['system.branches', 'stock.adjust', 'inventory.adjust']), deleteWarehouse);
+router.post('/warehouses', requirePerm('system.branches'), createWarehouse);
+router.put('/warehouses/:id', requirePerm('system.branches'), updateWarehouse);
+router.delete('/warehouses/:id', requirePerm('system.branches'), deleteWarehouse);
 // Own permission family (inventory_transactions.*), independent of items.*/stock.*, so
 // the Products page's "Inventory Transaction" tab can be granted/denied separately. See
 // server/sql/20260930a_products_tab_permissions.sql for the one-time backfill.

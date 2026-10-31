@@ -124,6 +124,55 @@ const ensureCreditDueNotificationsWithClient = async (
     });
   }
 
+  // A customer can carry an opening balance before any sale is entered. Its
+  // configured deadline must therefore alert independently of ims.sales;
+  // otherwise a customer such as one imported at go-live would never receive
+  // an alert even though they still owe money when the deadline passes.
+  const overdueCustomers = await runQuery<{
+    customer_id: number;
+    customer_name: string;
+    due_at: string;
+    balance: string;
+  }>(
+    `SELECT
+        c.customer_id,
+        c.full_name AS customer_name,
+        c.credit_due_at::text AS due_at,
+        COALESCE(
+          NULLIF(to_jsonb(c) ->> 'remaining_balance', '')::numeric,
+          NULLIF(to_jsonb(c) ->> 'open_balance', '')::numeric,
+          0
+        )::text AS balance
+       FROM ims.customers c
+      WHERE c.branch_id = $1
+        AND COALESCE(c.is_active, TRUE) = TRUE
+        AND COALESCE(c.credit_allowed, TRUE) = TRUE
+        AND c.credit_due_at IS NOT NULL
+        AND c.credit_due_at <= NOW()
+        AND COALESCE(
+          NULLIF(to_jsonb(c) ->> 'remaining_balance', '')::numeric,
+          NULLIF(to_jsonb(c) ->> 'open_balance', '')::numeric,
+          0
+        ) > 0.005
+        AND COALESCE(c.is_deleted, 0)::int = 0`,
+    [branchId]
+  );
+
+  for (const row of overdueCustomers) {
+    await notifyBranchUsers(client, {
+      branchId,
+      title: `Credit Due: ${row.customer_name}`,
+      message: `${row.customer_name}'s unpaid balance of ${Number(row.balance).toFixed(2)} reached its deadline on ${row.due_at}.`,
+      link: '/customers',
+      meta: {
+        type: 'credit_customer_due',
+        ref_id: row.customer_id,
+        due_date: row.due_at,
+        balance: row.balance,
+      },
+    });
+  }
+
   const overduePurchases = await runQuery<{
     purchase_id: number;
     supplier_name: string | null;

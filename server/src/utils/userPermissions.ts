@@ -9,6 +9,15 @@ const expandPermissionKeys = (permKey: string): string[] => {
   if (permKey.startsWith('products.')) {
     return [permKey, permKey.replace('products.', 'items.')];
   }
+  if (permKey === 'stock.view') {
+    return [permKey, 'warehouse_stock.view', 'inventory.view'];
+  }
+  if (permKey === 'warehouse_stock.view') {
+    return [permKey, 'stock.view', 'inventory.view'];
+  }
+  if (permKey === 'inventory.view') {
+    return [permKey, 'stock.view', 'warehouse_stock.view'];
+  }
   return [permKey];
 };
 
@@ -42,20 +51,13 @@ export const isAdminRole = async (roleId: number): Promise<boolean> => {
 };
 
 const loadUserPermissions = async (userId: number, roleId: number): Promise<Set<string>> => {
-  const [rolePerms, userPerms, overrides] = await Promise.all([
+  const [rolePerms, overrides] = await Promise.all([
     queryMany<{ perm_key: string }>(
       `SELECT DISTINCT p.perm_key
          FROM ims.role_permissions rp
          JOIN ims.permissions p ON rp.perm_id = p.perm_id
         WHERE rp.role_id = $1`,
       [roleId]
-    ),
-    queryMany<{ perm_key: string }>(
-      `SELECT DISTINCT p.perm_key
-         FROM ims.user_permissions up
-         JOIN ims.permissions p ON up.perm_id = p.perm_id
-        WHERE up.user_id = $1`,
-      [userId]
     ),
     queryMany<{ perm_key: string; effect: string }>(
       `SELECT DISTINCT p.perm_key, upo.effect
@@ -66,9 +68,13 @@ const loadUserPermissions = async (userId: number, roleId: number): Promise<Set<
     ),
   ]);
 
+  // Role permissions plus the managed allow/deny overrides are the complete
+  // authorization model. `ims.user_permissions` is a legacy table: it is not
+  // exposed by the Roles/Privileges UI, so including it would let an invisible
+  // historical grant bypass a role change. Administrators who need an
+  // exception must use an explicit override, which is visible and auditable.
   const permissionSet = new Set<string>([
     ...rolePerms.map((row) => row.perm_key),
-    ...userPerms.map((row) => row.perm_key),
     ...overrides.filter((row) => row.effect === 'allow').map((row) => row.perm_key),
   ]);
 

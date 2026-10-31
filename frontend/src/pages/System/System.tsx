@@ -53,14 +53,9 @@ type ConfirmTarget =
 
 const System = () => {
   const { showToast } = useToast();
-  const { permissions: currentPermissions, user } = useAuth();
+  const { permissions: currentPermissions } = useAuth();
   const { t } = useLanguage();
   const navigate = useNavigate();
-  // Business Profile is Developer-only: choosing/changing a client's
-  // business type is a one-time deployment-setup decision (it wholesale
-  // resets product config defaults), not a day-to-day admin task - same
-  // role-gate style already used for the Trash feature.
-  const isDeveloper = (user?.role_name || '').toLowerCase() === 'developer';
   const allowRemoteImageUpload = true;
   const logoStorageKey = 'erp.company.logo_img';
   const bannerStorageKey = 'erp.company.banner_img';
@@ -446,6 +441,12 @@ const System = () => {
   const canCreateRoles = hasAnyPerm(['system.roles.manage', 'roles.create']);
   const canUpdateRoles = hasAnyPerm(['system.roles.manage', 'roles.update']);
   const canDeleteRoles = hasAnyPerm(['system.roles.manage', 'roles.delete']);
+  const canManageCompany = hasAnyPerm([
+    'company.update',
+    'company.create',
+    'system.company.manage',
+    'system.settings',
+  ]);
 
   const loadUsers = async () => {
     const res = await systemService.getUsers();
@@ -912,10 +913,8 @@ const System = () => {
     </div>
   );
 
-  // Business Profile lives in its own tab (Developer-only, see isDeveloper
-  // above) rather than nested inside Company Info - it's a distinct,
-  // higher-impact "which industry is this deployment" decision, not part of
-  // everyday company-identity editing.
+  // Business Profile lives in its own tab rather than nested inside Company
+  // Info. Access follows the same managed company permission as its API.
   const businessProfileContent = (
     <div className="bg-white border border-black rounded-xl p-6 space-y-4 text-black">
       <div className="flex items-center justify-between">
@@ -1099,9 +1098,9 @@ const System = () => {
       badge: 0,
       content: <NotificationsTab />,
     },
-    // Business Profile: its own tab, visible only to the Developer role -
-    // see isDeveloper above for why this is tighter than plain company.update.
-    ...(isDeveloper
+    // Business Profile has the same permission gate as its save endpoint;
+    // custom roles therefore work exactly like the built-in roles.
+    ...(canManageCompany
       ? [
           {
             id: 'business-profile',

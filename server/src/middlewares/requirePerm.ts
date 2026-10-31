@@ -1,7 +1,6 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from './requireAuth';
 import { ApiError } from '../utils/ApiError';
-import { queryOne } from '../db/query';
 import {
   getUserPermissionSet,
   isAdminRole,
@@ -10,31 +9,6 @@ import {
 } from '../utils/userPermissions';
 
 export { isAdminRole } from '../utils/userPermissions';
-
-export const requireRoleName = (roleNames: string | string[]) => {
-  const allowed = Array.isArray(roleNames) ? roleNames : [roleNames];
-  const normalized = allowed.map((name) => name.toLowerCase());
-  return async (req: AuthRequest, _res: Response, next: NextFunction) => {
-    try {
-      if (!req.user) {
-        throw ApiError.unauthorized('Authentication required');
-      }
-
-      const row = await queryOne<{ role_name: string | null }>(
-        `SELECT role_name FROM ims.roles WHERE role_id = $1 LIMIT 1`,
-        [req.user.roleId]
-      );
-      const roleName = (row?.role_name || '').toLowerCase();
-      if (!normalized.includes(roleName)) {
-        throw ApiError.forbidden('Insufficient role access');
-      }
-
-      next();
-    } catch (error) {
-      next(error);
-    }
-  };
-};
 
 /**
  * Middleware to check if authenticated user has specific permission.

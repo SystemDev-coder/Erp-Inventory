@@ -27,6 +27,10 @@ const defaultPreferences = (): UserPreferences => ({
 const preferenceStore = new Map<number, UserPreferences>();
 
 const PERMISSION_CACHE_TTL_MS = 5 * 60 * 1000;
+// Bump this whenever the effective-permission calculation changes. It stops
+// a hot deployment from serving a result computed under an older policy for
+// the remainder of the cache TTL.
+const PERMISSION_POLICY_VERSION = 'role-overrides-v2';
 
 type PermissionCacheEntry = { permissions: string[]; expiresAt: number };
 
@@ -42,9 +46,10 @@ type PermissionCacheEntry = { permissions: string[]; expiresAt: number };
 // verification: reassigning a test user's role, then hitting one endpoint
 // with a stale (old-roleId) token before re-logging in, poisoned the
 // cache for the fresh (new-roleId) token's identical userId. Keying by
-// `${userId}:${roleId}` keeps every (user, role) combination's cache
+// the policy version plus `${userId}:${roleId}` keeps every (user, role) combination's cache
 // entry fully independent.
-const permissionCacheKey = (userId: number, roleId: number) => `${userId}:${roleId}`;
+const permissionCacheKey = (userId: number, roleId: number) =>
+  `${PERMISSION_POLICY_VERSION}:${userId}:${roleId}`;
 const permissionCache = new Map<string, PermissionCacheEntry>();
 
 export class SessionService {
@@ -130,7 +135,7 @@ export class SessionService {
   // caller's own current roleId - since the caller may not know every
   // roleId a stale, still-valid JWT for this user might embed.
   async invalidatePermissionCache(userId: number): Promise<void> {
-    const prefix = `${userId}:`;
+    const prefix = `${PERMISSION_POLICY_VERSION}:${userId}:`;
     for (const key of permissionCache.keys()) {
       if (key.startsWith(prefix)) permissionCache.delete(key);
     }

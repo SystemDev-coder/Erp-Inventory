@@ -1,7 +1,8 @@
 import { PoolClient } from "pg";
-import { query, queryMany, queryOne } from "../../db/query";
+import { query, queryOne } from "../../db/query";
 import { withTransaction } from "../../db/withTx";
 import { ApiError } from "../../utils/ApiError";
+import { getUserPermissionSet } from "../../utils/userPermissions";
 import {
   comparePassword,
   generateResetCode,
@@ -351,47 +352,10 @@ export class AuthService {
       throw ApiError.notFound("User not found");
     }
 
-    const rolePerms = await queryMany<{ perm_key: string }>(
-      `SELECT DISTINCT p.perm_key
-         FROM ims.role_permissions rp
-         JOIN ims.permissions p ON p.perm_id = rp.perm_id
-        WHERE rp.role_id = $1`,
-      [user.role_id],
-    );
-
-    const userPerms = await queryMany<{ perm_key: string }>(
-      `SELECT DISTINCT p.perm_key
-         FROM ims.user_permissions up
-         JOIN ims.permissions p ON p.perm_id = up.perm_id
-        WHERE up.user_id = $1`,
-      [userId],
-    );
-
-    const allowOverrides = await queryMany<{ perm_key: string }>(
-      `SELECT DISTINCT p.perm_key
-         FROM ims.user_permission_overrides uo
-         JOIN ims.permissions p ON p.perm_id = uo.perm_id
-        WHERE uo.user_id = $1
-          AND uo.effect = 'allow'`,
-      [userId],
-    );
-
-    const denyOverrides = await queryMany<{ perm_key: string }>(
-      `SELECT DISTINCT p.perm_key
-         FROM ims.user_permission_overrides uo
-         JOIN ims.permissions p ON p.perm_id = uo.perm_id
-        WHERE uo.user_id = $1
-          AND uo.effect = 'deny'`,
-      [userId],
-    );
-
-    const permissionSet = new Set<string>([
-      ...rolePerms.map((row) => row.perm_key),
-      ...userPerms.map((row) => row.perm_key),
-      ...allowOverrides.map((row) => row.perm_key),
-    ]);
-
-    denyOverrides.forEach((row) => permissionSet.delete(row.perm_key));
+    // Keep the permission list returned to the frontend identical to the
+    // set enforced by requirePerm(). This makes the button/menu visibility
+    // match the API decision for every role and explicit override.
+    const permissionSet = await getUserPermissionSet(userId, user.role_id);
 
     return {
       user,

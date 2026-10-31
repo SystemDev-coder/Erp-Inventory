@@ -52,7 +52,7 @@ type SidebarItem = {
 
 const AppSidebar: React.FC = () => {
   const { isExpanded, isMobileOpen, isHovered, setIsHovered, toggleSidebar } = useSidebar();
-  const { permissions, lock, user } = useAuth();
+  const { permissions, lock } = useAuth();
   const { t } = useLanguage();
   const [companyName, setCompanyName] = useState('');
 
@@ -105,7 +105,6 @@ const AppSidebar: React.FC = () => {
   );
 
   const groups = useMemo(() => {
-    const isDeveloper = (user?.role_name || '').toLowerCase() === 'developer';
     const base: { title: string; items: SidebarItem[] }[] = [
       {
         title: t('sidebar_group_main'),
@@ -121,11 +120,11 @@ const AppSidebar: React.FC = () => {
             id: 'stockManagement',
             label: t('nav_stock_management'),
             icon: Store,
-            permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'],
+            permissionAny: ['items.view', 'products.view', 'stock.view', 'warehouse_stock.view', 'inventory.view'],
             expandable: true,
             subItems: [
-              { id: 'stock-items', label: t('nav_items'), icon: Boxes, to: '/stock-management/items', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
-              { id: 'adjust-items', label: t('nav_adjust_items'), icon: SlidersHorizontal, to: '/stock-management/adjust-items', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'inventory.view'] },
+              { id: 'stock-items', label: t('nav_items'), icon: Boxes, to: '/stock-management/items', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'warehouse_stock.view', 'inventory.view'] },
+              { id: 'adjust-items', label: t('nav_adjust_items'), icon: SlidersHorizontal, to: '/stock-management/adjust-items', exact: true, permissionAny: ['items.view', 'products.view', 'stock.view', 'warehouse_stock.view', 'inventory.view'] },
             ],
           },
           { id: 'returns', label: t('nav_returns'), icon: FileText, to: '/returns', exact: true, permissionAny: ['returns.view', 'sales_returns.view', 'purchase_returns.view'] },
@@ -175,12 +174,12 @@ const AppSidebar: React.FC = () => {
           { id: 'system', label: t('nav_system'), icon: Settings, to: '/system', permissionAny: ['system.settings'] },
           { id: 'setting', label: t('nav_setting'), icon: Cog, to: '/settings', permissionAny: ['system.settings', 'users.view', 'roles.view', 'permissions.view', 'system.users.manage', 'system.roles.manage', 'system.permissions.manage'] },
           { id: 'reports', label: t('nav_reports'), icon: FileText, to: '/reports', permissionAny: ['reports.all'] },
-          ...(isDeveloper ? [{ id: 'trash', label: t('nav_trash'), icon: Trash2, to: '/trash', permissionAny: ['trash.view'] }] : []),
+          { id: 'trash', label: t('nav_trash'), icon: Trash2, to: '/trash', permissionAny: ['trash.view'] },
         ],
       },
     ];
     return base;
-  }, [user?.role_name, t]);
+  }, [t]);
 
   const visibleGroups = useMemo(
     () =>

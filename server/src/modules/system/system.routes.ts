@@ -94,8 +94,8 @@ router.put('/permissions/:id', requireAnyPerm(['system.permissions.manage', 'per
 router.delete('/permissions/:id', requireAnyPerm(['system.permissions.manage', 'permissions.delete']), deletePermission);
 
 router.get('/logs', requireAnyPerm(['system.audit.view', 'audit_logs.view', 'system.settings']), listLogs);
-router.delete('/logs/:id', requireAnyPerm(['system.audit.view', 'audit_logs.delete', 'system.settings']), deleteLog);
-router.delete('/logs', requireAnyPerm(['system.audit.view', 'audit_logs.delete', 'system.settings']), clearLogs);
+router.delete('/logs/:id', requireAnyPerm(['audit_logs.delete', 'system.settings']), deleteLog);
+router.delete('/logs', requireAnyPerm(['audit_logs.delete', 'system.settings']), clearLogs);
 
 router.get('/audit-balances', requireAnyPerm(['system.settings', 'system.company.manage']), auditBalances);
 router.post('/reconcile-balances', requireAnyPerm(['system.settings', 'system.company.manage']), reconcileBalances);

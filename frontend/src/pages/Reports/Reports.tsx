@@ -68,10 +68,13 @@ const expandPermissionKeys = (permKey: string): string[] => {
     return [permKey, permKey.replace('products.', 'items.')];
   }
   if (permKey === 'stock.view') {
-    return [permKey, 'warehouse_stock.view'];
+    return [permKey, 'warehouse_stock.view', 'inventory.view'];
   }
   if (permKey === 'warehouse_stock.view') {
-    return [permKey, 'stock.view'];
+    return [permKey, 'stock.view', 'inventory.view'];
+  }
+  if (permKey === 'inventory.view') {
+    return [permKey, 'stock.view', 'warehouse_stock.view'];
   }
   return [permKey];
 };

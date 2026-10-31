@@ -684,7 +684,7 @@ const Customers = () => {
             {form.customer_type === "regular" && form.credit_allowed && (
               <Field
                 label="Credit Due Date & Time"
-                hint="Optional — used as the default deadline for new credit sales"
+                hint="Optional — alerts when this customer's unpaid balance is due; also used for new credit sales"
               >
                 <input
                   type="datetime-local"

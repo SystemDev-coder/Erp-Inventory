@@ -48,7 +48,9 @@ export default function NotificationDropdown() {
               const notificationType = String(notification.meta?.type ?? '');
               return (
                 !knownNotificationIdsRef.current.has(notification.notification_id) &&
-                (notificationType === 'credit_sale_due' || notificationType === 'credit_purchase_due')
+                (notificationType === 'credit_sale_due' ||
+                  notificationType === 'credit_purchase_due' ||
+                  notificationType === 'credit_customer_due')
               );
             })
           : [];
