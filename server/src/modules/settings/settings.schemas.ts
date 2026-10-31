@@ -182,3 +182,108 @@ export const openingBalanceCleanupSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD').optional(),
   note: z.string().trim().max(500).optional().or(z.literal('')),
 });
+
+const optionalAccId = z.coerce.number().int().positive().nullable().optional();
+
+// Pulled out of businessProfileSchema so it can also back its own, more
+// lightly-gated endpoint (Document Print Settings) - see updateReceiptConfigSchema
+// and settings.routes.ts's /receipt-config route for why.
+export const receiptConfigSchema = z
+  .object({
+    logo: z.boolean().optional(),
+    header: z.string().trim().max(500).optional().or(z.literal('')),
+    footer: z.string().trim().max(500).optional().or(z.literal('')),
+    showCustomer: z.boolean().optional(),
+    showBarcode: z.boolean().optional(),
+    showTax: z.boolean().optional(),
+    showDiscount: z.boolean().optional(),
+    paperSize: z.enum(['a4', 'a5', 'thermal-80', 'thermal-58']).optional(),
+  })
+  .partial();
+
+// Document Print Settings: unlike the rest of businessProfileSchema (gated to
+// the Developer role - see settings.routes.ts's comment on PUT /business-profile),
+// the default print format is a day-to-day operational choice any admin with
+// basic settings access should be able to change, so it gets its own narrower
+// endpoint/schema instead of riding along on the Developer-only one.
+export const updateReceiptConfigSchema = z.object({
+  receiptConfig: receiptConfigSchema,
+});
+
+export const businessProfileSchema = z.object({
+  businessType: z.enum(['general', 'supermarket', 'clothing', 'pharmacy', 'perfume', 'cosmetics', 'electronics', 'other']).optional(),
+  email: z.string().trim().max(150).email('Invalid email').optional().or(z.literal('')),
+  website: z.string().trim().max(255).optional().or(z.literal('')),
+  currency: z.string().trim().max(10).optional().or(z.literal('')),
+  country: z.string().trim().max(80).optional().or(z.literal('')),
+  timezone: z.string().trim().max(60).optional().or(z.literal('')),
+  productConfig: z
+    .object({
+      barcode: z.boolean().optional(),
+      variants: z.boolean().optional(),
+      size: z.boolean().optional(),
+      color: z.boolean().optional(),
+      brand: z.boolean().optional(),
+      batchTracking: z.boolean().optional(),
+      expiryTracking: z.boolean().optional(),
+      serialNumber: z.boolean().optional(),
+      multipleUnits: z.boolean().optional(),
+      genericName: z.boolean().optional(),
+      strength: z.boolean().optional(),
+    })
+    .partial()
+    .optional(),
+  salesConfig: z
+    .object({
+      retail: z.boolean().optional(),
+      wholesale: z.boolean().optional(),
+      credit: z.boolean().optional(),
+      creditDays: z.coerce.number().int().nonnegative().optional(),
+      discount: z.boolean().optional(),
+      tax: z.boolean().optional(),
+      pos: z.boolean().optional(),
+      customerDisplay: z.boolean().optional(),
+    })
+    .partial()
+    .optional(),
+  purchaseConfig: z
+    .object({
+      supplierManagement: z.boolean().optional(),
+      purchaseOrders: z.boolean().optional(),
+      purchasePayments: z.boolean().optional(),
+      creditPurchases: z.boolean().optional(),
+      supplierCreditDays: z.coerce.number().int().nonnegative().optional(),
+    })
+    .partial()
+    .optional(),
+  accountingConfig: z
+    .object({
+      defaultCashAccId: optionalAccId,
+      defaultBankAccId: optionalAccId,
+      arAccId: optionalAccId,
+      apAccId: optionalAccId,
+      salesRevenueAccId: optionalAccId,
+      inventoryAccId: optionalAccId,
+      cogsAccId: optionalAccId,
+      openingBalanceEquityAccId: optionalAccId,
+    })
+    .partial()
+    .optional(),
+  branchConfig: z
+    .object({
+      multiBranch: z.boolean().optional(),
+      defaultBranchId: z.coerce.number().int().positive().nullable().optional(),
+    })
+    .partial()
+    .optional(),
+  receiptConfig: receiptConfigSchema.optional(),
+  notificationConfig: z
+    .object({
+      lowStock: z.boolean().optional(),
+      expiry: z.boolean().optional(),
+      creditDue: z.boolean().optional(),
+      purchasePayment: z.boolean().optional(),
+    })
+    .partial()
+    .optional(),
+});

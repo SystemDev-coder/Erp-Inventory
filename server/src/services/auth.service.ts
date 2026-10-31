@@ -1,14 +1,17 @@
-import { pool } from '../db/pool';
-import { hashPassword, comparePassword } from '../utils/password';
+import { pool } from "../db/pool";
+import { hashPassword, comparePassword } from "../utils/password";
 import {
   signAccessToken,
   signRefreshToken,
   hashToken,
   verifyRefreshToken,
-} from '../utils/jwt';
-import { AppError } from '../middlewares/error';
-import { SignupInput, LoginInput } from '../validators/auth.schema';
-import { env } from '../utils/env';
+} from "../utils/jwt";
+import { AppError } from "../middlewares/error";
+import { SignupInput, LoginInput } from "../validators/auth.schema";
+import { env } from "../utils/env";
+import { ApiError } from "../utils/ApiError";
+import { queryOne } from "../db/query";
+import { VerifyLoginPasswordInput } from "../modules/auth/auth.schemas";
 
 interface User {
   user_id: number;
@@ -25,20 +28,22 @@ interface User {
 
 export class AuthService {
   private parseExpiryToMs(value: string): number {
-    const raw = String(value || '').trim().toLowerCase();
+    const raw = String(value || "")
+      .trim()
+      .toLowerCase();
     if (!raw) return 0;
     const match = raw.match(/^(\d+)([smhd])?$/);
     if (!match) return 0;
     const amount = Number(match[1] || 0);
-    const unit = match[2] || 's';
+    const unit = match[2] || "s";
     switch (unit) {
-      case 'm':
+      case "m":
         return amount * 60 * 1000;
-      case 'h':
+      case "h":
         return amount * 60 * 60 * 1000;
-      case 'd':
+      case "d":
         return amount * 24 * 60 * 60 * 1000;
-      case 's':
+      case "s":
       default:
         return amount * 1000;
     }
@@ -50,23 +55,23 @@ export class AuthService {
   async signup(data: SignupInput) {
     const client = await pool.connect();
     try {
-      await client.query('BEGIN');
+      await client.query("BEGIN");
 
       // Get default role (User)
       const roleResult = await client.query(
-        "SELECT role_id FROM ims.roles WHERE role_name = 'User' LIMIT 1"
+        "SELECT role_id FROM ims.roles WHERE role_name = 'User' LIMIT 1",
       );
       if (roleResult.rows.length === 0) {
-        throw new AppError(500, 'Default user role not found');
+        throw new AppError(500, "Default user role not found");
       }
       const roleId = roleResult.rows[0].role_id;
 
       // Get default branch (first branch)
       const branchResult = await client.query(
-        'SELECT branch_id FROM ims.branches WHERE is_active = true ORDER BY branch_id LIMIT 1'
+        "SELECT branch_id FROM ims.branches WHERE is_active = true ORDER BY branch_id LIMIT 1",
       );
       if (branchResult.rows.length === 0) {
-        throw new AppError(500, 'No active branch found');
+        throw new AppError(500, "No active branch found");
       }
       const branchId = branchResult.rows[0].branch_id;
 
@@ -74,17 +79,17 @@ export class AuthService {
       const passwordHash = await hashPassword(data.password);
 
       // Normalize phone: empty string becomes null
-      const phone = data.phone && data.phone.trim() !== '' ? data.phone : null;
+      const phone = data.phone && data.phone.trim() !== "" ? data.phone : null;
 
       // Insert user
       const insertResult = await client.query(
         `INSERT INTO ims.users (branch_id, role_id, name, username, password_hash, phone, is_active)
          VALUES ($1, $2, $3, $4, $5, $6, true)
          RETURNING user_id, username, name, phone`,
-        [branchId, roleId, data.name, data.username, passwordHash, phone]
+        [branchId, roleId, data.name, data.username, passwordHash, phone],
       );
 
-      await client.query('COMMIT');
+      await client.query("COMMIT");
 
       const user = insertResult.rows[0];
       return {
@@ -94,7 +99,7 @@ export class AuthService {
         phone: user.phone,
       };
     } catch (error) {
-      await client.query('ROLLBACK');
+      await client.query("ROLLBACK");
       throw error;
     } finally {
       client.release();
@@ -113,11 +118,11 @@ export class AuthService {
        JOIN ims.branches b ON u.branch_id = b.branch_id
        WHERE (u.username = $1 OR u.phone = $1) AND u.is_active = true
        LIMIT 1`,
-      [data.identifier]
+      [data.identifier],
     );
 
     if (userResult.rows.length === 0) {
-      throw new AppError(401, 'Incorrect username or password');
+      throw new AppError(401, "Incorrect username or password");
     }
 
     const user = userResult.rows[0];
@@ -125,11 +130,11 @@ export class AuthService {
     // Verify password
     const isPasswordValid = await comparePassword(
       data.password,
-      user.password_hash
+      user.password_hash,
     );
 
     if (!isPasswordValid) {
-      throw new AppError(401, 'Incorrect username or password');
+      throw new AppError(401, "Incorrect username or password");
     }
 
     // Generate tokens
@@ -146,13 +151,13 @@ export class AuthService {
     // Store refresh token hash in database
     const tokenHash = hashToken(refreshToken);
     const expiresAt = new Date(
-      Date.now() + this.parseExpiryToMs(env.JWT_REFRESH_EXPIRY)
+      Date.now() + this.parseExpiryToMs(env.JWT_REFRESH_EXPIRY),
     );
 
     await pool.query(
       `INSERT INTO ims.refresh_tokens (user_id, token_hash, expires_at)
        VALUES ($1, $2, $3)`,
-      [user.user_id, tokenHash, expiresAt]
+      [user.user_id, tokenHash, expiresAt],
     );
 
     return {
@@ -182,11 +187,11 @@ export class AuthService {
         `SELECT * FROM ims.refresh_tokens 
          WHERE token_hash = $1 AND user_id = $2 AND revoked = false AND expires_at > NOW()
          LIMIT 1`,
-        [tokenHash, payload.userId]
+        [tokenHash, payload.userId],
       );
 
       if (tokenResult.rows.length === 0) {
-        throw new AppError(401, 'Invalid or expired refresh token');
+        throw new AppError(401, "Invalid or expired refresh token");
       }
 
       // Generate new access token
@@ -199,8 +204,11 @@ export class AuthService {
 
       return { accessToken: newAccessToken };
     } catch (error: any) {
-      if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
-        throw new AppError(401, 'Invalid or expired refresh token');
+      if (
+        error.name === "JsonWebTokenError" ||
+        error.name === "TokenExpiredError"
+      ) {
+        throw new AppError(401, "Invalid or expired refresh token");
       }
       throw error;
     }
@@ -217,11 +225,11 @@ export class AuthService {
        JOIN ims.branches b ON u.branch_id = b.branch_id
        WHERE u.user_id = $1 AND u.is_active = true
        LIMIT 1`,
-      [userId]
+      [userId],
     );
 
     if (userResult.rows.length === 0) {
-      throw new AppError(404, 'User not found');
+      throw new AppError(404, "User not found");
     }
 
     const user = userResult.rows[0];
@@ -235,22 +243,50 @@ export class AuthService {
     };
   }
 
+  async verifyUserPassword(
+    userId: number,
+    input: VerifyLoginPasswordInput,
+  ): Promise<void> {
+    const row = await queryOne<{ password_hash: string; is_active: boolean }>(
+      `SELECT password_hash, is_active
+       FROM ims.users
+      WHERE user_id = $1
+      LIMIT 1`,
+      [userId],
+    );
+
+    if (!row) {
+      throw ApiError.unauthorized("User not found");
+    }
+
+    if (!row.is_active) {
+      throw ApiError.forbidden(
+        "You are not authorized to access this section. Please contact the system administrator.",
+      );
+    }
+
+    const ok = await comparePassword(input.password, row.password_hash);
+    if (!ok) {
+      throw ApiError.unauthorized("Incorrect account password");
+    }
+  }
+
   /**
    * Logout user (revoke refresh token)
    */
   async logout(refreshToken: string) {
     try {
       const tokenHash = hashToken(refreshToken);
-      
+
       await pool.query(
-        'UPDATE ims.refresh_tokens SET revoked = true WHERE token_hash = $1',
-        [tokenHash]
+        "UPDATE ims.refresh_tokens SET revoked = true WHERE token_hash = $1",
+        [tokenHash],
       );
 
-      return { message: 'Logged out successfully' };
+      return { message: "Logged out successfully" };
     } catch (error) {
       // Silent fail - token might already be invalid
-      return { message: 'Logged out successfully' };
+      return { message: "Logged out successfully" };
     }
   }
 }

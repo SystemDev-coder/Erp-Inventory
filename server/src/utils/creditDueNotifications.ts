@@ -1,8 +1,9 @@
 import { PoolClient } from 'pg';
-import { query } from '../db/query';
+import { queryMany } from '../db/query';
+import { withTransaction } from '../db/withTx';
 
 const notifyBranchUsers = async (
-  client: PoolClient | null,
+  client: PoolClient,
   params: {
     branchId: number;
     title: string;
@@ -11,11 +12,31 @@ const notifyBranchUsers = async (
     meta: Record<string, unknown>;
   }
 ) => {
-  const exec = client
-    ? (sql: string, values: unknown[]) => client.query(sql, values)
-    : (sql: string, values: unknown[]) => query(sql, values);
+  // A notification failure must not abort the branch-wide synchronisation:
+  // one broken recipient row should not prevent later due alerts from being
+  // created. The savepoint keeps that failure isolated in the shared
+  // transaction used by both the scheduler and notification-list endpoint.
+  await client.query('SAVEPOINT sp_credit_due_notify');
+  try {
+    await insertCreditDueNotification(client, params);
+    await client.query('RELEASE SAVEPOINT sp_credit_due_notify');
+  } catch (error) {
+    await client.query('ROLLBACK TO SAVEPOINT sp_credit_due_notify');
+    console.error('ensureCreditDueNotifications failed to write a notification:', (error as Error)?.message);
+  }
+};
 
-  await exec(
+const insertCreditDueNotification = async (
+  client: PoolClient,
+  params: {
+    branchId: number;
+    title: string;
+    message: string;
+    link: string;
+    meta: Record<string, unknown>;
+  }
+) => {
+  await client.query(
     `INSERT INTO ims.notifications (branch_id, user_id, title, message, category, link, meta)
      SELECT
        $1,
@@ -51,19 +72,15 @@ const notifyBranchUsers = async (
   );
 };
 
-export const ensureCreditDueNotifications = async (
+const ensureCreditDueNotificationsWithClient = async (
   branchId: number,
-  client?: PoolClient
+  client: PoolClient
 ) => {
   if (!branchId) return;
 
   const runQuery = async <T extends Record<string, unknown>>(sql: string, values: unknown[]) => {
-    if (client) {
-      const res = await client.query<T>(sql, values);
-      return res.rows;
-    }
-    const { queryMany } = await import('../db/query');
-    return queryMany<T>(sql, values);
+    const res = await client.query<T>(sql, values);
+    return res.rows;
   };
 
   const overdueSales = await runQuery<{
@@ -78,14 +95,14 @@ export const ensureCreditDueNotifications = async (
         c.full_name AS customer_name,
         s.due_date::text AS due_date,
         s.total::text AS total,
-        (CURRENT_DATE - s.due_date)::int AS days_overdue
+        (CURRENT_DATE - s.due_date::date)::int AS days_overdue
        FROM ims.sales s
        LEFT JOIN ims.customers c ON c.customer_id = s.customer_id
       WHERE s.branch_id = $1
         AND COALESCE(s.status::text, '') NOT IN ('void', 'paid')
         AND COALESCE(s.sale_type::text, '') = 'credit'
         AND s.due_date IS NOT NULL
-        AND s.due_date <= CURRENT_DATE
+        AND s.due_date <= NOW()
         AND COALESCE(s.is_deleted, 0)::int = 0
         AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'`,
     [branchId]
@@ -93,7 +110,7 @@ export const ensureCreditDueNotifications = async (
 
   for (const row of overdueSales) {
     const name = row.customer_name || 'Customer';
-    await notifyBranchUsers(client ?? null, {
+    await notifyBranchUsers(client, {
       branchId,
       title: `Credit Due: Sale #${row.sale_id}`,
       message: `${name} — sale #${row.sale_id} was due on ${row.due_date} (${row.days_overdue} day(s) overdue). Amount: ${Number(row.total).toFixed(2)}.`,
@@ -107,6 +124,55 @@ export const ensureCreditDueNotifications = async (
     });
   }
 
+  // A customer can carry an opening balance before any sale is entered. Its
+  // configured deadline must therefore alert independently of ims.sales;
+  // otherwise a customer such as one imported at go-live would never receive
+  // an alert even though they still owe money when the deadline passes.
+  const overdueCustomers = await runQuery<{
+    customer_id: number;
+    customer_name: string;
+    due_at: string;
+    balance: string;
+  }>(
+    `SELECT
+        c.customer_id,
+        c.full_name AS customer_name,
+        c.credit_due_at::text AS due_at,
+        COALESCE(
+          NULLIF(to_jsonb(c) ->> 'remaining_balance', '')::numeric,
+          NULLIF(to_jsonb(c) ->> 'open_balance', '')::numeric,
+          0
+        )::text AS balance
+       FROM ims.customers c
+      WHERE c.branch_id = $1
+        AND COALESCE(c.is_active, TRUE) = TRUE
+        AND COALESCE(c.credit_allowed, TRUE) = TRUE
+        AND c.credit_due_at IS NOT NULL
+        AND c.credit_due_at <= NOW()
+        AND COALESCE(
+          NULLIF(to_jsonb(c) ->> 'remaining_balance', '')::numeric,
+          NULLIF(to_jsonb(c) ->> 'open_balance', '')::numeric,
+          0
+        ) > 0.005
+        AND COALESCE(c.is_deleted, 0)::int = 0`,
+    [branchId]
+  );
+
+  for (const row of overdueCustomers) {
+    await notifyBranchUsers(client, {
+      branchId,
+      title: `Credit Due: ${row.customer_name}`,
+      message: `${row.customer_name}'s unpaid balance of ${Number(row.balance).toFixed(2)} reached its deadline on ${row.due_at}.`,
+      link: '/customers',
+      meta: {
+        type: 'credit_customer_due',
+        ref_id: row.customer_id,
+        due_date: row.due_at,
+        balance: row.balance,
+      },
+    });
+  }
+
   const overduePurchases = await runQuery<{
     purchase_id: number;
     supplier_name: string | null;
@@ -116,7 +182,7 @@ export const ensureCreditDueNotifications = async (
   }>(
     `SELECT
         p.purchase_id,
-        COALESCE(s.supplier_name, s.name) AS supplier_name,
+        s.name AS supplier_name,
         p.due_date::text AS due_date,
         p.total::text AS total,
         (CURRENT_DATE - p.due_date)::int AS days_overdue
@@ -134,7 +200,7 @@ export const ensureCreditDueNotifications = async (
 
   for (const row of overduePurchases) {
     const name = row.supplier_name || 'Supplier';
-    await notifyBranchUsers(client ?? null, {
+    await notifyBranchUsers(client, {
       branchId,
       title: `Credit Due: Purchase #${row.purchase_id}`,
       message: `${name} — purchase #${row.purchase_id} was due on ${row.due_date} (${row.days_overdue} day(s) overdue). Amount: ${Number(row.total).toFixed(2)}.`,
@@ -146,5 +212,44 @@ export const ensureCreditDueNotifications = async (
         days_overdue: row.days_overdue,
       },
     });
+  }
+};
+
+/**
+ * Creates a credit-due notification once the exact due timestamp is reached.
+ * A transaction-scoped advisory lock prevents the background scheduler and a
+ * simultaneous notification-list request from inserting the same alert twice.
+ */
+export const ensureCreditDueNotifications = async (
+  branchId: number,
+  client?: PoolClient
+) => {
+  if (!branchId) return;
+  if (client) {
+    await ensureCreditDueNotificationsWithClient(branchId, client);
+    return;
+  }
+
+  await withTransaction(async (tx) => {
+    const lock = await tx.query<{ acquired: boolean }>(
+      `SELECT pg_try_advisory_xact_lock(42142, $1::integer) AS acquired`,
+      [branchId]
+    );
+    if (!lock.rows[0]?.acquired) return;
+    await ensureCreditDueNotificationsWithClient(branchId, tx);
+  });
+};
+
+// This is deliberately server-side rather than dependent on an open browser:
+// a deadline still creates its alert even when no user currently has the
+// notification dropdown open.
+export const syncCreditDueNotifications = async () => {
+  const branches = await queryMany<{ branch_id: number }>(
+    `SELECT branch_id
+       FROM ims.branches
+      WHERE is_active = TRUE`
+  );
+  for (const branch of branches) {
+    await ensureCreditDueNotifications(Number(branch.branch_id));
   }
 };

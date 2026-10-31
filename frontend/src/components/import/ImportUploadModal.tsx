@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { Modal } from '../ui/modal/Modal';
 import {
   importService,
@@ -17,6 +17,15 @@ type ImportUploadModalProps = {
   templateHeaders: string[];
   hint?: string;
   onImported?: () => void | Promise<void>;
+  // Optional slot for import-type-specific controls (e.g. Products' "Template
+  // for category" picker) - keeps this shared component generic instead of
+  // hardcoding item-specific UI into it.
+  extraControls?: ReactNode;
+  // Overrides the downloaded template's base filename (default: `${importType}
+  // -import-template`) - e.g. Products passes the selected category's name so
+  // a scoped download reads "mobile-phones-import-template.csv", not a
+  // generic "items-import-template.csv".
+  templateFilename?: string;
 };
 
 const escapeCsv = (value: unknown) => {
@@ -60,6 +69,8 @@ const ImportUploadModal = ({
   templateHeaders,
   hint,
   onImported,
+  extraControls,
+  templateFilename,
 }: ImportUploadModalProps) => {
   const { showToast } = useToast();
   const [file, setFile] = useState<File | null>(null);
@@ -137,7 +148,7 @@ const ImportUploadModal = ({
   const downloadTemplate = () => {
     const csv = `${templateHeaders.join(',')}\n`;
     downloadBlob(
-      `${importType}-import-template.csv`,
+      `${templateFilename || `${importType}-import-template`}.csv`,
       csv,
       'text/csv;charset=utf-8'
     );
@@ -200,6 +211,7 @@ const ImportUploadModal = ({
             {pageError}
           </div>
         ) : null}
+        {extraControls}
         {hint ? (
           <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
             {hint}

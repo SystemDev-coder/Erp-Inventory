@@ -282,6 +282,7 @@ gender          VARCHAR(20),
 address         TEXT,
  open_balance    NUMERIC(14,2) NOT NULL DEFAULT 0,
  remaining_balance NUMERIC(14,2) NOT NULL DEFAULT 0,
+ credit_due_at     TIMESTAMPTZ,
  registered_date DATE NOT NULL DEFAULT CURRENT_DATE,
  external_id     VARCHAR(120),
  source_system   VARCHAR(80),
@@ -362,22 +363,6 @@ BEGIN
     RETURNING 1
   )
   SELECT COUNT(*) INTO v_created FROM inserted;
-
-  UPDATE ims.accounts
-     SET is_active = FALSE
-   WHERE branch_id = p_branch_id
-     AND (
-       account_type = 'equity'
-       OR LOWER(name) LIKE 'accounts payable%'
-       OR LOWER(name) LIKE 'accounts receivable%'
-       OR LOWER(name) LIKE 'fixed asset%'
-       OR LOWER(name) LIKE '%capital%'
-       OR LOWER(name) LIKE 'office furniture%'
-       OR LOWER(name) LIKE 'computer%'
-       OR LOWER(name) LIKE 'equipment%'
-       OR LOWER(name) LIKE 'vehicle%'
-       OR LOWER(name) LIKE 'mukeef%'
-     );
 
   RETURN v_created;
 END $$;
@@ -565,6 +550,7 @@ sale_date   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 sale_type   ims.sale_type_enum NOT NULL DEFAULT 'cash',
 doc_type    ims.sale_doc_type_enum NOT NULL DEFAULT 'sale',
 quote_valid_until DATE,
+due_date    TIMESTAMPTZ,
 subtotal    NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (subtotal >= 0),
 discount    NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (discount >= 0),
 tax_amount  NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (tax_amount >= 0),

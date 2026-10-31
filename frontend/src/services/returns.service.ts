@@ -75,6 +75,21 @@ export interface ReturnItemOption {
     returned_qty?: number;
     on_hand_qty?: number;
     available_qty?: number;
+    attributes?: Record<string, string | number>;
+}
+
+export interface ReturnSaleOption {
+    sale_id: number;
+    sale_date: string | null;
+    reference_no: string | null;
+    total: number;
+}
+
+export interface ReturnPurchaseOption {
+    purchase_id: number;
+    purchase_date: string | null;
+    reference_no: string | null;
+    total: number;
 }
 
 export const returnsService = {
@@ -85,14 +100,26 @@ export const returnsService = {
         const qs = params?.branchId ? `?branchId=${params.branchId}` : '';
         return apiClient.get<{ customers: any[] }>(`/api/returns/sales/customers${qs}`);
     },
-    listSalesItemsByCustomer(customerId: number, excludeReturnId?: number) {
+    listSalesByCustomer(customerId: number) {
+        return apiClient.get<{ sales: ReturnSaleOption[] }>(
+            `/api/returns/sales/customer-sales?customerId=${encodeURIComponent(String(customerId))}`
+        );
+    },
+    listSalesItemsByCustomer(customerId: number, excludeReturnId?: number, saleId?: number) {
         const qs = new URLSearchParams({ customerId: String(customerId) });
         if (excludeReturnId) qs.set('excludeReturnId', String(excludeReturnId));
+        if (saleId) qs.set('saleId', String(saleId));
         return apiClient.get<{ items: ReturnItemOption[] }>(`/api/returns/sales/customer-items?${qs.toString()}`);
     },
-    listPurchaseItemsBySupplier(supplierId: number, excludeReturnId?: number) {
+    listPurchasesBySupplier(supplierId: number) {
+        return apiClient.get<{ purchases: ReturnPurchaseOption[] }>(
+            `/api/returns/purchases/supplier-purchases?supplierId=${encodeURIComponent(String(supplierId))}`
+        );
+    },
+    listPurchaseItemsBySupplier(supplierId: number, excludeReturnId?: number, purchaseId?: number) {
         const qs = new URLSearchParams({ supplierId: String(supplierId) });
         if (excludeReturnId) qs.set('excludeReturnId', String(excludeReturnId));
+        if (purchaseId) qs.set('purchaseId', String(purchaseId));
         return apiClient.get<{ items: ReturnItemOption[] }>(`/api/returns/purchases/supplier-items?${qs.toString()}`);
     },
     listSalesReturns(params?: { fromDate?: string; toDate?: string; branchId?: number }) {

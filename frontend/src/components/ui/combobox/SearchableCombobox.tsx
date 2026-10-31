@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
@@ -6,6 +6,10 @@ export type ComboboxOption<TValue extends string | number> = {
   value: TValue;
   label: string;
   disabled?: boolean;
+  // Optional leading icon, shown in the open dropdown's option row only - the
+  // collapsed/selected state is a plain <input type="text">, which can't host
+  // a node, so the icon isn't visible once the list closes.
+  icon?: ReactNode;
 };
 
 type Props<TValue extends string | number> = {
@@ -260,7 +264,14 @@ export function SearchableCombobox<TValue extends string | number>({
                           : 'text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800'
                       } ${opt.disabled ? 'cursor-not-allowed opacity-60' : ''}`}
                     >
-                      {opt.label}
+                      {opt.icon ? (
+                        <span className="flex items-center gap-2">
+                          {opt.icon}
+                          {opt.label}
+                        </span>
+                      ) : (
+                        opt.label
+                      )}
                     </li>
                   );
                 })}

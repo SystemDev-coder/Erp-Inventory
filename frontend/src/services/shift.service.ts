@@ -14,6 +14,8 @@ export interface Shift {
   closing_cash: number;
   status: ShiftStatus;
   note: string | null;
+  expected_cash: number;
+  over_short: number;
 }
 
 export interface OpenShiftInput {

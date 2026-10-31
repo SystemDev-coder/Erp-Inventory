@@ -13,11 +13,13 @@ import { EmployeeModal } from './EmployeeModal';
 import { Modal } from '../../components/ui/modal/Modal';
 import DeleteConfirmModal from '../../components/ui/modal/DeleteConfirmModal';
 import { useBranch } from '../../context/BranchContext';
+import { usePermissions } from '../../hooks/usePermissions';
 
 const Employees = () => {
   const location = useLocation();
   const { showToast } = useToast();
   const { activeBranchId } = useBranch();
+  const { can } = usePermissions();
 
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [stateEmployees, setStateEmployees] = useState<Employee[]>([]);
@@ -167,13 +169,13 @@ const Employees = () => {
       <div className="space-y-2">
         <TabActionToolbar
           title="Employee Registration"
-          primaryAction={{
+          primaryAction={can('employees.create') ? {
             label: 'New Employee',
             onClick: () => {
               setSelectedEmployee(null);
               setIsEmployeeModalOpen(true);
             },
-          }}
+          } : undefined}
           onDisplay={() => fetchEmployees(search)}
           displayLoading={loading}
           onSearch={(value) => {
@@ -195,14 +197,14 @@ const Employees = () => {
           columns={columns}
           isLoading={loading}
           searchPlaceholder="Search employees..."
-          onEdit={(row) => {
+          onEdit={can('employees.update') ? (row) => {
             setSelectedEmployee(row);
             setIsEmployeeModalOpen(true);
-          }}
-          onDelete={(row) => {
+          } : undefined}
+          onDelete={can('employees.delete') ? (row) => {
             setSelectedEmployee(row);
             setIsDeleteOpen(true);
-          }}
+          } : undefined}
         />
       </div>
     ),

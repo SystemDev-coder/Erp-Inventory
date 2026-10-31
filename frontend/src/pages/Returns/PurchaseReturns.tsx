@@ -1,13 +1,16 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
+import { useRef } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { PageHeader } from '../../components/ui/layout';
 import { useToast } from '../../components/ui/toast/Toast';
-import { returnsService, ReturnItemOption } from '../../services/returns.service';
+import { returnsService, ReturnItemOption, ReturnPurchaseOption } from '../../services/returns.service';
 import { supplierService, Supplier } from '../../services/supplier.service';
 import { accountService, Account } from '../../services/account.service';
 import { SearchableCombobox } from '../../components/ui/combobox/SearchableCombobox';
 import { useBranch } from '../../context/BranchContext';
+import { attributeSummary } from '../../config/productAttributes';
+import { useAttributeCatalog } from '../../hooks/useAttributeCatalog';
 
 const inputClass =
   'h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
@@ -18,6 +21,11 @@ const tableHeadCls = 'px-3 py-2 text-left text-xs font-semibold uppercase tracki
 const tableCellCls = 'px-3 py-2 text-sm text-slate-800 dark:text-slate-200';
 
 const fmtCurrency = (n: number) => `$${Number(n || 0).toFixed(2)}`;
+const fmtDate = (value: string | null | undefined) => {
+  if (!value) return 'No date';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
+};
 
 type ReturnLine = {
   itemId: number | '';
@@ -35,6 +43,7 @@ const sumLineQtyForItem = (lineItems: ReturnLine[], itemId: number) =>
 const PurchaseReturns = () => {
   const { showToast } = useToast();
   const { activeBranchId } = useBranch();
+  const attributeCatalog = useAttributeCatalog();
   const navigate = useNavigate();
   const { id } = useParams();
   const editingId = useMemo(() => {
@@ -49,12 +58,16 @@ const PurchaseReturns = () => {
     referenceNo: '',
     note: '',
     supplierId: '',
+    purchaseId: '',
     refundAccId: '',
     refundAmount: 0,
     refundViaAccount: false,
   });
   const [lines, setLines] = useState<ReturnLine[]>([defaultLine()]);
   const [items, setItems] = useState<ReturnItemOption[]>([]);
+  const [purchases, setPurchases] = useState<ReturnPurchaseOption[]>([]);
+  const [barcodeInput, setBarcodeInput] = useState('');
+  const barcodeInputRef = useRef<HTMLInputElement>(null);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -87,6 +100,7 @@ const PurchaseReturns = () => {
   useEffect(() => {
     if (!form.supplierId) {
       setItems([]);
+      setPurchases([]);
     }
   }, [form.supplierId]);
 
@@ -116,12 +130,27 @@ const PurchaseReturns = () => {
     if (res.success && res.data?.accounts) setAccounts(res.data.accounts);
   };
 
-  const loadItemsForSupplier = async (supplierId?: number, excludeReturnId?: number) => {
+  const loadPurchasesForSupplier = async (supplierId?: number) => {
+    if (!supplierId) {
+      setPurchases([]);
+      return [];
+    }
+    const res = await returnsService.listPurchasesBySupplier(supplierId);
+    if (res.success && res.data?.purchases) {
+      setPurchases(res.data.purchases);
+      return res.data.purchases;
+    }
+    setPurchases([]);
+    showToast('error', 'Purchase Return', res.error || 'Failed to load supplier purchases');
+    return [];
+  };
+
+  const loadItemsForSupplier = async (supplierId?: number, excludeReturnId?: number, purchaseId?: number) => {
     if (!supplierId) {
       setItems([]);
       return [];
     }
-    const res = await returnsService.listPurchaseItemsBySupplier(supplierId, excludeReturnId);
+    const res = await returnsService.listPurchaseItemsBySupplier(supplierId, excludeReturnId, purchaseId);
     if (res.success && res.data?.items) {
       const mapped = res.data.items.map((item) => ({
         ...item,
@@ -133,7 +162,7 @@ const PurchaseReturns = () => {
       return mapped;
     }
     setItems([]);
-    showToast('error', 'Purchase Return', res.error || 'Failed to load supplier items');
+    showToast('error', 'Purchase Return', res.error || 'Failed to load supplier products');
     return [];
   };
 
@@ -142,6 +171,7 @@ const PurchaseReturns = () => {
       referenceNo: '',
       note: '',
       supplierId: '',
+      purchaseId: '',
       refundAccId: '',
       refundAmount: 0,
       refundViaAccount: false,
@@ -157,8 +187,9 @@ const PurchaseReturns = () => {
     const errs: Record<string, string> = {};
     if (!form.supplierId) errs.supplierId = 'Supplier is required';
     const hasValidLine = lines.some((l) => l.itemId && Number(l.quantity) > 0);
-    if (!hasValidLine) errs.items = 'Add at least one item with a quantity greater than 0';
-    if (form.refundViaAccount && !form.refundAccId) errs.refundAccId = 'Select a refund account';
+    if (!hasValidLine) errs.items = 'Add at least one product with a quantity greater than 0';
+    const refundAccountNeeded = form.refundViaAccount || supplierOutstanding + 0.005 < subtotal;
+    if (refundAccountNeeded && !form.refundAccId) errs.refundAccId = 'Select a refund account';
     return errs;
   };
 
@@ -172,15 +203,22 @@ const PurchaseReturns = () => {
     if (res.success && res.data?.return) {
       const row = res.data.return;
       const supplierId = row.supplier_id ? String(row.supplier_id) : '';
+      const purchaseId = row.purchase_id ? String(row.purchase_id) : '';
       setForm({
         referenceNo: row.reference_no || '',
         note: row.note || '',
         supplierId,
+        purchaseId,
         refundAccId: row.refund_acc_id ? String(row.refund_acc_id) : '',
         refundAmount: Number(row.refund_amount || 0),
         refundViaAccount: Number(row.refund_amount || 0) > 0,
       });
-      await loadItemsForSupplier(row.supplier_id ? Number(row.supplier_id) : undefined, editingId);
+      await loadPurchasesForSupplier(row.supplier_id ? Number(row.supplier_id) : undefined);
+      await loadItemsForSupplier(
+        row.supplier_id ? Number(row.supplier_id) : undefined,
+        editingId,
+        row.purchase_id || undefined
+      );
       const itemsRes = await returnsService.getPurchaseReturnItems(editingId);
       if (itemsRes.success && itemsRes.data?.items) {
         const nextLines = itemsRes.data.items.map((item) => ({
@@ -200,11 +238,26 @@ const PurchaseReturns = () => {
   };
 
   const handleSupplierChange = async (supplierId: string) => {
-    setForm((prev) => ({ ...prev, supplierId }));
+    setForm((prev) => ({ ...prev, supplierId, purchaseId: '' }));
     setLines([defaultLine()]);
+    setBarcodeInput('');
     setErrors((prev) => ({ ...prev, supplierId: '', items: '' }));
     setTouched((prev) => ({ ...prev, supplierId: true }));
-    await loadItemsForSupplier(supplierId ? Number(supplierId) : undefined, editingId ?? undefined);
+    await Promise.all([
+      loadPurchasesForSupplier(supplierId ? Number(supplierId) : undefined),
+      loadItemsForSupplier(supplierId ? Number(supplierId) : undefined, editingId ?? undefined),
+    ]);
+  };
+
+  const handlePurchaseChange = async (purchaseId: string) => {
+    setForm((prev) => ({ ...prev, purchaseId }));
+    setLines([defaultLine()]);
+    setBarcodeInput('');
+    await loadItemsForSupplier(
+      form.supplierId ? Number(form.supplierId) : undefined,
+      editingId ?? undefined,
+      purchaseId ? Number(purchaseId) : undefined
+    );
   };
 
   const setLineValue = (index: number, patch: Partial<ReturnLine>) => {
@@ -247,6 +300,39 @@ const PurchaseReturns = () => {
       return next.length ? next : [defaultLine()];
     });
 
+  const handleBarcodeScan = () => {
+    const barcode = barcodeInput.trim().toLowerCase();
+    if (!form.supplierId) {
+      showToast('error', 'Barcode', 'Select a supplier before scanning a product.');
+      return;
+    }
+    if (!barcode) return;
+    const selected = items.find((item) => String(item.barcode || '').trim().toLowerCase() === barcode);
+    if (!selected) {
+      showToast('error', 'Barcode', 'No returnable product matches this barcode.');
+      return;
+    }
+    const itemId = Number(selected.item_id);
+    const currentQty = sumLineQtyForItem(lines, itemId);
+    const maxQty = getMaxReturnQty(selected, itemId);
+    if (currentQty >= maxQty) {
+      showToast('error', 'Barcode', `${selected.name} has reached its returnable quantity.`);
+      return;
+    }
+    const lineIndex = lines.findIndex((line) => Number(line.itemId) === itemId);
+    if (lineIndex >= 0) {
+      setLineValue(lineIndex, { quantity: Number(lines[lineIndex].quantity || 0) + 1 });
+    } else {
+      setLines((prev) => [
+        ...prev.filter((line) => line.itemId),
+        { itemId, quantity: 1, unitCost: Number(selected.cost_price || 0) },
+      ]);
+    }
+    setErrors((prev) => ({ ...prev, items: '' }));
+    setBarcodeInput('');
+    requestAnimationFrame(() => barcodeInputRef.current?.focus());
+  };
+
   const handleReset = () => {
     if (isEditing) {
       void loadReturn();
@@ -280,22 +366,26 @@ const PurchaseReturns = () => {
     if (unavailable) {
       const selected = items.find((it) => Number(it.item_id) === Number(unavailable.itemId));
       const maxQty = selected ? getMaxReturnQty(selected, unavailable.itemId) : 0;
-      showToast('error', 'Purchase Return', `Return qty exceeds available stock (${maxQty}) for ${selected?.name || `item ${unavailable.itemId}`}`);
-      setFormError(`Return quantity exceeds available stock for ${selected?.name || `item ${unavailable.itemId}`}.`);
+      showToast('error', 'Purchase Return', `Return qty exceeds available stock (${maxQty}) for ${selected?.name || `product ${unavailable.itemId}`}`);
+      setFormError(`Return quantity exceeds available stock for ${selected?.name || `product ${unavailable.itemId}`}.`);
       return;
     }
     const payload: any = {
       supplierId: Number(form.supplierId),
+      purchaseId: form.purchaseId ? Number(form.purchaseId) : undefined,
       referenceNo: form.referenceNo || undefined,
       note: form.note || undefined,
       items: normalized,
       refundViaAccount: form.refundViaAccount,
     };
-    if (form.refundViaAccount) {
-      payload.refundAccId = form.refundAccId ? Number(form.refundAccId) : undefined;
-      payload.refundAmount = subtotal;
-    } else {
-      payload.refundAmount = 0;
+    // The server recomputes the actual refund/payable split itself (it never
+    // trusts a client-supplied refundAmount) - but it does need the chosen
+    // refund account whenever one is picked, not only when the "refund via
+    // account" toggle is checked (that toggle is hidden entirely once the
+    // return exceeds the supplier's payable, since a refund account becomes
+    // mandatory for the leftover cash portion in that case too).
+    if (form.refundAccId) {
+      payload.refundAccId = Number(form.refundAccId);
     }
     setSaving(true);
     const res = editingId
@@ -330,7 +420,7 @@ const PurchaseReturns = () => {
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
           <div>
             <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">Return Details</p>
-            <p className="text-xs text-slate-500">Add items using the table like purchases.</p>
+            <p className="text-xs text-slate-500">Add products using the table like purchases.</p>
           </div>
           <button
             type="button"
@@ -346,7 +436,7 @@ const PurchaseReturns = () => {
               {formError}
             </div>
           )}
-	          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+	          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
 	            <div>
 	              <label className={labelClass}>Supplier</label>
 	              <SearchableCombobox<number>
@@ -362,6 +452,20 @@ const PurchaseReturns = () => {
 	              )}
 	            </div>
             <div>
+              <label className={labelClass}>Purchase / Bill</label>
+              <SearchableCombobox<number>
+                value={form.purchaseId ? Number(form.purchaseId) : ''}
+                options={purchases.map((purchase) => ({
+                  value: purchase.purchase_id,
+                  label: `${purchase.reference_no || `Purchase #${purchase.purchase_id}`} · ${fmtDate(purchase.purchase_date)} · ${fmtCurrency(purchase.total)}`,
+                }))}
+                placeholder={form.supplierId ? 'All supplier purchases (optional)' : 'Select supplier first'}
+                disabled={loading || !form.supplierId}
+                onChange={(nextValue) => void handlePurchaseChange(nextValue === '' ? '' : String(nextValue))}
+              />
+              <p className="mt-1 text-[11px] text-slate-500">Choose a purchase to limit products and barcode scans to that bill.</p>
+            </div>
+            <div>
               <label className={labelClass}>Reference No</label>
               <input
                 className={inputClass}
@@ -374,15 +478,46 @@ const PurchaseReturns = () => {
 
           <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
             <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-200">
-              <span>Items</span>
-              <button type="button" onClick={addLine} className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-1 text-xs font-medium text-white hover:bg-primary-700">
-                <Plus className="h-3.5 w-3.5" /> Add line
-              </button>
+              <span>Products</span>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <input
+                  ref={barcodeInputRef}
+                  type="text"
+                  value={barcodeInput}
+                  onChange={(event) => setBarcodeInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      handleBarcodeScan();
+                    }
+                  }}
+                  disabled={!form.supplierId}
+                  placeholder={form.supplierId ? 'Scan or enter barcode' : 'Select supplier first'}
+                  className="h-8 w-52 rounded-md border border-slate-300 bg-white px-2 text-xs font-normal text-slate-900 outline-none focus:border-primary-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  aria-label="Scan product barcode"
+                />
+                <button
+                  type="button"
+                  onClick={handleBarcodeScan}
+                  disabled={!form.supplierId || !barcodeInput.trim()}
+                  className="rounded-lg border border-primary-600 px-3 py-1 text-xs font-medium text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60 dark:text-primary-300 dark:hover:bg-primary-950/30"
+                >
+                  Add barcode
+                </button>
+                <button
+                  type="button"
+                  onClick={addLine}
+                  disabled={!form.supplierId}
+                  className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-1 text-xs font-medium text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Plus className="h-3.5 w-3.5" /> Add line
+                </button>
+              </div>
             </div>
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 dark:bg-slate-800">
                 <tr>
-                  <th className={tableHeadCls}>Item</th>
+                  <th className={tableHeadCls}>Product</th>
                   <th className={`${tableHeadCls} text-right`}>Qty</th>
                   <th className={`${tableHeadCls} text-right`}>Unit Cost</th>
                   <th className={`${tableHeadCls} text-right`}>Line Total</th>
@@ -396,11 +531,14 @@ const PurchaseReturns = () => {
 	                      <div className="space-y-1">
 	                        <SearchableCombobox<number>
 	                          value={line.itemId}
-	                          options={items.map((item) => ({
-	                            value: Number(item.item_id),
-	                            label: `${item.name} (Available: ${getMaxReturnQty(item, item.item_id)})`,
-	                          }))}
-	                          placeholder={form.supplierId ? 'Select item' : 'Select supplier first'}
+	                          options={items.map((item) => {
+	                            const summary = attributeSummary(item.attributes, 2, attributeCatalog);
+	                            return {
+	                              value: Number(item.item_id),
+	                              label: `${item.name}${summary ? ` - ${summary}` : ''} (Available: ${getMaxReturnQty(item, item.item_id)})`,
+	                            };
+	                          })}
+	                          placeholder={form.supplierId ? 'Select product' : 'Select supplier first'}
 	                          disabled={!form.supplierId}
 	                          onChange={(nextValue) => handleSelectItem(idx, nextValue === '' ? '' : String(nextValue))}
 	                        />
@@ -468,9 +606,11 @@ const PurchaseReturns = () => {
             </div>
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-200">
               <p className="text-xs uppercase text-slate-500">Payable Reduction</p>
-              <p className="text-lg font-semibold">{fmtCurrency(payableReduction)}</p>
+              <p className="text-lg font-semibold">
+                {fmtCurrency(canChooseRefundMethod ? payableReduction : Math.min(supplierOutstanding, subtotal))}
+              </p>
               {minRefund > 0 ? (
-                <p className="mt-1 text-[11px] text-amber-600">Min refund required: {fmtCurrency(minRefund)}</p>
+                <p className="mt-1 text-[11px] text-amber-600">Cash refund (after offsetting payable): {fmtCurrency(minRefund)}</p>
               ) : null}
             </div>
           </div>
@@ -518,7 +658,9 @@ const PurchaseReturns = () => {
                   )}
                   {!canChooseRefundMethod && (
                     <p className="mt-1 text-[11px] text-slate-500">
-                      Supplier payable is less than return total — refund into account is required.
+                      {supplierOutstanding > 0
+                        ? `${fmtCurrency(supplierOutstanding)} will reduce the supplier's payable; the remaining ${fmtCurrency(minRefund)} will be refunded into this account.`
+                        : 'Supplier has no outstanding payable — the full amount will be refunded into this account.'}
                     </p>
                   )}
                 </div>

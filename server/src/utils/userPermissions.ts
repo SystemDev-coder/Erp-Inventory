@@ -1,5 +1,6 @@
 import { queryMany, queryOne } from '../db/query';
 import { sessionService } from '../modules/session/session.service';
+import { isAdminRoleRecord } from './branchScope';
 
 const expandPermissionKeys = (permKey: string): string[] => {
   if (permKey.startsWith('items.')) {
@@ -8,45 +9,55 @@ const expandPermissionKeys = (permKey: string): string[] => {
   if (permKey.startsWith('products.')) {
     return [permKey, permKey.replace('products.', 'items.')];
   }
+  if (permKey === 'stock.view') {
+    return [permKey, 'warehouse_stock.view', 'inventory.view'];
+  }
+  if (permKey === 'warehouse_stock.view') {
+    return [permKey, 'stock.view', 'inventory.view'];
+  }
+  if (permKey === 'inventory.view') {
+    return [permKey, 'stock.view', 'warehouse_stock.view'];
+  }
   return [permKey];
 };
 
 const adminRoleCache = new Map<number, { isAdmin: boolean; expiresAt: number }>();
 const ADMIN_ROLE_TTL_MS = 10 * 60 * 1000;
 
+// H9 fix: `is_system` means "one of the roles this product ships with" (every
+// seeded role, including Viewer/Sales Associate/etc., has it) - it is never a
+// signal of trust on its own and must not be used alone to bypass permission
+// checks. The one existing, explicit signal for "this role has full access"
+// is the same one branchScope.ts uses to decide whether a user can see every
+// branch: role_code = 'ADMIN' combined with is_system = true (both only ever
+// true, together, for the originally-seeded Administrator role - see
+// isAdminRoleRecord's own comment in branchScope.ts for why). Reusing it here
+// keeps a single definition of "admin" across the authorization system
+// instead of two that can drift apart.
 export const isAdminRole = async (roleId: number): Promise<boolean> => {
   const cached = adminRoleCache.get(roleId);
   if (cached && Date.now() <= cached.expiresAt) {
     return cached.isAdmin;
   }
 
-  const row = await queryOne<{ role_name: string; is_system: boolean | null }>(
-    `SELECT role_name, is_system FROM ims.roles WHERE role_id = $1 LIMIT 1`,
+  const row = await queryOne<{ role_code: string; is_system: boolean }>(
+    `SELECT role_code, is_system FROM ims.roles WHERE role_id = $1 LIMIT 1`,
     [roleId]
   );
-  const isAdmin = row
-    ? (row.role_name || '').toLowerCase().includes('admin') || Boolean(row.is_system)
-    : false;
+  const isAdmin = isAdminRoleRecord(row);
 
   adminRoleCache.set(roleId, { isAdmin, expiresAt: Date.now() + ADMIN_ROLE_TTL_MS });
   return isAdmin;
 };
 
 const loadUserPermissions = async (userId: number, roleId: number): Promise<Set<string>> => {
-  const [rolePerms, userPerms, overrides] = await Promise.all([
+  const [rolePerms, overrides] = await Promise.all([
     queryMany<{ perm_key: string }>(
       `SELECT DISTINCT p.perm_key
          FROM ims.role_permissions rp
          JOIN ims.permissions p ON rp.perm_id = p.perm_id
         WHERE rp.role_id = $1`,
       [roleId]
-    ),
-    queryMany<{ perm_key: string }>(
-      `SELECT DISTINCT p.perm_key
-         FROM ims.user_permissions up
-         JOIN ims.permissions p ON up.perm_id = p.perm_id
-        WHERE up.user_id = $1`,
-      [userId]
     ),
     queryMany<{ perm_key: string; effect: string }>(
       `SELECT DISTINCT p.perm_key, upo.effect
@@ -57,9 +68,13 @@ const loadUserPermissions = async (userId: number, roleId: number): Promise<Set<
     ),
   ]);
 
+  // Role permissions plus the managed allow/deny overrides are the complete
+  // authorization model. `ims.user_permissions` is a legacy table: it is not
+  // exposed by the Roles/Privileges UI, so including it would let an invisible
+  // historical grant bypass a role change. Administrators who need an
+  // exception must use an explicit override, which is visible and auditable.
   const permissionSet = new Set<string>([
     ...rolePerms.map((row) => row.perm_key),
-    ...userPerms.map((row) => row.perm_key),
     ...overrides.filter((row) => row.effect === 'allow').map((row) => row.perm_key),
   ]);
 
@@ -74,11 +89,11 @@ export const getUserPermissionSet = async (
   userId: number,
   roleId: number
 ): Promise<Set<string>> => {
-  const cached = await sessionService.getCachedPermissions(userId);
+  const cached = await sessionService.getCachedPermissions(userId, roleId);
   if (cached) return new Set(cached);
 
   const permissionSet = await loadUserPermissions(userId, roleId);
-  await sessionService.cachePermissions(userId, Array.from(permissionSet));
+  await sessionService.cachePermissions(userId, roleId, Array.from(permissionSet));
   return permissionSet;
 };
 

@@ -53,13 +53,48 @@ export function AuthProvider({ children }: AuthProviderProps) {
         setUser(null);
         return;
       }
-      if (lockedInfo) {
-        // Keep user data minimal while locked
+      // Read the marker from storage here instead of the React state. During
+      // unlock(), React has not necessarily rendered `setLockedInfo(null)`
+      // before refreshUser() runs. Reading the old state at that point used
+      // to write app_lock back and immediately lock the user again.
+      let storedLock: { identifier: string; name?: string; hasLock?: boolean } | null = null;
+      try {
+        const rawLock = localStorage.getItem('app_lock');
+        if (rawLock) {
+          const parsed = JSON.parse(rawLock);
+          if (parsed && typeof parsed === 'object') storedLock = parsed;
+          else localStorage.removeItem('app_lock');
+        }
+      } catch {
+        localStorage.removeItem('app_lock');
+      }
+
+      if (storedLock) {
+        // The durable lock state belongs to the server. A browser's app_lock
+        // marker only means that this tab is currently on the lock screen;
+        // it can be stale after an idle logout, an app upgrade, or another
+        // device changing the lock password. Hydrate it from /me before the
+        // Lock page decides whether to show Unlock or Set Lock Password.
         const response = await authService.getCurrentUser();
-        if (response.success && response.data) setUser(response.data.user);
+        if (response.success && response.data) {
+          const freshUser = response.data.user;
+          const hydratedLock = {
+            ...storedLock,
+            identifier: storedLock.identifier || freshUser.username,
+            name: storedLock.name || freshUser.name,
+            hasLock: freshUser.has_lock === true,
+          };
+          setUser(freshUser);
+          setLockedInfo(hydratedLock);
+          localStorage.setItem('app_lock', JSON.stringify(hydratedLock));
+        }
         setIsLoading(false);
         return;
       }
+
+      // A missing marker means this is an active, unlocked session. This is
+      // important immediately after a successful password verification.
+      setLockedInfo(null);
       const response = await authService.getCurrentUser();
       if (response.success && response.data) {
         setUser(response.data.user);
@@ -81,6 +116,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const response = await authService.login(credentials);
 
     if (response.success && response.data) {
+      // A new login starts a normal session. The durable lock password lives
+      // on the server, while app_lock only represents an active lock screen.
+      // Clearing a previous user's/stale screen marker must never delete the
+      // saved lock password.
+      localStorage.removeItem('app_lock');
+      setLockedInfo(null);
       setAccessToken(response.data.accessToken, !!credentials.rememberMe);
       setUser(response.data.user);
       const permsRes = await userService.getPermissions();
@@ -115,6 +156,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setPermissions([]);
       setLockedInfo(null);
       localStorage.removeItem('app_lock');
+      sessionStorage.removeItem('lock_return_to');
     }
   };
 
@@ -122,13 +164,36 @@ export function AuthProvider({ children }: AuthProviderProps) {
     await checkAuth();
   };
 
+  /**
+   * Lock the app: persist a minimal identity blob and redirect to /lock.
+   * The session (access + refresh token) stays intact, so unlock() can
+   * resume the user's work without re-login.
+   *
+   * We remember the current path in sessionStorage so unlock() can send
+   * the user back to exactly where they were.
+   */
   const lock = () => {
     if (!user) return;
-    const raw = localStorage.getItem('app_lock');
-    const existing = raw ? JSON.parse(raw) : {};
-    const payload = { identifier: user.username, name: user.name, hasLock: existing.hasLock ?? true };
+    const payload = {
+      identifier: user.username,
+      name: user.name,
+      // The API tells us whether this person already has a lock password.
+      // Do not infer it from localStorage: idle logout intentionally clears
+      // only that browser marker, not the user's saved lock password.
+      hasLock: user.has_lock === true,
+      lockedAt: Date.now(),
+    };
     localStorage.setItem('app_lock', JSON.stringify(payload));
     setLockedInfo(payload);
+
+    // Hard redirect to /lock. Using window.location (not react-router's
+    // navigate) because lock() may be called from outside the Router tree
+    // (e.g. from the inactivity hook) and we want a clean mount of the
+    // Lock page regardless of the current route.
+    if (window.location.pathname !== '/lock') {
+      sessionStorage.setItem('lock_return_to', window.location.pathname + window.location.search);
+      window.location.href = '/lock';
+    }
   };
 
   const unlock = async (password: string): Promise<ApiResponse> => {
@@ -139,6 +204,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
       localStorage.removeItem('app_lock');
       setLockedInfo(null);
       await refreshUser();
+
+      // Return to the page the user was on before the idle lock.
+      const returnTo = sessionStorage.getItem('lock_return_to');
+      if (returnTo) {
+        sessionStorage.removeItem('lock_return_to');
+        window.location.href = returnTo;
+      }
     }
     return response;
   };

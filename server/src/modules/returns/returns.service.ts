@@ -94,6 +94,7 @@ export interface ReturnItemOption {
   returned_qty?: number;
   on_hand_qty?: number;
   available_qty?: number;
+  attributes?: Record<string, string | number>;
 }
 
 export interface CreateSalesReturnInput {
@@ -1258,6 +1259,43 @@ export const returnsService = {
         );
     },
 
+    async listSalesByCustomer(scope: BranchScope, customerId: number): Promise<any[]> {
+        if (!Number.isFinite(customerId) || customerId <= 0) {
+            throw ApiError.badRequest('Customer is required');
+        }
+
+        const docTypeFilter = (await hasSalesDocTypeColumn())
+            ? `AND COALESCE(s.doc_type::text, 'sale') <> 'quotation'`
+            : '';
+        const params: any[] = [customerId];
+        let where = `
+            WHERE s.customer_id = $1
+              AND LOWER(COALESCE(s.status::text, '')) <> 'void'
+              ${docTypeFilter}
+        `;
+        if (!scope.isAdmin) {
+            params.push(scope.branchIds);
+            where += ` AND s.branch_id = ANY($${params.length})`;
+        }
+
+        return queryMany(
+            `SELECT
+                s.sale_id,
+                s.sale_date::text AS sale_date,
+                COALESCE(
+                  NULLIF(to_jsonb(s)->>'invoice_no', ''),
+                  NULLIF(to_jsonb(s)->>'reference_no', ''),
+                  'Sale #' || s.sale_id::text
+                ) AS reference_no,
+                COALESCE(s.total, 0)::double precision AS total
+             FROM ims.sales s
+             ${where}
+               AND EXISTS (SELECT 1 FROM ims.sale_items si WHERE si.sale_id = s.sale_id)
+             ORDER BY s.sale_date DESC NULLS LAST, s.sale_id DESC`,
+            params
+        );
+    },
+
     async listReturnItems(scope: BranchScope): Promise<ReturnItemOption[]> {
         const params: any[] = [];
         let where = `WHERE 1=1`;
@@ -1282,7 +1320,8 @@ export const returnsService = {
     async listSalesItemsByCustomer(
         scope: BranchScope,
         customerId: number,
-        excludeReturnId?: number
+        excludeReturnId?: number,
+        saleId?: number
     ): Promise<ReturnItemOption[]> {
         if (!Number.isFinite(customerId) || customerId <= 0) {
             throw ApiError.badRequest('Customer is required');
@@ -1296,11 +1335,20 @@ export const returnsService = {
               AND COALESCE(s.status::text, 'posted') <> 'void'
               ${docTypeFilter}
         `;
+        let selectedSaleClause = '';
+        if (saleId && Number.isFinite(saleId) && saleId > 0) {
+            params.push(saleId);
+            selectedSaleClause = ` AND s.sale_id = $${params.length}`;
+            where += selectedSaleClause;
+        }
         if (!scope.isAdmin) {
             params.push(scope.branchIds);
             where += ` AND s.branch_id = ANY($${params.length})`;
         }
         const returnedBranchClause = scope.isAdmin ? '' : `AND sr.branch_id = ANY($${params.length})`;
+        const returnedSaleClause = selectedSaleClause
+            ? `AND sr.sale_id = ${selectedSaleClause.replace(' AND s.sale_id = ', '')}`
+            : '';
         const excludeReturnClause =
             excludeReturnId && Number.isFinite(excludeReturnId) && excludeReturnId > 0
                 ? `AND sr.sr_id <> ${Number(excludeReturnId)}`
@@ -1318,6 +1366,7 @@ export const returnsService = {
                   FROM ims.sales_returns sr
                   JOIN ims.sales_return_items sri ON sri.sr_id = sr.sr_id
                  WHERE sr.customer_id = $1
+                   ${returnedSaleClause}
                    AND ${ACTIVE_SALES_RETURN}
                    AND ${ACTIVE_SALES_RETURN_ITEM}
                   ${returnedBranchClause}
@@ -1352,7 +1401,8 @@ export const returnsService = {
                 COALESCE(price.unit_price, i.sell_price, i.cost_price, 0)::numeric(14,2) AS sell_price,
                 COALESCE(sold.sold_qty, 0)::int AS sold_qty,
                 COALESCE(returned.returned_qty, 0)::int AS returned_qty,
-                GREATEST(COALESCE(sold.sold_qty, 0) - COALESCE(returned.returned_qty, 0), 0)::int AS available_qty
+                GREATEST(COALESCE(sold.sold_qty, 0) - COALESCE(returned.returned_qty, 0), 0)::int AS available_qty,
+                COALESCE(i.attributes, '{}'::jsonb) AS attributes
              FROM sold
              JOIN ims.items i ON i.item_id = sold.item_id
              LEFT JOIN returned ON returned.item_id = sold.item_id
@@ -1362,10 +1412,45 @@ export const returnsService = {
         );
     },
 
+    async listPurchasesBySupplier(scope: BranchScope, supplierId: number): Promise<any[]> {
+        if (!Number.isFinite(supplierId) || supplierId <= 0) {
+            throw ApiError.badRequest('Supplier is required');
+        }
+
+        const params: any[] = [supplierId];
+        let where = `
+            WHERE p.supplier_id = $1
+              AND LOWER(COALESCE(p.status::text, '')) <> 'void'
+        `;
+        if (!scope.isAdmin) {
+            params.push(scope.branchIds);
+            where += ` AND p.branch_id = ANY($${params.length})`;
+        }
+
+        return queryMany(
+            `SELECT
+                p.purchase_id,
+                p.purchase_date::text AS purchase_date,
+                COALESCE(
+                  NULLIF(to_jsonb(p)->>'reference_no', ''),
+                  NULLIF(to_jsonb(p)->>'invoice_no', ''),
+                  NULLIF(to_jsonb(p)->>'purchase_no', ''),
+                  'Purchase #' || p.purchase_id::text
+                ) AS reference_no,
+                COALESCE(p.total, 0)::double precision AS total
+             FROM ims.purchases p
+             ${where}
+               AND EXISTS (SELECT 1 FROM ims.purchase_items pi WHERE pi.purchase_id = p.purchase_id)
+             ORDER BY p.purchase_date DESC NULLS LAST, p.purchase_id DESC`,
+            params
+        );
+    },
+
     async listPurchaseItemsBySupplier(
         scope: BranchScope,
         supplierId: number,
-        excludeReturnId?: number
+        excludeReturnId?: number,
+        purchaseId?: number
     ): Promise<ReturnItemOption[]> {
         if (!Number.isFinite(supplierId) || supplierId <= 0) {
             throw ApiError.badRequest('Supplier is required');
@@ -1375,11 +1460,20 @@ export const returnsService = {
             WHERE p.supplier_id = $1
               AND COALESCE(p.status::text, 'received') <> 'void'
         `;
+        let selectedPurchaseClause = '';
+        if (purchaseId && Number.isFinite(purchaseId) && purchaseId > 0) {
+            params.push(purchaseId);
+            selectedPurchaseClause = ` AND p.purchase_id = $${params.length}`;
+            where += selectedPurchaseClause;
+        }
         if (!scope.isAdmin) {
             params.push(scope.branchIds);
             where += ` AND p.branch_id = ANY($${params.length})`;
         }
         const returnedBranchClause = scope.isAdmin ? '' : `AND pr.branch_id = ANY($${params.length})`;
+        const returnedPurchaseClause = selectedPurchaseClause
+            ? `AND pr.purchase_id = ${selectedPurchaseClause.replace(' AND p.purchase_id = ', '')}`
+            : '';
         const excludeReturnClause =
             excludeReturnId && Number.isFinite(excludeReturnId) && excludeReturnId > 0
                 ? `AND pr.pr_id <> ${Number(excludeReturnId)}`
@@ -1417,6 +1511,7 @@ export const returnsService = {
                   FROM ims.purchase_returns pr
                   JOIN ims.purchase_return_items pri ON pri.pr_id = pr.pr_id
                  WHERE pr.supplier_id = $1
+                   ${returnedPurchaseClause}
                    AND ${ACTIVE_PURCHASE_RETURN}
                    AND ${ACTIVE_PURCHASE_RETURN_ITEM}
                   ${returnedBranchClause}
@@ -1482,7 +1577,8 @@ export const returnsService = {
                      ),
                      0
                    )
-                 )::int AS available_qty
+                 )::int AS available_qty,
+                 COALESCE(i.attributes, '{}'::jsonb) AS attributes
               FROM purchased
               JOIN ims.items i ON i.item_id = purchased.item_id
               LEFT JOIN LATERAL (
@@ -2216,7 +2312,6 @@ export const returnsService = {
         try {
             await client.query('BEGIN');
             await client.query(`SET LOCAL app.include_deleted = '0'`);
-            await client.query(`SET LOCAL app.allow_soft_void = '1'`);
             const hasBalanceColumn = await hasSalesReturnBalanceAdjustment(client);
             const existing = await client.query<{
                 sr_id: number;
@@ -2272,6 +2367,14 @@ export const returnsService = {
                 });
             }
 
+            // Delete-protection audit (Phase 10 Batch 1, Finding F7): the
+            // rls_soft_delete policy on GL/ledger/return-item tables gates
+            // writing is_deleted=1 on this same session var - it was left at
+            // '0' above (needed for the "correct totals" reads just done)
+            // and a previous, misnamed fix attempt (app.allow_soft_void,
+            // which the policy never references) never actually addressed
+            // it. Flip it to '1' now, before every soft-delete write below.
+            await client.query(`SET LOCAL app.include_deleted = '1'`);
             await softVoidReturnLinkedRows(client, {
                 branchId: Number(current.branch_id),
                 refTable: 'sales_returns',
@@ -2974,7 +3077,6 @@ export const returnsService = {
             await client.query('BEGIN');
             // Soft-delete triggers can toggle this session flag; keep deleted rows hidden for correct totals.
             await client.query(`SET LOCAL app.include_deleted = '0'`);
-            await client.query(`SET LOCAL app.allow_soft_void = '1'`);
             const hasBalanceColumn = await hasPurchaseReturnBalanceAdjustment(client);
             const existing = await client.query<{
                 pr_id: number;
@@ -3031,6 +3133,10 @@ export const returnsService = {
                 });
             }
 
+            // Delete-protection audit (Phase 10 Batch 1, Finding F7): same
+            // fix as deleteSalesReturn above - flip the RLS-gating session
+            // var back to '1' before any soft-delete write.
+            await client.query(`SET LOCAL app.include_deleted = '1'`);
             await softVoidReturnLinkedRows(client, {
                 branchId: Number(current.branch_id),
                 refTable: 'purchase_returns',

@@ -5,6 +5,7 @@ import {
   getInventoryReportOptions,
   getInventoryValuationReport,
   getLowStockAlertReport,
+  getStockByAttributeReport,
   getStoreMovementDetailReport,
   getInventoryLossReport,
   getInventoryFoundReport,
@@ -18,6 +19,7 @@ const router = Router();
 
 router.get('/options', getInventoryReportOptions);
 router.get('/current-stock', getCurrentStockLevelsReport);
+router.get('/by-attribute', getStockByAttributeReport);
 router.get('/low-stock', getLowStockAlertReport);
 router.get('/valuation', getInventoryValuationReport);
 router.get('/expiry-tracking', getExpiryTrackingReport);

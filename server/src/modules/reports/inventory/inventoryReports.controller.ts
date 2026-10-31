@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { ApiResponse } from '../../../utils/ApiResponse';
 import { asyncHandler } from '../../../utils/asyncHandler';
 import { AuthRequest } from '../../../middlewares/requireAuth';
+import { ApiError } from '../../../utils/ApiError';
 import { reportRows, REPORT_ROW_LIMITS } from '../../../utils/reportMeta';
 import {
   parseDateRange,
@@ -21,6 +22,14 @@ export const getCurrentStockLevelsReport = asyncHandler(async (req: AuthRequest,
   const branchId = await resolveBranchIdForReports(req);
   const rows = await inventoryReportsService.getCurrentStockLevels(branchId);
   return ApiResponse.success(res, reportRows(branchId, { reportKey: 'current-stock-levels', rows }, rows, REPORT_ROW_LIMITS.detail));
+});
+
+export const getStockByAttributeReport = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const branchId = await resolveBranchIdForReports(req);
+  const attributeKey = String(req.query.attributeKey || '').trim();
+  if (!attributeKey) throw ApiError.badRequest('attributeKey is required');
+  const rows = await inventoryReportsService.getStockByAttribute(branchId, attributeKey);
+  return ApiResponse.success(res, reportRows(branchId, { reportKey: 'stock-by-attribute', attributeKey, rows }, rows, REPORT_ROW_LIMITS.detail));
 });
 
 export const getLowStockAlertReport = asyncHandler(async (req: AuthRequest, res: Response) => {

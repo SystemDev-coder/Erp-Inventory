@@ -5,6 +5,8 @@ import { financialReportsService } from '../../../services/reports/financialRepo
 import type { DateRange, ModalReportState } from '../types';
 import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange, defaultAsOfDate, ensureAsOfDateValid, ensureDateRangeValid, withReportTruncation, type ReportTruncationMeta } from '../reportUtils';
 import { useBranch } from '../../../context/BranchContext';
+import { useLanguage } from '../../../context/LanguageContext';
+import type { TranslationKey } from '../../../translations';
 
 type FinancialCardId =
   | 'balance-sheet'
@@ -24,12 +26,25 @@ const financialCards: Array<{ id: FinancialCardId; title: string; hint?: string 
   { id: 'cogs-by-invoice', title: 'COGS (Cost of Goods Sold)' },
   { id: 'account-balances', title: 'Account Balances' },
   { id: 'expense-summary', title: 'Expense Summary' },
-  { id: 'accounts-receivable', title: 'Accounts Receivable', hint: 'Open invoices as of date' },
+  { id: 'accounts-receivable', title: 'Accounts Receivable' },
   { id: 'accounts-payable', title: 'Accounts Payable' },
   { id: 'account-statement', title: 'Account Statement' },
   { id: 'trial-balance', title: 'Trial Balance' },
   { id: 'general-ledger', title: 'General Ledger' },
 ];
+
+const FINANCIAL_CARD_TITLE_KEYS: Record<FinancialCardId, TranslationKey> = {
+  'balance-sheet': 'rcard_balance_sheet_title',
+  'cash-flow': 'rcard_cash_flow_title',
+  'cogs-by-invoice': 'rcard_cogs_title',
+  'account-balances': 'rcard_account_balances_title',
+  'expense-summary': 'rcard_expense_summary_title',
+  'accounts-receivable': 'rcard_accounts_receivable_title',
+  'accounts-payable': 'rcard_accounts_payable_title',
+  'account-statement': 'rcard_account_statement_title',
+  'trial-balance': 'rcard_trial_balance_title',
+  'general-ledger': 'rcard_general_ledger_title',
+};
 
 const statementColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'section', header: 'Section' },
@@ -148,7 +163,7 @@ const trialBalanceColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'closing_credit', header: 'Closing CR', align: 'right', render: (row) => formatCurrency(row.closing_credit) },
 ];
 
-const generalLedgerColumns: ReportColumn<Record<string, unknown>>[] = [
+export const generalLedgerColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'txn_date', header: 'Date', render: (row) => formatDateOnly(row.txn_date) },
   { key: 'account_name', header: 'Account' },
   { key: 'txn_type', header: 'Type' },
@@ -168,6 +183,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
     onOpenModal(withReportTruncation(report, meta, legacy));
 
   const { activeBranchId } = useBranch();
+  const { t } = useLanguage();
   const [expandedCardKey, setExpandedCardKey] = useState<string | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<FinancialCardId | null>(null);
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
@@ -177,7 +193,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
   const [accountBalanceAsOfDate, setAccountBalanceAsOfDate] = useState(defaultAsOfDate);
   const [cogsRange, setCogsRange] = useState<DateRange>(defaultReportRange());
   const [expenseRange, setExpenseRange] = useState<DateRange>(defaultReportRange());
-  const [receivableAsOfDate, setReceivableAsOfDate] = useState(defaultAsOfDate);
+  const [receivableRange, setReceivableRange] = useState<DateRange>(defaultReportRange());
   const [payableRange, setPayableRange] = useState<DateRange>(defaultReportRange());
   const [statementRange, setStatementRange] = useState<DateRange>(defaultReportRange());
   const [trialBalanceRange, setTrialBalanceRange] = useState<DateRange>(defaultReportRange());
@@ -522,16 +538,17 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
 
   const handleAccountsReceivable = () =>
     runCardAction('accounts-receivable', async () => {
-      ensureAsOfDateValid(receivableAsOfDate, 'Accounts Receivable');
+      ensureRangeValid(receivableRange, 'Accounts Receivable');
       const response = await financialReportsService.getAccountsReceivable({
-        asOfDate: receivableAsOfDate,
+        fromDate: receivableRange.fromDate,
+        toDate: receivableRange.toDate,
         branchId: activeBranchId ?? undefined,
       });
       if (!response.success || !response.data) throw new Error(response.error || response.message || 'Failed to load accounts receivable');
       const rows = toRecordRows(response.data.rows || []);
       openReport({
         title: 'Accounts Receivable',
-        subtitle: `As of ${formatDateOnly(receivableAsOfDate)}`,
+        subtitle: `${formatDateOnly(receivableRange.fromDate)} - ${formatDateOnly(receivableRange.toDate)}`,
         fileName: 'accounts-receivable',
         data: rows,
         columns: accountsReceivableColumns,
@@ -543,7 +560,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
             balance: formatCurrency(sumNumericField(rows, 'balance')),
           },
         },
-        filters: { 'As of Date': receivableAsOfDate },
+        filters: { 'From Date': receivableRange.fromDate, 'To Date': receivableRange.toDate },
       }, response.data.meta);
     });
 
@@ -751,7 +768,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
     if (cardId === 'accounts-receivable') {
       return (
         <div className="space-y-3">
-          {renderAsOfDate(receivableAsOfDate, setReceivableAsOfDate)}
+          {renderDateRange(receivableRange, setReceivableRange)}
           <button
             onClick={handleAccountsReceivable}
             disabled={loadingCardId === cardId}
@@ -855,7 +872,7 @@ export function FinancialReportsTab({ onOpenModal }: Props) {
           className="flex w-full min-h-11 items-center justify-between border-b border-slate-200 bg-gradient-to-r from-primary-900 to-primary-700 px-5 py-4 text-left text-white"
         >
           <div>
-            <p className="text-xl font-semibold leading-tight">{card.title}</p>
+            <p className="text-xl font-semibold leading-tight">{t(FINANCIAL_CARD_TITLE_KEYS[card.id])}</p>
           </div>
           <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
         </button>

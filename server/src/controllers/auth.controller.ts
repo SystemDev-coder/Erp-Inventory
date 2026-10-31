@@ -1,8 +1,12 @@
-import { Response, NextFunction } from 'express';
-import { AuthRequest } from '../middlewares/auth';
-import authService from '../services/auth.service';
-import { signupSchema, loginSchema } from '../validators/auth.schema';
-import { env } from '../utils/env';
+import { Response, NextFunction } from "express";
+import { AuthRequest } from "../middlewares/auth";
+import authService from "../services/auth.service";
+import { signupSchema, loginSchema } from "../validators/auth.schema";
+import { env } from "../utils/env";
+import { ApiResponse } from "../utils/ApiResponse";
+import { verifyLoginPasswordSchema } from "../modules/auth/auth.schemas";
+import { ApiError } from "../utils/ApiError";
+import { asyncHandler } from "../utils/asyncHandler";
 
 export class AuthController {
   /**
@@ -15,7 +19,7 @@ export class AuthController {
 
       return res.status(201).json({
         success: true,
-        message: 'User registered successfully',
+        message: "User registered successfully",
         data: result,
       });
     } catch (error) {
@@ -32,17 +36,17 @@ export class AuthController {
       const result = await authService.login(validatedData);
 
       // Set refresh token as HttpOnly cookie
-      res.cookie('refreshToken', result.refreshToken, {
+      res.cookie("refreshToken", result.refreshToken, {
         httpOnly: true,
-        secure: env.NODE_ENV === 'production',
-        sameSite: env.NODE_ENV === 'production' ? 'strict' : 'lax',
+        secure: env.NODE_ENV === "production",
+        sameSite: env.NODE_ENV === "production" ? "strict" : "lax",
         maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-        path: '/',
+        path: "/",
       });
 
       return res.json({
         success: true,
-        message: 'Login successful',
+        message: "Login successful",
         data: {
           accessToken: result.accessToken,
           user: result.user,
@@ -63,7 +67,7 @@ export class AuthController {
       if (!refreshToken) {
         return res.status(401).json({
           success: false,
-          message: 'Refresh token required',
+          message: "Refresh token required",
         });
       }
 
@@ -71,7 +75,7 @@ export class AuthController {
 
       return res.json({
         success: true,
-        message: 'Token refreshed successfully',
+        message: "Token refreshed successfully",
         data: result,
       });
     } catch (error) {
@@ -87,7 +91,7 @@ export class AuthController {
       if (!req.user) {
         return res.status(401).json({
           success: false,
-          message: 'Unauthorized',
+          message: "Unauthorized",
         });
       }
 
@@ -103,6 +107,20 @@ export class AuthController {
   }
 
   /**
+   * POST /api/auth/verify-login-password
+   */
+
+  verifyLoginPassword = asyncHandler(
+    async (req: AuthRequest, res: Response) => {
+      const userId = req.user?.userId;
+      if (!userId) throw ApiError.unauthorized("User required");
+      const input = verifyLoginPasswordSchema.parse(req.body);
+      await authService.verifyUserPassword(userId, input);
+      return ApiResponse.success(res, { verified: true }, "Password verified");
+    },
+  );
+
+  /**
    * POST /api/auth/logout
    */
   async logout(req: AuthRequest, res: Response, next: NextFunction) {
@@ -114,16 +132,16 @@ export class AuthController {
       }
 
       // Clear refresh token cookie
-      res.clearCookie('refreshToken', {
+      res.clearCookie("refreshToken", {
         httpOnly: true,
-        secure: env.NODE_ENV === 'production',
-        sameSite: env.NODE_ENV === 'production' ? 'strict' : 'lax',
-        path: '/',
+        secure: env.NODE_ENV === "production",
+        sameSite: env.NODE_ENV === "production" ? "strict" : "lax",
+        path: "/",
       });
 
       return res.json({
         success: true,
-        message: 'Logged out successfully',
+        message: "Logged out successfully",
       });
     } catch (error) {
       return next(error);

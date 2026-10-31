@@ -1,4 +1,4 @@
-import { useId, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import clsx from 'clsx';
 import {
     useReactTable,
@@ -11,7 +11,9 @@ import {
     SortingState,
     ColumnFiltersState,
     VisibilityState,
+    PaginationState,
     Row,
+    Updater,
 } from '@tanstack/react-table';
 import {
     ChevronDown,
@@ -49,6 +51,27 @@ interface DataTableProps<TData> {
     headerClassName?: string;
     rowHoverClassName?: string;
     mobileCardRender?: (row: TData) => ReactNode;
+    /**
+     * Server-driven pagination: when provided, `data` is expected to already be just the
+     * current page (e.g. 10-20 rows from the API), not the whole list. The table stops
+     * paginating/filtering client-side and defers page/size changes to the caller, who owns
+     * fetching each page - this is what actually keeps a large list from being pulled to the
+     * browser in one request. Omit this prop to keep the previous client-side-only behavior.
+     */
+    serverPagination?: {
+        pageIndex: number; // 0-based
+        pageSize: number;
+        pageCount: number;
+        totalRows?: number;
+        onPageChange: (pageIndex: number) => void;
+        onPageSizeChange: (pageSize: number) => void;
+    };
+    /**
+     * When set alongside serverPagination, the built-in search box calls this (debounced)
+     * instead of filtering the already-paginated local data, since that would only ever
+     * search within the current page.
+     */
+    onServerSearch?: (value: string) => void;
 }
 
 const headerLabel = (header: unknown): string => {
@@ -73,6 +96,8 @@ export function DataTable<TData>({
     headerClassName,
     rowHoverClassName,
     mobileCardRender,
+    serverPagination,
+    onServerSearch,
 }: DataTableProps<TData>) {
     const [sorting, setSorting] = useState<SortingState>([]);
     const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
@@ -81,6 +106,8 @@ export function DataTable<TData>({
     const [globalFilter, setGlobalFilter] = useState('');
     const searchId = useId();
     const pageSizeId = useId();
+    const isServerPaginated = !!serverPagination;
+    const searchDebounceRef = useRef<number | null>(null);
 
     const columnsWithActions = useMemo(() => {
         const next: ColumnDef<TData, unknown>[] = [];
@@ -168,24 +195,54 @@ export function DataTable<TData>({
         return [...next, actionsColumn];
     }, [columns, onView, onEdit, onDelete, canDelete, enableRowSelection]);
 
+    // Debounce the search box's calls to onServerSearch so every keystroke doesn't fire a
+    // request - the caller refetches page 1 with this as a `search` query param.
+    useEffect(() => {
+        if (!onServerSearch) return;
+        if (searchDebounceRef.current) window.clearTimeout(searchDebounceRef.current);
+        searchDebounceRef.current = window.setTimeout(() => onServerSearch(globalFilter), 400);
+        return () => {
+            if (searchDebounceRef.current) window.clearTimeout(searchDebounceRef.current);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [globalFilter]);
+
+    const handlePaginationChange = (updater: Updater<PaginationState>) => {
+        if (!serverPagination) return;
+        const current: PaginationState = { pageIndex: serverPagination.pageIndex, pageSize: serverPagination.pageSize };
+        const next = typeof updater === 'function' ? updater(current) : updater;
+        if (next.pageSize !== current.pageSize) {
+            serverPagination.onPageSizeChange(next.pageSize);
+        } else if (next.pageIndex !== current.pageIndex) {
+            serverPagination.onPageChange(next.pageIndex);
+        }
+    };
+
     const table = useReactTable({
         data,
         columns: columnsWithActions,
         getCoreRowModel: getCoreRowModel(),
-        getPaginationRowModel: getPaginationRowModel(),
+        getPaginationRowModel: isServerPaginated ? undefined : getPaginationRowModel(),
         getSortedRowModel: getSortedRowModel(),
-        getFilteredRowModel: getFilteredRowModel(),
+        getFilteredRowModel: isServerPaginated ? undefined : getFilteredRowModel(),
+        manualPagination: isServerPaginated,
+        manualFiltering: isServerPaginated || !!onServerSearch,
+        pageCount: isServerPaginated ? serverPagination.pageCount : undefined,
         onSortingChange: setSorting,
         onColumnFiltersChange: setColumnFilters,
         onColumnVisibilityChange: setColumnVisibility,
         onRowSelectionChange: setRowSelection,
         onGlobalFilterChange: setGlobalFilter,
+        onPaginationChange: isServerPaginated ? handlePaginationChange : undefined,
         state: {
             sorting,
             columnFilters,
             columnVisibility,
             rowSelection,
             globalFilter,
+            ...(isServerPaginated
+                ? { pagination: { pageIndex: serverPagination.pageIndex, pageSize: serverPagination.pageSize } }
+                : {}),
         },
         enableRowSelection,
     });

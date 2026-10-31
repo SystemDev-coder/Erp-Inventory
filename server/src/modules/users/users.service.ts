@@ -2,6 +2,7 @@ import { queryMany, queryOne } from '../../db/query';
 import { withTransaction } from '../../db/withTx';
 import { hashPassword } from '../../utils/password';
 import { ApiError } from '../../utils/ApiError';
+import { sessionService } from '../session/session.service';
 import {
   UserCreateInput,
   UserGenerateFromEmployeeInput,
@@ -282,6 +283,16 @@ export const usersService = {
       }
     });
 
+    // Fixed: same stale-permission-cache bug as replaceRolePermissions/
+    // replaceUserPermissionOverrides in system.service.ts - changing a
+    // user's role changes their effective permission set just as much as
+    // editing the role's own permissions does, but this call site never
+    // dropped their cache entry either. Covers both update paths that
+    // share this function (/api/system/users/:id and /api/users/:id).
+    if (input.roleId !== undefined) {
+      await sessionService.invalidatePermissionCache(id);
+    }
+
     return getUserRow(id);
   },
 
@@ -290,11 +301,36 @@ export const usersService = {
   },
 
   async remove(id: number): Promise<void> {
-    await withTransaction(async (client) => {
-      await client.query(`DELETE FROM ims.user_branches WHERE user_id = $1`, [id]);
-      await client.query(`DELETE FROM ims.users WHERE user_id = $1`, [id]);
-      return null;
-    });
+    try {
+      await withTransaction(async (client) => {
+        await client.query(`DELETE FROM ims.user_branches WHERE user_id = $1`, [id]);
+        await client.query(`DELETE FROM ims.users WHERE user_id = $1`, [id]);
+        return null;
+      });
+    } catch (error) {
+      // M15 fix: hard-deleting a user is structurally impossible here, for
+      // two independent reasons - (1) ims.users is referenced (RESTRICT) by
+      // nearly every transactional table (sales, purchases, stock
+      // adjustments, account transfers, payroll runs, etc.), correctly
+      // protecting real business history, and (2) even a brand-new user with
+      // zero activity still fails: trg_audit_all_tables' AFTER DELETE fires
+      // fn_audit_all_tables(), which inserts an audit_logs row recording the
+      // deleted user's own id as user_id - but by then that row is already
+      // gone, so the audit insert itself violates audit_logs_user_id_fkey.
+      // Neither is fixable by touching the trigger (explicitly out of scope)
+      // or by reassigning/deleting history (not allowed). Previously this
+      // surfaced as a raw foreign_key_violation, caught only by the generic
+      // error handler's "Referenced record does not exist" (which reads
+      // backwards for this case - nothing is missing). is_active is already
+      // the supported way to remove a user's access while keeping every
+      // record - including audit history - intact.
+      if ((error as { code?: string })?.code === '23503') {
+        throw ApiError.badRequest(
+          'This user cannot be permanently deleted - doing so would break the audit trail and any linked records. Deactivate the account instead to remove their access while preserving history.'
+        );
+      }
+      throw error;
+    }
   },
 
   async generateFromEmployee(

@@ -21,7 +21,9 @@ const customerBaseSchema = z.object({
   gender: genderSchema.optional().nullable(),
   isActive: z.boolean().optional(),
   creditAllowed: z.boolean().optional(),
+  creditLimit: z.coerce.number().nonnegative().nullable().optional(),
   creditDays: z.coerce.number().int().nonnegative().optional(),
+  creditDueAt: z.string().datetime({ offset: true }).nullable().optional(),
   remainingBalance: z.coerce.number().nonnegative().optional(),
   editReason: z.string().max(500).optional(),
 });
@@ -48,6 +50,9 @@ export const listCustomers = asyncHandler(async (req: AuthRequest, res: Response
   const search = req.query.search as string | undefined;
   const fromDate = req.query.fromDate as string | undefined;
   const toDate = req.query.toDate as string | undefined;
+  const customerTypeRaw = req.query.customerType as string | undefined;
+  const customerType =
+    customerTypeRaw === 'regular' || customerTypeRaw === 'one-time' ? customerTypeRaw : undefined;
   if (fromDate && toDate && fromDate > toDate) {
     throw ApiError.badRequest('fromDate cannot be after toDate');
   }
@@ -56,7 +61,8 @@ export const listCustomers = asyncHandler(async (req: AuthRequest, res: Response
     branchIds,
     search,
     { fromDate, toDate },
-    pagination
+    pagination,
+    customerType
   );
   return ApiResponse.success(res, {
     customers: customersResult.rows,

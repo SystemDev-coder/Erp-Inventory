@@ -6,8 +6,10 @@ import { ensureRuntimeFinanceSchema } from './utils/runtimeFinanceSchema';
 import { syncSystemAccountBalances } from './utils/systemAccounts';
 import { syncLedgerBalances } from './utils/ledgerBalanceSync';
 import { ensurePerformanceIndexes } from './utils/ensurePerformanceIndexes';
+import { syncCreditDueNotifications } from './utils/creditDueNotifications';
 
 const LEDGER_SYNC_INTERVAL_MS = 60 * 60 * 1000;
+const CREDIT_DUE_NOTIFICATION_INTERVAL_MS = 5 * 1000;
 
 const startLedgerSyncSchedule = () => {
   setInterval(() => {
@@ -15,6 +17,25 @@ const startLedgerSyncSchedule = () => {
       console.error('Scheduled ledger balance sync failed:', error);
     });
   }, LEDGER_SYNC_INTERVAL_MS);
+};
+
+const startCreditDueNotificationSchedule = () => {
+  let syncing = false;
+  const sync = async () => {
+    // A slow database call must not overlap with the next five-second tick.
+    if (syncing) return;
+    syncing = true;
+    try {
+      await syncCreditDueNotifications();
+    } catch (error) {
+      console.error('Scheduled credit due notification sync failed:', error);
+    } finally {
+      syncing = false;
+    }
+  };
+
+  void sync();
+  setInterval(() => void sync(), CREDIT_DUE_NOTIFICATION_INTERVAL_MS);
 };
 
 const startServer = async () => {
@@ -27,6 +48,7 @@ const startServer = async () => {
     await syncSystemAccountBalances();
     await syncLedgerBalances();
     startLedgerSyncSchedule();
+    startCreditDueNotificationSchedule();
 
     // Start server
     app.listen(config.port, config.host, () => {

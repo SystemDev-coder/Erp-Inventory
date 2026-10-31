@@ -6,7 +6,7 @@ import { BranchScope, pickBranchForWrite, assertBranchAccess } from '../../utils
 import { softDeleteById } from '../../db/softDelete';
 import { adjustSystemAccountBalance } from '../../utils/systemAccounts';
 import { postGl } from '../../utils/glPosting';
-import { ensureCoaAccounts, ensureNamedAssetAccount } from '../../utils/coaDefaults';
+import { ensureCoaAccounts, ensureNamedAssetAccount, ensureNamedAccount } from '../../utils/coaDefaults';
 import { syncCustomerOutstandingFromLedger } from '../../utils/customerOutstanding';
 import {
   AccountTransferInput,
@@ -19,6 +19,7 @@ import {
   ExpenseInput,
   ExpenseBudgetChargeInput,
   ExpensePaymentInput,
+  LiabilityPaymentInput,
   PayrollChargeInput,
   PayrollPayInput,
   PayrollDeleteInput,
@@ -61,6 +62,33 @@ const isOpeningExpenseNote = (note?: string | null): boolean =>
   typeof note === 'string' && note.trimStart().toUpperCase().startsWith(OPENING_EXPENSE_NOTE_PREFIX);
 
 const roundMoney = (value: number) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+
+// H1 fix: recover the amount that was actually applied to AR/AP for an
+// existing receipt from its own prior GL posting, rather than re-deriving a
+// split from today's outstanding balance (which has likely moved since the
+// receipt was first created/updated - other sales/payments may have
+// happened). The original applyToAr/applyToAp was never stored anywhere
+// except as the GL line itself, so this is the only accurate source for a
+// reversal. Only one of debit/credit is ever non-zero on a single postGl
+// line (enforced by postGl itself), so summing both safely captures
+// whichever side was used - credit for reducing AR (asset), debit for
+// reducing AP (liability) - without needing to know which in advance.
+const readAppliedGlAmount = async (
+  client: PoolClient,
+  params: { branchId: number; refTable: string; refId: number; accId: number }
+): Promise<number> => {
+  const row = await client.query<{ total: string }>(
+    `SELECT COALESCE(SUM(debit + credit), 0)::text AS total
+       FROM ims.account_transactions
+      WHERE branch_id = $1
+        AND ref_table = $2
+        AND ref_id = $3
+        AND acc_id = $4
+        AND COALESCE(is_deleted, 0) = 0`,
+    [params.branchId, params.refTable, params.refId, params.accId]
+  );
+  return roundMoney(Number(row.rows[0]?.total || 0));
+};
 
 const lockAccountBalance = async (client: PoolClient, branchId: number, accId: number) => {
   const row = (
@@ -147,6 +175,27 @@ const rewriteExpenseChargeGl = async (
   ).rows[0];
   if (!charge) return;
 
+  // H4 fix: reverse whatever this ref's PREVIOUS debit-side posting (operating
+  // expense, or a prepaid-asset account - it can be a different account each
+  // time this function re-runs, since a charge's prepaid status can change
+  // between edits) contributed to accounts.balance, before deleting the old
+  // GL rows and posting new ones. Credit-side rows (Expense Payable) are
+  // deliberately skipped - see the note further down.
+  const previousDebitRows = (
+    await client.query<{ acc_id: number; debit: string }>(
+      `SELECT acc_id, debit FROM ims.account_transactions
+        WHERE branch_id = $1 AND ref_table = 'expense_charges' AND ref_id = $2 AND debit > 0`,
+      [params.branchId, params.chargeId]
+    )
+  ).rows;
+  for (const row of previousDebitRows) {
+    await client.query(`UPDATE ims.accounts SET balance = balance - $1 WHERE acc_id = $2 AND branch_id = $3`, [
+      Number(row.debit),
+      Number(row.acc_id),
+      params.branchId,
+    ]);
+  }
+
   await client.query(
     `DELETE FROM ims.account_transactions
       WHERE branch_id = $1
@@ -194,6 +243,16 @@ const rewriteExpenseChargeGl = async (
       { accId: coa.expensePayable, debit: 0, credit: amount, note: 'Expense payable' },
     ],
   });
+
+  // Apply the new debit-side amount (asset/expense account - debit increases
+  // it). Expense Payable is deliberately left untouched: it is one of the
+  // liability accounts the Balance Sheet's ledger-sum fallback relies on
+  // staying at 0 (see the block comment above createLiabilityAccount below).
+  await client.query(`UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`, [
+    amount,
+    debitAccId,
+    params.branchId,
+  ]);
 };
 
 export const financeService = {
@@ -467,7 +526,13 @@ export const financeService = {
             AND branch_id = $2`,
         [input.customerId, branchId, amount]
       );
-      await adjustSystemAccountBalance(client, { branchId, kind: 'receivable', delta: -amount });
+      // H1 fix: the cached AR balance must move by exactly what actually
+      // reduced AR (applyToAr), not the full received amount - the excess
+      // (advance) is a liability (Customer Advances), not a reduction of
+      // receivables. Using the full amount here understated AR (or, with
+      // little headroom, could violate the accounts_balance_check
+      // constraint outright) whenever a payment exceeded what was owed.
+      await adjustSystemAccountBalance(client, { branchId, kind: 'receivable', delta: -applyToAr });
 
       const hasTotalPaid = await hasColumn('customers', 'total_paid');
       if (hasTotalPaid) {
@@ -678,7 +743,10 @@ export const financeService = {
             AND branch_id = $2`,
         [resolvedSupplierId, branchId, amount]
       );
-      await adjustSystemAccountBalance(client, { branchId, kind: 'payable', delta: -amount });
+      // H1 fix: move the cached AP balance by exactly what reduced AP
+      // (applyToAp), not the full paid amount - the excess (advance) is an
+      // asset (Supplier Advances), not a further reduction of payables.
+      await adjustSystemAccountBalance(client, { branchId, kind: 'payable', delta: -applyToAp });
 
       await client.query(
         `INSERT INTO ims.supplier_ledger
@@ -768,6 +836,19 @@ export const financeService = {
         ? (input.saleId !== undefined ? (input.saleId || null) : receipt.sale_id)
         : null;
 
+      const coa = await ensureCoaAccounts(client, receipt.branch_id, ['accountsReceivable', 'customerAdvances']);
+
+      // H1 fix: recover what the OLD receipt actually applied to AR from its
+      // own GL posting (before it's deleted below) rather than the raw old
+      // amount - the two only match when the old receipt was not itself an
+      // overpayment.
+      const oldApplyToAr = await readAppliedGlAmount(client, {
+        branchId: receipt.branch_id,
+        refTable: 'customer_receipts',
+        refId: id,
+        accId: coa.accountsReceivable,
+      });
+
       // Reverse old financial effects
       await client.query(
         `UPDATE ims.customers
@@ -776,7 +857,7 @@ export const financeService = {
             AND branch_id = $2`,
         [oldCustomerId, receipt.branch_id, oldAmount]
       );
-      await adjustSystemAccountBalance(client, { branchId: receipt.branch_id, kind: 'receivable', delta: oldAmount });
+      await adjustSystemAccountBalance(client, { branchId: receipt.branch_id, kind: 'receivable', delta: oldApplyToAr });
 
       await client.query(
         `UPDATE ims.accounts
@@ -826,6 +907,14 @@ export const financeService = {
       ).rows[0];
       if (!accountRow) throw ApiError.badRequest('Account not found in selected branch');
 
+      // H8/H1: authoritative split, computed server-side from the customer's
+      // real outstanding balance (post-reversal) - never trust a client
+      // total. Moved above the "apply" block below so the cached AR update
+      // can use applyToAr instead of the raw amount.
+      const outstandingBefore = Math.max(Number(customerRow.balance || 0), 0);
+      const applyToAr = roundMoney(Math.min(nextAmount, outstandingBefore));
+      const advance = roundMoney(nextAmount - applyToAr);
+
       // Apply new financial effects
       await client.query(
         `UPDATE ims.customers
@@ -834,7 +923,7 @@ export const financeService = {
             AND branch_id = $2`,
         [nextCustomerId, receipt.branch_id, nextAmount]
       );
-      await adjustSystemAccountBalance(client, { branchId: receipt.branch_id, kind: 'receivable', delta: -nextAmount });
+      await adjustSystemAccountBalance(client, { branchId: receipt.branch_id, kind: 'receivable', delta: -applyToAr });
 
       await client.query(
         `UPDATE ims.accounts
@@ -859,11 +948,6 @@ export const financeService = {
         ]
       );
 
-      const outstandingBefore = Math.max(Number(customerRow.balance || 0), 0);
-      const applyToAr = roundMoney(Math.min(nextAmount, outstandingBefore));
-      const advance = roundMoney(nextAmount - applyToAr);
-
-      const coa = await ensureCoaAccounts(client, receipt.branch_id, ['accountsReceivable', 'customerAdvances']);
       await postGl(client, {
         branchId: receipt.branch_id,
         txnDate: input.receiptDate !== undefined ? input.receiptDate || null : receipt.receipt_date,
@@ -923,6 +1007,17 @@ export const financeService = {
       if (!customerId) throw ApiError.badRequest('Receipt has no customer');
       const amount = roundMoney(Number(receipt.amount || 0));
 
+      // H1 fix: reverse only what this receipt actually applied to AR (read
+      // from its own GL posting, before it's deleted below), not the raw
+      // receipt amount - matches the same fix in updateCustomerReceipt.
+      const coa = await ensureCoaAccounts(client, receipt.branch_id, ['accountsReceivable', 'customerAdvances']);
+      const appliedToAr = await readAppliedGlAmount(client, {
+        branchId: receipt.branch_id,
+        refTable: 'customer_receipts',
+        refId: id,
+        accId: coa.accountsReceivable,
+      });
+
       await client.query(
         `UPDATE ims.customers
             SET ${customerBalanceColumn} = ${customerBalanceColumn} + $3
@@ -930,7 +1025,7 @@ export const financeService = {
             AND branch_id = $2`,
         [customerId, receipt.branch_id, amount]
       );
-      await adjustSystemAccountBalance(client, { branchId: receipt.branch_id, kind: 'receivable', delta: amount });
+      await adjustSystemAccountBalance(client, { branchId: receipt.branch_id, kind: 'receivable', delta: appliedToAr });
 
       await client.query(
         `UPDATE ims.accounts
@@ -955,7 +1050,12 @@ export const financeService = {
         [receipt.branch_id, id]
       );
 
-      await client.query(`DELETE FROM ims.customer_receipts WHERE receipt_id = $1`, [id]);
+      // Delete-protection audit (Phase 10 Batch 1, Finding F5): the GL/
+      // ledger/balance reversal above is correct - the only gap was the
+      // receipt record itself being hard-deleted, destroying the evidentiary
+      // history of a real cash movement. Soft-delete instead, same pattern
+      // already used by deleteExpense in this file.
+      await softDeleteById('customer_receipts', id, { runner: client });
       return { deleted: true };
     });
   },
@@ -1024,6 +1124,19 @@ export const financeService = {
         }
       }
 
+      const coa = await ensureCoaAccounts(client, receipt.branch_id, ['accountsPayable', 'supplierAdvances']);
+
+      // H1 fix: recover what the OLD receipt actually applied to AP from its
+      // own GL posting (before it's deleted below), not the raw old amount -
+      // the two only match when the old receipt was not itself an
+      // overpayment.
+      const oldApplyToAp = await readAppliedGlAmount(client, {
+        branchId: receipt.branch_id,
+        refTable: 'supplier_receipts',
+        refId: id,
+        accId: coa.accountsPayable,
+      });
+
       // Reverse old effects
       await client.query(
         `UPDATE ims.suppliers
@@ -1032,7 +1145,7 @@ export const financeService = {
             AND branch_id = $2`,
         [oldSupplierId, receipt.branch_id, oldAmount]
       );
-      await adjustSystemAccountBalance(client, { branchId: receipt.branch_id, kind: 'payable', delta: oldAmount });
+      await adjustSystemAccountBalance(client, { branchId: receipt.branch_id, kind: 'payable', delta: oldApplyToAp });
 
       await client.query(
         `UPDATE ims.accounts
@@ -1104,7 +1217,7 @@ export const financeService = {
             AND branch_id = $2`,
         [nextSupplierId, receipt.branch_id, nextAmount]
       );
-      await adjustSystemAccountBalance(client, { branchId: receipt.branch_id, kind: 'payable', delta: -nextAmount });
+      await adjustSystemAccountBalance(client, { branchId: receipt.branch_id, kind: 'payable', delta: -applyToAp });
 
       await client.query(
         `INSERT INTO ims.supplier_ledger
@@ -1121,7 +1234,6 @@ export const financeService = {
         ]
       );
 
-      const coa = await ensureCoaAccounts(client, receipt.branch_id, ['accountsPayable', 'supplierAdvances']);
       await postGl(client, {
         branchId: receipt.branch_id,
         txnDate: input.receiptDate !== undefined ? input.receiptDate || null : receipt.receipt_date,
@@ -1181,6 +1293,17 @@ export const financeService = {
       if (!supplierId) throw ApiError.badRequest('Receipt has no supplier');
       const amount = roundMoney(Number(receipt.amount || 0));
 
+      // H1 fix: reverse only what this receipt actually applied to AP (read
+      // from its own GL posting, before it's deleted below), not the raw
+      // receipt amount - matches the same fix in updateSupplierReceipt.
+      const coa = await ensureCoaAccounts(client, receipt.branch_id, ['accountsPayable', 'supplierAdvances']);
+      const appliedToAp = await readAppliedGlAmount(client, {
+        branchId: receipt.branch_id,
+        refTable: 'supplier_receipts',
+        refId: id,
+        accId: coa.accountsPayable,
+      });
+
       await client.query(
         `UPDATE ims.suppliers
             SET ${supplierBalanceColumn} = ${supplierBalanceColumn} + $3
@@ -1188,7 +1311,7 @@ export const financeService = {
             AND branch_id = $2`,
         [supplierId, receipt.branch_id, amount]
       );
-      await adjustSystemAccountBalance(client, { branchId: receipt.branch_id, kind: 'payable', delta: amount });
+      await adjustSystemAccountBalance(client, { branchId: receipt.branch_id, kind: 'payable', delta: appliedToAp });
 
       await client.query(
         `UPDATE ims.accounts
@@ -1213,7 +1336,9 @@ export const financeService = {
         [receipt.branch_id, id]
       );
 
-      await client.query(`DELETE FROM ims.supplier_receipts WHERE receipt_id = $1`, [id]);
+      // Delete-protection audit (Phase 10 Batch 1, Finding F5): soft-delete
+      // instead of hard-delete - same rationale as deleteCustomerReceipt above.
+      await softDeleteById('supplier_receipts', id, { runner: client });
       return { deleted: true };
     });
   },
@@ -1491,6 +1616,19 @@ export const financeService = {
               WHERE sr.purchase_id IS NOT NULL
            ) x
           GROUP BY x.purchase_id
+       ),
+       -- H2 fix: "outstanding" above only reflects payments explicitly linked
+       -- to this purchase (purchase_id set). A supplier receipt intentionally
+       -- left unlinked applies to the supplier's pooled balance instead, and
+       -- must never be guessed onto a specific purchase. Surface it as its
+       -- own per-supplier figure so callers can show it alongside invoice
+       -- outstanding rather than it silently vanishing from this view.
+       unallocated_totals AS (
+         SELECT sr.supplier_id,
+                COALESCE(SUM(sr.amount), 0) AS unallocated
+           FROM ims.supplier_receipts sr
+          WHERE sr.purchase_id IS NULL
+          GROUP BY sr.supplier_id
        )
        SELECT p.purchase_id,
               p.supplier_id,
@@ -1498,11 +1636,13 @@ export const financeService = {
               p.total,
               COALESCE(pt.paid,0) AS paid,
               GREATEST(p.total - COALESCE(pt.paid,0), 0) AS outstanding,
+              COALESCE(ut.unallocated,0) AS supplier_unallocated_payment,
               s.${supplierNameCol} AS supplier_name,
               p.status
          FROM ims.purchases p
          LEFT JOIN ims.suppliers s ON s.supplier_id = p.supplier_id
          LEFT JOIN payment_totals pt ON pt.purchase_id = p.purchase_id
+         LEFT JOIN unallocated_totals ut ON ut.supplier_id = p.supplier_id
         ${where}
           AND GREATEST(p.total - COALESCE(pt.paid,0), 0) > 0
         ORDER BY p.purchase_date DESC
@@ -1921,27 +2061,21 @@ export const financeService = {
               AND sr.supplier_id IS NOT NULL
             GROUP BY sr.branch_id, sr.supplier_id
          )
+         -- M13 fix: s.${supplierBalanceColumn} (remaining_balance) is already the
+         -- live running AP balance - adjustSupplierBalance (purchases.service.ts)
+         -- moves it on every purchase create/update/void/delete, and supplier
+         -- receipts subtract their full amount from it directly. It already
+         -- reflects every purchase and payment below; adding a second,
+         -- independently-recomputed credit_balance on top of it (the previous
+         -- formula) double-counted every purchase that had already been paid
+         -- down, since both numbers were tracking the same underlying debt.
+         -- purchase_rollup/supplier_unallocated_payments are kept only as
+         -- informational total/paid context, no longer folded into balance.
          SELECT s.branch_id,
                 s.supplier_id,
                 s.${supplierNameColumn} AS supplier_name,
-                COALESCE(s.${supplierBalanceColumn}, 0) AS opening_balance,
-                GREATEST(
-                  COALESCE(pr.total_purchase, 0)
-                  - COALESCE(pr.paid_against_purchase, 0)
-                  - COALESCE(up.unallocated_paid, 0),
-                  0
-                ) AS credit_balance,
-                GREATEST(
-                  COALESCE(s.${supplierBalanceColumn}, 0)
-                  + GREATEST(
-                      COALESCE(pr.total_purchase, 0)
-                      - COALESCE(pr.paid_against_purchase, 0)
-                      - COALESCE(up.unallocated_paid, 0),
-                      0
-                    ),
-                  0
-                ) AS balance,
-                COALESCE(pr.total_purchase, 0) + COALESCE(s.${supplierBalanceColumn}, 0) AS total,
+                GREATEST(COALESCE(s.${supplierBalanceColumn}, 0), 0) AS balance,
+                COALESCE(pr.total_purchase, 0) AS total,
                 COALESCE(pr.paid_against_purchase, 0) + COALESCE(up.unallocated_paid, 0) AS paid
          FROM ims.suppliers s
          LEFT JOIN purchase_rollup pr
@@ -1951,16 +2085,7 @@ export const financeService = {
            ON up.branch_id = s.branch_id
           AND up.supplier_id = s.supplier_id
          WHERE ${branchFilter}
-           AND GREATEST(
-                 COALESCE(s.${supplierBalanceColumn}, 0)
-                 + GREATEST(
-                     COALESCE(pr.total_purchase, 0)
-                     - COALESCE(pr.paid_against_purchase, 0)
-                     - COALESCE(up.unallocated_paid, 0),
-                     0
-                   ),
-                 0
-               ) > 0
+           AND COALESCE(s.${supplierBalanceColumn}, 0) > 0
          ORDER BY balance DESC, supplier_name`,
         params
       );
@@ -2376,6 +2501,22 @@ export const financeService = {
         throw ApiError.badRequest('Cannot delete: this expense has payments recorded.');
       }
 
+      const debitRows = (
+        await client.query<{ acc_id: number; debit: string }>(
+          `SELECT acc_id, debit::text AS debit
+             FROM ims.account_transactions
+            WHERE branch_id = $1
+              AND ref_table = 'expense_charges'
+              AND ref_id = $2
+              AND debit > 0`,
+          [locked.branch_id, id]
+        )
+      ).rows;
+      for (const row of debitRows) {
+        await client.query(`UPDATE ims.accounts SET balance = balance - $1 WHERE acc_id = $2 AND branch_id = $3`, [
+          Number(row.debit), Number(row.acc_id), Number(locked.branch_id),
+        ]);
+      }
       await client.query(
         `DELETE FROM ims.account_transactions
           WHERE branch_id = $1
@@ -2384,7 +2525,9 @@ export const financeService = {
         [locked.branch_id, id]
       );
 
-      await client.query(`DELETE FROM ims.expense_charges WHERE charge_id = $1`, [id]);
+      // Central Delete Architecture (Phase 7): archive instead of hard
+      // delete, matching deleteExpensePayment/deleteLiabilityPayment above.
+      await softDeleteById('expense_charges', id, { runner: client });
     });
   },
 
@@ -2425,7 +2568,240 @@ export const financeService = {
         [payment.branch_id, id]
       );
 
-      await client.query(`DELETE FROM ims.expense_payments WHERE exp_payment_id = $1`, [id]);
+      // Delete-protection audit (Phase 10 Batch 1, Finding F5): soft-delete
+      // instead of hard-delete - same rationale as the receipt deletes above.
+      await softDeleteById('expense_payments', id, { runner: client });
+      return { deleted: true };
+    });
+  },
+
+  /* Liability payments - a generic way to pay down any liability account (Sales Tax
+     Payable, Expense Payable, Payroll Payable, Customer Advances, etc). Modeled on
+     createExpensePayment above: debit the chosen cash account (existing debitAccount
+     helper, enforces sufficient funds), post the GL entry, and - deliberately -
+     never write to the liability account's own accounts.balance column. That column
+     is never touched by any other code path for these accounts either (postGl only
+     writes account_transactions; the periodic syncSystemAccountBalances in server.ts
+     only covers Receivable/Payable), so it sits at 0 forever, which is exactly why
+     buildBalanceSheetFromLedger already falls back to summing the ledger whenever the
+     stored balance is 0. Writing a wrong non-zero value here would break that
+     fallback for every liability account, not just this one. */
+  async createLiabilityAccount(name: string, scope: BranchScope, branchId?: number) {
+    const effectiveBranchId = pickBranchForWrite(scope, branchId);
+    const trimmed = String(name || '').trim();
+    if (!trimmed) throw ApiError.badRequest('Name is required');
+    const accId = await withTransaction(async (client) => {
+      const existing = await queryOne<{ acc_id: number; account_type: string }>(
+        `SELECT acc_id, account_type FROM ims.accounts WHERE branch_id = $1 AND LOWER(TRIM(name)) = LOWER($2)`,
+        [effectiveBranchId, trimmed]
+      );
+      if (existing && existing.account_type !== 'liability') {
+        throw ApiError.badRequest(`"${trimmed}" already exists as a different kind of account`);
+      }
+      return ensureNamedAccount(client, effectiveBranchId, trimmed, 'liability');
+    });
+    return { acc_id: accId, name: trimmed, institution: null, outstanding_balance: 0 };
+  },
+
+  async listLiabilityAccounts(scope: BranchScope, branchId?: number, onlyOutstanding = true) {
+    const effectiveBranchId = branchId ?? scope.branchIds[0];
+    if (!effectiveBranchId) return [];
+    assertBranchAccess(scope, effectiveBranchId);
+    if (!onlyOutstanding) {
+      // Borrowing against a brand-new liability (e.g. Note Payable) needs the account to
+      // exist and be selectable before it has any balance - ensure it's there.
+      await withTransaction(async (client) => {
+        await ensureCoaAccounts(client, effectiveBranchId, ['notesPayable']);
+      });
+    }
+    const rows = await queryMany<{
+      acc_id: number;
+      name: string;
+      institution: string | null;
+      outstanding_balance: string;
+    }>(
+      `WITH liability_accounts AS (
+         SELECT
+            a.acc_id,
+            a.name,
+            a.institution,
+            COALESCE((
+              SELECT SUM(t.credit) - SUM(t.debit)
+                FROM ims.account_transactions t
+               WHERE t.acc_id = a.acc_id
+                 AND t.branch_id = a.branch_id
+                 AND t.is_deleted = 0
+            ), 0) AS outstanding_balance
+           FROM ims.accounts a
+          WHERE a.branch_id = $1
+            AND a.account_type = 'liability'
+            AND a.is_active = TRUE
+            -- Accounts Payable is an aggregate across every supplier - paying it down as
+            -- one lump sum here would not touch any specific supplier's ledger. Supplier
+            -- Receipts is the correct, already-existing way to settle a supplier balance.
+            AND LOWER(a.name) NOT LIKE 'accounts payable%'
+            AND LOWER(a.name) NOT LIKE 'account payable%'
+       )
+       SELECT acc_id, name, institution, outstanding_balance::text AS outstanding_balance
+         FROM liability_accounts
+        WHERE ($2 = FALSE) OR (outstanding_balance > 0.004)
+        ORDER BY name`,
+      [effectiveBranchId, onlyOutstanding]
+    );
+    // acc_id is a bigint - pg serializes it as a string. The frontend's own === lookups
+    // against this list (e.g. the amount-preview) need a real number, same as every
+    // other account-list endpoint (see accounts.service.ts's `acc_id: Number(row.acc_id)`).
+    return rows.map((row) => ({ ...row, acc_id: Number(row.acc_id) }));
+  },
+
+  async createLiabilityPayment(input: LiabilityPaymentInput, scope: BranchScope, userId: number) {
+    const branchId = pickBranchForWrite(scope, input.branchId);
+    if (input.liabilityAccId === input.payFromAccId) {
+      throw ApiError.badRequest('Liability account and pay-from account must differ');
+    }
+    const amount = roundMoney(Number(input.amount));
+    if (amount <= 0) throw ApiError.badRequest('Amount must be greater than zero');
+
+    const liabilityAccount = await queryOne<{ acc_id: number; account_type: string; name: string }>(
+      `SELECT acc_id, account_type, name FROM ims.accounts WHERE acc_id = $1 AND branch_id = $2`,
+      [input.liabilityAccId, branchId]
+    );
+    if (!liabilityAccount) throw ApiError.notFound('Liability account not found');
+    if (liabilityAccount.account_type !== 'liability') {
+      throw ApiError.badRequest('Selected account is not a liability account');
+    }
+
+    const payDate = input.payDate || null;
+    const direction = input.direction || 'payment';
+
+    return withTransaction(async (client) => {
+      // 'payment' pays a liability down: money leaves the chosen account, so it must
+      // actually have the funds. 'borrow' records new debt (e.g. a Note Payable): money
+      // comes IN, so there's nothing to check - creditAccount just adds to the balance.
+      if (direction === 'borrow') {
+        await creditAccount(client, branchId, input.payFromAccId, amount);
+      } else {
+        await debitAccount(client, branchId, input.payFromAccId, amount);
+      }
+
+      const row = (
+        await client.query<{ liability_payment_id: number; pay_date: string }>(
+          `INSERT INTO ims.liability_payments
+             (branch_id, liability_acc_id, pay_from_acc_id, amount, pay_date, reference_no, note, user_id, direction)
+           VALUES ($1,$2,$3,$4,COALESCE($5, NOW()),$6,$7,$8,$9)
+           RETURNING liability_payment_id, pay_date::text AS pay_date`,
+          [
+            branchId,
+            input.liabilityAccId,
+            input.payFromAccId,
+            amount,
+            payDate,
+            input.referenceNo || null,
+            input.note || null,
+            userId,
+            direction,
+          ]
+        )
+      ).rows[0];
+      if (!row?.liability_payment_id) throw ApiError.internal('Failed to record liability payment');
+
+      const glLines =
+        direction === 'borrow'
+          ? [
+              { accId: input.payFromAccId, debit: amount, credit: 0, note: 'Cash/bank received' },
+              { accId: input.liabilityAccId, debit: 0, credit: amount, note: 'New liability incurred' },
+            ]
+          : [
+              { accId: input.liabilityAccId, debit: amount, credit: 0, note: 'Pay down liability' },
+              { accId: input.payFromAccId, debit: 0, credit: amount, note: 'Cash/bank paid' },
+            ];
+      await postGl(client, {
+        branchId,
+        txnDate: row.pay_date || payDate,
+        txnType: 'other',
+        refTable: 'liability_payments',
+        refId: Number(row.liability_payment_id),
+        note: `${direction === 'borrow' ? 'New liability' : 'Liability payment'} #${row.liability_payment_id} - ${liabilityAccount.name}`,
+        lines: glLines,
+      });
+
+      return (
+        await client.query(
+          `SELECT * FROM ims.liability_payments WHERE liability_payment_id = $1`,
+          [row.liability_payment_id]
+        )
+      ).rows[0];
+    });
+  },
+
+  async listLiabilityPayments(scope: BranchScope, branchId?: number, range: DateRange = {}) {
+    const effectiveBranchId = branchId ?? scope.branchIds[0];
+    if (!effectiveBranchId) return [];
+    assertBranchAccess(scope, effectiveBranchId);
+    const params: any[] = [effectiveBranchId];
+    let dateFilter = '';
+    if (range.fromDate) {
+      params.push(range.fromDate);
+      dateFilter += ` AND p.pay_date >= $${params.length}`;
+    }
+    if (range.toDate) {
+      params.push(range.toDate);
+      dateFilter += ` AND p.pay_date <= $${params.length}::date + interval '1 day'`;
+    }
+    return queryMany(
+      `SELECT p.*, la.name AS liability_account_name, pa.name AS pay_from_account_name
+         FROM ims.liability_payments p
+         JOIN ims.accounts la ON la.acc_id = p.liability_acc_id
+         JOIN ims.accounts pa ON pa.acc_id = p.pay_from_acc_id
+        WHERE p.branch_id = $1
+          ${dateFilter}
+        ORDER BY p.pay_date DESC, p.liability_payment_id DESC`,
+      params
+    );
+  },
+
+  async deleteLiabilityPayment(id: number, scope: BranchScope) {
+    return withTransaction(async (client) => {
+      const payment = (
+        await client.query<{
+          liability_payment_id: number;
+          branch_id: number;
+          pay_from_acc_id: number;
+          amount: string;
+          direction: string;
+        }>(
+          `SELECT liability_payment_id, branch_id, pay_from_acc_id, amount::text AS amount, direction
+             FROM ims.liability_payments
+            WHERE liability_payment_id = $1
+            FOR UPDATE`,
+          [id]
+        )
+      ).rows[0];
+      if (!payment) throw ApiError.notFound('Liability payment not found');
+      assertBranchAccess(scope, payment.branch_id);
+
+      const amount = roundMoney(Number(payment.amount || 0));
+      // Reverse whichever side the original posting touched: a 'payment' credited the
+      // cash account back out of nothing, so undoing it credits it again; a 'borrow'
+      // added received cash, so undoing it must debit it back out (and can fail with
+      // insufficient funds if that money has since been spent - same as any reversal).
+      if (payment.direction === 'borrow') {
+        await debitAccount(client, payment.branch_id, payment.pay_from_acc_id, amount);
+      } else {
+        await creditAccount(client, payment.branch_id, payment.pay_from_acc_id, amount);
+      }
+
+      await client.query(
+        `DELETE FROM ims.account_transactions
+          WHERE branch_id = $1
+            AND ref_table = 'liability_payments'
+            AND ref_id = $2`,
+        [payment.branch_id, id]
+      );
+
+      // Delete-protection audit (Phase 10 Batch 1, Finding F5): soft-delete
+      // instead of hard-delete - same rationale as the other Finance deletes.
+      await softDeleteById('liability_payments', id, { runner: client });
       return { deleted: true };
     });
   },
@@ -2571,7 +2947,11 @@ export const financeService = {
   },
 
   /* Expense budgets */
-  async listExpenseBudgets(scope: BranchScope, branchId?: number, range: DateRange = {}) {
+  // Budgets are a standing monthly limit, not a dated transaction - unlike
+  // charges/receipts/transfers, they should never be filtered by the page's
+  // From/To Date picker, or a budget created outside that window silently
+  // disappears from "Display" even though it's still active.
+  async listExpenseBudgets(scope: BranchScope, branchId?: number, _range: DateRange = {}) {
     const params: any[] = [];
     let where = 'WHERE 1=1';
     if (branchId) {
@@ -2582,26 +2962,25 @@ export const financeService = {
       params.push(scope.branchIds);
       where += ` AND e.branch_id = ANY($${params.length})`;
     }
-    if (range.fromDate) {
-      const hasCreatedAt = await hasColumn('expense_budgets', 'created_at');
-      if (hasCreatedAt) {
-      params.push(range.fromDate);
-      where += ` AND b.created_at::date >= $${params.length}::date`;
-    }
-    if (range.toDate) {
-      params.push(range.toDate);
-      where += ` AND b.created_at::date <= $${params.length}::date`;
-      }
-    }
 
     return queryMany(
       `SELECT b.*,
               e.name AS expense_name,
               b.fixed_amount AS amount_limit,
-              COALESCE(u.full_name, u.name) AS created_by
+              COALESCE(u.full_name, u.name) AS created_by,
+              COALESCE(spent.amount, 0) AS spent_amount,
+              GREATEST(b.fixed_amount - COALESCE(spent.amount, 0), 0) AS remaining_amount
          FROM ims.expense_budgets b
          JOIN ims.expenses e ON e.exp_id = b.exp_id
          JOIN ims.users u ON u.user_id = b.user_id
+         LEFT JOIN LATERAL (
+           SELECT SUM(c.amount) AS amount
+             FROM ims.expense_charges c
+            WHERE c.exp_id = b.exp_id
+              AND c.branch_id = e.branch_id
+              AND COALESCE(c.is_deleted, 0) = 0
+              AND date_trunc('month', c.charge_date) = date_trunc('month', CURRENT_DATE)
+         ) spent ON TRUE
         ${where}
         ORDER BY b.budget_id DESC
         LIMIT 200`,
@@ -2689,8 +3068,70 @@ export const financeService = {
     );
     if (!budget) throw ApiError.notFound('Expense budget not found');
     assertBranchAccess(scope, budget.branch_id);
-    await queryOne(`DELETE FROM ims.expense_charges WHERE ref_table = 'expense_budgets' AND ref_id = $1`, [id]);
-    await queryOne(`DELETE FROM ims.expense_budgets WHERE budget_id = $1`, [id]);
+
+    // Delete-protection audit (Phase 10 Batch 1, Finding F6): this used to
+    // delete every linked expense_charges row directly, bypassing
+    // deleteExpenseCharge's own "has payments" block AND its GL-balance
+    // reversal - a budget with an already-paid charge could be deleted,
+    // leaving accounts.balance permanently overstated (the same bug class
+    // as the payroll-delete finding elsewhere in this audit). Block if any
+    // linked charge has a payment; otherwise reverse each charge's GL
+    // impact the same way deleteExpenseCharge does before removing it.
+    const linkedCharges = await queryMany<{ charge_id: number }>(
+      `SELECT charge_id FROM ims.expense_charges WHERE ref_table = 'expense_budgets' AND ref_id = $1`,
+      [id]
+    );
+    const chargeIds = linkedCharges.map((row) => Number(row.charge_id));
+    if (chargeIds.length) {
+      const paidCharge = await queryOne<{ exp_payment_id: number }>(
+        `SELECT exp_payment_id FROM ims.expense_payments WHERE exp_ch_id = ANY($1::bigint[]) LIMIT 1`,
+        [chargeIds]
+      );
+      if (paidCharge) {
+        const paymentCount = await queryOne<{ total: string }>(
+          `SELECT COUNT(*)::text AS total FROM ims.expense_payments WHERE exp_ch_id = ANY($1::bigint[])`,
+          [chargeIds]
+        );
+        throw ApiError.conflict('Cannot delete budget: one or more charged periods already have payments recorded.', {
+          code: 'RECORD_HAS_TRANSACTIONS',
+          dependencies: { expense_payments: Number(paymentCount?.total || 0) },
+        });
+      }
+    }
+
+    await withTransaction(async (client) => {
+      for (const chargeId of chargeIds) {
+        const debitRows = (
+          await client.query<{ acc_id: number; debit: string }>(
+            `SELECT acc_id, debit::text AS debit
+               FROM ims.account_transactions
+              WHERE branch_id = $1
+                AND ref_table = 'expense_charges'
+                AND ref_id = $2
+                AND debit > 0`,
+            [budget.branch_id, chargeId]
+          )
+        ).rows;
+        for (const row of debitRows) {
+          await client.query(`UPDATE ims.accounts SET balance = balance - $1 WHERE acc_id = $2 AND branch_id = $3`, [
+            Number(row.debit), Number(row.acc_id), Number(budget.branch_id),
+          ]);
+        }
+        await client.query(
+          `DELETE FROM ims.account_transactions
+            WHERE branch_id = $1
+              AND ref_table = 'expense_charges'
+              AND ref_id = $2`,
+          [budget.branch_id, chargeId]
+        );
+      }
+      // Central Delete Architecture (Phase 7): archive instead of hard
+      // delete, matching deleteExpenseCharge above.
+      for (const chargeId of chargeIds) {
+        await softDeleteById('expense_charges', chargeId, { runner: client });
+      }
+      await softDeleteById('expense_budgets', id, { runner: client });
+    });
   },
 
   async chargeExpenseBudget(input: ExpenseBudgetChargeInput, scope: BranchScope, userId: number) {
@@ -2811,9 +3252,14 @@ export const financeService = {
     const monthEnd = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
 
     return withTransaction(async (client) => {
+      // M09 fix: restrict the stored procedure's branch loop to this caller's
+      // own scope (NULL for admin/global, preserving the prior unscoped
+      // behavior) so a branch-restricted user can no longer create payroll
+      // runs/lines for branches outside their access just by charging their
+      // own branch's salaries.
       const res = (await client.query<{ created: number }>(
-        `SELECT ims.sp_charge_salary($1, $2) AS created`,
-        [input.periodDate, userId]
+        `SELECT ims.sp_charge_salary($1, $2, $3) AS created`,
+        [input.periodDate, userId, scope.isAdmin ? null : scope.branchIds]
       )).rows[0];
 
       const runParams: any[] = [year, month];
@@ -2831,6 +3277,31 @@ export const financeService = {
       )).rows.map((r) => Number(r.payroll_id));
 
       if (runIds.length) {
+        // H4 fix: this function re-charges an already-charged period by deleting
+        // its old GL rows and posting fresh ones below - reverse the old
+        // Payroll Expense balance contribution first, or a re-run double-counts
+        // it. Only debit rows (Payroll Expense) are reversed; Payroll Payable is
+        // deliberately left untouched (see the note further down).
+        const reversalRows = (
+          await client.query<{ branch_id: number; acc_id: number; debit: string }>(
+            `SELECT at.branch_id, at.acc_id, SUM(at.debit)::text AS debit
+               FROM ims.account_transactions at
+               JOIN ims.payroll_lines pl ON pl.branch_id = at.branch_id AND pl.payroll_line_id = at.ref_id
+              WHERE at.ref_table = 'payroll_lines'
+                AND pl.payroll_id = ANY($1::bigint[])
+                AND at.debit > 0
+              GROUP BY at.branch_id, at.acc_id`,
+            [runIds]
+          )
+        ).rows;
+        for (const row of reversalRows) {
+          await client.query(`UPDATE ims.accounts SET balance = balance - $1 WHERE acc_id = $2 AND branch_id = $3`, [
+            Number(row.debit),
+            Number(row.acc_id),
+            Number(row.branch_id),
+          ]);
+        }
+
         await client.query(
           `DELETE FROM ims.account_transactions at
             USING ims.payroll_lines pl
@@ -2872,6 +3343,16 @@ export const financeService = {
               { accId: coa.payrollPayable, debit: 0, credit: amount, note: 'Payroll payable' },
             ],
           });
+          // H4 fix: Payroll Expense is a normal expense account (debit increases
+          // it) with no other code path keeping accounts.balance in sync - add
+          // it here. Payroll Payable is deliberately left untouched: it is one
+          // of the liability accounts the Balance Sheet's ledger-sum fallback
+          // relies on staying at 0 (see the block comment above
+          // createLiabilityAccount in this file).
+          await client.query(
+            `UPDATE ims.accounts SET balance = balance + $1 WHERE acc_id = $2 AND branch_id = $3`,
+            [amount, coa.payrollExpense, branchId]
+          );
         }
       }
 
@@ -3057,9 +3538,30 @@ export const financeService = {
                 AND ref_id = $2`,
             [line.branch_id, payment.emp_payment_id]
           );
+          // F5: soft-delete the payment record itself instead of erasing it.
+          await softDeleteById('employee_payments', Number(payment.emp_payment_id), { runner: client });
         }
 
-        await client.query(`DELETE FROM ims.employee_payments WHERE payroll_line_id = $1`, [line.payroll_line_id]);
+        // Inventory/Payroll audit Finding F1 (accounting-correctness pass):
+        // the payroll_lines GL rows (the actual "Payroll Expense" charge)
+        // were deleted below with no preceding balance reversal, leaving
+        // accounts.balance permanently overstated by the deleted charge's
+        // amount - reverse it first, same pattern deleteExpenseCharge uses.
+        const lineDebits = (await client.query<{ acc_id: number; total_debit: string }>(
+          `SELECT acc_id, SUM(debit)::text AS total_debit
+             FROM ims.account_transactions
+            WHERE branch_id = $1
+              AND ref_table = 'payroll_lines'
+              AND ref_id = $2
+              AND debit > 0
+            GROUP BY acc_id`,
+          [line.branch_id, line.payroll_line_id]
+        )).rows;
+        for (const row of lineDebits) {
+          await client.query(`UPDATE ims.accounts SET balance = balance - $1 WHERE branch_id = $2 AND acc_id = $3`, [
+            Number(row.total_debit), line.branch_id, Number(row.acc_id),
+          ]);
+        }
 
         await client.query(
           `DELETE FROM ims.account_transactions
@@ -3069,14 +3571,16 @@ export const financeService = {
           [line.branch_id, line.payroll_line_id]
         );
 
-        await client.query(`DELETE FROM ims.payroll_lines WHERE payroll_line_id = $1`, [line.payroll_line_id]);
+        // Delete-protection audit (Phase 10 Batch 1, Finding F5): soft-delete
+        // the payroll line/run instead of hard-deleting them.
+        await softDeleteById('payroll_lines', Number(line.payroll_line_id), { runner: client });
 
         const remaining = (await client.query<{ cnt: string }>(
-          `SELECT COUNT(*)::text AS cnt FROM ims.payroll_lines WHERE payroll_id = $1`,
+          `SELECT COUNT(*)::text AS cnt FROM ims.payroll_lines WHERE payroll_id = $1 AND COALESCE(is_deleted, 0) = 0`,
           [line.payroll_id]
         )).rows[0];
         if (!remaining || Number(remaining.cnt) === 0) {
-          await client.query(`DELETE FROM ims.payroll_runs WHERE payroll_id = $1`, [line.payroll_id]);
+          await softDeleteById('payroll_runs', Number(line.payroll_id), { runner: client });
         }
 
         return { deleted: 1 };
@@ -3133,15 +3637,34 @@ export const financeService = {
               AND ref_id = $2`,
           [payment.branch_id, payment.emp_payment_id]
         );
+        // F5: soft-delete the payment record itself instead of erasing it.
+        await softDeleteById('employee_payments', Number(payment.emp_payment_id), { runner: client });
       }
 
-      await client.query(
-        `DELETE FROM ims.employee_payments
-          WHERE payroll_line_id IN (
-            SELECT payroll_line_id FROM ims.payroll_lines WHERE payroll_id = ANY($1::bigint[])
-          )`,
+      // Inventory/Payroll audit Finding F1 (accounting-correctness pass):
+      // same missing reversal as the 'line' branch above, but across every
+      // payroll_lines row in this period - reverse each (branch_id, acc_id)
+      // debit total before the GL rows are removed.
+      const periodDebits = (await client.query<{ branch_id: number; acc_id: number; total_debit: string }>(
+        `SELECT at.branch_id, at.acc_id, SUM(at.debit)::text AS total_debit
+           FROM ims.account_transactions at
+           JOIN ims.payroll_lines pl ON pl.branch_id = at.branch_id AND pl.payroll_line_id = at.ref_id
+          WHERE at.ref_table = 'payroll_lines'
+            AND at.debit > 0
+            AND pl.payroll_id = ANY($1::bigint[])
+          GROUP BY at.branch_id, at.acc_id`,
         [runIds]
-      );
+      )).rows;
+      for (const row of periodDebits) {
+        await client.query(`UPDATE ims.accounts SET balance = balance - $1 WHERE branch_id = $2 AND acc_id = $3`, [
+          Number(row.total_debit), Number(row.branch_id), Number(row.acc_id),
+        ]);
+      }
+
+      const periodLines = (await client.query<{ payroll_line_id: number }>(
+        `SELECT payroll_line_id FROM ims.payroll_lines WHERE payroll_id = ANY($1::bigint[])`,
+        [runIds]
+      )).rows;
 
       await client.query(
         `DELETE FROM ims.account_transactions at
@@ -3153,8 +3676,16 @@ export const financeService = {
         [runIds]
       );
 
-      await client.query(`DELETE FROM ims.payroll_lines WHERE payroll_id = ANY($1::bigint[])`, [runIds]);
-      await client.query(`DELETE FROM ims.payroll_runs WHERE payroll_id = ANY($1::bigint[])`, [runIds]);
+      // Delete-protection audit (Phase 10 Batch 1, Finding F5): soft-delete
+      // every payroll line and run instead of hard-deleting them - payments
+      // are already soft-deleted above, so sp_soft_delete's own dependency
+      // check on payroll_lines/payroll_runs passes cleanly.
+      for (const row of periodLines) {
+        await softDeleteById('payroll_lines', Number(row.payroll_line_id), { runner: client });
+      }
+      for (const runId of runIds) {
+        await softDeleteById('payroll_runs', runId, { runner: client });
+      }
 
       return { deleted: runIds.length };
     });

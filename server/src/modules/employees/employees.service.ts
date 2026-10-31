@@ -1,5 +1,6 @@
 import { queryMany, queryOne } from '../../db/query';
 import { adminQueryMany } from '../../db/adminQuery';
+import { softDeleteById } from '../../db/softDelete';
 import {
   EmployeeInput,
   EmployeeUpdateInput,
@@ -519,21 +520,13 @@ export const employeesService = {
    * Delete employee
    */
   async delete(id: number): Promise<void> {
-    try {
-      await queryOne('DELETE FROM ims.employees WHERE emp_id = $1', [id]);
-    } catch (error: any) {
-      // If employee has dependent records, keep the row and mark inactive.
-      if (error?.code === '23503') {
-        await queryOne(
-          `UPDATE ims.employees
-              SET status = 'inactive'::ims.employment_status_enum
-            WHERE emp_id = $1`,
-          [id]
-        );
-        return;
-      }
-      throw error;
-    }
+    // Central Delete Architecture (Phase 7): archives the employee instead
+    // of a hard delete. payroll/salary/loan/shift-assignment history is
+    // preserved untouched, hidden alongside the employee (policy rows in
+    // 20260923d_phase7_delete_policy.sql). Deactivate (PATCH
+    // /employees/state, targetType: 'employee') remains the separate action
+    // for "still employed but inactive".
+    await softDeleteById('employees', id);
   },
 
   async updateState(input: StateUpdateInput, branchIds?: number[]): Promise<void> {
@@ -597,6 +590,23 @@ export const employeesService = {
     input: ShiftAssignmentInput,
     context: { branchId: number; userId?: number }
   ): Promise<ShiftAssignment> {
+    // LOW-01 fix: this table has no end_date - is_active is the only signal
+    // for "which shift is this employee currently on." Nothing stopped a
+    // second active assignment from being created for the same employee
+    // while an earlier one was still active, leaving two simultaneously
+    // "current" shifts (an overlap). Close out any other active assignment
+    // for this employee first, mirroring the same single-active-row pattern
+    // already used for employee_salary history.
+    if (input.is_active ?? true) {
+      await queryOne(
+        `UPDATE ims.employee_shift_assignments
+            SET is_active = FALSE
+          WHERE emp_id = $1
+            AND branch_id = $2
+            AND is_active = TRUE`,
+        [input.emp_id, context.branchId]
+      );
+    }
     const row = await queryOne<ShiftAssignment>(
       `INSERT INTO ims.employee_shift_assignments
          (branch_id, emp_id, shift_type, effective_date, is_active, created_by)
@@ -650,6 +660,30 @@ export const employeesService = {
       return list.find((row) => row.assignment_id === id) || null;
     }
 
+    // LOW-01 fix: re-activating a row (or repointing it to another employee
+    // while active) through update can create the same overlap createShiftAssignment
+    // guards against. Resolve which employee/branch this row will belong to
+    // after the update, and close out that employee's other active rows first.
+    if (input.is_active === true) {
+      const current = await queryOne<{ emp_id: number; branch_id: number }>(
+        `SELECT emp_id, branch_id FROM ims.employee_shift_assignments WHERE assignment_id = $1`,
+        [id]
+      );
+      const targetEmpId = input.emp_id ?? current?.emp_id;
+      const targetBranchId = current?.branch_id;
+      if (targetEmpId && targetBranchId) {
+        await queryOne(
+          `UPDATE ims.employee_shift_assignments
+              SET is_active = FALSE
+            WHERE emp_id = $1
+              AND branch_id = $2
+              AND is_active = TRUE
+              AND assignment_id <> $3`,
+          [targetEmpId, targetBranchId, id]
+        );
+      }
+    }
+
     values.push(id);
     let where = `assignment_id = $${p++}`;
     if (branchIds && branchIds.length > 0) {
@@ -666,8 +700,14 @@ export const employeesService = {
     );
     if (!row) return null;
 
+    // Pre-existing bug, surfaced while testing LOW-01: assignment_id comes
+    // back from Postgres (bigint) as a JSON string, so the strict === below
+    // against the numeric `id` never matched - every successful update was
+    // reported to the caller as "not found" even though the row was already
+    // correctly updated (same string-vs-number class as prior fixes in
+    // Purchases/Sales item selection this engagement).
     const list = await this.listShiftAssignments(branchIds);
-    return list.find((assignment) => assignment.assignment_id === id) || null;
+    return list.find((assignment) => Number(assignment.assignment_id) === id) || null;
   },
 
   async deleteShiftAssignment(id: number, branchIds?: number[]): Promise<void> {

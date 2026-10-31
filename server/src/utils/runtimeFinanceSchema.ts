@@ -310,7 +310,11 @@ export const ensureRuntimeFinanceSchema = async (): Promise<void> => {
   // Credit due dates for overdue reports.
   await adminQueryMany(`
     ALTER TABLE ims.sales
-      ADD COLUMN IF NOT EXISTS due_date DATE
+      ADD COLUMN IF NOT EXISTS due_date TIMESTAMPTZ
+  `);
+  await adminQueryMany(`
+    ALTER TABLE ims.customers
+      ADD COLUMN IF NOT EXISTS credit_due_at TIMESTAMPTZ
   `);
   await adminQueryMany(`
     ALTER TABLE ims.purchases

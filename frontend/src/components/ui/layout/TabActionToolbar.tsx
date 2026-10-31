@@ -10,7 +10,9 @@ interface QuickAddItem {
 
 interface TabActionToolbarProps {
     title?: string;
-    primaryAction: {
+    // Optional so callers can omit it entirely (e.g. the signed-in user lacks create
+    // permission for this list) instead of rendering a button that would just fail server-side.
+    primaryAction?: {
         label: string;
         onClick: () => void;
     };
@@ -156,14 +158,16 @@ export const TabActionToolbar: React.FC<TabActionToolbarProps> = ({
                     </div>
                 )}
 
-                <button
-                    type="button"
-                    onClick={primaryAction.onClick}
-                    className="flex min-h-11 items-center gap-2 px-5 py-2.5 bg-primary-600 text-white font-bold rounded-xl hover:bg-primary-700 transition-all shadow-lg shadow-primary-500/20 active:scale-95"
-                >
-                    <Plus className="w-5 h-5" aria-hidden="true" />
-                    <span>{primaryAction.label}</span>
-                </button>
+                {primaryAction && (
+                    <button
+                        type="button"
+                        onClick={primaryAction.onClick}
+                        className="flex min-h-11 items-center gap-2 px-5 py-2.5 bg-primary-600 text-white font-bold rounded-xl hover:bg-primary-700 transition-all shadow-lg shadow-primary-500/20 active:scale-95"
+                    >
+                        <Plus className="w-5 h-5" aria-hidden="true" />
+                        <span>{primaryAction.label}</span>
+                    </button>
+                )}
 
                 {quickAddItems.length > 0 && (
                     <ActionDropdown

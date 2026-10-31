@@ -51,7 +51,7 @@ export default function StockAdjustmentsPage() {
         header: 'Date',
         cell: ({ row }) => <span className="font-semibold">{formatDate(String(row.original.adj_date))}</span>,
       },
-      { accessorKey: 'item_names', header: 'Item' },
+      { accessorKey: 'item_names', header: 'Product' },
       {
         accessorKey: 'qty_delta',
         header: 'Qty',
@@ -89,7 +89,7 @@ export default function StockAdjustmentsPage() {
       const res = await inventoryService.listItems({ page: 1, limit: 1000, branchId: activeBranchId ?? undefined });
       setItems(res.data?.items ?? []);
     } catch (err: any) {
-      showToast('error', 'Failed', err?.message || 'Could not load items.');
+      showToast('error', 'Failed', err?.message || 'Could not load products.');
     } finally {
       setItemsLoading(false);
     }
@@ -144,7 +144,7 @@ export default function StockAdjustmentsPage() {
     e.preventDefault();
     if (!editTarget) return;
     if (!editForm.itemId) {
-      showToast('error', 'Validation error', 'Item is required.');
+      showToast('error', 'Validation error', 'Product is required.');
       return;
     }
     if (!Number.isFinite(editForm.quantity) || editForm.quantity < 1) {
@@ -201,7 +201,7 @@ export default function StockAdjustmentsPage() {
     <div className="space-y-4">
       <PageHeader
         title="Stock Adjustments"
-        description="Increase or decrease stock for a single item."
+        description="Increase or decrease stock for a single product."
       />
 
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
@@ -273,14 +273,14 @@ export default function StockAdjustmentsPage() {
         <form onSubmit={submitEdit} className="space-y-5">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2 sm:col-span-2">
-              <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Item *</label>
+              <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Product *</label>
               <select
                 value={editForm.itemId}
                 onChange={(e) => setEditForm((prev) => ({ ...prev, itemId: e.target.value }))}
                 className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-900 outline-none transition-all focus:ring-2 focus:ring-primary-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 required
               >
-                <option value="">{itemsLoading ? 'Loading items...' : 'Select item'}</option>
+                <option value="">{itemsLoading ? 'Loading products...' : 'Select product'}</option>
                 {items.map((it) => (
                   <option key={it.item_id} value={it.item_id}>
                     {it.item_name}

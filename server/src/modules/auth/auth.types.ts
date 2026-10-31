@@ -19,6 +19,10 @@ export interface UserProfile {
   branch_name: string;
   is_active: boolean;
   is_admin: boolean;
+  // Stored separately from the login password. This lets the client retain
+  // the user's existing lock after an idle logout without retaining a stale
+  // browser lock-screen marker.
+  has_lock: boolean;
 }
 
 export interface UserWithPermissions {
@@ -68,3 +72,8 @@ export interface LockSetInput {
 export interface LockVerifyInput {
   password: string;
 }
+
+// server/src/modules/auth/auth.types.ts
+export type VerifyLoginPasswordInput = {
+  password: string;
+};

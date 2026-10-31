@@ -12,14 +12,17 @@ export interface Customer {
   is_active: boolean;
   credit_allowed?: boolean;
   credit_days?: number;
+  credit_due_at?: string | null;
+  credit_limit?: number | null;
   balance: number;
   open_balance?: number;
   remaining_balance?: number;
   registered_date?: string;
+  has_transactions?: boolean;
 }
 
 export const customerService = {
-  async list(params?: { search?: string; fromDate?: string; toDate?: string; branchId?: number; page?: number; limit?: number }) {
+  async list(params?: { search?: string; fromDate?: string; toDate?: string; branchId?: number; page?: number; limit?: number; customerType?: 'regular' | 'one-time' }) {
     const qsParts: string[] = [];
     if (params?.search) qsParts.push(`search=${encodeURIComponent(params.search)}`);
     if (params?.fromDate) qsParts.push(`fromDate=${encodeURIComponent(params.fromDate)}`);
@@ -27,6 +30,7 @@ export const customerService = {
     if (params?.branchId) qsParts.push(`branchId=${params.branchId}`);
     if (params?.page) qsParts.push(`page=${params.page}`);
     if (params?.limit) qsParts.push(`limit=${params.limit}`);
+    if (params?.customerType) qsParts.push(`customerType=${params.customerType}`);
     const qs = qsParts.length ? `?${qsParts.join('&')}` : '';
     return apiClient.get<{ customers: Customer[]; pagination?: { total: number; page: number; limit: number; totalPages: number } }>(
       `${API.CUSTOMERS.LIST}${qs}`
@@ -48,6 +52,8 @@ export const customerService = {
       isActive: data.is_active,
       creditAllowed: data.credit_allowed,
       creditDays: data.credit_days,
+      creditDueAt: data.credit_due_at,
+      creditLimit: data.credit_limit,
       remainingBalance: data.remaining_balance,
     });
   },
@@ -63,6 +69,8 @@ export const customerService = {
       isActive: data.is_active,
       creditAllowed: data.credit_allowed,
       creditDays: data.credit_days,
+      creditDueAt: data.credit_due_at,
+      creditLimit: data.credit_limit,
       remainingBalance: data.remaining_balance,
       editReason: data.edit_reason,
     });

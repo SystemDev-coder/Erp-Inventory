@@ -1,11 +1,11 @@
-import { Response } from 'express';
-import { authService } from './auth.service';
-import { ApiResponse } from '../../utils/ApiResponse';
-import { asyncHandler } from '../../utils/asyncHandler';
-import { AuthRequest } from '../../middlewares/requireAuth';
-import { getCookieOptions, getClearCookieOptions } from '../../config/cookie';
-import { config } from '../../config/env';
-import { ApiError } from '../../utils/ApiError';
+import { Response } from "express";
+import { authService } from "./auth.service";
+import { ApiResponse } from "../../utils/ApiResponse";
+import { asyncHandler } from "../../utils/asyncHandler";
+import { AuthRequest } from "../../middlewares/requireAuth";
+import { getCookieOptions, getClearCookieOptions } from "../../config/cookie";
+import { config } from "../../config/env";
+import { ApiError } from "../../utils/ApiError";
 import {
   registerSchema,
   loginSchema,
@@ -13,22 +13,26 @@ import {
   resetPasswordSchema,
   lockSetSchema,
   lockVerifySchema,
-} from './auth.schemas';
-import { resolveBranchScope } from '../../utils/branchScope';
-import { queryMany } from '../../db/query';
+  verifyLoginPasswordSchema,
+} from "./auth.schemas";
+import { resolveBranchScope } from "../../utils/branchScope";
+import { queryMany } from "../../db/query";
 
 export class AuthController {
   register = asyncHandler(async (req: AuthRequest, res: Response) => {
     const input = registerSchema.parse(req.body);
     const { tokens, user } = await authService.register(input);
 
-    // Set refresh token cookie
     res.cookie(config.cookie.name, tokens.refreshToken, getCookieOptions());
 
-    return ApiResponse.created(res, {
-      accessToken: tokens.accessToken,
-      user,
-    }, 'Registration successful');
+    return ApiResponse.created(
+      res,
+      {
+        accessToken: tokens.accessToken,
+        user,
+      },
+      "Registration successful",
+    );
   });
 
   login = asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -36,16 +40,19 @@ export class AuthController {
     const { tokens, user } = await authService.login({
       ...input,
       ip: req.ip,
-      userAgent: req.get('user-agent') || null,
+      userAgent: req.get("user-agent") || null,
     });
 
-    // Set refresh token cookie
     res.cookie(config.cookie.name, tokens.refreshToken, getCookieOptions());
 
-    return ApiResponse.success(res, {
-      accessToken: tokens.accessToken,
-      user,
-    }, 'Login successful');
+    return ApiResponse.success(
+      res,
+      {
+        accessToken: tokens.accessToken,
+        user,
+      },
+      "Login successful",
+    );
   });
 
   refresh = asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -54,20 +61,20 @@ export class AuthController {
     if (!refreshToken) {
       return res.status(401).json({
         success: false,
-        message: 'Refresh token required',
+        message: "Refresh token required",
       });
     }
 
     const accessToken = await authService.refresh(refreshToken);
 
-    return ApiResponse.success(res, { accessToken }, 'Token refreshed');
+    return ApiResponse.success(res, { accessToken }, "Token refreshed");
   });
 
   me = asyncHandler(async (req: AuthRequest, res: Response) => {
     if (!req.user) {
       return res.status(401).json({
         success: false,
-        message: 'Unauthorized',
+        message: "Unauthorized",
       });
     }
 
@@ -80,18 +87,21 @@ export class AuthController {
     if (!req.user) {
       return res.status(401).json({
         success: false,
-        message: 'Unauthorized',
+        message: "Unauthorized",
       });
     }
 
     const scope = await resolveBranchScope(req);
-    const branches = await queryMany<{ branch_id: number; branch_name: string }>(
+    const branches = await queryMany<{
+      branch_id: number;
+      branch_name: string;
+    }>(
       `SELECT branch_id, branch_name
          FROM ims.branches
         WHERE branch_id = ANY($1)
           AND is_active = TRUE
         ORDER BY branch_name`,
-      [scope.branchIds]
+      [scope.branchIds],
     );
 
     return ApiResponse.success(res, {
@@ -106,10 +116,9 @@ export class AuthController {
       await authService.logout(req.user.userId);
     }
 
-    // Clear refresh token cookie (no maxAge to avoid Express 5 deprecation)
     res.clearCookie(config.cookie.name, getClearCookieOptions());
 
-    return ApiResponse.success(res, null, 'Logged out successfully');
+    return ApiResponse.success(res, null, "Logged out successfully");
   });
 
   forgotPassword = asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -118,42 +127,62 @@ export class AuthController {
 
     if (config.resetPassword.devReturnCode && result.resetCode) {
       return ApiResponse.success(res, {
-        message: 'Password reset code generated',
+        message: "Password reset code generated",
         resetCode: result.resetCode,
       });
     }
 
-    return ApiResponse.success(res, null, 'If the account exists, a reset code has been sent');
+    return ApiResponse.success(
+      res,
+      null,
+      "If the account exists, a reset code has been sent",
+    );
   });
 
   resetPassword = asyncHandler(async (req: AuthRequest, res: Response) => {
     const input = resetPasswordSchema.parse(req.body);
     await authService.resetPassword(input);
 
-    return ApiResponse.success(res, null, 'Password reset successfully');
+    return ApiResponse.success(res, null, "Password reset successfully");
   });
 
   setLockPassword = asyncHandler(async (req: AuthRequest, res: Response) => {
     const userId = req.user?.userId;
-    if (!userId) throw ApiError.unauthorized('User required');
+    if (!userId) throw ApiError.unauthorized("User required");
     const input = lockSetSchema.parse(req.body);
     await authService.setLockPassword(userId, input);
-    return ApiResponse.success(res, null, 'Lock password saved');
+    return ApiResponse.success(res, null, "Lock password saved");
   });
 
   verifyLockPassword = asyncHandler(async (req: AuthRequest, res: Response) => {
     const userId = req.user?.userId;
-    if (!userId) throw ApiError.unauthorized('User required');
+    if (!userId) throw ApiError.unauthorized("User required");
     const input = lockVerifySchema.parse(req.body);
     await authService.verifyLockPassword(userId, input);
-    return ApiResponse.success(res, null, 'Lock verified');
+    return ApiResponse.success(res, null, "Lock verified");
   });
+
+  /**
+   * POST /api/auth/verify-login-password
+   * Verifies the user's ACCOUNT password (not the lock password) so the
+   * Lock screen's "Forgot lock password" flow can reset it without logging
+   * the user out.
+   */
+  verifyLoginPassword = asyncHandler(
+    async (req: AuthRequest, res: Response) => {
+      const userId = req.user?.userId;
+      if (!userId) throw ApiError.unauthorized("User required");
+      const input = verifyLoginPasswordSchema.parse(req.body);
+      await authService.verifyUserPassword(userId, input);
+      return ApiResponse.success(res, { verified: true }, "Password verified");
+    },
+  );
 
   clearLockPassword = asyncHandler(async (req: AuthRequest, res: Response) => {
     const userId = req.user?.userId;
-    if (!userId) throw ApiError.unauthorized('User required');
+    if (!userId) throw ApiError.unauthorized("User required");
     await authService.clearLockPassword(userId);
-    return ApiResponse.success(res, null, 'Lock cleared');
+    return ApiResponse.success(res, null, "Lock cleared");
   });
 }
 

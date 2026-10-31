@@ -54,6 +54,9 @@ export const saleSchema = z.object({
   payFromAccId: z.coerce.number().int().positive().optional(),
   paidAmount: z.coerce.number().nonnegative().optional(),
   dueDate: z.string().optional().nullable(),
+  // Present when this sale was rung up through the POS screen - ties it to the
+  // open register/shift it was sold under (server/src/modules/shifts).
+  posShiftId: z.coerce.number().int().positive().optional(),
 });
 
 export const saleUpdateSchema = z.object({

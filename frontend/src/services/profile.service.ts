@@ -8,6 +8,7 @@ export interface Profile {
   phone?: string | null;
   role_id?: number | null;
   role_name?: string | null;
+  created_at?: string;
 }
 
 export const profileService = {

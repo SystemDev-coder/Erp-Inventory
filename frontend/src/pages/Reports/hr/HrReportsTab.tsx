@@ -5,6 +5,8 @@ import { hrReportsService } from '../../../services/reports/hrReports.service';
 import type { DateRange, ModalReportState } from '../types';
 import { formatCurrency, formatDateOnly, formatDateTime, toRecordRows, defaultReportRange, withReportTruncation, type ReportTruncationMeta } from '../reportUtils';
 import { useBranch } from '../../../context/BranchContext';
+import { useLanguage } from '../../../context/LanguageContext';
+import type { TranslationKey } from '../../../translations';
 
 type HrCardId =
   | 'employee-list'
@@ -20,6 +22,22 @@ const hrCards: Array<{ id: HrCardId; title: string; hint: string }> = [
   { id: 'salary-payments', title: 'Salary Payments', hint: 'Date range + Show / All' },
   { id: 'payroll-by-month', title: 'Payroll by Month', hint: 'Between two dates' },
 ];
+
+const HR_CARD_TITLE_KEYS: Record<HrCardId, TranslationKey> = {
+  'employee-list': 'rcard_employee_list_title',
+  'payroll-summary': 'rcard_payroll_summary_title',
+  'payroll-employee-detail': 'rcard_payroll_employee_detail_title',
+  'salary-payments': 'rcard_salary_payments_title',
+  'payroll-by-month': 'rcard_payroll_by_month_title',
+};
+
+const HR_CARD_HINT_KEYS: Record<HrCardId, TranslationKey> = {
+  'employee-list': 'hint_dropdown_show_all',
+  'payroll-summary': 'hint_between_two_dates',
+  'payroll-employee-detail': 'hint_payroll_detail',
+  'salary-payments': 'hint_date_range_show_all',
+  'payroll-by-month': 'hint_between_two_dates',
+};
 
 const employeeListColumns: ReportColumn<Record<string, unknown>>[] = [
   { key: 'emp_id', header: 'Emp #' },
@@ -97,6 +115,7 @@ export function HrReportsTab({ onOpenModal }: Props) {
     onOpenModal(withReportTruncation(report, meta, legacy));
 
   const { activeBranchId } = useBranch();
+  const { t } = useLanguage();
   const [expandedCardKey, setExpandedCardKey] = useState<string | null>(null);
   const [loadingCardId, setLoadingCardId] = useState<HrCardId | null>(null);
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
@@ -477,8 +496,8 @@ export function HrReportsTab({ onOpenModal }: Props) {
           className="flex w-full items-center justify-between border-b border-slate-200 bg-gradient-to-r from-primary-900 to-primary-700 px-5 py-4 text-left text-white"
         >
           <div>
-            <p className="text-xl font-semibold leading-tight">{card.title}</p>
-            <p className="mt-1 text-xs font-medium text-white/85">{card.hint}</p>
+            <p className="text-xl font-semibold leading-tight">{t(HR_CARD_TITLE_KEYS[card.id])}</p>
+            <p className="mt-1 text-xs font-medium text-white/85">{t(HR_CARD_HINT_KEYS[card.id])}</p>
           </div>
           <ChevronDown className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
         </button>

@@ -15,6 +15,13 @@ export interface Shift {
   closing_cash: number;
   status: 'open' | 'closed' | 'void';
   note: string | null;
+  // Cash payments taken on POS sales linked to this shift (see ims.sales.pos_shift_id),
+  // added to opening_cash - i.e. "what should be in the drawer right now". Only
+  // meaningful for a shift used as a POS register; always 0 for a plain Employees >
+  // Shifts session with no linked sales, so this is safe to compute unconditionally.
+  expected_cash: number;
+  // closing_cash - expected_cash, only meaningful once the shift is closed.
+  over_short: number;
 }
 
 type ShiftRow = {
@@ -29,21 +36,43 @@ type ShiftRow = {
   closing_cash: string;
   status: 'open' | 'closed' | 'void';
   note: string | null;
+  cash_paid: string;
 };
 
-const mapShift = (row: ShiftRow): Shift => ({
-  shift_id: Number(row.shift_id),
-  branch_id: Number(row.branch_id),
-  branch_name: row.branch_name,
-  user_id: Number(row.user_id),
-  username: row.username,
-  opened_at: row.opened_at,
-  closed_at: row.closed_at,
-  opening_cash: Number(row.opening_cash || 0),
-  closing_cash: Number(row.closing_cash || 0),
-  status: row.status,
-  note: row.note,
-});
+// "Cash" accounts are identified by name convention (e.g. "Cash @ Salaam Bank"), the
+// same way SaleCreate.tsx already distinguishes them for display - there's no explicit
+// payment-method column anywhere in this schema.
+const CASH_PAID_SUBQUERY = `
+  COALESCE((
+    SELECT SUM(sp.amount_paid)
+      FROM ims.sale_payments sp
+      JOIN ims.sales sl ON sl.sale_id = sp.sale_id
+      JOIN ims.accounts a ON a.acc_id = sp.acc_id
+     WHERE sl.pos_shift_id = s.shift_id
+       AND a.name ILIKE 'cash%'
+  ), 0)::text AS cash_paid
+`;
+
+const mapShift = (row: ShiftRow): Shift => {
+  const openingCash = Number(row.opening_cash || 0);
+  const closingCash = Number(row.closing_cash || 0);
+  const expectedCash = openingCash + Number(row.cash_paid || 0);
+  return {
+    shift_id: Number(row.shift_id),
+    branch_id: Number(row.branch_id),
+    branch_name: row.branch_name,
+    user_id: Number(row.user_id),
+    username: row.username,
+    opened_at: row.opened_at,
+    closed_at: row.closed_at,
+    opening_cash: openingCash,
+    closing_cash: closingCash,
+    status: row.status,
+    note: row.note,
+    expected_cash: expectedCash,
+    over_short: row.status === 'closed' ? closingCash - expectedCash : 0,
+  };
+};
 
 const getShiftById = async (id: number): Promise<Shift | null> => {
   const row = await queryOne<ShiftRow>(
@@ -58,7 +87,8 @@ const getShiftById = async (id: number): Promise<Shift | null> => {
         s.opening_cash::text,
         s.closing_cash::text,
         s.status::text AS status,
-        s.note
+        s.note,
+        ${CASH_PAID_SUBQUERY}
        FROM ims.shifts s
        LEFT JOIN ims.users u ON u.user_id = s.user_id
        LEFT JOIN ims.branches b ON b.branch_id = s.branch_id
@@ -108,7 +138,8 @@ export const shiftsService = {
           s.opening_cash::text,
           s.closing_cash::text,
           s.status::text AS status,
-          s.note
+          s.note,
+          ${CASH_PAID_SUBQUERY}
          FROM ims.shifts s
          LEFT JOIN ims.users u ON u.user_id = s.user_id
          LEFT JOIN ims.branches b ON b.branch_id = s.branch_id

@@ -11,6 +11,7 @@ export interface PurchaseOrderSummaryRow {
   total: number;
   paid_amount: number;
   outstanding_amount: number;
+  supplier_unallocated_payment: number;
   payment_status: string;
   status: string;
 }
@@ -46,6 +47,7 @@ export interface PurchasePaymentStatusRow {
   total: number;
   paid_amount: number;
   outstanding_amount: number;
+  supplier_unallocated_payment: number;
   payment_status: string;
   status: string;
 }
@@ -107,6 +109,7 @@ export interface CreditOverduePurchaseRow {
   appointment_date: string;
   days_overdue: number;
   total: number;
+  supplier_unallocated_payment: number;
 }
 
 export interface PurchaseOptionsResponse {

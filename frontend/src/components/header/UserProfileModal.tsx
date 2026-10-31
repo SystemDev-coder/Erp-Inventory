@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Modal } from '../ui/modal/Modal';
 import { profileService, Profile } from '../../services/profile.service';
 import { useToast } from '../ui/toast/Toast';
 import { useAuth } from '../../context/AuthContext';
+import { useLanguage } from '../../context/LanguageContext';
 
 interface Props {
   isOpen: boolean;
@@ -13,18 +14,36 @@ interface Props {
 export function UserProfileModal({ isOpen, onClose, initial }: Props) {
   const { showToast } = useToast();
   const { setUserState } = useAuth();
+  const { t } = useLanguage();
   const [form, setForm] = useState<Partial<Profile>>({
     name: initial?.name || '',
     username: initial?.username || '',
     phone: initial?.phone || '',
+    email: initial?.email || '',
   });
   const [passwords, setPasswords] = useState({ currentPassword: '', newPassword: '' });
   const [loading, setLoading] = useState(false);
 
+  // The user object from AuthContext doesn't carry phone/email, so re-fetch the full
+  // profile every time the modal opens instead of relying on the stale `initial` prop.
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    (async () => {
+      const res = await profileService.get();
+      if (!cancelled && res.success && res.data?.profile) {
+        const p = res.data.profile;
+        setForm({ name: p.name || '', username: p.username || '', phone: p.phone || '', email: p.email || '' });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
+
   const submit = async () => {
     setLoading(true);
     const res = await profileService.update(form);
-    setLoading(false);
     if (res.success && res.data?.profile) {
       setUserState({
         ...res.data.profile,
@@ -54,10 +73,10 @@ export function UserProfileModal({ isOpen, onClose, initial }: Props) {
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Edit profile" size="md">
+    <Modal isOpen={isOpen} onClose={onClose} title={t('edit_profile')} size="md">
       <div className="space-y-4">
         <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-200">
-          Name
+          {t('full_name')}
           <input
             className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
             value={form.name || ''}
@@ -66,7 +85,7 @@ export function UserProfileModal({ isOpen, onClose, initial }: Props) {
           />
         </label>
         <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-200">
-          Username
+          {t('username')}
           <input
             className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
             value={form.username || ''}
@@ -75,7 +94,17 @@ export function UserProfileModal({ isOpen, onClose, initial }: Props) {
           />
         </label>
         <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-200">
-          Phone
+          {t('email')}
+          <input
+            type="email"
+            className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
+            value={form.email || ''}
+            onChange={(e) => setForm({ ...form, email: e.target.value })}
+            placeholder="name@example.com"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-200">
+          {t('phone')}
           <input
             className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
             value={form.phone || ''}
@@ -85,7 +114,7 @@ export function UserProfileModal({ isOpen, onClose, initial }: Props) {
         </label>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-200">
-            Current password
+            {t('current_password')}
             <input
               type="password"
               className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
@@ -95,7 +124,7 @@ export function UserProfileModal({ isOpen, onClose, initial }: Props) {
             />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 dark:text-slate-200">
-            New password
+            {t('new_password')}
             <input
               type="password"
               className="rounded-lg border px-3 py-2 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
@@ -111,7 +140,7 @@ export function UserProfileModal({ isOpen, onClose, initial }: Props) {
             onClick={onClose}
             className="px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200"
           >
-            Cancel
+            {t('cancel')}
           </button>
           <button
             type="button"
@@ -119,7 +148,7 @@ export function UserProfileModal({ isOpen, onClose, initial }: Props) {
             disabled={loading}
             className="px-5 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50"
           >
-            Save
+            {t('save_changes')}
           </button>
         </div>
       </div>
