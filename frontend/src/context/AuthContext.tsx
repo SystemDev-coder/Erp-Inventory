@@ -54,9 +54,24 @@ export function AuthProvider({ children }: AuthProviderProps) {
         return;
       }
       if (lockedInfo) {
-        // Keep user data minimal while locked
+        // The durable lock state belongs to the server. A browser's app_lock
+        // marker only means that this tab is currently on the lock screen;
+        // it can be stale after an idle logout, an app upgrade, or another
+        // device changing the lock password. Hydrate it from /me before the
+        // Lock page decides whether to show Unlock or Set Lock Password.
         const response = await authService.getCurrentUser();
-        if (response.success && response.data) setUser(response.data.user);
+        if (response.success && response.data) {
+          const freshUser = response.data.user;
+          const hydratedLock = {
+            ...lockedInfo,
+            identifier: lockedInfo.identifier || freshUser.username,
+            name: lockedInfo.name || freshUser.name,
+            hasLock: freshUser.has_lock === true,
+          };
+          setUser(freshUser);
+          setLockedInfo(hydratedLock);
+          localStorage.setItem('app_lock', JSON.stringify(hydratedLock));
+        }
         setIsLoading(false);
         return;
       }
@@ -145,7 +160,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       // The API tells us whether this person already has a lock password.
       // Do not infer it from localStorage: idle logout intentionally clears
       // only that browser marker, not the user's saved lock password.
-      hasLock: user.has_lock,
+      hasLock: user.has_lock === true,
       lockedAt: Date.now(),
     };
     localStorage.setItem('app_lock', JSON.stringify(payload));

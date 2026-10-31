@@ -437,6 +437,14 @@ const Lock = () => {
   const isCreating = useMemo(() => !isSetup, [isSetup]);
   const busy = saving || submitting;
 
+  // `lockedInfo` is a browser marker and can have been written by an older
+  // client. AuthContext refreshes `user` from /api/auth/me while this page is
+  // mounting; once that authoritative profile says a lock exists, never show
+  // the setup form merely because the local marker was stale.
+  useEffect(() => {
+    if (user?.has_lock === true) setIsSetup(true);
+  }, [user?.has_lock]);
+
   useEffect(() => {
     const timer = setTimeout(() => setIsBootstrapping(false), 250);
     return () => clearTimeout(timer);
