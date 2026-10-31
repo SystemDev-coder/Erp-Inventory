@@ -1,8 +1,46 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useAuth } from "../context/AuthContext";
 
-const DEFAULT_TIMEOUT_MS = 30 * 1000; // 30 il-biriqsi — TIJAABO KALIYA
+const DEFAULT_TIMEOUT_MS = 60 * 1000;
+const LOCKED_SESSION_TIMEOUT_MS = 10 * 60 * 1000;
 const LAST_ACTIVITY_KEY = "lastActivityTime";
+const APP_LOCK_KEY = "app_lock";
+
+const readLockTimestamp = (): number | null => {
+  try {
+    const raw = localStorage.getItem(APP_LOCK_KEY);
+    if (!raw) return null;
+    const lockedAt = Number(JSON.parse(raw)?.lockedAt || 0);
+    return Number.isFinite(lockedAt) && lockedAt > 0 ? lockedAt : null;
+  } catch {
+    return null;
+  }
+};
+
+const getOrSetLockTimestamp = (): number => {
+  const existingTimestamp = readLockTimestamp();
+  if (existingTimestamp) return existingTimestamp;
+
+  // Locks created before this timeout existed do not have a timestamp. Give
+  // those legacy locks a one-time start point so a reload cannot keep
+  // extending the ten-minute window indefinitely.
+  const startedAt = Date.now();
+  try {
+    const raw = localStorage.getItem(APP_LOCK_KEY);
+    const existing = raw ? JSON.parse(raw) : {};
+    localStorage.setItem(
+      APP_LOCK_KEY,
+      JSON.stringify({
+        ...(existing && typeof existing === "object" ? existing : {}),
+        lockedAt: startedAt,
+      }),
+    );
+  } catch {
+    // The current tab still enforces the timeout even if storage is corrupt
+    // or unavailable; AuthContext will clear any stale lock on logout.
+  }
+  return startedAt;
+};
 
 /**
  * Idle LOCK (not logout): after `timeoutMs` of no user activity, lock the app
@@ -13,7 +51,7 @@ const LAST_ACTIVITY_KEY = "lastActivityTime";
  * to change — only the behavior is now "lock" instead of "logout".
  */
 export function useInactivityLogout(timeoutMs: number = DEFAULT_TIMEOUT_MS) {
-  const { isAuthenticated, isLocked, lock } = useAuth();
+  const { isAuthenticated, isLocked, lock, logout } = useAuth();
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearTimer = useCallback(() => {
@@ -91,4 +129,52 @@ export function useInactivityLogout(timeoutMs: number = DEFAULT_TIMEOUT_MS) {
       clearTimer();
     };
   }, [clearTimer, handleLock, isAuthenticated, isLocked, resetTimer, timeoutMs]);
+
+  // A locked page must not keep a valid refresh token forever. The timestamp
+  // is persisted by AuthContext so reloads and other tabs share the same
+  // ten-minute limit. Focus/visibility checks cover paused background timers.
+  useEffect(() => {
+    if (!isAuthenticated || !isLocked) return;
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let loggingOut = false;
+
+    const endLockedSession = () => {
+      if (loggingOut) return;
+      loggingOut = true;
+      void logout().finally(() => {
+        window.location.replace("/signin");
+      });
+    };
+
+    const scheduleLogout = () => {
+      if (timer) clearTimeout(timer);
+      const startedAt = getOrSetLockTimestamp();
+      const remaining = LOCKED_SESSION_TIMEOUT_MS - (Date.now() - startedAt);
+      if (remaining <= 0) {
+        endLockedSession();
+        return;
+      }
+      timer = setTimeout(endLockedSession, remaining);
+    };
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === APP_LOCK_KEY) scheduleLogout();
+    };
+    const onVisibilityOrFocus = () => {
+      if (document.visibilityState === "visible") scheduleLogout();
+    };
+
+    scheduleLogout();
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("focus", onVisibilityOrFocus);
+    document.addEventListener("visibilitychange", onVisibilityOrFocus);
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", onVisibilityOrFocus);
+      document.removeEventListener("visibilitychange", onVisibilityOrFocus);
+    };
+  }, [isAuthenticated, isLocked, logout]);
 }

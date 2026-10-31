@@ -27,6 +27,8 @@ export default function NotificationDropdown() {
   const { showToast } = useToast();
   const navigate = useNavigate();
   const { activeBranchId } = useBranch();
+  const knownNotificationIdsRef = useRef<Set<number>>(new Set());
+  const initializedScopeRef = useRef<string | null>(null);
 
   const loadNotifications = useCallback(
     async (withLoader: boolean, unreadOnly: boolean) => {
@@ -38,8 +40,35 @@ export default function NotificationDropdown() {
         branchId: activeBranchId ?? undefined,
       });
       if (res.success && res.data) {
-        setNotifications(res.data.notifications ?? []);
+        const nextNotifications = res.data.notifications ?? [];
+        const scopeKey = String(activeBranchId ?? 'all');
+        const hasInitializedScope = initializedScopeRef.current === scopeKey;
+        const newlyDue = hasInitializedScope
+          ? nextNotifications.filter((notification) => {
+              const notificationType = String(notification.meta?.type ?? '');
+              return (
+                !knownNotificationIdsRef.current.has(notification.notification_id) &&
+                (notificationType === 'credit_sale_due' || notificationType === 'credit_purchase_due')
+              );
+            })
+          : [];
+
+        for (const notification of nextNotifications) {
+          knownNotificationIdsRef.current.add(notification.notification_id);
+        }
+        // The dropdown fetches only the newest rows. Retain a bounded history
+        // so an older row never produces a duplicate deadline toast later.
+        if (knownNotificationIdsRef.current.size > 100) {
+          knownNotificationIdsRef.current = new Set(
+            Array.from(knownNotificationIdsRef.current).slice(-100)
+          );
+        }
+        initializedScopeRef.current = scopeKey;
+        setNotifications(nextNotifications);
         setUnreadCount(res.data.unreadCount ?? 0);
+        for (const notification of newlyDue) {
+          showToast('warning', notification.title, notification.message);
+        }
       } else if (withLoader) {
         showToast('error', 'Load failed', res.error ?? res.message ?? 'Could not load notifications');
       }
@@ -49,7 +78,7 @@ export default function NotificationDropdown() {
   );
 
   // Keeps the background poll's "Only Unread" value live without needing to restart
-  // the interval on every toggle - otherwise a 60s-old closure silently overwrites the
+  // the interval on every toggle - otherwise an old closure silently overwrites the
   // list with read+unread items while the toggle UI still shows ON.
   const onlyUnreadRef = useRef(onlyUnread);
   useEffect(() => {
@@ -63,7 +92,7 @@ export default function NotificationDropdown() {
     void loadNotifications(false, onlyUnreadRef.current);
     const timer = setInterval(() => {
       void loadNotifications(false, onlyUnreadRef.current);
-    }, 60000);
+    }, 5000);
 
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps

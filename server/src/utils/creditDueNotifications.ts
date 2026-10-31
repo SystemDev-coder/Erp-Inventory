@@ -1,8 +1,9 @@
 import { PoolClient } from 'pg';
-import { query } from '../db/query';
+import { queryMany } from '../db/query';
+import { withTransaction } from '../db/withTx';
 
 const notifyBranchUsers = async (
-  client: PoolClient | null,
+  client: PoolClient,
   params: {
     branchId: number;
     title: string;
@@ -11,34 +12,22 @@ const notifyBranchUsers = async (
     meta: Record<string, unknown>;
   }
 ) => {
-  // C9 fix: when called with a shared `client` (i.e. embedded in a caller's own
-  // business transaction, e.g. a future purchase/sale save that also wants to
-  // refresh due-date notifications inline), a failed INSERT here would abort
-  // that whole transaction the same way an unprotected low-stock notification
-  // write once did (see stockAlerts.ts#syncLowStockNotifications and the H4/C9
-  // fix history). No current caller passes a client - notifications.service.ts
-  // always calls this standalone - but the parameter exists specifically to
-  // support that usage, so it needs the same savepoint isolation now rather
-  // than waiting for it to actually break something. The standalone path
-  // (client is null) doesn't need a savepoint: query() is its own independent,
-  // auto-committing statement with nothing shared to poison.
-  if (client) {
-    await client.query('SAVEPOINT sp_credit_due_notify');
-    try {
-      await insertCreditDueNotification(client, params);
-      await client.query('RELEASE SAVEPOINT sp_credit_due_notify');
-    } catch (error) {
-      await client.query('ROLLBACK TO SAVEPOINT sp_credit_due_notify');
-      console.error('ensureCreditDueNotifications failed to write a notification:', (error as Error)?.message);
-    }
-    return;
+  // A notification failure must not abort the branch-wide synchronisation:
+  // one broken recipient row should not prevent later due alerts from being
+  // created. The savepoint keeps that failure isolated in the shared
+  // transaction used by both the scheduler and notification-list endpoint.
+  await client.query('SAVEPOINT sp_credit_due_notify');
+  try {
+    await insertCreditDueNotification(client, params);
+    await client.query('RELEASE SAVEPOINT sp_credit_due_notify');
+  } catch (error) {
+    await client.query('ROLLBACK TO SAVEPOINT sp_credit_due_notify');
+    console.error('ensureCreditDueNotifications failed to write a notification:', (error as Error)?.message);
   }
-
-  await insertCreditDueNotification(null, params);
 };
 
 const insertCreditDueNotification = async (
-  client: PoolClient | null,
+  client: PoolClient,
   params: {
     branchId: number;
     title: string;
@@ -47,11 +36,7 @@ const insertCreditDueNotification = async (
     meta: Record<string, unknown>;
   }
 ) => {
-  const exec = client
-    ? (sql: string, values: unknown[]) => client.query(sql, values)
-    : (sql: string, values: unknown[]) => query(sql, values);
-
-  await exec(
+  await client.query(
     `INSERT INTO ims.notifications (branch_id, user_id, title, message, category, link, meta)
      SELECT
        $1,
@@ -87,19 +72,15 @@ const insertCreditDueNotification = async (
   );
 };
 
-export const ensureCreditDueNotifications = async (
+const ensureCreditDueNotificationsWithClient = async (
   branchId: number,
-  client?: PoolClient
+  client: PoolClient
 ) => {
   if (!branchId) return;
 
   const runQuery = async <T extends Record<string, unknown>>(sql: string, values: unknown[]) => {
-    if (client) {
-      const res = await client.query<T>(sql, values);
-      return res.rows;
-    }
-    const { queryMany } = await import('../db/query');
-    return queryMany<T>(sql, values);
+    const res = await client.query<T>(sql, values);
+    return res.rows;
   };
 
   const overdueSales = await runQuery<{
@@ -129,7 +110,7 @@ export const ensureCreditDueNotifications = async (
 
   for (const row of overdueSales) {
     const name = row.customer_name || 'Customer';
-    await notifyBranchUsers(client ?? null, {
+    await notifyBranchUsers(client, {
       branchId,
       title: `Credit Due: Sale #${row.sale_id}`,
       message: `${name} — sale #${row.sale_id} was due on ${row.due_date} (${row.days_overdue} day(s) overdue). Amount: ${Number(row.total).toFixed(2)}.`,
@@ -170,7 +151,7 @@ export const ensureCreditDueNotifications = async (
 
   for (const row of overduePurchases) {
     const name = row.supplier_name || 'Supplier';
-    await notifyBranchUsers(client ?? null, {
+    await notifyBranchUsers(client, {
       branchId,
       title: `Credit Due: Purchase #${row.purchase_id}`,
       message: `${name} — purchase #${row.purchase_id} was due on ${row.due_date} (${row.days_overdue} day(s) overdue). Amount: ${Number(row.total).toFixed(2)}.`,
@@ -182,5 +163,44 @@ export const ensureCreditDueNotifications = async (
         days_overdue: row.days_overdue,
       },
     });
+  }
+};
+
+/**
+ * Creates a credit-due notification once the exact due timestamp is reached.
+ * A transaction-scoped advisory lock prevents the background scheduler and a
+ * simultaneous notification-list request from inserting the same alert twice.
+ */
+export const ensureCreditDueNotifications = async (
+  branchId: number,
+  client?: PoolClient
+) => {
+  if (!branchId) return;
+  if (client) {
+    await ensureCreditDueNotificationsWithClient(branchId, client);
+    return;
+  }
+
+  await withTransaction(async (tx) => {
+    const lock = await tx.query<{ acquired: boolean }>(
+      `SELECT pg_try_advisory_xact_lock(42142, $1::integer) AS acquired`,
+      [branchId]
+    );
+    if (!lock.rows[0]?.acquired) return;
+    await ensureCreditDueNotificationsWithClient(branchId, tx);
+  });
+};
+
+// This is deliberately server-side rather than dependent on an open browser:
+// a deadline still creates its alert even when no user currently has the
+// notification dropdown open.
+export const syncCreditDueNotifications = async () => {
+  const branches = await queryMany<{ branch_id: number }>(
+    `SELECT branch_id
+       FROM ims.branches
+      WHERE is_active = TRUE`
+  );
+  for (const branch of branches) {
+    await ensureCreditDueNotifications(Number(branch.branch_id));
   }
 };

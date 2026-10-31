@@ -134,8 +134,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const lock = () => {
     if (!user) return;
     const raw = localStorage.getItem('app_lock');
-    const existing = raw ? JSON.parse(raw) : {};
-    const payload = { identifier: user.username, name: user.name, hasLock: existing.hasLock ?? true };
+    let existing: { hasLock?: boolean } = {};
+    try {
+      const parsed = raw ? JSON.parse(raw) : {};
+      if (parsed && typeof parsed === 'object') existing = parsed;
+    } catch {
+      // A malformed stale browser value must not prevent the app from locking.
+    }
+    const payload = {
+      identifier: user.username,
+      name: user.name,
+      hasLock: existing.hasLock ?? true,
+      lockedAt: Date.now(),
+    };
     localStorage.setItem('app_lock', JSON.stringify(payload));
     setLockedInfo(payload);
 
