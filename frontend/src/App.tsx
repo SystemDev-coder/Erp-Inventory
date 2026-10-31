@@ -208,7 +208,7 @@ function AppRoutes() {
             }
           />
           <Route path="/system" element={<ProtectedRoute permission="system.settings"><Lazy><Settings /></Lazy></ProtectedRoute>} />
-          <Route path="/trash" element={<ProtectedRoute permission="trash.view" roleAny={['developer']}><Lazy><Trash /></Lazy></ProtectedRoute>} />
+          <Route path="/trash" element={<ProtectedRoute permission="trash.view"><Lazy><Trash /></Lazy></ProtectedRoute>} />
         </Route>
 
         {/* Auth Layout */}

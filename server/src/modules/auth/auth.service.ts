@@ -134,6 +134,7 @@ const mapProfile = async (
     is_active: boolean;
     branch_id: number | null;
     branch_name: string | null;
+    has_lock: boolean;
   }>(
     `SELECT
         u.user_id,
@@ -144,6 +145,11 @@ const mapProfile = async (
         r.role_code,
         r.is_system,
         u.is_active,
+        EXISTS (
+          SELECT 1
+            FROM ims.user_locks ul
+           WHERE ul.user_id = u.user_id
+        ) AS has_lock,
         b.branch_id,
         b.branch_name
      FROM ims.users u
@@ -177,6 +183,7 @@ const mapProfile = async (
     branch_name: branchName,
     is_active: Boolean(row.is_active),
     is_admin: isAdminRoleRecord(row),
+    has_lock: Boolean(row.has_lock),
   };
 };
 

@@ -17,6 +17,7 @@ export interface User {
   branch_name: string;
   is_active: boolean;
   is_admin: boolean;
+  has_lock: boolean;
 }
 
 export interface LoginCredentials {

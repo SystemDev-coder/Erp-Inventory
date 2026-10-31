@@ -493,7 +493,11 @@ const Lock = () => {
         }
         try {
           setSaving(true);
-          await withMinDuration(authService.setLockPassword(password));
+          const saveResponse = await withMinDuration(authService.setLockPassword(password));
+          if (!saveResponse.success) {
+            setError(saveResponse.error || t.errSaveFailed);
+            return;
+          }
           const payload = { ...(lockedInfo || { identifier: '' }), hasLock: true };
           localStorage.setItem('app_lock', JSON.stringify(payload));
           setIsSetup(true);
@@ -606,7 +610,11 @@ const Lock = () => {
 
     setResetBusy(true);
     try {
-      await withMinDuration(authService.setLockPassword(newLockPassword));
+      const saveResponse = await withMinDuration(authService.setLockPassword(newLockPassword));
+      if (!saveResponse.success) {
+        setResetError(saveResponse.error || t.errSaveFailed);
+        return;
+      }
       const payload = { ...(lockedInfo || { identifier: '' }), hasLock: true };
       localStorage.setItem('app_lock', JSON.stringify(payload));
       setIsSetup(true);

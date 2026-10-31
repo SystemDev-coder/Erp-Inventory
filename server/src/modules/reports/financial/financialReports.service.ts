@@ -2520,14 +2520,16 @@ export const financialReportsService = {
   async getAccountsReceivable(branchId: number, fromDate: string, toDate: string): Promise<AccountsReceivableRow[]> {
     // Period-scoped, mirroring getAccountsPayable exactly: invoices *raised* within
     // [fromDate, toDate] (not every invoice ever, up to toDate), payments/receipts
-    // still counted up to toDate, and the opening-balance carry-forward using fromDate
-    // (the pre-period balance) instead of toDate. Invoices only cover debt raised by
+    // still counted up to toDate. Opening balances are also read up to toDate (rather
+    // than only up to fromDate): a customer can be created or assigned a go-live
+    // balance during the selected period, and that balance must appear in the report.
+    // Invoices only cover debt raised by
     // sales - go-live balances live in the customer ledger as an `opening` entry, and
     // receipts that are not tied to a sale settle that opening debt, so both have to be
     // folded in or the report looks empty for customers who were migrated with a
     // balance but have no unpaid invoice yet.
     const params: Array<number | string> = [branchId, fromDate, toDate];
-    const [invoiceRows, openingRows, unallocatedRows] = await Promise.all([
+    const [invoiceRows, openingRows, unallocatedRows, legacyOpeningRows] = await Promise.all([
       queryMany<AccountsReceivableRow>(
       `WITH sales_scope AS (
          SELECT
@@ -2578,7 +2580,7 @@ export const financialReportsService = {
           AND cl.entry_date::date <= $2::date
         GROUP BY c.customer_id, c.full_name
        HAVING COALESCE(SUM(cl.debit - cl.credit), 0) > 0.009`,
-        [branchId, fromDate]
+        [branchId, toDate]
       ),
       queryMany<{ customer_id: number; customer_name: string; unallocated_paid: number }>(
         `SELECT
@@ -2589,16 +2591,73 @@ export const financialReportsService = {
          JOIN ims.customers c ON c.customer_id = cr.customer_id
         WHERE cr.branch_id = $1
           AND cr.sale_id IS NULL
-          AND cr.receipt_date::date BETWEEN $2::date AND $3::date
+          -- These payments reduce the carried-forward opening balance, so include
+          -- every one posted on or before the report's as-of date. Restricting this
+          -- to the selected period overstated balances when a payment was made
+          -- before the period began.
+          AND cr.receipt_date::date <= $2::date
         GROUP BY c.customer_id, c.full_name
        HAVING COALESCE(SUM(cr.amount), 0) > 0.009`,
-        params
+        [branchId, toDate]
+      ),
+      // Older installations could have a value in customers.open_balance (or
+      // remaining_balance) from before opening balances were mirrored to the
+      // customer ledger. Keep that genuine customer debt visible, but only
+      // when there is no ledger or sale history to avoid counting an invoice
+      // twice. Newer data always follows the ledger path above.
+      queryMany<{ customer_id: number; customer_name: string; opening_balance: number }>(
+        `WITH legacy_customers AS (
+           SELECT
+             c.customer_id,
+             c.branch_id,
+             COALESCE(NULLIF(BTRIM(c.full_name), ''), 'Unknown Customer') AS customer_name,
+             COALESCE(
+               NULLIF(NULLIF(to_jsonb(c) ->> 'remaining_balance', '')::numeric, 0),
+               NULLIF(NULLIF(to_jsonb(c) ->> 'open_balance', '')::numeric, 0),
+               0
+             )::double precision AS opening_balance
+           FROM ims.customers c
+           WHERE c.branch_id = $1
+             AND c.registered_date::date <= $2::date
+             AND COALESCE(c.is_deleted, 0) = 0
+         )
+         SELECT lc.customer_id, lc.customer_name, lc.opening_balance
+           FROM legacy_customers lc
+          WHERE lc.opening_balance > 0.009
+            AND NOT EXISTS (
+              SELECT 1
+                FROM ims.customer_ledger cl
+               WHERE cl.branch_id = lc.branch_id
+                 AND cl.customer_id = lc.customer_id
+            )
+            AND NOT EXISTS (
+              SELECT 1
+                FROM ims.sales s
+               WHERE s.branch_id = lc.branch_id
+                 AND s.customer_id = lc.customer_id
+                 AND s.sale_date::date <= $2::date
+                 AND LOWER(COALESCE(s.status::text, '')) <> 'void'
+                 AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'
+                 AND COALESCE(s.is_deleted, 0) = 0
+            )`,
+        [branchId, toDate]
       ),
     ]);
 
     const openingByCustomer = new Map<number, { customer_name: string; opening: number; paid: number }>();
 
     openingRows.forEach((row) => {
+      openingByCustomer.set(Number(row.customer_id), {
+        customer_name: row.customer_name,
+        opening: Number(row.opening_balance || 0),
+        paid: 0,
+      });
+    });
+
+    legacyOpeningRows.forEach((row) => {
+      // The SQL already excludes ledger-backed customers. Keep the guard here
+      // too, so future query changes cannot accidentally double-count them.
+      if (openingByCustomer.has(Number(row.customer_id))) return;
       openingByCustomer.set(Number(row.customer_id), {
         customer_name: row.customer_name,
         opening: Number(row.opening_balance || 0),

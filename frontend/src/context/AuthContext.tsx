@@ -81,6 +81,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const response = await authService.login(credentials);
 
     if (response.success && response.data) {
+      // A new login starts a normal session. The durable lock password lives
+      // on the server, while app_lock only represents an active lock screen.
+      // Clearing a previous user's/stale screen marker must never delete the
+      // saved lock password.
+      localStorage.removeItem('app_lock');
+      setLockedInfo(null);
       setAccessToken(response.data.accessToken, !!credentials.rememberMe);
       setUser(response.data.user);
       const permsRes = await userService.getPermissions();
@@ -133,18 +139,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
    */
   const lock = () => {
     if (!user) return;
-    const raw = localStorage.getItem('app_lock');
-    let existing: { hasLock?: boolean } = {};
-    try {
-      const parsed = raw ? JSON.parse(raw) : {};
-      if (parsed && typeof parsed === 'object') existing = parsed;
-    } catch {
-      // A malformed stale browser value must not prevent the app from locking.
-    }
     const payload = {
       identifier: user.username,
       name: user.name,
-      hasLock: existing.hasLock ?? true,
+      // The API tells us whether this person already has a lock password.
+      // Do not infer it from localStorage: idle logout intentionally clears
+      // only that browser marker, not the user's saved lock password.
+      hasLock: user.has_lock,
       lockedAt: Date.now(),
     };
     localStorage.setItem('app_lock', JSON.stringify(payload));
