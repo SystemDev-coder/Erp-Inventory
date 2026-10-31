@@ -37,10 +37,24 @@ type FormErrors = {
 
 const todayString = () => new Date().toISOString().slice(0, 10);
 
-const addDaysToDate = (baseDate: string, days: number) => {
-  const dt = new Date(`${baseDate}T00:00:00`);
+const toDateTimeLocal = (value: string | null | undefined) => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+};
+
+const toIsoDateTime = (value: string) => {
+  if (!value) return undefined;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+};
+
+const addDaysToDateTime = (baseDate: string, days: number) => {
+  const dt = new Date(`${baseDate}T23:59:00`);
   dt.setDate(dt.getDate() + Math.max(0, Math.floor(days)));
-  return dt.toISOString().slice(0, 10);
+  return toDateTimeLocal(dt.toISOString());
 };
 
 // Sales tax is a fixed policy rate, not something a cashier should be able to change
@@ -273,7 +287,7 @@ const SaleCreate = () => {
         total: Number(sale.total || 0),
         acc_id: sale.pay_acc_id ?? '',
         paid_amount: Number(sale.paid_amount || 0),
-        due_date: (sale as { due_date?: string | null }).due_date?.slice(0, 10) || '',
+        due_date: toDateTimeLocal((sale as { due_date?: string | null }).due_date),
         note: sale.note || '',
         items: items.length ? items : [{ item_id: '', quantity: 1, unit_price: 0 }],
       });
@@ -541,10 +555,11 @@ const SaleCreate = () => {
 
   useEffect(() => {
     if (!shouldShowDueDate) return;
+    const configuredDueAt = toDateTimeLocal(selectedCustomer?.credit_due_at);
     const days = Math.max(0, Number(selectedCustomer?.credit_days ?? 30));
-    const nextDue = addDaysToDate(saleForm.sale_date || todayString(), days);
+    const nextDue = configuredDueAt || addDaysToDateTime(saleForm.sale_date || todayString(), days);
     setSaleForm((prev) => (prev.due_date === nextDue ? prev : { ...prev, due_date: nextDue }));
-  }, [shouldShowDueDate, selectedCustomer?.credit_days, saleForm.sale_date]);
+  }, [shouldShowDueDate, selectedCustomer?.credit_due_at, selectedCustomer?.credit_days, saleForm.sale_date]);
 
   const itemOptionsMap = useMemo(() => {
     const map = new Map<number, SaleItemOption>();
@@ -746,7 +761,7 @@ const SaleCreate = () => {
       saleType: effectiveSaleType,
       status: effectiveStatus,
       note: saleForm.note || undefined,
-      dueDate: shouldShowDueDate && saleForm.due_date ? saleForm.due_date : undefined,
+      dueDate: shouldShowDueDate ? toIsoDateTime(saleForm.due_date) : undefined,
       items: validItems.map((line) => ({
         itemId: Number(line.item_id),
         quantity: Number(line.quantity),
@@ -1056,9 +1071,9 @@ const SaleCreate = () => {
 
             {shouldShowDueDate && (
               <label className="flex flex-col text-sm font-medium gap-1 text-slate-800 dark:text-slate-200">
-                Credit Return Date (Ballanta)
+                Credit Due Date & Time (Ballanta)
                 <input
-                  type="date"
+                  type="datetime-local"
                   className={controlCls}
                   value={saleForm.due_date}
                   onChange={(e) => setSaleForm((prev) => ({ ...prev, due_date: e.target.value }))}

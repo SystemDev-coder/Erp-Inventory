@@ -28,7 +28,9 @@ type CustomerForm = {
   gender: "male" | "female";
   is_active: boolean;
   credit_allowed: boolean;
-  credit_days: number;
+  // ISO timestamp from the date-and-time picker.  Empty means no fixed
+  // deadline is configured for this customer.
+  credit_due_at: string;
   // Kept as a string, same reasoning as remaining_balance below: an empty
   // string means "no limit" (persisted as NULL), and coercing on every
   // keystroke would turn that into "0" and fight the caret.
@@ -48,7 +50,7 @@ const emptyForm: CustomerForm = {
   gender: "male",
   is_active: true,
   credit_allowed: true,
-  credit_days: 30,
+  credit_due_at: "",
   credit_limit: "",
   remaining_balance: "",
   edit_reason: "",
@@ -57,6 +59,22 @@ const emptyForm: CustomerForm = {
 const parseBalance = (value: string) => {
   const numeric = Number(String(value).trim());
   return Number.isFinite(numeric) ? numeric : 0;
+};
+
+const toDateTimeLocal = (value: string | null | undefined): string => {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+    date.getDate(),
+  )}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+};
+
+const toIsoDateTime = (value: string): string | null => {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 };
 
 const hasOpeningBalanceChanged = (f: CustomerForm, original: number | null) =>
@@ -227,10 +245,10 @@ const Customers = () => {
       is_active: form.is_active,
       credit_allowed:
         form.customer_type === "regular" ? form.credit_allowed : false,
-      credit_days:
+      credit_due_at:
         form.customer_type === "regular" && form.credit_allowed
-          ? form.credit_days
-          : 0,
+          ? toIsoDateTime(form.credit_due_at)
+          : null,
       credit_limit:
         form.customer_type === "regular" &&
         form.credit_allowed &&
@@ -272,7 +290,7 @@ const Customers = () => {
         gender: (row.gender || row.sex || "male") as "male" | "female",
         is_active: row.is_active,
         credit_allowed: row.credit_allowed !== false,
-        credit_days: Number(row.credit_days ?? 30),
+        credit_due_at: toDateTimeLocal(row.credit_due_at),
         credit_limit: row.credit_limit == null ? "" : String(row.credit_limit),
         remaining_balance: String(openingBalance),
         edit_reason: "",
@@ -665,17 +683,13 @@ const Customers = () => {
 
             {form.customer_type === "regular" && form.credit_allowed && (
               <Field
-                label="Credit Days"
-                hint="Payment due period for credit sales"
+                label="Credit Due Date & Time"
+                hint="Optional — used as the default deadline for new credit sales"
               >
                 <input
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={form.credit_days}
-                  onChange={(ev) =>
-                    set("credit_days", Number(ev.target.value || 0))
-                  }
+                  type="datetime-local"
+                  value={form.credit_due_at}
+                  onChange={(ev) => set("credit_due_at", ev.target.value)}
                   disabled={loading}
                 />
               </Field>

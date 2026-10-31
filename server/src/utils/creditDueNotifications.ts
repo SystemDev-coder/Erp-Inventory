@@ -114,14 +114,14 @@ export const ensureCreditDueNotifications = async (
         c.full_name AS customer_name,
         s.due_date::text AS due_date,
         s.total::text AS total,
-        (CURRENT_DATE - s.due_date)::int AS days_overdue
+        (CURRENT_DATE - s.due_date::date)::int AS days_overdue
        FROM ims.sales s
        LEFT JOIN ims.customers c ON c.customer_id = s.customer_id
       WHERE s.branch_id = $1
         AND COALESCE(s.status::text, '') NOT IN ('void', 'paid')
         AND COALESCE(s.sale_type::text, '') = 'credit'
         AND s.due_date IS NOT NULL
-        AND s.due_date <= CURRENT_DATE
+        AND s.due_date <= NOW()
         AND COALESCE(s.is_deleted, 0)::int = 0
         AND COALESCE((to_jsonb(s) ->> 'doc_type'), 'sale') <> 'quotation'`,
     [branchId]

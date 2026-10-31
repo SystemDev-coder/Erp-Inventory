@@ -20,6 +20,7 @@ export interface Customer {
   credit_allowed: boolean;
   credit_limit: number | null;
   credit_days: number;
+  credit_due_at: string | null;
   balance: number;
   open_balance: number;
   remaining_balance: number;
@@ -36,6 +37,7 @@ export interface CustomerInput {
   isActive?: boolean;
   creditAllowed?: boolean;
   creditDays?: number;
+  creditDueAt?: string | null;
   creditLimit?: number | null;
   remainingBalance?: number;
   editReason?: string;
@@ -49,6 +51,7 @@ type CustomerColumnMeta = {
   hasType: boolean;
   hasCreditAllowed: boolean;
   hasCreditDays: boolean;
+  hasCreditDueAt: boolean;
   hasCreditLimit: boolean;
 };
 
@@ -73,6 +76,7 @@ const detectCustomerColumns = async (): Promise<CustomerColumnMeta> => {
     hasType: names.has('customer_type'),
     hasCreditAllowed: names.has('credit_allowed'),
     hasCreditDays: names.has('credit_days'),
+    hasCreditDueAt: names.has('credit_due_at'),
     hasCreditLimit: names.has('credit_limit'),
   };
   return customerColumnMeta;
@@ -90,6 +94,7 @@ const mapCustomer = (row: {
   customer_type: string | null;
   credit_allowed?: boolean | null;
   credit_days?: number | string | null;
+  credit_due_at?: string | null;
   balance_value: string | number;
   credit_limit?: number | string | null;
   open_balance_value?: string | number | null;
@@ -106,6 +111,7 @@ const mapCustomer = (row: {
   is_active: Boolean(row.is_active),
   credit_allowed: row.credit_allowed !== false,
   credit_days: Number(row.credit_days ?? 30),
+  credit_due_at: row.credit_due_at ?? null,
   balance: Number(row.balance_value || 0),
   credit_limit: row.credit_limit == null ? null : Number(row.credit_limit),
   open_balance: Number(row.open_balance_value ?? row.balance_value ?? 0),
@@ -121,6 +127,8 @@ const getCreditAllowedSelect = (meta: CustomerColumnMeta) =>
   meta.hasCreditAllowed ? 'credit_allowed' : 'TRUE AS credit_allowed';
 const getCreditDaysSelect = (meta: CustomerColumnMeta) =>
   meta.hasCreditDays ? 'credit_days' : '30 AS credit_days';
+const getCreditDueAtSelect = (meta: CustomerColumnMeta) =>
+  meta.hasCreditDueAt ? 'credit_due_at::text AS credit_due_at' : 'NULL::text AS credit_due_at';
 const getCreditLimitSelect = (meta: CustomerColumnMeta) =>
   meta.hasCreditLimit ? 'credit_limit::text AS credit_limit' : 'NULL::text AS credit_limit';
 const getOpenBalanceSelect = (meta: CustomerColumnMeta) =>
@@ -159,7 +167,7 @@ const scopedCustomer = async (
         open_balance_value: string | null;
         has_transactions: boolean;
       }>(
-        `SELECT customer_id, full_name, phone, sex::text AS sex, address, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect(meta)}, ${getCreditAllowedSelect(meta)}, ${getCreditDaysSelect(meta)}, ${getCreditLimitSelect(meta)}, ${balanceColumn}::text AS balance_value, ${getOpenBalanceSelect(meta)}, ${HAS_TRANSACTIONS_SELECT}
+        `SELECT customer_id, full_name, phone, sex::text AS sex, address, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect(meta)}, ${getCreditAllowedSelect(meta)}, ${getCreditDaysSelect(meta)}, ${getCreditDueAtSelect(meta)}, ${getCreditLimitSelect(meta)}, ${balanceColumn}::text AS balance_value, ${getOpenBalanceSelect(meta)}, ${HAS_TRANSACTIONS_SELECT}
            FROM ims.customers
           WHERE customer_id = $1
             AND COALESCE(is_deleted, 0)::int = 0`,
@@ -181,7 +189,7 @@ const scopedCustomer = async (
         open_balance_value: string | null;
         has_transactions: boolean;
       }>(
-        `SELECT customer_id, full_name, phone, sex::text AS sex, address, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect(meta)}, ${getCreditAllowedSelect(meta)}, ${getCreditDaysSelect(meta)}, ${getCreditLimitSelect(meta)}, ${balanceColumn}::text AS balance_value, ${getOpenBalanceSelect(meta)}, ${HAS_TRANSACTIONS_SELECT}
+        `SELECT customer_id, full_name, phone, sex::text AS sex, address, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect(meta)}, ${getCreditAllowedSelect(meta)}, ${getCreditDaysSelect(meta)}, ${getCreditDueAtSelect(meta)}, ${getCreditLimitSelect(meta)}, ${balanceColumn}::text AS balance_value, ${getOpenBalanceSelect(meta)}, ${HAS_TRANSACTIONS_SELECT}
            FROM ims.customers
           WHERE customer_id = $1
             AND branch_id = ANY($2)
@@ -394,6 +402,7 @@ export const customersService = {
           ${getCustomerTypeSelect(meta)},
           ${getCreditAllowedSelect(meta)},
           ${getCreditDaysSelect(meta)},
+          ${getCreditDueAtSelect(meta)},
           ${getCreditLimitSelect(meta)},
           ${balanceColumn}::text AS balance_value,
           ${getOpenBalanceSelect(meta)},
@@ -460,6 +469,7 @@ export const customersService = {
           ${getCustomerTypeSelect(meta)},
           ${getCreditAllowedSelect(meta)},
           ${getCreditDaysSelect(meta)},
+          ${getCreditDueAtSelect(meta)},
           ${getCreditLimitSelect(meta)},
           ${balanceColumn}::text AS balance_value,
           ${getOpenBalanceSelect(meta)}
@@ -521,6 +531,11 @@ export const customersService = {
         insertValues += `$${p++}, `;
         values.push(creditDays);
       }
+      if (meta.hasCreditDueAt) {
+        insertColumns += `credit_due_at, `;
+        insertValues += `$${p++}, `;
+        values.push(customerType === 'regular' && creditAllowed ? input.creditDueAt ?? null : null);
+      }
 
       if (meta.hasCreditLimit) {
         insertColumns += `credit_limit, `;
@@ -564,7 +579,7 @@ export const customersService = {
            ${insertColumns}
          VALUES
            ${insertValues}
-         RETURNING customer_id, full_name, phone, address, sex::text AS sex, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect(meta)}, ${getCreditAllowedSelect(meta)}, ${getCreditDaysSelect(meta)}, ${getCreditLimitSelect(meta)}, ${meta.balanceColumn}::text AS balance_value, ${getOpenBalanceSelect(meta)}`,
+         RETURNING customer_id, full_name, phone, address, sex::text AS sex, ${genderSelect}, registered_date::text, is_active, ${getCustomerTypeSelect(meta)}, ${getCreditAllowedSelect(meta)}, ${getCreditDaysSelect(meta)}, ${getCreditDueAtSelect(meta)}, ${getCreditLimitSelect(meta)}, ${meta.balanceColumn}::text AS balance_value, ${getOpenBalanceSelect(meta)}`,
         values
       );
 
@@ -644,6 +659,12 @@ export const customersService = {
     if (input.creditDays !== undefined && meta.hasCreditDays) {
       updates.push(`credit_days = $${parameter++}`);
       values.push(Math.max(0, Number(input.creditDays ?? 30)));
+    }
+    if (input.creditDueAt !== undefined && meta.hasCreditDueAt) {
+      updates.push(`credit_due_at = $${parameter++}`);
+      values.push(input.customerType === 'one-time' ? null : input.creditDueAt);
+    } else if (input.customerType === 'one-time' && meta.hasCreditDueAt) {
+      updates.push(`credit_due_at = NULL`);
     }
     if (input.creditLimit !== undefined && meta.hasCreditLimit) {
       updates.push(`credit_limit = $${parameter++}`);
@@ -731,7 +752,7 @@ export const customersService = {
         `UPDATE ims.customers
             SET ${updates.join(', ')}
           WHERE ${whereSql}
-          RETURNING customer_id, full_name, phone, address, sex::text AS sex, ${getGenderSelect(meta)}, registered_date::text, is_active, ${getCustomerTypeSelect(meta)}, ${getCreditAllowedSelect(meta)}, ${getCreditDaysSelect(meta)}, ${getCreditLimitSelect(meta)}, ${meta.balanceColumn}::text AS balance_value, ${getOpenBalanceSelect(meta)}`,
+          RETURNING customer_id, full_name, phone, address, sex::text AS sex, ${getGenderSelect(meta)}, registered_date::text, is_active, ${getCustomerTypeSelect(meta)}, ${getCreditAllowedSelect(meta)}, ${getCreditDaysSelect(meta)}, ${getCreditDueAtSelect(meta)}, ${getCreditLimitSelect(meta)}, ${meta.balanceColumn}::text AS balance_value, ${getOpenBalanceSelect(meta)}`,
         values
       );
 

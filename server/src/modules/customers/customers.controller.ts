@@ -23,6 +23,7 @@ const customerBaseSchema = z.object({
   creditAllowed: z.boolean().optional(),
   creditLimit: z.coerce.number().nonnegative().nullable().optional(),
   creditDays: z.coerce.number().int().nonnegative().optional(),
+  creditDueAt: z.string().datetime({ offset: true }).nullable().optional(),
   remainingBalance: z.coerce.number().nonnegative().optional(),
   editReason: z.string().max(500).optional(),
 });
