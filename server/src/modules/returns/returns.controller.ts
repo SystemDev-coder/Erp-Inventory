@@ -47,6 +47,13 @@ export const listSalesCustomers = async (req: AuthRequest, res: Response): Promi
     res.json({ success: true, data: { customers } });
 };
 
+export const listSalesByCustomer = async (req: AuthRequest, res: Response): Promise<void> => {
+    const scope = await resolveBranchScope(req);
+    const customerId = Number(req.query.customerId);
+    const sales = await returnsService.listSalesByCustomer(scope, customerId);
+    res.json({ success: true, data: { sales } });
+};
+
 export const listReturnItems = async (req: AuthRequest, res: Response): Promise<void> => {
     const scope = await resolveBranchScope(req);
     const items = await returnsService.listReturnItems(scope);
@@ -57,15 +64,24 @@ export const listSalesItemsByCustomer = async (req: AuthRequest, res: Response):
     const scope = await resolveBranchScope(req);
     const customerId = Number(req.query.customerId);
     const excludeReturnId = req.query.excludeReturnId ? Number(req.query.excludeReturnId) : undefined;
-    const items = await returnsService.listSalesItemsByCustomer(scope, customerId, excludeReturnId);
+    const saleId = req.query.saleId ? Number(req.query.saleId) : undefined;
+    const items = await returnsService.listSalesItemsByCustomer(scope, customerId, excludeReturnId, saleId);
     res.json({ success: true, data: { items } });
+};
+
+export const listPurchasesBySupplier = async (req: AuthRequest, res: Response): Promise<void> => {
+    const scope = await resolveBranchScope(req);
+    const supplierId = Number(req.query.supplierId);
+    const purchases = await returnsService.listPurchasesBySupplier(scope, supplierId);
+    res.json({ success: true, data: { purchases } });
 };
 
 export const listPurchaseItemsBySupplier = async (req: AuthRequest, res: Response): Promise<void> => {
     const scope = await resolveBranchScope(req);
     const supplierId = Number(req.query.supplierId);
     const excludeReturnId = req.query.excludeReturnId ? Number(req.query.excludeReturnId) : undefined;
-    const items = await returnsService.listPurchaseItemsBySupplier(scope, supplierId, excludeReturnId);
+    const purchaseId = req.query.purchaseId ? Number(req.query.purchaseId) : undefined;
+    const items = await returnsService.listPurchaseItemsBySupplier(scope, supplierId, excludeReturnId, purchaseId);
     res.json({ success: true, data: { items } });
 };
 
