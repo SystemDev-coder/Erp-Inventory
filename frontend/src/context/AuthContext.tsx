@@ -53,7 +53,23 @@ export function AuthProvider({ children }: AuthProviderProps) {
         setUser(null);
         return;
       }
-      if (lockedInfo) {
+      // Read the marker from storage here instead of the React state. During
+      // unlock(), React has not necessarily rendered `setLockedInfo(null)`
+      // before refreshUser() runs. Reading the old state at that point used
+      // to write app_lock back and immediately lock the user again.
+      let storedLock: { identifier: string; name?: string; hasLock?: boolean } | null = null;
+      try {
+        const rawLock = localStorage.getItem('app_lock');
+        if (rawLock) {
+          const parsed = JSON.parse(rawLock);
+          if (parsed && typeof parsed === 'object') storedLock = parsed;
+          else localStorage.removeItem('app_lock');
+        }
+      } catch {
+        localStorage.removeItem('app_lock');
+      }
+
+      if (storedLock) {
         // The durable lock state belongs to the server. A browser's app_lock
         // marker only means that this tab is currently on the lock screen;
         // it can be stale after an idle logout, an app upgrade, or another
@@ -63,9 +79,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
         if (response.success && response.data) {
           const freshUser = response.data.user;
           const hydratedLock = {
-            ...lockedInfo,
-            identifier: lockedInfo.identifier || freshUser.username,
-            name: lockedInfo.name || freshUser.name,
+            ...storedLock,
+            identifier: storedLock.identifier || freshUser.username,
+            name: storedLock.name || freshUser.name,
             hasLock: freshUser.has_lock === true,
           };
           setUser(freshUser);
@@ -75,6 +91,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
         setIsLoading(false);
         return;
       }
+
+      // A missing marker means this is an active, unlocked session. This is
+      // important immediately after a successful password verification.
+      setLockedInfo(null);
       const response = await authService.getCurrentUser();
       if (response.success && response.data) {
         setUser(response.data.user);
